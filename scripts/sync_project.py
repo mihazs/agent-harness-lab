@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """Refresh label mirrors, lifecycle status and PR snapshots; no background work."""
 import argparse
+from datetime import datetime, timezone
 import json
+from pathlib import Path
 import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agent_harness_lab.sources.ratelimit import Limiter, classify, identity_digest, signals, split_http, state_path  # noqa: E402
+from agent_harness_lab.sources.transport import RateLimited  # noqa: E402
 
 REPO = 'mihazs/agent-harness-lab'
 AXES = {
@@ -15,13 +22,37 @@ AXES = {
 }
 
 
+# One limiter per process, shared with every other AHL process through the private state file; the gh CLI
+# holds the credential, so its quota is tracked under one opaque "gh" identity and no token is ever read.
+LIMITER = None
+
+
+def limiter():
+    global LIMITER
+    if LIMITER is None: LIMITER = Limiter(path=state_path())
+    return LIMITER
+
+
 def graphql(query, variables):
-    result = subprocess.run(['gh', 'api', 'graphql', '--input', '-'],
+    """One GraphQL call that stops at the reserve floor and reports rate limits as such (never as permission)."""
+    quota, who = limiter(), identity_digest('gh-cli')
+    try:
+        quota.before('api.github.com', 'graphql', who)
+    except RateLimited as halt:
+        raise RuntimeError(f'GitHub GraphQL quota halted ({halt.reason}); resets at '
+            f'{datetime.fromtimestamp(halt.reset, timezone.utc).isoformat() if halt.reset else "an unknown time"}') from None
+    result = subprocess.run(['gh', 'api', 'graphql', '-i', '--input', '-'],
                             input=json.dumps({'query': query, 'variables': variables}),
                             text=True, capture_output=True)
     if not result.stdout:
         raise RuntimeError('GitHub CLI failed; check gh auth status and network access')
-    data = json.loads(result.stdout)
+    status, headers, body = split_http(result.stdout)
+    found = signals(headers)
+    quota.observe('api.github.com', who, 'graphql', status, found)
+    if classify(status, found, 'rate limit' in body.lower()[:2048]):
+        raise RuntimeError('GitHub rate limit reached; not a permission problem. Wait for the quota reset '
+            'or the retry-after interval and rerun; see ahl sources github quota')
+    data = json.loads(body)
     if result.returncode or data.get('errors'):
         raise ValueError(data.get('errors', 'GitHub CLI request failed'))
     return data['data']
