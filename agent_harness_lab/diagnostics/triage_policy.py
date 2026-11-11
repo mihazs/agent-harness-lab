@@ -14,6 +14,9 @@ POLICY_PROFILE = 'diagnostic-triage-policy-v2'
 REPORT_PROFILE = 'diagnostic-triage-evaluation-v2'
 REPORT_PROFILE_V3 = 'diagnostic-triage-evaluation-v3'
 REPORT_PROFILE_V4 = 'diagnostic-triage-evaluation-v4'
+REPORT_PROFILE_V5 = 'diagnostic-triage-evaluation-v5'
+BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8)  # fixed descriptive grid, never a tuned or accepted value
+MIN_BIN_ROOTS = 10  # below this a reliability bin is reported as sparse, not as evidence
 SEVERITIES = ('severe', 'normal', 'none')
 COSTS = ('false_alert', 'wrong_class', 'missed_alert', 'severe_miss', 'review')
 ROLE_ROOTS = ('fit_roots_sha256', 'calibration_roots_sha256', 'threshold_tuning_roots_sha256')
@@ -108,7 +111,7 @@ def _row_decision(scores, names, classes, margin):
     return ranked[0], None
 
 
-def _aggregate(observations, policy, names, forbidden, bind_model=False):
+def _aggregate(observations, policy, names, forbidden, bind_model=False, sums=None):
     """Single pass over rows; per-root state is the only retained data."""
     classes, margin = policy['classes'], policy['abstention']['min_margin']
     severe = [name for name in names if classes[name]['severity'] == 'severe']
@@ -138,6 +141,11 @@ def _aggregate(observations, policy, names, forbidden, bind_model=False):
         elif state[0] != label:
             raise ValueError('conflicting labels within a declared validation root')
         state[1].add(predicted if reason is None else ABSTAINED+':'+reason)
+        if sums is not None:
+            total = sums.setdefault(digest, [0, dict.fromkeys(names, 0.0)])
+            total[0] += 1
+            for name in names:
+                total[1][name] += scores[name]
         state[2] = max([state[2], *(scores[name] for name in severe)])
     if not roots:
         raise ValueError('empty triage validation input')
@@ -151,13 +159,14 @@ def evaluate(policy, observations, *, report_version=2):
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
-    if type(report_version) is not int or report_version not in (2, 3, 4):
+    if type(report_version) is not int or report_version not in (2, 3, 4, 5):
         raise ValueError('unsupported triage report version')
-    names, forbidden = check_policy(policy, require_disjoint_roles=report_version==4)
+    names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4)
     classes, costs = policy['classes'], policy['costs']
-    if report_version == 4 and policy['model_sha256'] is None:
-        raise ValueError('v4 requires a policy bound to a model revision')
-    roots = _aggregate(observations, policy, names, forbidden, bind_model=report_version == 4)
+    if report_version >= 4 and policy['model_sha256'] is None:
+        raise ValueError('v4 and v5 require a policy bound to a model revision')
+    sums = {} if report_version == 5 else None
+    roots = _aggregate(observations, policy, names, forbidden, bind_model=report_version >= 4, sums=sums)
     abstained = []
     # Replace per-root aggregation state in place with the root decision.
     for digest, (label, outcomes, risk) in roots.items():
@@ -232,7 +241,7 @@ def evaluate(policy, observations, *, report_version=2):
             elif metrics[metric] < classes[name]['min_'+metric]:
                 failed.append(f'class:{name}:{metric}_below_minimum')
     # V2 retains its original labeled-root denominator for saved-report replay.
-    # V3 and V4 measure decisions on all declared roots, including unlabeled roots.
+    # V3 to V5 measure decisions on all declared roots, including unlabeled roots.
     if report_version == 2:
         coverage = decided/labeled if labeled else None
     else:
@@ -254,7 +263,7 @@ def evaluate(policy, observations, *, report_version=2):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')
-    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4}[report_version], role='validate',
+    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5}[report_version], role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',
@@ -270,6 +279,45 @@ def evaluate(policy, observations, *, report_version=2):
         threshold_authority='human_preregistered_unverified', threshold_selection='refused_in_validation',
         root_independence='unverified', label_authority='unverified', qualification='descriptive_only',
         certification='not_issued', automatic_promotion=False, publication_allowed=False)
-    if report_version==4:
+    if report_version >= 4:
         result['role_separation']='declared_hash_lists_disjoint_only'
+    if report_version == 5:
+        result['score_diagnostics'] = _score_diagnostics(sums, roots, names)
+        if result['score_diagnostics']['reliability']['sparse_bins']:
+            result['reasons'].insert(len(failed)+len(missing), 'reliability_bins_sparse')
     return result
+
+
+def _score_diagnostics(sums, roots, names):
+    """Descriptive Brier, top-label reliability and risk/coverage on labeled roots.
+
+    Scores are each root's mean row score; abstaining roots are included because
+    these describe the scores, not the frozen decisions. Nothing here is a gate.
+    """
+    rows = []
+    for digest, (n, total) in sums.items():
+        label = roots[digest][0]
+        if label is None:
+            continue
+        mean = {name: total[name]/n for name in names}
+        top = max(mean.values())
+        leaders = [name for name in names if mean[name] == top]
+        rows.append((top, leaders == [label], sum((mean[name]-(name == label))**2 for name in names)))
+    count = len(rows)
+    bins = []
+    for index, low in enumerate(BIN_EDGES):
+        high = BIN_EDGES[index+1] if index+1 < len(BIN_EDGES) else None
+        inside = [r for r in rows if r[0] >= low and (high is None or r[0] < high)]
+        bins.append(dict(low=low, high=high if high is not None else 1.0, roots=len(inside),
+                         mean_confidence=sum(r[0] for r in inside)/len(inside) if inside else None,
+                         accuracy=sum(r[1] for r in inside)/len(inside) if inside else None))
+    curve = []
+    for low in BIN_EDGES:
+        kept = [r for r in rows if r[0] >= low]
+        curve.append(dict(min_confidence=low, roots=len(kept), coverage=len(kept)/count if count else None,
+                          error_rate=sum(not r[1] for r in kept)/len(kept) if kept else None))
+    return dict(unit='declared_root', labeled_roots=count, score_source='mean_row_score_per_root',
+                multiclass_brier=sum(r[2] for r in rows)/count if count else None,
+                reliability=dict(bins=bins, min_bin_roots=MIN_BIN_ROOTS,
+                                 sparse_bins=sum(0 < b['roots'] < MIN_BIN_ROOTS for b in bins)),
+                risk_coverage=curve, authority='descriptive_only')

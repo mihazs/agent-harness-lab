@@ -123,6 +123,21 @@ identity, not verified provenance. The strict profile does not express cross-fit
 is unchanged. The v4 report is private and grants no certification or promotion
 authority.
 
+For descriptive score diagnostics, call `evaluate(policy, observations,
+report_version=5)`. The separate `diagnostic-triage-evaluation-v5` profile applies
+every v4 check and decision unchanged and adds `score_diagnostics`, computed on
+labeled roots from each root's mean row score (repeated rows count once;
+abstaining roots are included because these describe scores, not decisions):
+a multiclass Brier score, a top-label reliability table over the fixed bins
+[0, .2), [.2, .4), [.4, .6), [.6, .8) and [.8, 1] with root counts, mean
+confidence and accuracy, and a risk/coverage table giving, for the same fixed
+minimum confidences, the share of labeled roots kept and their misclassification
+rate. Bins with fewer than 10 roots are counted in `sparse_bins` and add the
+`reliability_bins_sparse` reason; 10 is a reporting convention, not an acceptance
+value. Empty bins and undefined rates are null. Brier and the tables do not
+feed any constraint, so a low Brier score cannot rescue a failed recall or
+coverage check, and scores are not assumed to be calibrated probabilities.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,
