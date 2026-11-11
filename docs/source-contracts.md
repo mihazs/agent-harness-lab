@@ -2927,7 +2927,8 @@ beside a cross-reference to a foreign repository's same-numbered issue. Only the
 repository's issue joins; the foreign reference stays an unlinked fingerprint, the
 approval does not match the PR head, and every join remains a `candidate`. HTTP
 403/404/429 denials, API truncation and a moving PR head block the capture without
-advancing the checkpoint; a 429 is not distinguished from other denials.
+advancing the checkpoint; a rate limit (primary, secondary or 429) halts as blocked access with its reset
+time and is never reported as a permission denial (see [forge rate limits](forge-rate-limits.md)).
 
 ### Selected timeline and CI detail profile
 
