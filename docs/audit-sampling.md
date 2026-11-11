@@ -315,10 +315,10 @@ that the declared units are independent and that reviewer labels are correct.
 Labels are unauthenticated, and capture outside the frame is unknown.
 
 This first slice of #75 covers the frame, plan, receipt and fixed-window
-estimates. The issue still tracks logged budget changes and adaptive sampling
-decisions, cluster designs beyond the declared unit, review-queue export
-integration, and versioned summaries consumed by #15 monitoring and the triage
-gate. Prediction-powered e-values remain an experimental extension for later.
+estimates. Later sections cover fixed and stratified budgets, corpus review
+linkage and observe-only monitoring, and the logged budget and adaptive
+decisions below. The issue still tracks cluster designs beyond the declared
+unit. Prediction-powered e-values remain an experimental extension for later.
 
 ## Opt-in fixed-size hard-budget design
 
@@ -379,3 +379,23 @@ independence between strata is needed for that union bound. Hash exchangeability
 frame origin, quota timing, reviewer identities and labels remain unverified.
 The design does not support arbitrary overlapping-route probabilities or claim
 coverage of uncaptured interactions. Existing audit designs are unchanged.
+
+## Pre-label decision log
+
+`agent_harness_lab.diagnostics.audit_decisions.check(receipt, log, first_label_at)`
+verifies a hash-chained history of audit budget changes and adaptive sampling
+decisions for any Poisson receipt. A `budget_change` entry records
+`from_budget` and `to_budget`; an `adaptive_sampling` entry records
+`from_plan_sha256` and `to_plan_sha256`. Each entry has a `time` and a
+`prev_sha256` that is `entry_sha256` of the previous entry (`null` for the first).
+Chain breaks, out-of-order times, discontinuous histories and a final budget or
+plan that differs from the receipt's `review_budget` and `plan_sha256` are
+refused. An entry at or after the declared `first_label_at` makes the report
+`invalid` with `design_based_estimates_supported: false`, because a design chosen
+after labels were seen is not the declared design. The report is private and
+authorizes no policy update.
+
+The times, the first-label time, the log's completeness and its initial budget and
+plan are caller declarations that this check does not authenticate, and the report
+carries them as limitations. An empty log records nothing. This check does not
+change `draw` or `estimate`, and the fixed and stratified designs are not covered.
