@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.166.0
+
+### Minor Changes
+
+- 18016c6: Record comparable `skill_availability` bundle provenance (entry and bundle hashes, route, present or absent) on every evaluator trial, whether a skill is delivered through `skills` or `harness_paths`, with activation left unknown. Part of #11.
+
+### Patch Changes
+
+- 69d4773: Resolve ambiguous runtimes without `ahl.json` by a declared policy (single installed runtime, else the invoking host, else one question). The preflight plan and invocation context record the selection and state what an explicit invocation authorizes. The skill may re-dispatch once after a zero-spend preflight block whose remediation is a user choice.
+
 ## 0.165.1
 
 ### Patch Changes
