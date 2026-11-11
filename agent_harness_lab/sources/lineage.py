@@ -1,4 +1,5 @@
 """Private operator-attested links over exact cache revisions, never native proof."""
+from collections import Counter
 from dataclasses import dataclass
 import hashlib
 import json
@@ -9,6 +10,7 @@ import tempfile
 from agent_harness_lab.evaluation.integrity import contained, open_nofollow, read_regular, regular_sha256
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, record_bytes, sync_directory, write_bytes
 from .execution import RecordRef, frozen, objects, unpack
+from .graph import STATUSES
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .store import SourceStore
 
@@ -293,23 +295,60 @@ class LineageStore(PrivateJournal):
         return result
 
 
+    def coverage(self, cache_path):
+        """Bounded evidence-coverage report: what the cache holds, what is missing, which joins were tried and what stays unproven."""
+        result = self.query(cache_path)
+        origin, state, _, cache_hash = self.cache(cache_path)
+        inventory = SourceStore(origin, project_sha256=self.project, scope_sha256=self.scope).inventory()
+        if cache_hash != result['cache_sha256'] or self.cache(origin)[3] != cache_hash: raise ValueError('source cache changed during coverage report')
+        superseded = {tuple(edge[:3]) for edge in state['supersessions']}
+        types = Counter(e['record']['record_type'] for e in state['records']
+            if e['record']['state'] == 'present' and (e['record']['source_sha256'], e['record']['native_id_sha256'], e['record']['revision_sha256']) not in superseded)
+        joins = Counter()
+        for s in inventory['sources']:
+            if s['evidence_graph'] is not None: joins.update(s['evidence_graph']['statuses'])
+        missing = [dict(source_sha256=s['source_sha256'], reasons=[reason for reason, absent in (
+            ('no_active_snapshot', not s['active_snapshot']), ('no_execution_metadata', s['execution_metadata'] is None),
+            ('no_evidence_graph', s['evidence_graph'] is None), ('capture_coverage_undeclared', s['declared_coverage'] is None),
+            ('tombstoned_records', s['tombstones'] > 0),
+            ('capture_truncated_or_limited', bool(s['declared_coverage'] and (s['declared_coverage']['truncated'] or s['declared_coverage']['limit_reached']
+                or s['declared_coverage']['gaps'])))) if absent]) for s in inventory['sources']]
+        rows = result.get('outcome_correlation', {}).get('records', [])
+        return dict(schema_version=1, profile='evidence-coverage-v1', project_sha256=self.project, scope_sha256=self.scope,
+            cache_sha256=cache_hash, grouping_revision_sha256=result['grouping_revision_sha256'],
+            applicability=result['applicability'], native_freshness='unverified',
+            capture_completeness=inventory['capture_completeness'], target_project_binding=inventory['target_project_binding'],
+            source_kinds=sorted({s['kind'] for s in inventory['sources']}), source_count=inventory['source_count'],
+            adapter_versions_sha256=sorted({v for s in inventory['sources'] for v in s['adapter_versions_sha256']}),
+            record_types=dict(sorted(types.items())), missing_data=[m for m in missing if m['reasons']],
+            attempted_joins=dict(graph_claims={k: joins.get(k, 0) for k in STATUSES},
+                reviewed_links=dict(sorted(Counter(l['relation'] for l in result['links']).items()))),
+            claims=dict(contradicted_reports=sum(r['contradiction'] for r in rows), unverified_outcomes=sum(r['outcome'] == 'unverified' for r in rows),
+                ambiguous_outcome_sources=len(result.get('outcome_correlation', {}).get('ambiguous_sources', ())),
+                conflicts=result['conflicts'], stale_cases=result['stale_cases']),
+            correlated_components=len(result['components']), component_members=sum(len(c['members']) for c in result['components']),
+            independent_roots=None, task_outcomes_verified=False, execution_authorized=False, publication_allowed=False,
+            source_read=False, network_used=False)
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(prog='ahl sources lineage', description=__doc__,
         epilog='Claims and reviews bind exact source-cache revisions and operator identities; they never authorize execution or prove independent roots. '
         'All commands print private JSON metadata. Exit 0: completed; 2: rejected input/binding; '
-        '3: busy store, or query with stale cases/conflicts. '
+        '3: busy store, or query/coverage with stale cases/conflicts. '
         'Example: ahl sources lineage --store /private/lineage --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH '
         'propose --cache /private/sources.json --claim claim.json. Then inspect the returned case/event/cache hashes before preparing a review.')
     parser.add_argument('--store', type=Path, required=True,help='Private lineage journal directory, separate from the source cache')
     parser.add_argument('--project-sha256', required=True,help='Expected 64-hex project identity of the selected source cache')
     parser.add_argument('--scope-sha256', required=True,help='Expected 64-hex selection/scope identity of the selected source cache')
     commands = parser.add_subparsers(dest='action', required=True,help='Choose one explicit claim, review or read-only query operation')
-    for name in ('propose', 'review', 'show', 'query'):
+    for name in ('propose', 'review', 'show', 'query', 'coverage'):
         purpose={'propose':'Record an unsigned claim and freeze its exact source-cache snapshot',
             'review':'Append an operator-attested decision bound to the case, event and cache hashes',
             'show':'Read a recorded case summary without checking current cache applicability',
-            'query':'Read reviewed links and structured outcome contradictions in the selected cache'}
+            'query':'Read reviewed links and structured outcome contradictions in the selected cache',
+            'coverage':'Report source kinds, missing data, attempted joins, contradicted claims and unproven independence for the selected cache'}
         action = commands.add_parser(name,help=purpose[name],description=purpose[name],
             epilog='Output is private JSON metadata, not native execution proof. Use the parent --help for scope identities and exit states.')
         if name in ('review', 'show'): action.add_argument('--case', required=True,help='Exact case ID returned by propose; not a file path')
@@ -324,9 +363,11 @@ def main(argv=None):
         if args.action == 'propose': result = store.propose(args.cache, args.claim)
         elif args.action == 'review': result = store.review(args.case, args.cache, args.record)
         elif args.action == 'show': result = store.show(args.case)
+        elif args.action == 'coverage': result = store.coverage(args.cache)
         else: result = store.query(args.cache)
         print(json.dumps(result, sort_keys=True, allow_nan=False))
-        return 3 if args.action == 'query' and (result['conflicts'] or result['stale_cases']) else 0
+        found = result['claims'] if args.action == 'coverage' else result
+        return 3 if args.action in ('query', 'coverage') and (found['conflicts'] or found['stale_cases']) else 0
     except BlockingIOError:
         print(json.dumps(dict(status='busy', execution_authorized=False, publication_allowed=False))); return 3
     except (ValueError, OSError, TypeError, KeyError, RecursionError):

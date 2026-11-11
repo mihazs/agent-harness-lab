@@ -38,6 +38,15 @@ Append one action:
    correlated components, independent-case assertions, conflicts and stale cases.
    It rechecks the selected cache before returning. It does not return verified
    independent roots or authorize an execution.
+5. `coverage --cache CACHE_JSON` runs the same checks and adds a bounded
+   `evidence-coverage-v1` summary: source kinds and record types present, sources
+   lacking an active snapshot, execution metadata, evidence graph or complete
+   capture, join claims by status, reviewed links by relation, contradicted and
+   unverified outcome reports, conflicts and stale cases. Sources whose capture
+   coverage was never declared are listed as `capture_coverage_undeclared`, and
+   `capture_completeness` stays `unknown` with `target_project_binding`
+   `unverified`. Contradictions are investigation leads. The report contains
+   counts and hashes only, keeps `independent_roots` null, and never labels a task a success or failure.
 
 The cache locator must match the one recorded for a case. Quarantine, rejection
 and retirement can still be recorded if that cache is missing or stale; they do

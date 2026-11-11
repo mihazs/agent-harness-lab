@@ -288,3 +288,72 @@ def test_cli_source_status_reports_unverified_agent_claim_without_lineage_store(
     assert code == 0
     row, = result['outcome_correlation']['records']
     assert row['reported_outcome']['provenance_tier'] == 'agent_report' and row['outcome'] == 'unverified'
+
+
+def test_coverage_report_keeps_contradiction_missing_data_and_unknown_independence_visible(sources):
+    _, cache, store, refs, *_ = sources
+    proposed = review_link(sources)
+    report = store.coverage(cache.path)
+    assert report['profile'] == 'evidence-coverage-v1' and report['source_count'] == 2
+    assert report['source_kinds'] == ['local_file'] and report['claims']['contradicted_reports'] == 1
+    assert report['attempted_joins']['reviewed_links'] == {'test_result_for': 1} and report['correlated_components'] == 1
+    assert report['record_types']['agent_outcome_report'] == 1 and len(report['missing_data']) == 2
+    assert all('no_evidence_graph' in m['reasons'] for m in report['missing_data'])
+    assert report['independent_roots'] is None and not report['task_outcomes_verified'] and not report['publication_allowed']
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report) and proposed['case_id'] not in json.dumps(report['claims']['stale_cases'])
+
+
+def test_coverage_report_does_not_manufacture_a_label_without_reviewed_links(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    report = store.coverage(cache.path)
+    assert report['claims']['contradicted_reports'] == 0 and report['claims']['unverified_outcomes'] >= 1
+    assert report['attempted_joins']['reviewed_links'] == {} and report['independent_roots'] is None
+
+
+def test_coverage_cli_prints_private_json(sources, capsys):
+    from agent_harness_lab.sources.lineage import main
+    root, cache, store, *_ = sources
+    review_link(sources)
+    code = main(['--store', str(root/'lineage'), '--project-sha256', store.project, '--scope-sha256', store.scope, 'coverage', '--cache', str(cache.path)])
+    assert code == 0 and json.loads(capsys.readouterr().out)['profile'] == 'evidence-coverage-v1'
+
+
+def ingest_with_metadata(sources, kind, coverage_change, *, tombstone=False):
+    from tests.unit.sources.test_source_execution import metadata_for
+    root, cache, *_ = sources
+    spec = SourceSpec('local_file', kind, 'v1', digest(str(root)), cache.project, cache.scope, identity_provenance='source_declared_id', enabled=True)
+    record = EvidenceRecord(spec.source_key, digest(kind), digest(('revision', kind)), digest('content'), 'behavioral_event', 'synthetic_claim', '2026-01-01T00:00:00Z')
+    metadata = metadata_for(spec, record)
+    cache.ingest(spec, [replace(record, state='tombstone') if tombstone else record], snapshot_sha256=digest(kind),
+        metadata=replace(metadata, coverage=coverage_change(metadata.coverage)))
+    return spec.source_key
+
+
+def test_coverage_report_flags_undeclared_capture_coverage_and_keeps_unknown_labels(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    key = ingest_with_metadata(sources, 'undeclared', lambda c: None)
+    report = store.coverage(cache.path)
+    row, = [m for m in report['missing_data'] if m['source_sha256'] == key]
+    assert row['reasons'] == ['no_evidence_graph', 'capture_coverage_undeclared']
+    assert report['capture_completeness'] == 'unknown' and report['target_project_binding'] == 'unverified'
+
+
+def test_coverage_report_surfaces_truncated_and_tombstoned_capture(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    truncated = ingest_with_metadata(sources, 'truncated', lambda c: replace(c, truncated=True, limit_reached=True, gaps=('not_captured',)))
+    tombstoned = ingest_with_metadata(sources, 'tombstoned', lambda c: c, tombstone=True)
+    reasons = {m['source_sha256']: m['reasons'] for m in store.coverage(cache.path)['missing_data']}
+    assert 'capture_truncated_or_limited' in reasons[truncated] and 'capture_coverage_undeclared' not in reasons[truncated]
+    assert 'tombstoned_records' in reasons[tombstoned]
+
+
+def test_coverage_cli_exits_3_when_stale_cases_remain_visible(sources, capsys):
+    from agent_harness_lab.sources.lineage import main
+    root, cache, store, _, reported, _, agent = sources
+    proposed = review_link(sources)
+    cache.ingest(agent, [replace(reported, native_id_sha256=digest('later'))])
+    code = main(['--store', str(root/'lineage'), '--project-sha256', store.project, '--scope-sha256', store.scope, 'coverage', '--cache', str(cache.path)])
+    assert code == 3 and json.loads(capsys.readouterr().out)['claims']['stale_cases'] == [proposed['case_id']]
