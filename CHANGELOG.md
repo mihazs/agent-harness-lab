@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.169.0
+
+### Minor Changes
+
+- fdf0366: Add a read-only `--history [--since DATE|first] [--source native]` evidence input to `ahl improve` and `ahl skills invoke` that reuses the existing session collection, reports captured and unknown evidence, and blocks unsupported or empty requests with typed reasons and exact next steps. Run directories now honor `AHL_STATE_HOME` (part of #663).
+
+### Patch Changes
+
+- cc5d038: Pin the reported zero-config runtime dead end (#663) and the non-actionable no-change analysis (#666) with synthetic regression tests, including strict expected failures for the undelivered `--history` input, user-level runtime persistence, restated-instruction fingerprints and artifact bounds. Closes #670.
+
 ## 0.168.0
 
 ### Minor Changes
