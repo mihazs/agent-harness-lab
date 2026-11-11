@@ -1129,7 +1129,7 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/publish_release.py'
   release:verify:
-    desc: Download and verify the current public release using native acceptance tests
+    desc: Download the current public release, verify it, then install it into an isolated prefix and run the reported scenarios against its launcher
     requires:
       vars: [COMMIT]
     vars:
@@ -1140,4 +1140,4 @@ tasks:
       AHL_EXPECTED_COMMIT: '{{.COMMIT}}'
     cmds:
       - 'gh release download {{printf "v%s" .PACKAGE_VERSION | shellQuote}} --dir {{printf "dist/published/v%s" .PACKAGE_VERSION | shellQuote}} --clobber'
-      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/packaging/test_published_release.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/packaging/test_published_release.py tests/integration/packaging/test_installed_artifact.py -v'
