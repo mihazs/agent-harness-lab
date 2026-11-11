@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.156.0
+
+### Minor Changes
+
+- 386ea85: Require a recorded reviewer decision for lexically near-duplicate diagnostic corpus incidents that cross partitions, so a reworded copy of a training incident cannot enter a held-out split unnoticed. Corpus export manifests now carry `near_duplicate_decisions`, so older exports no longer validate.
+
 ## 0.155.0
 
 ### Minor Changes
