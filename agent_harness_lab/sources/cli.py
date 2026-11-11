@@ -229,7 +229,7 @@ def main(argv):
                 else:
                     result = registry.status(source, store, **scope)
                     if remote: result['network_used'] = False
-        if remote and getattr(connector, 'limiter', None) is not None: result['rate_limit'] = connector.limiter.receipt()
+        if getattr(connector, 'limiter', None) is not None: result['rate_limit'] = connector.limiter.receipt()
         print(json.dumps(result, sort_keys=True))
         return 0
     except MissingOKFDependency:
