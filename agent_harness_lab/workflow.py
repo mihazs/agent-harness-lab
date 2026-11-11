@@ -434,6 +434,13 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
 
 def adopt(project, baseline, candidate, original, proposed, scoped=False):
     """Journal a directly authorized owned patch; behavioral controller is gated."""
+    receipt = adopt_with_receipt(project, baseline, candidate, original, proposed, scoped)
+    return [operation['path'] for operation in receipt['operations']]
+
+
+def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False):
+    """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change."""
+    from agent_harness_lab.application_receipt import application_receipt
     from agent_harness_lab.promotion.journal import Journal, file_record
     with project_lock(project):
         if candidate_states(candidate, original) != proposed:
@@ -455,11 +462,10 @@ def adopt(project, baseline, candidate, original, proposed, scoped=False):
                 if captured != proposed.get(name):
                     raise ValueError('Candidate changed while journaling; nothing was applied')
         if not before:
-            return []
+            return dict(status='no_change', operations=[], activation='unknown', behavioral_effect='not_established')
         journal = Journal(project, state_root() / 'promotions' / identity(project))
         transaction = journal.prepare(before, after, dict(source='directly_authorized_adopt_api'))
-        journal._execute(transaction['deployment'])
-        return sorted(before)
+        return application_receipt(journal, journal._execute(transaction['deployment']))
 
 
 def recommend_plugin_change(project, profile, plugin_checkouts, plugin_id, changes, **options):
