@@ -1,9 +1,14 @@
 """Private diagnostic annotation journals; operator attestations are not gold truth."""
 from copy import deepcopy
+from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
+import os
 from pathlib import Path
+import re
 import tempfile
 
+from agent_harness_lab.evaluation.integrity import contained
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
 from agent_harness_lab.evaluation.task_bank import identifier
 
@@ -12,8 +17,12 @@ PARTITIONS = ('fitting','calibration','threshold','development','validation','ce
 OUTCOMES = ('task_failure','successful','external_failure','requirements_changed','unknown')
 MAX_CASES = 128
 PROVENANCE = 'operator_attested_adjudication'
+NEAR_RULE = 'word-3gram-jaccard-v1'
+NEAR_PERMILLE = 800
+NEAR_DECISIONS = ('distinct_incident','same_lineage')
+MAX_DECISIONS = 1024
 LIMITATIONS = ('Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
-    'Near-duplicate adjudication, verified lineage binding and held-out classifier evaluation are not implemented.')
+    'Near-duplicate detection is lexical only; verified lineage binding and held-out classifier evaluation are not implemented.')
 
 
 def _fields(value, names):
@@ -106,6 +115,50 @@ def _separate(groups, texts, inputs, partition):
         texts.setdefault(('fragment',fragment),set()).add(partition)
 
 
+@lru_cache(maxsize=4096)
+def _shingles(text):
+    words=re.findall(r'\w+',text.casefold())
+    return frozenset(tuple(words[i:i+3]) for i in range(max(1,len(words)-2)))
+
+
+def _jaccard(a, b): return len(a&b)*1000//len(a|b)
+
+
+def similarity(first, second):
+    """Largest lexical overlap (permille) between one incident's summary and the other's summary/fragments."""
+    mine,theirs=_shingles(first['summary']),_shingles(second['summary'])
+    return max(_jaccard(mine,theirs),*(_jaccard(mine,_shingles(e['content'])) for e in second['evidence']),
+        *(_jaccard(theirs,_shingles(e['content'])) for e in first['evidence']))
+
+
+def _decision(value):
+    _fields(value,'schema_version cases rule threshold_permille similarity_permille decision reviewer reason review_authentication recorded_at')
+    _text(value['reason']); _identity(value['reviewer']); _text(value['recorded_at'],64)
+    cases=value['cases']
+    if (type(value['schema_version']) is not int or value['schema_version']!=1 or not isinstance(cases,list) or len(cases)!=2
+            or cases!=sorted(set(cases)) or value['rule']!=NEAR_RULE or value['threshold_permille']!=NEAR_PERMILLE
+            or type(value['similarity_permille']) is not int or not NEAR_PERMILLE<=value['similarity_permille']<=1000
+            or value['decision'] not in NEAR_DECISIONS or value['review_authentication']!='operator_attested'):
+        raise ValueError('invalid near-duplicate decision')
+    for case in cases: _sha(case)
+    return deepcopy(value)
+
+
+def _near(entries, decisions):
+    """Fail when a lexically near pair crosses partitions without a recorded distinct-incident decision.
+
+    entries are (case_id, effective_partition, incident); decisions map sorted case-ID pairs to records."""
+    for index,(first,part,mine) in enumerate(entries):
+        for second,other,theirs in entries[index+1:]:
+            if part==other: continue
+            score=similarity(mine,theirs)
+            if score<NEAR_PERMILLE: continue
+            found=decisions.get(tuple(sorted((first,second))))
+            if found is None: raise ValueError('near-duplicate text across protected splits requires a recorded decision')
+            if found['similarity_permille']!=score: raise ValueError('near-duplicate decision differs from current text')
+            if found['decision']!='distinct_incident': raise ValueError('same-lineage near duplicates leak across protected splits')
+
+
 def transition(state, kind, target, previous_kind=None):
     if state is None: return kind==target=='pending'
     if kind=='audit_assigned': return state=='pending' and previous_kind=='pending' and target=='pending'
@@ -182,6 +235,35 @@ class CorpusStore(PrivateJournal):
             reviewer_independence='unverified',root_independence='unverified',gold_label=False,
             classifier_selection_allowed=False,task_outcome_oracle=False,publication_allowed=False)
 
+    def _decisions(self):
+        folder=contained(self.root,'near_duplicates'); found={}
+        if not folder.exists(): return found
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if len(found)>=MAX_DECISIONS: raise ValueError('near-duplicate decision bound exceeded')
+                value,_=record(Path(entry.path),32*1024)  # worst case: 4096 control bytes escape to 6 chars each; value=_decision(value)
+                if entry.name!=_digest(value['cases'])+'.json': raise ValueError('near-duplicate decision file differs from its pair')
+                found[tuple(value['cases'])]=value
+        return found
+
+    def decide_near_duplicate(self, first, second, decision, reviewer, reason):
+        """Record one immutable operator-attested decision for a lexically near pair of incident revisions."""
+        _identity(reviewer); _text(reason)
+        if decision not in NEAR_DECISIONS or first==second: raise ValueError('distinct near-duplicate pair and decision required')
+        pair=sorted((first,second))
+        with self.locked():
+            mine,theirs=(self._opened(key)[1] for key in pair); score=similarity(mine,theirs)
+            if score<NEAR_PERMILLE: raise ValueError('pair is not a near duplicate under the frozen rule')
+            if reviewer.casefold() in {mine['author'].casefold(),theirs['author'].casefold()}:
+                raise ValueError('near-duplicate decision requires a separate declared reviewer')
+            value=dict(schema_version=1,cases=pair,rule=NEAR_RULE,threshold_permille=NEAR_PERMILLE,similarity_permille=score,
+                decision=decision,reviewer=reviewer,reason=reason,review_authentication='operator_attested',
+                recorded_at=datetime.now(timezone.utc).isoformat())
+            path=contained(self.root,f'near_duplicates/{_digest(pair)}.json')
+            if path.exists(): raise ValueError('near-duplicate decision already recorded')
+            self._publish(self._locked_store,path,value)
+            return _decision(value)
+
     def enqueue(self, value):
         inputs=incident(value); case_id=_digest(inputs)
         with self.locked(create=True):
@@ -251,7 +333,8 @@ class CorpusStore(PrivateJournal):
             raise ValueError('ambiguous competing incident revisions')
         current=[row for row in rows if row[0] not in superseded]
         summaries=[self._summary(key,*opened[1:]) for key,opened in current]
-        revision=_digest(dict(engine=engine(),preprocessing='whitespace-casefold-v1',cases=[(key,opened[2][-1][1]) for key,opened in rows]))
+        revision=_digest(dict(engine=engine(),preprocessing='whitespace-casefold-v1',near_duplicate=NEAR_RULE,
+            decisions=sorted(_digest(v) for v in self._decisions().values()),cases=[(key,opened[2][-1][1]) for key,opened in rows]))
         return current,summaries,revision
 
     def snapshot(self):
@@ -266,7 +349,7 @@ class CorpusStore(PrivateJournal):
         with self.locked():
             rows,summaries,revision=self._snapshot()
             if revision!=expected_revision_sha256: raise ValueError('stale corpus export revision')
-            groups={}; texts={}; exported=[]
+            groups={}; texts={}; exported=[]; decisions=self._decisions()
             for (key,(_,inputs,events,submissions,final)),summary in zip(rows,summaries):
                 partition=summary['partition']; _separate(groups,texts,inputs,partition)
                 if partition not in ('fitting','development') or final is None or final['outcome']=='unknown': continue
@@ -274,7 +357,10 @@ class CorpusStore(PrivateJournal):
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
                     review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,
                     retirement=self._retirement(key,inputs,events)))
+            _near([(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)],decisions)
+            ids={row['case_id'] for row in exported}
             body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
+                near_duplicate_decisions=[v for k,v in sorted(decisions.items()) if set(k)<=ids],
                 publication_allowed=False,classifier_selection_allowed=False,root_independence='unverified',
                 limitations=list(LIMITATIONS))
             return dict(body,manifest_sha256=_digest(body))
@@ -300,7 +386,7 @@ def development_export(value):
 
     The digest detects changed or truncated content; it is not an authenticity signature,
     so the protected-partition, eligibility and provenance checks run independently."""
-    _fields(value,'schema_version profile revision_sha256 records publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
+    _fields(value,'schema_version profile revision_sha256 records near_duplicate_decisions publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
     _sha(value['revision_sha256']); _sha(value['manifest_sha256'])
     if value['manifest_sha256']!=_digest({k:v for k,v in value.items() if k!='manifest_sha256'}):
         raise ValueError('diagnostic corpus manifest digest differs')
@@ -310,7 +396,7 @@ def development_export(value):
         raise ValueError('diagnostic corpus manifest authority differs')
     rows=value['records']
     if not isinstance(rows,list) or len(rows)>MAX_CASES: raise ValueError('bounded diagnostic corpus records required')
-    groups={}; texts={}; seen=set()
+    groups={}; texts={}; seen=set(); entries=[]
     for row in rows:
         _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label retirement')
         inputs=incident(row['record']); _sha(row['review_event_sha256']); partition=row['partition']
@@ -319,5 +405,11 @@ def development_export(value):
         if (partition not in ('fitting','development') or row['label_provenance']!=PROVENANCE or row['gold_label'] is not False or not _eligible(inputs)):
             raise ValueError('diagnostic corpus export has protected, ineligible or relabelled items')
         if annotation(row['annotation'],inputs)['outcome']=='unknown': raise ValueError('unknown annotations are not exported labels')
-        _separate(groups,texts,inputs,partition)
+        _separate(groups,texts,inputs,partition); entries.append((row['case_id'],partition,inputs))
+    decisions={}
+    for item in value['near_duplicate_decisions']:
+        item=_decision(item)
+        if not set(item['cases'])<=seen or tuple(item['cases']) in decisions: raise ValueError('near-duplicate decision names no exported pair')
+        decisions[tuple(item['cases'])]=item
+    _near(entries,decisions)
     return deepcopy(value)

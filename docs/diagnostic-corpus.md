@@ -63,7 +63,21 @@ with newly detected cross-field matches can fail validation after this change.
 The development export omits protected-only records, so its consumer cannot
 reconstruct or independently check aliases involving omitted protected data; the
 complete private store is required for that check.
-Near-duplicate decisions and verified #58 lineage receipts are not yet integrated.
+
+Near duplicates across effective partitions need a recorded decision. The frozen
+`word-3gram-jaccard-v1` rule scores each incident's summary against the other's
+summary and evidence fragments (word 3-gram Jaccard, case-folded) and flags a
+pair at 0.80 or above. `CorpusStore.decide_near_duplicate(first, second, decision,
+reviewer, reason)` stores one immutable, operator-attested decision per pair of
+incident revisions, `distinct_incident` or `same_lineage`, by a declared
+reviewer who is neither incident's author. Export fails without a decision for a
+flagged pair and always fails on `same_lineage`; such a pair has to be rebuilt in a
+fresh store with consistent lineage. Decisions bind exact case IDs, so a requeue
+invalidates them, and they are part of the export revision and travel in the
+manifest's `near_duplicate_decisions`, which `development_export` re-checks for
+the exported pairs. The rule is lexical only: paraphrases below the threshold are
+not detected, and a decision is not evidence of independence. Verified #58 lineage
+receipts are not yet integrated.
 
 An `exposed` event retires a protected item to effective development use. This
 retirement persists through all source/rubric requeues. Export preserves the
@@ -81,7 +95,7 @@ All storage and exports remain private, including synthetic-source declarations.
 The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
 No public exporter is included. The next slices still need verified grouping,
-near-duplicate adjudication, a production review authentication policy, protected
+a production review authentication policy, protected
 evaluation access, class-wise uncertainty plans and the #74 classifier gate. A
 reviewed diagnostic annotation remains distinct from #8's independently
 reproduced and graded executable regression case.
