@@ -47,6 +47,9 @@ jobs:
       # Changesets publishes only when no changeset is pending; this step releases any
       # version commit it skipped (idempotent: a no-op when every version is released).
       - name: Publish unreleased version commits
-        run: python3 scripts/publish_pending_releases.py --commit "$GITHUB_SHA"
+        run: |
+          # changesets/action leaves `task version` edits in the tracked tree; the publisher refuses a dirty tree.
+          git reset --hard "$GITHUB_SHA"
+          python3 scripts/publish_pending_releases.py --commit "$GITHUB_SHA"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
