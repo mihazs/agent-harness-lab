@@ -1,0 +1,331 @@
+{
+ "schema_version": 1,
+ "profile": "ahl-memory-reuse-fixtures-v1",
+ "synthetic": true,
+ "note": "Synthetic labels only. Fixtures declare the expected reuse decision per stage; no store or planner exists yet.",
+ "vocabulary": {
+  "decisions": [
+   "reuse",
+   "recompute",
+   "verify_then_replay",
+   "not_comparable",
+   "blocked",
+   "incomplete",
+   "legacy_unverified",
+   "not_reusable",
+   "excluded"
+  ],
+  "claims": [
+   "historical_observation_only",
+   "fresh_qualified_evaluation_required"
+  ]
+ },
+ "stages": {
+  "capture_selection": {
+   "kind": "deterministic",
+   "depends_on": [],
+   "identity": [
+    "source_revision",
+    "source_scope",
+    "adapter_version"
+   ]
+  },
+  "normalization": {
+   "kind": "deterministic",
+   "depends_on": [
+    "capture_selection"
+   ],
+   "identity": [
+    "parser_version"
+   ]
+  },
+  "event_analysis": {
+   "kind": "deterministic",
+   "depends_on": [
+    "normalization"
+   ],
+   "identity": [
+    "algorithm_version",
+    "analysis_limits"
+   ]
+  },
+  "execution_summary": {
+   "kind": "deterministic",
+   "depends_on": [
+    "event_analysis"
+   ],
+   "identity": [
+    "summary_version"
+   ]
+  },
+  "sealed_comparison_analysis": {
+   "kind": "sealed_history",
+   "depends_on": [],
+   "identity": [
+    "grader",
+    "plan",
+    "runtime",
+    "model",
+    "bank_authority",
+    "oracle_state",
+    "run_state",
+    "provenance"
+   ]
+  },
+  "fresh_trial": {
+   "kind": "fresh_execution",
+   "depends_on": [],
+   "identity": []
+  }
+ },
+ "baseline": {
+  "source_revision": "synthetic:source-rev-1",
+  "source_scope": "synthetic:scope-a",
+  "adapter_version": "synthetic-adapter-v1",
+  "parser_version": "synthetic-parser-v1",
+  "algorithm_version": "synthetic-algorithm-v1",
+  "analysis_limits": "synthetic:limits-default",
+  "summary_version": "synthetic-summary-v1",
+  "grader": "synthetic:grader-a",
+  "plan": "synthetic:plan-a",
+  "runtime": "synthetic:runtime-a",
+  "model": "synthetic:model-a",
+  "bank_authority": "synthetic:bank-a",
+  "oracle_state": "active",
+  "run_state": "sealed",
+  "provenance": "complete",
+  "trace_contains_secret_shaped_value": false
+ },
+ "fixtures": [
+  {
+   "id": "unchanged_rerun",
+   "covers": "unchanged_rerun",
+   "changes": {},
+   "description": "Nothing differs from the prior run. Deterministic stages are reusable; the sealed comparison is replayed only after its live authority checks pass.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "verify_then_replay",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "historical_observation_only"
+   },
+   "evidence": [
+    "agent_harness_lab/sources/store.py",
+    "agent_harness_lab/evaluation/decision_receipts.py"
+   ]
+  },
+  {
+   "id": "changed_source_revision",
+   "covers": "changed_source_revision",
+   "changes": {
+    "source_revision": "synthetic:source-rev-2"
+   },
+   "description": "One source revision changed. Capture selection and every stage derived from it are recomputed; sealed history is unaffected.",
+   "expected": {
+    "stages": {
+     "capture_selection": "recompute",
+     "normalization": "recompute",
+     "event_analysis": "recompute",
+     "execution_summary": "recompute",
+     "sealed_comparison_analysis": "verify_then_replay",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "historical_observation_only"
+   },
+   "evidence": [
+    "agent_harness_lab/sources/store.py",
+    "agent_harness_lab/evidence.py"
+   ]
+  },
+  {
+   "id": "changed_parser",
+   "covers": "changed_parser_or_algorithm",
+   "changes": {
+    "parser_version": "synthetic-parser-v2"
+   },
+   "description": "The parser version changed. Capture selection stays reusable; normalization and its dependants are recomputed.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "recompute",
+     "event_analysis": "recompute",
+     "execution_summary": "recompute",
+     "sealed_comparison_analysis": "verify_then_replay",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "historical_observation_only"
+   },
+   "evidence": [
+    "agent_harness_lab/telemetry/schema.py",
+    "agent_harness_lab/sources/execution.py"
+   ]
+  },
+  {
+   "id": "changed_algorithm",
+   "covers": "changed_parser_or_algorithm",
+   "changes": {
+    "algorithm_version": "synthetic-algorithm-v2"
+   },
+   "description": "The analysis algorithm version changed. Earlier stages stay reusable; the analysis and its dependants are recomputed.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "recompute",
+     "execution_summary": "recompute",
+     "sealed_comparison_analysis": "verify_then_replay",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "historical_observation_only"
+   },
+   "evidence": [
+    "tools/diagnose.py",
+    "agent_harness_lab/analysis_receipt.py"
+   ]
+  },
+  {
+   "id": "changed_grader_hash",
+   "covers": "changed_grader_hash",
+   "changes": {
+    "grader": "synthetic:grader-b"
+   },
+   "description": "The grader identity changed. Outcomes under different graders are not comparable, so a behavioral claim needs a fresh qualified evaluation.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "not_comparable",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "fresh_qualified_evaluation_required"
+   },
+   "evidence": [
+    "agent_harness_lab/evaluation/oracle.py",
+    "agent_harness_lab/evaluation/plan.py"
+   ]
+  },
+  {
+   "id": "quarantined_oracle",
+   "covers": "quarantined_oracle",
+   "changes": {
+    "oracle_state": "quarantined"
+   },
+   "description": "The oracle bundle was quarantined. Dependent sealed analysis is blocked; deterministic stages over source captures are unaffected.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "blocked",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "fresh_qualified_evaluation_required"
+   },
+   "evidence": [
+    "agent_harness_lab/evaluation/oracle_history.py"
+   ]
+  },
+  {
+   "id": "changed_model_runtime",
+   "covers": "changed_model_runtime",
+   "changes": {
+    "model": "synthetic:model-b",
+    "runtime": "synthetic:runtime-b"
+   },
+   "description": "The model and runtime identities changed. Sealed trials are not comparable with the new configuration.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "not_comparable",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "fresh_qualified_evaluation_required"
+   },
+   "evidence": [
+    "agent_harness_lab/evaluation/plan.py",
+    "agent_harness_lab/evaluation/history_report.py"
+   ]
+  },
+  {
+   "id": "legacy_record_missing_provenance",
+   "covers": "legacy_record_missing_provenance",
+   "changes": {
+    "provenance": "missing"
+   },
+   "description": "A legacy record lacks provenance fields. It stays a descriptive legacy_unverified record and never gains comparability.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "legacy_unverified",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "fresh_qualified_evaluation_required"
+   },
+   "evidence": [
+    "agent_harness_lab/evaluation/oracle_history.py"
+   ]
+  },
+  {
+   "id": "interrupted_run",
+   "covers": "interrupted_run",
+   "changes": {
+    "run_state": "running"
+   },
+   "description": "The prior controller run never sealed. It is incomplete evidence, is never resumed and cannot be reused.",
+   "expected": {
+    "stages": {
+     "capture_selection": "reuse",
+     "normalization": "reuse",
+     "event_analysis": "reuse",
+     "execution_summary": "reuse",
+     "sealed_comparison_analysis": "incomplete",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "fresh_qualified_evaluation_required"
+   },
+   "evidence": [
+    "agent_harness_lab/evaluation/oracle_history.py",
+    "agent_harness_lab/private_journal.py"
+   ]
+  },
+  {
+   "id": "secret_bearing_trace",
+   "covers": "secret_bearing_trace",
+   "changes": {
+    "trace_contains_secret_shaped_value": true
+   },
+   "trace_features": {
+    "canary": "SYNTHETIC-CANARY-0000",
+    "field": "tool_name"
+   },
+   "description": "An allow-listed free-text field holds a secret-shaped value (a declared synthetic canary). The raw body is excluded and derived outputs stay blocked until a content-free admission check exists; unrelated sealed history is unaffected.",
+   "expected": {
+    "stages": {
+     "capture_selection": "excluded",
+     "normalization": "blocked",
+     "event_analysis": "blocked",
+     "execution_summary": "blocked",
+     "sealed_comparison_analysis": "verify_then_replay",
+     "fresh_trial": "not_reusable"
+    },
+    "claim": "historical_observation_only"
+   },
+   "evidence": [
+    "agent_harness_lab/telemetry/schema.py"
+   ]
+  }
+ ]
+}

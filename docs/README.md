@@ -30,10 +30,12 @@ reader purpose.
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
+- [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
 
 ## Understand the context
 
 - [Newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
+- [Why evidence reuse is split by authority](memory-reuse-rationale.md).
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 
 ## Historical and maintainer material
