@@ -109,6 +109,20 @@ call `evaluate(policy, observations, report_version=3)`. Its separate
 constraint. Historical v2 and v3 coverage values are not directly comparable.
 Neither profile establishes label authority or root independence.
 
+For a strict declared-role check, call `evaluate(policy, observations,
+report_version=4)`. The separate `diagnostic-triage-evaluation-v4` profile uses
+the v3 all-root coverage denominator and refuses any root hash listed in more
+than one fitting, calibration or threshold-tuning role. It also retains the
+existing refusal of held-out roots in those lists. The check compares only the
+caller-supplied lists: empty, incomplete or falsified lists can pass, and
+disjoint hashes do not prove independence, calibration or prior freezing. This
+profile also requires the policy's `model_sha256` and refuses any observation whose
+own `model_sha256` differs or is missing, so out-of-scope model revisions are
+rejected rather than evaluated; the revision match is a caller-supplied
+identity, not verified provenance. The strict profile does not express cross-fitting; historical v2 and v3 behavior
+is unchanged. The v4 report is private and grants no certification or promotion
+authority.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,
