@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.170.0
+
+### Minor Changes
+
+- 8e76c0d: Add a shared forge rate-limit limiter: parse limiter headers and classify primary, secondary and permission 403s, stop at a reserve floor or per-run budget as blocked access with the reset time, share quota state across processes in the private state root, report a quota receipt, add read-only `ahl sources github quota`, and use it from `scripts/sync_project.py` (part of #665).
+- 04c2a88: Add an explicit, versioned optimization strategy registry (`agent_harness_lab.optimization.strategies`) with no-op, single-revision and GEPA-inspired reflective built-ins that run through the existing bounded search, budget and selection contracts. Strategies receive development evidence only and cannot invoke certification. Callback results stay unverified; no model-backed proposer, measured cost accounting or strategy comparison is included. Part of #12.
+
+### Patch Changes
+
+- b3b35f8: Publish every version commit from the release workflow even when other changesets are pending on main: an idempotent step after Changesets releases each version without a GitHub release, oldest first, from its own version commit, only with a matching CHANGELOG entry and a clean tree. Closes #677.
+- 19febe7: Reset the release workflow checkout to the built commit before publishing unreleased version commits, because the Changesets step leaves its version edits in the tracked tree and the publisher refuses a dirty tree. Part of #677.
+
 ## 0.169.0
 
 ### Minor Changes
