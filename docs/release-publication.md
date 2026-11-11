@@ -29,8 +29,9 @@ that introduced a version.
   `git worktree` at its own version commit and published with
   `scripts/publish_release.py`, which refuses an existing tag, requires a clean
   committed tree and never publishes the private npm package.
-- If the current checkout has tracked modifications the step refuses before
-  mutating anything. When every version is released it exits 0 and changes nothing.
+- The step first runs `git reset --hard "$GITHUB_SHA"`, because the Changesets step
+  leaves its version edits in the tracked tree. If the checkout still has tracked
+  modifications the script refuses before mutating anything. When every version is released it exits 0 and changes nothing.
 - A failing publication stops the step; later versions are retried on the next run.
 - With no release at all only the current version is published, not all history.
 

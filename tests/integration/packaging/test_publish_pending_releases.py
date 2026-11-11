@@ -144,7 +144,7 @@ def test_release_workflow_gate_order_and_permissions():
     assert 'permissions:\n  contents: write\n  pull-requests: write\nconcurrency:' in text
     assert 'cancel-in-progress: false' in text
     positions = [text.index(marker) for marker in (
-        'Run the suite and stop at the first failure', 'uses: changesets/action', 'publish_pending_releases.py --commit "$GITHUB_SHA"')]
+        'Run the suite and stop at the first failure', 'uses: changesets/action', 'git reset --hard "$GITHUB_SHA"', 'publish_pending_releases.py --commit "$GITHUB_SHA"')]
     assert positions == sorted(positions)
     assert 'create-github-releases: false' in text and 'publish-script: task release' in text
     assert 'npm publish' not in text
