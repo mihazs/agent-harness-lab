@@ -579,9 +579,9 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_recheck.py -v'
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_git.py -k recheck -v'
   test:sources:commit-join:
-    desc: Run offline Git/GitHub commit and PR commit-role join negative controls and link-study scoring with synthetic journals
+    desc: Run offline Git/GitHub commit, PR commit-role and Git/GitLab MR commit join negative controls and link-study scoring with synthetic journals
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_commit_join.py tests/integration/sources/test_source_link_study.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_commit_join.py tests/integration/sources/test_source_gitlab_commit_join.py tests/integration/sources/test_source_link_study.py -v'
   test:sources:ref-movement:
     desc: Run offline local Git ref movement controls with synthetic native repositories
     cmds:
