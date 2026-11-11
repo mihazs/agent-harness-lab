@@ -8,7 +8,7 @@ from tests.unit.sources.test_source_github import GitHubCase
 from tests.unit.sources.test_source_github_actions import HEAD, RUNS, jobs
 from tests.unit.sources.test_source_test_results import JUNIT
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources.ci_join import PROFILE, join_ci_evidence
+from agent_harness_lab.sources.ci_join import join_ci_evidence
 from agent_harness_lab.sources.github import GitHubSelection
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.test_results import TestResultsExport as ResultsExport
@@ -63,7 +63,9 @@ class TestCiJoin(GitHubCase):
         assert report['job_conclusions'] == dict(failure=1, success=1) and report['rerun_attempts'] == 1
         assert {'workflow_logs_not_captured', 'workflow_artifacts_not_captured', 'reruns_not_independent'} <= set(report['warnings'])
         assert SECRET not in json.dumps(report) and 'test_fail' not in json.dumps(report)
-        assert not public_export_allowed(dict(profile=PROFILE, publication_allowed=False))
+        assert not public_export_allowed([report])
+        assert not public_export_allowed([dict(report, publication_allowed=True,
+            provenance=dict(source_kind='synthetic', approved_publication=True, source_ref='x', derived_from_private=False))])
 
     def test_without_a_declared_origin_cases_stay_unlinked_to_any_job(self):
         assert all(c['origin'] is None for c in self.join()['failed_cases'])
