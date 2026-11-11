@@ -2361,7 +2361,7 @@ frontmatter are not persisted. Parsed metadata is available through the reader A
 it is not yet stored as structured journal facets. History includes revisions
 observed through successive imports; the default reader never reconciles pages
 missing from a later bundle, and the opt-in reader [below](#okf-absence-reconciliation)
-does. Git history and native session correlation remain open in #43. Declared
+does. Git history remains open in #43. Declared
 handoff/workstream links are described
 [below](#declared-handoff-and-workstream-provenance). A separate explicit
 [selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
@@ -2487,11 +2487,46 @@ scoped bundle and journal. They do not establish that a handoff was delivered,
 claimed or injected into an agent, that an ai-memory session is a Codex or Claude
 native session, that its content is true, or that linked records are independent.
 `task test:sources:memory-provenance` runs synthetic bundles only. Still open in
-#43: native session correlation across journals without duplicate roots, the
-upstream database or MCP handoff and workstream surfaces, delivery and injection
-evidence, and persisted links and lineage components. Pages missing from a later
-bundle are reconciled only by the opt-in
+#43: the upstream database or MCP handoff and workstream surfaces, delivery and
+injection evidence, and persisted links and lineage components. Pages missing from
+a later bundle are reconciled only by the opt-in
 [absence reader](#okf-absence-reconciliation); upstream deletion stays unconfirmed.
+Native session correlation is described [below](#native-session-correlation).
+
+### Native session correlation
+
+`sources.session_correlation.correlate_sessions(connector, source, store, natives)`
+counts one session once across an imported OKF bundle and native Claude or Codex
+journals. `natives` is a sequence of `(source, store, project)` tuples; `project` is
+the absolute directory the native capture was declared against. It is an offline
+Python API with no CLI exposure that reads the journals and the bundle and writes,
+fetches and starts nothing.
+
+A `type: Session Summary` page binds a native session when the page's `session_id`,
+fingerprinted exactly as that runtime's decoder does for `project`, equals the
+`session` identity of a present record in the native journal's latest active
+checkpoint whose declared `worktree` is `project`. ai-memory forwards the harness
+hook session id, but neither the pinned OKF format nor the MCP surface documents that
+equality, so a match is a `candidate` `memory_session_native` receipt with basis
+`source_declaration` (never `verified`). Handoffs and workstreams join the cluster of
+the one session their `handoff_from_session` or `memory_links_session` receipt names.
+
+| Situation | Result |
+| --- | --- |
+| Page, handoff and one or more native journals name one session | One `linked` cluster; each journal adds a native entry and a receipt, not a root |
+| Several pages share a `session_id` | Each stays its own `memory_only` cluster, reason `duplicate_session_id` |
+| Session matches native Claude and Codex journals | Own `memory_only` cluster, reason `ambiguous_native_runtime` |
+| No native record matches, or the project differs | `memory_only` cluster, reason `no_native_match`; the native session stays its own `native_only` cluster |
+| Handoff or workstream names several sessions | Attached to none and counted in `handoffs_spanning_sessions`; the sessions are not merged |
+| Bundle is not the journal's latest checkpoint | Status `unknown`, no clusters or receipts |
+
+The report holds fingerprints, record references and counts only. It sets
+`independent_roots: null`, `delivery_observed`, `injection_observed`,
+`verification_authorized` and `publication_allowed` false, and `persisted: false`.
+A cluster count is a duplicate-collapsed session count, not proof of independence,
+that memory reached the agent, or that either side's content is true. Synthetic
+fixtures establish this contract: `tests/integration/sources/test_source_session_correlation.py`,
+run by `task test:sources:memory-provenance`.
 
 ### Declared validity as of an instant
 
@@ -2675,7 +2710,7 @@ change on reads according to ai-memory behavior; no content mutation tool is use
 This mode supports JSON responses from stateless servers. SSE-only and
 stateful responses are unsupported; an explicitly requested initialization may
 create protocol session state before a stateful header is rejected. Full session
-lifecycle/SSE, remote CLI configuration, native execution facets, correlation
+lifecycle/SSE, remote CLI configuration, native execution facets
 and live-server verification remain open in #43. The optional
 [MCPPageCapture](memory-page-capture.md) adds selected-page Registry/SourceStore
 captures with caller-selected shared bounds and readbacks. No server is contacted by package
