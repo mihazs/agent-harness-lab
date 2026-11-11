@@ -135,6 +135,36 @@ is unverified. The [pinned 2.1.316 profile](#explicit-claude-code-21316-file-pro
 below is the version-pinned native contract, and its synthetic fixtures do not
 verify a live CLI either.
 
+## Native capture capability matrix
+
+This reference lists what each pinned native profile maps, by runtime. Rows read
+the pinned adapters, not a live CLI: every fixture is synthetic. Anything marked
+unknown is neither absent nor failed. The two `-v1` synthetic adapters above are
+unpinned contracts and are not part of this matrix.
+
+| Capability | Codex `codex-rollout-0.166.0` | Claude `claude-jsonl-2.1.316` |
+| --- | --- | --- |
+| Pinned source | tag `rust-v0.166.0`, commit `6ff1e1ca3b30fc8b914720681fcf5fe62e95f856` | SDK 0.2.176 reader (CLI 2.1.316), commit `2146f9d8985513053e904b13200c8f744b36785a` |
+| Selection | one file, or one explicit root with optional exact `--session` | one file, or one explicit `projects` root with optional exact `--session` |
+| Home or account scan | never | never |
+| Archived copies | active and archive directories inside the selected root merge by native identity | an archive or backup copy is a further root in the source-journal profile only |
+| Compressed captures | not read | not read |
+| Tool call/result lineage | call IDs; unmatched calls stay visible | `tool_use` IDs; unmatched calls stay visible |
+| Observed tool error | explicit `exec_command_end` exit code | explicit `is_error` flag |
+| Turn or response stop | `turn_complete` to `turn_stop` (not task success) | response stop reason (not task success) |
+| Cancellation | `turn_aborted` to `cancelled` | not mapped |
+| Compaction | `compacted` and `context_compacted` | compact summary and boundary records |
+| Own usage counts | `token_usage_record` once per response; inherited parent usage excluded | complete `message.usage` once per response; cache counts not added |
+| Parent or child link | parent/fork thread claims kept as fingerprints, `lineage_verified: false` | sidechain stays a separate writer; parent pointers never followed |
+| Skill activation | unknown | unknown (declared `Skill` and `Read` signals are requests) |
+| Harness loading | `no_native_loading_signal` | `observed_pattern`, `effective_loading: False` |
+| Served model | unknown (requested model only) | reported model, not authenticated |
+| Incremental cursor | none | none |
+| Live CLI validation | none | none |
+
+Unsupported or incompatible versions reject instead of being normalized. Remaining
+gaps for #44 are listed with each profile.
+
 ## Explicit Claude Code 2.1.316 file profile
 
 ```sh
