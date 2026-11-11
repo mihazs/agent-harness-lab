@@ -113,6 +113,17 @@ def group_diagnostics(rows):
     return result
 
 
+def leakage(rows):
+    """Declared projects shared by train and heldout, and normalized texts in several splits; paraphrases are not detected."""
+    def names(split):
+        return {r['project'] for r in rows if r['split'] == split and 'project' in r}
+    splits = {}
+    for r in rows:
+        splits.setdefault(' '.join(r['text'].split()).casefold(), set()).add(r['split'])
+    return dict(shared_train_heldout_projects=sorted(names('train') & names('heldout')),
+                texts_in_multiple_splits=sum(len(value) > 1 for value in splits.values()))
+
+
 def wilson_lower(successes, count):
     if not count:
         return 0.0
@@ -139,6 +150,7 @@ def measure(rows, probabilities, threshold):
                 accepted=len(accepted), coverage=len(accepted)/len(labeled) if labeled else None,
                 precision=tp/(tp+fp) if tp+fp else None,
                 recall=tp/positives if positives else None,
+                positives=positives, positive_misses=positives-tp,
                 accepted_label_accuracy=sum(pred == r['label'] for r, _, pred in accepted)/len(accepted) if accepted else None,
                 accepted_roots=len(root_correct),
                 root_accuracy_lower_95=wilson_lower(sum(root_correct.values()), len(root_correct)),
@@ -409,6 +421,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=8, help='Positive number of examples per embeddings/NLI batch (default: %(default)s)')
     parser.add_argument('--triage-policy', type=Path, help='Existing frozen JSON policy with schema_version, threshold, min_precision, min_recall and min_coverage; evaluate only heldout roots, with no certification authority')
     parser.add_argument('--triage-report-version', type=int, choices=(1,2), help='Binary triage report: 1 labeled-root coverage (default), 2 all-declared-root coverage; requires --triage-policy')
+    parser.add_argument('--reject-leakage', action='store_true', help='Fail when a declared project appears in both train and heldout rows or a normalized text appears in several splits; the report always discloses both')
     parser.add_argument('--max-examples', type=int, help='Optional positive input-row limit; the default reads every example without a row or evidence-text length cap')
     args = parser.parse_args()
     try:
@@ -425,6 +438,9 @@ def main():
             rows, manifest = read_corpus_manifest(args.input, limit=args.max_examples)
         else:
             rows = read_examples(args.input, limit=args.max_examples)
+        found = leakage(rows)
+        if args.reject_leakage and (found['shared_train_heldout_projects'] or found['texts_in_multiple_splits']):
+            raise ValueError('project or text crosses splits')
         started = time.monotonic()
         probabilities = model_predict(args.method, rows, args.model_path, args.revision, args.question, args.batch_size)
         elapsed = time.monotonic()-started
@@ -440,11 +456,12 @@ def main():
                                    'NLI rejects unsupported or exceeded local model context; no truncation is performed.',
                                    'TF-IDF retains all extracted training-vocabulary features; unseen terms remain out of vocabulary.',
                                    'Embeddings require complete tokenization under the checked stock pipeline and reject unsupported or exceeded encoder context.',
-                                   'Root confidence interval assumes independent supplied root cases.'], splits={},
+                                   'Root confidence interval assumes independent supplied root cases.',
+                                   'Overall accuracy can hide missed rare positives; read positive_misses and recall per split.'], splits={},
                       input_profile=args.profile.replace('-', '_'), qualification='descriptive_only', certification='not_issued',
                       label_provenance_counts={name: sum(r['label_provenance'] == name for r in rows) for name in PROVENANCE},
                       reviewed_annotations=sum(r['label_provenance'] != 'adapter_smoke' for r in rows),
-                      gold_labels=0, groups=group_diagnostics(rows))
+                      gold_labels=0, groups=group_diagnostics(rows), leakage=found)
         if manifest is not None:
             result.update(profile=CORPUS_PROFILE, corpus_revision_sha256=manifest['revision_sha256'],
                 manifest_sha256=manifest['manifest_sha256'], publication_allowed=False, classifier_selection_allowed=False,

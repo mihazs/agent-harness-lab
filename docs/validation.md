@@ -40,6 +40,17 @@ experiments, not implemented default dependencies. No hosted Jev evaluation was 
 Keep raw traces, model weights, environments and trial workspaces outside version
 control. The ignored `artifacts/` directory is available for local-only work.
 
+## Benchmark leakage disclosure
+
+Roots may not cross splits. The report's `leakage` object additionally lists
+declared `project` values present in both `train` and `heldout` rows and counts
+normalized (whitespace- and case-folded) texts present in more than one split.
+`--reject-leakage` exits 2 on either. These are exact checks: paraphrases and
+undeclared projects pass, so a clean result does not establish independence.
+Each split's metrics report `positives` and `positive_misses` (positives not
+accepted as positive, including abstentions) next to accuracy and recall, so a
+rare-incident miss stays visible when overall accuracy is high.
+
 ## Benchmark input size controls
 
 `ahl benchmark FILE --method baseline` reads every input example and retains its
