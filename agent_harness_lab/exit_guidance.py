@@ -29,7 +29,8 @@ REMEDIATION = {
     'instruction_removal_inconclusive': 'Restore the missing behavioral controls before evaluating the removal.',
     'instruction_removal_rejected': 'Review the failed behavioral controls before revising the removal.',
     'shared_trial_budget_exhausted': 'Review and increase the shared trial budget if appropriate.',
-    'proposer_no_change': 'Review the evidence and proposal before deciding whether another candidate is needed.',
+    'no_change_harness_supported': 'Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion.',
+    'no_change_evidence_insufficient': 'The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
@@ -92,7 +93,8 @@ def guidance(result):
         category = {'empty': 'No data', 'incomplete': 'Inconclusive', 'observed': 'Evidence observed'}.get(evidence, 'Inconclusive')
     else:
         reason = result.get('reason')
-        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline') else 'No change proposed'),
+        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
+                                  else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
                     'blocked': 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected'}.get(status, 'Inconclusive')
     if (reason is not None and reason not in REMEDIATION) or (status == 'analyzed' and reason is None):
@@ -100,6 +102,9 @@ def guidance(result):
         action = 'Review the private receipt before retrying.'
     else:
         action = REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+    steps = result.get('next_steps')
+    if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
+        action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"
     events = analysis.get('events')
     cases = analysis.get('cases')
     coverage = f'{events} events, {cases} cases' if type(events) is int and type(cases) is int else 'unavailable'

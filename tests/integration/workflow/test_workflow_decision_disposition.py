@@ -141,7 +141,7 @@ class TestDefaultDecisionDisposition:
         self.original = 'bad'
         (self.project / 'mode').write_text('late_stop')
         code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (0, 'no_change', 'proposer_no_change')
+        assert (code, result['status'], result['reason']) == (0, 'no_change', 'no_change_evidence_insufficient')
         decision = self.assert_no_authority(result)
         assert (decision['bindings']['attempt'], decision['bindings']['final_attempt']) == (0, 1)
         assert decision['bindings']['describes_final_attempt'] is False

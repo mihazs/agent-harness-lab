@@ -50,6 +50,51 @@ harness is correct. A method can report `no_events` or `insufficient_support`
 rather than a negative diagnosis. For example, fewer than three reported roots
 cannot establish a recurring sequence under the implemented threshold.
 
+## Analysis brief and mechanism summaries
+
+Each analysis run writes two additional private artifacts beside `analysis.json`.
+Both are descriptive observed patterns; neither is a diagnosis, an outcome label or
+an independence claim.
+
+| Artifact | Purpose | Bound |
+| --- | --- | --- |
+| `analysis-brief.json` | What the cooperative preparation stage reads instead of `analysis.json` | Hard cap of 32 KiB on the file, independent of history size |
+| `mechanism-summaries.json` | Ranked groups with at most five evidence references each | At most 200 groups; omitted groups are counted in `truncated` |
+
+Structured tool errors are grouped by tool class and a fixed error category. A tool
+class is a documented built-in tool name or a stable opaque label; free-text error
+bodies, prompts, paths and identifiers are never copied into the brief. The category
+is `tool_reported_error` because captured events carry only the structured error
+flag; the vocabulary (`exit_code`, `permission`, `not_found`, `timeout`,
+`schema_validation`, `network`) is reserved for sources that supply such a field and
+is never inferred from text. Each group reports case and root counts, the error rate
+against that tool's calls (null when no calls were captured), occurrence over four
+merged capture-stream bins (not wall-clock time), and the observed next action:
+`same_call_retry`, `same_tool_changed_input`, `same_tool_next`, `different_tool`,
+`user_intervention`, `interrupted` or `abandoned` (no later action was captured;
+a truncated capture explains it as well as abandonment). Groups rank by reported
+roots, cases, bins with occurrences and error count. Counts are lower bounds when
+`counts_are_lower_bounds` is true.
+
+The brief also lists capture coverage and exclusions, the methods that ran and the
+exact prerequisite each missing method lacks, weak-outcome signals, and a
+`missing_evidence` list whose entries carry the command that would supply it. Weak-outcome signals
+(user turn after a tool error, consecutive user turns, interrupts, same-call
+retries, edit-then-revert) are `observed_pattern` with competing explanations. A
+signal whose input is not captured is `unknown`, and a zero count is
+`not_observed_capture_unverified`; neither is a clean result. Restated instructions
+need content-free structural fingerprints of user messages, which the event envelope
+does not carry, so that signal stays `unknown`.
+
+### Bound and truncation provenance
+
+The brief shrinks its lists from the end until it fits and records
+`bounds.truncated`. Mechanism groups are capped at 2000 per run (further groups merge
+into an `other` class) and case and root sets at 5000 per group, which sets
+`counts_are_lower_bounds`. Truncation is reported and never turns missing data into a
+success or an independence label. The size of `analysis.json` and `events.v2.jsonl`
+is not yet capped.
+
 ## Evidence-based method selection
 
 `method_selection` records the versioned structural prerequisite policy after
@@ -276,6 +321,12 @@ The descriptive analysis changes do not close those broader issues.
 
 The CLI writes one short summary to stderr and preserves the JSON receipt on stdout. Empty evidence exits 0: analysis ran, but no capture was found. The first suggested step, `ahl audit .`, is offline and uses no model; `ahl improve` can incur model costs. Unknown or unrecognized reasons remain inconclusive; inspect the private receipt before retrying.
 
+When a proposer writes `no_change`, the controller chooses the reason. `no_change_harness_supported`
+requires an executable-grader success among the verified outcomes, no failure outcome and no collection
+caveat. Every other case is `no_change_evidence_insufficient`: the receipt then carries a non-empty, ranked
+`next_steps` list (strongest observed patterns, each missing-evidence item, then `ahl audit .`), each with
+the command to run. Neither reason claims the harness is correct beyond the examined behaviors.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
@@ -330,7 +381,8 @@ The CLI writes one short summary to stderr and preserves the JSON receipt on std
 | `precision_target_infeasible` | Review the requested precision target and available budget. |
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
-| `proposer_no_change` | Review the evidence and proposal before deciding whether another candidate is needed. |
+| `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
+| `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude. |

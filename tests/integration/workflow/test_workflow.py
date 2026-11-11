@@ -254,7 +254,7 @@ def test_no_supported_change_does_not_create_evaluation(wf):
     (wf.project/'mode').write_text('no_change')
     result=improve(wf.args())
     assert result['status'] == 'no_change'
-    assert result['reason'] == 'proposer_no_change'
+    assert result['reason'] == 'no_change_evidence_insufficient'
     assert 'No supported defect' not in json.dumps(result)
     assert not (Path(result['output'])/'evaluation-0').exists()
 

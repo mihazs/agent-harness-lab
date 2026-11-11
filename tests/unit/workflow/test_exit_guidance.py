@@ -62,7 +62,11 @@ def test_empty_observed_blocked_and_unknown_summaries():
     empty = summary({'status': 'analyzed', 'analysis': {'evidence_state': 'empty', 'events': 0, 'cases': 0}})
     assert empty.startswith('No data.') and '0 events, 0 cases' in empty and 'ahl audit' in empty
     assert 'model costs' in empty
-    assert summary({'status': 'no_change', 'reason': 'proposer_no_change'}).startswith('No change proposed.')
+    assert summary({'status': 'no_change', 'reason': 'no_change_harness_supported'}).startswith('No change proposed.')
+    insufficient = summary({'status': 'no_change', 'reason': 'no_change_evidence_insufficient',
+                            'next_steps': [dict(rank=1, action='Capture outcomes.', command='ahl evaluate --help')]})
+    assert insufficient.startswith('Evidence insufficient.') and 'ahl evaluate --help' in insufficient
+    assert 'harness is fine' not in insufficient.replace('does not show the harness is fine', '')
     assert summary({'status': 'blocked', 'reason': 'agent_runtime_unavailable'}).startswith('Blocked by missing prerequisite.')
     assert summary({'status': 'inconclusive', 'reason': 'unknown_future_reason'}).startswith('Inconclusive.')
     assert summary({'status': 'no_change', 'reason': 'unknown_future_reason'}).startswith('Inconclusive.')
