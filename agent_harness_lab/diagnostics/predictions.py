@@ -176,7 +176,7 @@ def reconcile(ledger, observations):
     rows = []
     for record, receipt in ledger.entries():
         pid, obs = record.prediction_id, observations.get(record.prediction_id)
-        extra = dict(kind=record.kind, preregistered=receipt['preregistered'], receipt_id=receipt['receipt_id'],
+        extra = dict(mechanism_id=record.mechanism_id, kind=record.kind, preregistered=receipt['preregistered'], receipt_id=receipt['receipt_id'],
                      expected=record.observable_effect, regression_risks=list(record.regression_risks),
                      attribution='unresolved' if len(record.components) > 1 and not record.ablation_design else 'single_or_isolated')
         if obs is None:
