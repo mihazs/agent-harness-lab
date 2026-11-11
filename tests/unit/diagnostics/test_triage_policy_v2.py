@@ -345,3 +345,52 @@ def test_v4_requires_policy_and_rows_bound_to_the_same_model_revision():
         with pytest.raises(ValueError, match='outside the policy scope'):
             triage.evaluate(policy(model_sha256=bound), rows, report_version=4)
         assert triage.evaluate(policy(model_sha256=bound), rows, report_version=3)['status'] == 'insufficient_evidence'
+
+
+def _v5_policy(**changes):
+    return policy(model_sha256=sha('synthetic-model'), **changes)
+
+
+def _v5_rows(items):
+    return [dict(r, model_sha256=sha('synthetic-model')) for r in items]
+
+
+def test_v5_reports_brier_reliability_and_risk_coverage_without_changing_decisions():
+    rows = _v5_rows([row('a', NONE, NONE, .9), row('b', NONE, NONE, .9), row('c', SEVERE, NONE, .9),
+                     row('d', SEVERE, None), row('e', None, NONE, .9)])
+    v4 = triage.evaluate(_v5_policy(), rows, report_version=4)
+    v5 = triage.evaluate(_v5_policy(), rows, report_version=5)
+    assert v5['profile'] == 'diagnostic-triage-evaluation-v5'
+    assert {k: v for k, v in v5.items() if k not in ('profile', 'schema_version', 'score_diagnostics', 'reasons')} == \
+        {k: v for k, v in v4.items() if k not in ('profile', 'schema_version', 'reasons')}
+    diag = v5['score_diagnostics']
+    assert diag['labeled_roots'] == 4 and diag['authority'] == 'descriptive_only'
+    # roots a, b: (0.1)^2 each; c: 0.9^2 + 0.9^2... true class scored 0; d: all-zero scores -> 1.0
+    assert diag['multiclass_brier'] == pytest.approx((.01+.01+(.81+1)+1)/4)
+    bins = diag['reliability']['bins']
+    assert bins[4]['roots'] == 3 and bins[4]['accuracy'] == pytest.approx(2/3) and bins[0]['roots'] == 1
+    assert diag['reliability']['sparse_bins'] == 2 and 'reliability_bins_sparse' in v5['reasons']
+    curve = diag['risk_coverage']
+    assert curve[0]['coverage'] == 1 and curve[0]['error_rate'] == pytest.approx(.5)
+    assert curve[4]['coverage'] == .75 and curve[4]['error_rate'] == pytest.approx(1/3)
+    json.dumps(v5, allow_nan=False)
+
+
+def test_v5_repeated_rows_count_once_and_undefined_diagnostics_are_null():
+    rows = _v5_rows([row('a', NONE, NONE, .9)]*20)
+    diag = triage.evaluate(_v5_policy(), rows, report_version=5)['score_diagnostics']
+    assert diag['labeled_roots'] == 1 and diag['reliability']['bins'][4]['roots'] == 1
+    unlabeled = triage.evaluate(_v5_policy(), _v5_rows([row('u', None, NONE)]), report_version=5)['score_diagnostics']
+    assert unlabeled['multiclass_brier'] is None and unlabeled['risk_coverage'][0]['coverage'] is None
+    assert unlabeled['reliability']['bins'][4]['accuracy'] is None
+
+
+def test_v5_keeps_v4_role_and_model_refusals():
+    with pytest.raises(ValueError, match='bound to a model revision'):
+        triage.evaluate(policy(), [row('a', NONE, NONE)], report_version=5)
+    with pytest.raises(ValueError, match='outside the policy scope'):
+        triage.evaluate(_v5_policy(), [row('a', NONE, NONE)], report_version=5)
+    shared = sha('synthetic-development-root')
+    with pytest.raises(ValueError, match='role roots overlap'):
+        triage.evaluate(_v5_policy(fit_roots_sha256=[shared], calibration_roots_sha256=[shared]),
+                        _v5_rows([row('a', NONE, NONE)]), report_version=5)
