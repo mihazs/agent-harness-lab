@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.165.0
+
+### Minor Changes
+
+- ff19c28: Add `ahl sources lineage coverage`, a bounded private evidence-coverage report listing source kinds, missing data, attempted joins, contradicted and unverified reports, conflicts and stale cases, with independence left unproven.
+
 ## 0.164.0
 
 ### Minor Changes
