@@ -114,6 +114,9 @@ def main(argv=None):
     if argv and argv[0] == 'grader-correction':
         from agent_harness_lab.evaluation.grader_correction import main as correction_main
         return correction_main(argv[1:])
+    if argv and argv[0] == 'annotation-plan':
+        from agent_harness_lab.diagnostics.annotation_plan import main as plan_main
+        return plan_main(argv[1:])
     if argv and argv[0] in ('doctor', 'init'):
         from agent_harness_lab.onboarding import main as onboarding_main
         return onboarding_main(argv)
@@ -166,6 +169,7 @@ def main(argv=None):
         'research-simulate':'Run reproducible synthetic research scenarios without a model service',
         'incident-search':'Search an explicitly approved private incident corpus with a local lexical index',
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
+        'annotation-plan':'Report additional annotation needs from a frozen per-class precision/recall interval plan',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
         'audit':'Inspect static harness conventions without execution, network or a model',

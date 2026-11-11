@@ -96,7 +96,7 @@ The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
 No public exporter is included. The next slices still need verified grouping,
 a production review authentication policy, protected
-evaluation access, class-wise uncertainty plans and the #74 classifier gate. A
+evaluation access and the #74 classifier gate. A
 reviewed diagnostic annotation remains distinct from #8's independently
 reproduced and graded executable regression case.
 
@@ -162,6 +162,21 @@ corpus's own split and root groups without exposing protected items. It is not
 evidence of classifier accuracy. Real reviewed gold labels need authenticated,
 independent human reviewers and an agreed gold-label policy, both still open in
 #73. The same applies to protected held-out evaluation and the #74 acceptance gate.
+
+## Class-wise annotation plan
+
+No fixed corpus size is sufficient. `ahl annotation-plan SPEC.json OBSERVED.json`
+compares a frozen per-class plan with caller-supplied independent-root counts.
+`SPEC.json` is `{"schema_version":1,"classes":{NAME:{"half_width":0.1,"min_roots":20}}}`;
+`OBSERVED.json` is `{NAME:{"precision":ROOTS,"recall":ROOTS}}`. For each class and metric
+the report gives the roots needed for the worst-case (proportion 0.5) Wilson 95%
+interval to reach the declared half-width (or `min_roots`, if larger), the additional
+roots still required and `sufficient` or `inconclusive`. Sparse classes and unreported
+counts stay `inconclusive`; they are never zero evidence or success. The spec digest
+is reported so a plan can be frozen before outcomes are seen, but the order of
+preregistration and root independence are not verified. The report is
+`planning_only`: it estimates annotation need, not precision or recall, and grants no
+certification, classifier-selection or publication authority.
 
 Run `task test:diagnostics:corpus` for native synthetic controls, including the
 benchmark profile. The same task is
