@@ -9,6 +9,7 @@ import hashlib
 import json
 
 from agent_harness_lab.diagnostics.mechanisms import COMPONENTS, DISPOSITIONS, SEVERITIES, MechanismRecord
+from agent_harness_lab.diagnostics.predictions import RECONCILIATION_PROFILE, STATUSES
 from agent_harness_lab.evaluation.history_report import _cell
 
 COVERAGE_PROFILE = 'mechanism-coverage-v1'
@@ -83,7 +84,24 @@ def _counts(entries, name, vocabulary):
     return {value: sum(entry[name] == value for entry in entries) for value in vocabulary}
 
 
-def report(mechanisms, *, capture='unknown'):
+_PREDICTION_FIELDS = ('prediction_id', 'mechanism_id', 'status', 'reason', 'kind', 'expected', 'preregistered',
+                      'attribution', 'regression_risks', 'limitations', 'route')
+
+
+def _predictions(reconciliation):
+    """Bounded prediction-to-outcome table from a ``reconcile`` result; every prediction stays listed."""
+    if (not isinstance(reconciliation, dict) or reconciliation.get('profile') != RECONCILIATION_PROFILE
+            or not isinstance(reconciliation.get('entries'), list)
+            or not all(isinstance(row, dict) and row.get('status') in STATUSES for row in reconciliation['entries'])):
+        raise ValueError('prediction-reconciliation-v1 result required')
+    rows = [{k: row[k] for k in _PREDICTION_FIELDS if k in row} for row in reconciliation['entries']]
+    return dict(eligible_predictions=len(rows), counts={s: sum(r['status'] == s for r in rows) for s in STATUSES},
+                entries=rows, certifies=False,
+                limitations=['predictions are self-selected hypotheses, not population-wide diagnostic accuracy',
+                             'a prediction status is bookkeeping under its registered criterion, not certification'])
+
+
+def report(mechanisms, *, capture='unknown', predictions=None):
     """Return the private ``mechanism-coverage-v1`` JSON report for ``mechanisms``.
 
     ``mechanisms`` are records or their ``as_dict`` mappings (as ``run_queue``
@@ -93,7 +111,10 @@ def report(mechanisms, *, capture='unknown'):
     result never depends on which repeat comes first. One mechanism ID under
     several evidence/component versions stays separate entries, listed as
     ``multiple_versions``. ``capture`` is the controller's declaration for the
-    run. Pure: nothing is evaluated, charged or mutated.
+    run. ``predictions`` is an optional ``predictions.reconcile`` result: its
+    table is listed whole, a ``validated`` mechanism with a contradicted
+    prediction stays open (``prediction_contradicted``) and a prediction for an
+    unrecorded mechanism is flagged. Pure: nothing is evaluated, charged or mutated.
     """
     if capture not in CAPTURE_STATES:
         raise ValueError('capture must be complete, partial or unknown')
@@ -117,8 +138,22 @@ def report(mechanisms, *, capture='unknown'):
         kept[mechanism.key] = (entry, state)
         versions.setdefault(mechanism.mechanism_id, []).append(mechanism.key)
         entries.append(entry)
+    table = None if predictions is None else _predictions(predictions)
+    if table:
+        known = {entry['mechanism_id'] for entry in entries}
+        contradicted = {r.get('mechanism_id') for r in table['entries'] if r['status'] == 'contradicted_under_test'}
+        for entry in entries:
+            if entry['mechanism_id'] in contradicted:
+                entry['limitations'].append('prediction_contradicted')
+                if entry['disposition'] == 'validated' and entry['coverage'] == 'resolved':
+                    entry['coverage'] = 'open'
+        for row in table['entries']:
+            if row.get('mechanism_id') not in known:
+                row['limitations'] = [*row.get('limitations', []), 'mechanism_not_recorded']
     entries.sort(key=lambda e: (SEVERITIES.index(e['severity']), e['mechanism_id'], e['key']))
     limitations = ['taxonomy_and_routes_are_hypotheses_not_causal_proof']
+    if table is None:
+        limitations.append('no_predictions_reconciled')
     if not entries:
         limitations.append('no_mechanisms_recorded')
     if capture != 'complete':
@@ -133,7 +168,7 @@ def report(mechanisms, *, capture='unknown'):
                   exposure_unknown=sum(entry['exposure'] is None for entry in entries))
     body = dict(schema_version=1, profile=COVERAGE_PROFILE, publication_allowed=False, authority='none',
                 diagnosis_established=False, causal_claim=False, capture=capture, entries=entries,
-                duplicates=duplicates,
+                duplicates=duplicates, predictions=table,
                 multiple_versions={name: keys for name, keys in sorted(versions.items()) if len(keys) > 1},
                 totals=totals, limitations=limitations,
                 coverage_complete=bool(entries) and capture == 'complete'
@@ -161,5 +196,15 @@ def render_markdown(result):
     lines += ['| ' + ' | '.join(_cell(entry[name]) for name in
                                 ('mechanism_id', 'severity', 'responsible_component', 'claim_level',
                                  'disposition', 'coverage', 'reason')) + ' |' for entry in result['entries']]
+    table = result.get('predictions')
+    if table:
+        lines += ['', f"Predictions: {table['eligible_predictions']} registered; none is omitted. Self-selected "
+                      'hypotheses, not diagnostic accuracy or certification.', '',
+                  '| Prediction | Mechanism | Expected change | Status | Reason | Attribution | Limitations |',
+                  '| --- | --- | --- | --- | --- | --- | --- |']
+        lines += ['| ' + ' | '.join(_cell(row.get(name, '')) if name != 'limitations'
+                                    else _cell(', '.join(row.get(name, [])))
+                                    for name in ('prediction_id', 'mechanism_id', 'expected', 'status', 'reason',
+                                                 'attribution', 'limitations')) + ' |' for row in table['entries']]
     lines += ['', 'Limitations: ' + ', '.join(_cell(item) for item in result['limitations']), '']
     return '\n'.join(lines)
