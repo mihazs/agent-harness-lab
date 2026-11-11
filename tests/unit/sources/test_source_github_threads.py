@@ -297,3 +297,60 @@ class TestGitHubThread(GitHubCase):
         self.graph_handler = oversized
         with pytest.raises(TransportError): self.read(max_bytes=50000)
         assert len(self.graph_calls) == 1
+
+
+class TestGitHubTaskLinkage(GitHubCase):
+    """Issue #45 acceptance: one synthetic task joins its exact PR, review decision, thread, commit and issue."""
+    @pytest.fixture(autouse=True)
+    def _linkage(self, _github):
+        sha = self.commit['sha']
+        self.selection = GitHubSelection(42, (7,), (8,), schema_version=5, commits=(sha,), details=('graph', 'threads', 'timeline'))
+        self.source = replace(self.source, version=self.selection.source_version, scope_sha256=self.selection.sha256, auth_mode='configured')
+        self.repo['node_id'], self.pull['node_id'], self.inline['node_id'] = 'REPO_SYNTHETIC', 'PR_SYNTHETIC', 'COMMENT_SYNTHETIC'
+        node = dict(id='COMMENT_SYNTHETIC', fullDatabaseId='802', body=self.inline['body'], path=self.inline['path'],
+            createdAt=self.stamp, updatedAt=self.stamp, outdated=False, line=3, startLine=None, originalLine=2, originalStartLine=None,
+            repository=dict(id='REPO_SYNTHETIC'), pullRequest=dict(id='PR_SYNTHETIC'), pullRequestReview=dict(fullDatabaseId='803'),
+            commit=dict(oid=self.inline['commit_id']), originalCommit=dict(oid=self.inline['original_commit_id']))
+        thread = dict(id='THREAD_SYNTHETIC', repository=dict(id='REPO_SYNTHETIC'),
+            pullRequest=dict(id='PR_SYNTHETIC', number=8, headRefOid=self.pull['head']['sha']), isResolved=True, isOutdated=False,
+            path=self.inline['path'], diffSide='RIGHT', startDiffSide=None, subjectType='LINE',
+            line=3, startLine=None, originalLine=2, originalStartLine=None, comments=connection([node]))
+        self.graph = dict(data=dict(repository=dict(id='REPO_SYNTHETIC', nameWithOwner=self.repo['full_name'],
+            pullRequest=dict(id='PR_SYNTHETIC', number=8, headRefOid=self.pull['head']['sha'], reviewThreads=connection([thread])))))
+        foreign = 'https://api.github.com/repos/foreign/project/issues/7'
+        same_number = lambda url, number: dict(event='cross-referenced', created_at=self.stamp, updated_at=self.stamp, actor=self.actor,
+            source=dict(type='issue', issue=dict(id=number*10, number=number, url=url)))
+        self.routes.update({
+            '/issues/7/timeline?per_page=100&page=1': [same_number(self.base+'/issues/8', 8), same_number(foreign, 7)],
+            '/issues/8/timeline?per_page=100&page=1': [],
+            '/commits/'+sha+'?per_page=100&page=1': {**self.commit, 'commit': {**self.commit['commit'], 'tree': dict(sha='e'*40), 'comment_count': 0},
+                'stats': dict(additions=2, deletions=1, total=3), 'files': [self.file]},
+            '/commits/'+sha+'/comments?per_page=100&page=1': []})
+        rest = self.connection.request.side_effect
+        def request(method, target, body=None, headers=None):
+            if method == 'GET': return rest(method, target, body, headers)
+            assert (method, target) == ('POST', '/graphql') and 'mutation' not in json.loads(body)['query']
+            self.targets.append('/graphql')
+        self.connection.request.side_effect = request
+
+    def respond(self):
+        if self.targets[-1] != '/graphql': return super().respond()
+        return Response(self.graph, headers={'Content-Type': 'application/json'})
+
+    def test_exact_pr_review_thread_commit_and_issue_join_without_the_colliding_foreign_issue(self):
+        client, snapshot = self.read(authorization='Bearer SYNTHETIC_SECRET', max_pages=60)
+        by_hash = {n['native_id_sha256']: n for n in client.summary['nodes']}
+        kinds = {j.relation for j in snapshot.graph.joins}
+        assert {'inline_review', 'thread_comment', 'pr_head_commit', 'references_issue'} <= kinds
+        review = next(n for n in by_hash.values() if n['kind'] == 'github_review')
+        pull = next(n for n in by_hash.values() if n['kind'] == 'github_pull')
+        commit = next(n for n in by_hash.values() if n['kind'] == 'github_commit')
+        assert ('pr_head_commit', pull['native_id_sha256'], commit['native_id_sha256']) in client.summary['relations']
+        assert any(r[0] == 'references_issue' for r in client.summary['relations'])
+        assert sum(r[0] == 'references_issue' for r in client.summary['relations']) == 1
+        foreign = [n for n in by_hash.values() if n.get('source_scope') == 'foreign_repository']
+        assert len(foreign) == 1
+        assert not any(foreign[0]['native_id_sha256'] in r[1:] and r[0] == 'references_issue' for r in client.summary['relations'])
+        assert review['state'] == 'APPROVED' and not review['matches_head']
+        assert all(j.status == 'candidate' for j in snapshot.graph.joins)
+        assert all(r.plane != 'grader_reference' and r.causal_status == 'unknown' for r in snapshot.records)

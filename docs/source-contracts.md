@@ -2821,13 +2821,21 @@ Version 1 leaves thread resolution/outdated state unknown without native GraphQL
 evidence and does not read timelines or CI/checks; the explicit profile below adds
 those reads. Later profiles add commit detail, bounded comment windows and
 GitHub Actions runs and jobs.
-Explicit conditional (ETag) requests are described below; incremental requests
-remain open in #45/#42. An omitted comment is not proof of deletion or no defect.
+Explicit conditional (ETag) requests are described below; `since`-filtered incremental requests
+are not implemented. An omitted comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
 server snapshot. Native unittest fixtures cover the client contract using fake
 HTTPS responses; live GitHub compatibility, concurrency and diagnostic utility
 are not established by those fixtures. No source or server is contacted by install,
 help, constructor invocation or default discovery.
+
+The task-linkage acceptance fixture (`TestGitHubTaskLinkage`) captures one synthetic issue,
+PR, review submission, resolved thread, inline comment and commit in a v5 graph selection
+beside a cross-reference to a foreign repository's same-numbered issue. Only the selected
+repository's issue joins; the foreign reference stays an unlinked fingerprint, the
+approval does not match the PR head, and every join remains a `candidate`. HTTP
+403/404/429 denials, API truncation and a moving PR head block the capture without
+advancing the checkpoint; a 429 is not distinguished from other denials.
 
 ### Selected timeline and CI detail profile
 
@@ -2873,7 +2881,7 @@ calls share the original request/byte/deadline budgets, and final issue/PR/repos
 readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
 cannot be reported as an empty successful check/review set. The explicit profile
 below adds GraphQL thread state. Later profiles add commit detail, durable claims and
-comment windows; conditional requests are opt-in below and incremental requests remain open.
+comment windows; conditional requests are opt-in below and `since`-filtered incremental requests are not implemented.
 
 ### Authenticated native review threads
 
@@ -2962,8 +2970,8 @@ references require exact SHAs; open-PR test-merge references remain separate fro
 reported merged results. No revert/cherry-pick relationship is inferred from a
 message, and no comment or merge establishes a task outcome or independent root.
 Structured relationships remain in memory unless the v5 graph profile is selected.
-Persisted/cross-source resolution remains #58 work. Incremental requests remain
-open in #45/#42; comment windows and conditional requests are described below.
+Persisted/cross-source resolution remains #58 work. `since`-filtered incremental requests are
+not implemented; comment windows and conditional requests are described below.
 
 `task test:sources:github:commit:live` runs the native public-service acceptance
 case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
@@ -3049,7 +3057,7 @@ separation, edits, absence, idempotence and rejected captures. They do not
 establish live GitHub listing semantics, deletion detection or diagnostic
 utility. Conditional requests are described below; a `304 Not Modified` never
 advances a checkpoint. `since`-filtered incremental requests, recheck windows and
-deletion signals beyond REST listings remain open in #45.
+deletion signals beyond REST listings are not implemented.
 
 ### Explicit conditional requests
 
