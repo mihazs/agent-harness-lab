@@ -241,7 +241,7 @@ class CorpusStore(PrivateJournal):
         with os.scandir(folder) as entries:
             for entry in entries:
                 if len(found)>=MAX_DECISIONS: raise ValueError('near-duplicate decision bound exceeded')
-                value,_=record(Path(entry.path),8192); value=_decision(value)
+                value,_=record(Path(entry.path),32*1024)  # worst case: 4096 control bytes escape to 6 chars each; value=_decision(value)
                 if entry.name!=_digest(value['cases'])+'.json': raise ValueError('near-duplicate decision file differs from its pair')
                 found[tuple(value['cases'])]=value
         return found

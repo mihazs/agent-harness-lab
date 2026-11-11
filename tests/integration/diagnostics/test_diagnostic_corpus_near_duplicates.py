@@ -113,3 +113,11 @@ def test_forged_manifest_cannot_drop_or_flip_decisions(tmp_path):
     flipped = deepcopy(manifest); flipped['near_duplicate_decisions'][0]['decision'] = 'same_lineage'
     with pytest.raises(ValueError, match='same-lineage'):
         development_export(resign(flipped))
+
+
+@pytest.mark.parametrize('reason', ['"'*4096, 'é'*2048, '€'*1365, '\U0001f600'*1024, '\x01'*4096])
+def test_escape_heavy_max_length_reason_keeps_the_corpus_usable(tmp_path, reason):
+    store, fit, held = pair(tmp_path)
+    store.decide_near_duplicate(fit, held, 'distinct_incident', 'synthetic-near-reviewer', reason)
+    assert store.snapshot()['revision_sha256']
+    assert export(store)['near_duplicate_decisions'] == []
