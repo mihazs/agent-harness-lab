@@ -12,7 +12,8 @@ from agent_harness_lab.harness_change_plan import HarnessChangePlan, REFERENCE_N
 from agent_harness_lab.hooks_contract import contracts_for, stage
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.sources import skill_validation
-from agent_harness_lab.workflow import adopt, candidate_states, snapshot
+from agent_harness_lab.application_receipt import application_receipt
+from agent_harness_lab.workflow import adopt, adopt_with_receipt, candidate_states, snapshot
 from tests.unit.surfaces.test_hooks_contract import SCRIPT, SETTINGS, hooks
 
 ENTRY = '---\nname: {name}\ndescription: Summarize release notes\n---\nRead [the guide](references/guide.md).\n'
@@ -150,6 +151,33 @@ def test_candidate_modified_after_review_invalidates_application(project):
     with pytest.raises(ValueError, match='candidate changed'):
         adopt(project, run.root / 'baseline', run.candidate, run.original, run.proposed)
     assert (project / 'AGENTS.md').read_text() == 'rules\n'
+
+
+@pytest.mark.parametrize('row', [pytest.param(name, id=name) for name in ROWS])
+def test_receipt_rereads_the_target_and_claims_no_activation_or_improvement(project, row):
+    stage_row, names, action = ROWS[row]
+    run = stage_row(Run(project))
+    run.plan()
+    receipt = adopt_with_receipt(project, run.root / 'baseline', run.candidate, run.original, run.proposed)
+    assert receipt['status'] == 'applied_verified' and receipt['rollback'] == 'rollback_eligible'
+    assert [o['path'] for o in receipt['operations']] == sorted(names)
+    assert {o['action'] for o in receipt['operations']} == {action} and all(o['verified'] for o in receipt['operations'])
+    assert (receipt['activation'], receipt['behavioral_effect']) == ('unknown', 'not_established')
+    assert receipt['deployment'] == journal_for(run).active
+
+
+def test_receipt_flags_a_target_edited_after_commit_and_a_replay_is_refused(project):
+    run = Run(project).edit('AGENTS.md', 'tighter rules\n')
+    run.plan()
+    receipt = adopt_with_receipt(project, run.root / 'baseline', run.candidate, run.original, run.proposed)
+    with pytest.raises(ValueError, match='changed before adoption'):  # replay never writes or journals twice
+        adopt(project, run.root / 'baseline', run.candidate, run.original, run.proposed)
+    assert journal_for(run).active == receipt['deployment']
+    (project / 'AGENTS.md').write_text('user edit after\n')
+    journal = journal_for(run)
+    again = application_receipt(journal, journal.load(receipt['deployment']))
+    assert again['status'] == 'applied_unverified' and not again['operations'][0]['verified']
+    assert again['rollback'] == 'conflict'
 
 
 class HookRun:

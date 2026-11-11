@@ -684,6 +684,17 @@ unresolved operation, a blocked skill bundle, a blocked hook contract, a source 
 candidate modified after review. These rows exercise `adopt()` and the journal directly, with explicit
 authorization; they do not make `ahl improve` apply behavioral candidates.
 
+## Target-state application receipt
+
+`adopt_with_receipt()` (which `adopt()` wraps) returns a receipt built by re-reading every installed path
+and mode after the journal commits, not by trusting the write. It lists each operation as `create`,
+`update` or `remove` with its final hash, mode and a `verified` flag, plus the deployment ID and whether
+rollback is still eligible. `status` is `applied_verified` only when every path matches and the deployment is
+active; otherwise `applied_unverified`. `activation` stays `unknown` and `behavioral_effect` stays
+`not_established`: a file copy proves neither hook execution nor improvement. A replay after a commit is
+refused because the project no longer matches the baseline, so nothing is written or journaled twice.
+The receipt holds no file content.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
