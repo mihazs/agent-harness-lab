@@ -26,7 +26,10 @@ Choose the mode before following the manual steps below. Read
   question, then re-dispatch once with the answer using the exact command in
   `remediation`; a second block is final. Say that an explicit invocation
   authorizes the bounded default run and that `execution_authority: false`
-  on a blocked plan means only that nothing was dispatched.
+  on a blocked plan means only that nothing was dispatched. To use the user's
+  past sessions as evidence, pass `--history [--since DATE|first]`; relay a
+  `history_*` block's `remediation` verbatim and never assert recurrence it
+  does not report.
 - Automated global improvement is unsupported. An explicit global request or
   named global location retains the manual scope and authorization rules below;
   do not route it through the project adapter.

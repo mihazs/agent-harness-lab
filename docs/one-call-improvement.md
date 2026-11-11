@@ -79,6 +79,9 @@ isolated runtime explicitly (a configured `responses` pipeline) when the
 evaluation must not share the host's tooling or account. A user-level default
 that persists the choice is not provided yet.
 
+To evaluate from sessions already recorded, add `--history`; see
+[improve from past sessions](improve-from-past-sessions.md).
+
 An explicit invocation is the authorization to run this bounded default
 workflow. `execution_authority: false` in a blocked plan only states that
 nothing was dispatched.

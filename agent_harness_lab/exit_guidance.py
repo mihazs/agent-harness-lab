@@ -7,6 +7,8 @@ REMEDIATION = {
     'analysis_incomplete': 'Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings.',
     'analysis_observed': 'Review the captured evidence and assess a candidate with ahl improve when ready.',
     'select_one_runtime_with_agent': 'Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude.',
+    'history_source_ai_memory_unsupported': 'ahl improve reads native Codex and Claude sessions only; rerun with --source native, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis.',
+    'history_no_matching_sessions': 'No captured events matched this project and --since; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
     'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
     'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
     'configured_bank_invalid_or_unavailable': 'Select an accessible valid project bank or use the starter bank; review its configuration before retrying.',

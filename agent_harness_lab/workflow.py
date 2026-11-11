@@ -27,6 +27,8 @@ MAX_BYTES = 10 * 1024 * 1024
 
 
 def state_root():
+    if os.environ.get('AHL_STATE_HOME'):
+        return Path(os.environ['AHL_STATE_HOME'])
     return Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'agent-harness-lab'
 
 
@@ -138,7 +140,8 @@ def evidence(args, output, source_context=None, *, progress=None):
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None), progress=progress, **source_identity)
+            sequence_length=getattr(args, 'sequence_length', None), progress=progress,
+            since_ns=getattr(args, '_history_since_ns', None), **source_identity)
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
         events.seek(0)
@@ -156,6 +159,9 @@ def evidence(args, output, source_context=None, *, progress=None):
         data.setdefault('caveats', []).append('Session observations lack diagnostic evidence ('
             +', '.join(memory_summary['missing_fields'])+' unknown); this is source insufficiency, not a no-defect outcome. '
             +memory_summary['remediation'])
+    if getattr(args, 'history', False):
+        from .history import summary
+        data['history'] = summary(args, data)
     data['execution'] = summarize(data)
     if closed is not None:
         from .evaluation.closed_inputs import collected
@@ -523,6 +529,13 @@ def _improve(args):
             write_json(output/'workflow.json',result);return result
     progress = getattr(args, '_progress', None) or _progress_reporter()
     data = evidence(args, output, progress=progress)
+    if getattr(args, 'history', False) and not data['analysis']['events']:
+        # Nothing was captured for this request; stop before any candidate preparation or model spend.
+        from .one_call import REMEDIATION
+        result = dict(status='blocked', reason='history_no_matching_sessions', output=str(output), changed_files=[],
+                      remediation=REMEDIATION['history_no_matching_sessions'], history=data['history'], automatic_promotion=False)
+        write_json(output/'workflow.json', result)
+        return result
     progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
@@ -614,6 +627,7 @@ def _improve(args):
     used_heldout = set()
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
                   analysis=data['execution'])
+    if 'history' in data: result['history'] = data['history']
     protected = {}
     refinement_feedback = []
     single_run = None

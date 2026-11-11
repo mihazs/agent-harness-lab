@@ -155,7 +155,6 @@ def test_skill_allows_one_redispatch_after_a_zero_spend_block_and_still_forbids_
     assert 'execution_authority: false` on a blocked plan means only that nothing was dispatched' in skill
 
 
-@pytest.mark.xfail(strict=True, reason='the read-only --history evidence input is not delivered, tracked in #663')
 def test_history_evidence_input_is_accepted_and_never_modifies_the_source_store(world):
     store = world.root/'sessions'; store.mkdir()
     (store/'synthetic-session.jsonl').write_text(json.dumps(dict(type='user', message='synthetic request'))+'\n')

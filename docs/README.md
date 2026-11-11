@@ -11,7 +11,7 @@ reader purpose.
 ## Complete a task
 
 - [Install](installation.md) and [check readiness or initialize a project](onboarding.md).
-- [Analyze, improve, or monitor a project](workflows.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
+- [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
 - [Repair a supported skill header](repair-skill-header.md) or [inspect a private source journal](inspect-source-context.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
