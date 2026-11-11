@@ -607,9 +607,9 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_cognee.py -v'
   test:sources:memory-provenance:
-    desc: Run declared ai-memory handoff/workstream provenance cases with synthetic OKF bundles
+    desc: Run declared ai-memory handoff/workstream provenance and native session correlation cases with synthetic fixtures
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_memory_provenance.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_memory_provenance.py tests/integration/sources/test_source_session_correlation.py -v'
   test:sources:context:
     desc: Run private journal inventory and offline analyze/doctor context cases
     cmds:
