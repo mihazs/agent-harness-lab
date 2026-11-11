@@ -161,6 +161,9 @@ report execution errors separately. For broad work, include mechanism coverage,
 remaining deferred families and why analysis did or did not yield more changes.
 A no-change result needs the actual evaluated
 candidates and reasons, not merely the absence of a pre-existing benchmark.
+Report a controller `no_change_evidence_insufficient` as "evidence insufficient", never as
+"the harness is fine", and relay its ranked `next_steps` with their commands. Say the harness is
+supported only for `no_change_harness_supported`, and only for the examined behaviors.
 
 Rollback only this task's edits. Before restoration compare current hashes against
 what this task wrote; preserve intervening user changes rather than overwriting an

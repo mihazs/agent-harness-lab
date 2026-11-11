@@ -13,7 +13,7 @@ def test_no_change_refinement_does_not_inherit_prior_instruction_disposition(wf)
     program = program.replace("mode in ('rooted','drift','ambient')", "mode in ('rooted','drift','ambient','refine')")
     wf.agent.write_text(program); wf.agent.chmod(0o700); (wf.project/'mode').write_text('refine')
     result = improve(wf.args())
-    assert result['status'] == 'no_change' and result['reason'] == 'proposer_no_change'
+    assert result['status'] == 'no_change' and result['reason'] == 'no_change_evidence_insufficient'
     assert 'instruction_removal' not in result and 'instruction_validation' not in result
     saved = json.loads((Path(result['output'])/'workflow.json').read_text())
     assert 'instruction_removal' not in saved and 'instruction_validation' not in saved
