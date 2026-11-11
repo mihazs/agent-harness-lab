@@ -666,6 +666,7 @@ class GitHubAPI:
         return absences
 
     def _capture(self, source, prior=()):
+        self.transport.limiter.begin_run()
         state = dict(requests=0, used=0, validators={}, conditional=0, not_modified=0,
             deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
         records, nodes, relations, observed = {}, {}, set(), set()

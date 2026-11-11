@@ -203,7 +203,23 @@ class TestNativeRecheck(GitHubPytestCase):
         assert len(matches) == 1; assert matches[0]['receipt']['status'] == 'candidate'
         assert matches[0]['resolution_reason'] == 'native_identity_unverified'
 
-    def test_http_denial_and_foreign_repository_never_advance_checkpoint_or_emit_proofs(self):
+    def test_rate_limited_import_is_blocked_access_with_receipt_and_reset_and_no_checkpoint(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'one'))
+        assert self.invoke('import')[0] == 0; original = self.store.path.read_bytes()
+        self.routes[''] = Response(dict(message='rate limit'), 403, {'X-RateLimit-Remaining': '0', 'X-RateLimit-Reset': '4102444800'})
+        code, result = self.invoke('import')
+        assert code == 3
+        assert (result['status'], result['checkpoint_committed']) == ('blocked', False)
+        assert (result['rate_limit']['halt_reason'], result['rate_limit']['reset_epoch']) == ('primary_limit', 4102444800)
+        assert self.store.path.read_bytes() == original
+        # A later run sees the shared cooldown; a permission 403 on a fresh state is a denial, not a limit.
+        assert self.invoke('import')[0] == 3
+        monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'two'))
+        self.routes[''] = Response(b'SYNTHETIC_SECRET', 403, {'X-RateLimit-Remaining': '7'})
+        assert self.invoke('import')[0] == 2
+
+    def test_http_denial_and_foreign_repository_never_advance_checkpoint_or_emit_proofs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
         assert self.invoke('import')[0] == 0; original = self.store.path.read_bytes()
         for status in (403, 404, 429):
             self.routes[''] = Response(b'SYNTHETIC_SECRET', status)

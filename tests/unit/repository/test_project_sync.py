@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 from contextlib import redirect_stdout
 import io
+import json
 
 import pytest
 
@@ -102,3 +103,39 @@ def test_pagination_validates_all_labels_before_lifecycle_writes():
         sync.main()
     assert [(v['itemId'], v['value']['singleSelectOptionId']) for v in writes] == [('one', 'Done'), ('two', 'Backlog')]
 
+
+
+def gh_output(status, headers, body):
+    head = f'HTTP/2.0 {status} Synthetic\n' + ''.join(f'{k}: {v}\n' for k, v in headers.items())
+    return type('Result', (), dict(stdout=head + '\n' + json.dumps(body), returncode=0 if status == 200 else 1))()
+
+
+def test_graphql_stops_at_the_reserve_and_reports_rate_limits_not_permissions(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    reset = str(int(__import__('time').time()) + 600)
+    limits = {'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '250', 'x-ratelimit-reset': reset, 'x-ratelimit-resource': 'graphql'}
+    with patch.object(sync.subprocess, 'run', return_value=gh_output(200, limits, {'data': {'ok': 1}})) as run:
+        assert sync.graphql('query {a}', {}) == {'ok': 1}
+        assert '-i' in run.call_args.args[0]
+        # The shared reserve (5% of 5,000) is reached: no further request is sent.
+        with pytest.raises(RuntimeError, match='halted'):
+            sync.graphql('query {a}', {})
+        assert run.call_count == 1
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'fresh'))
+    limited = gh_output(403, {'x-ratelimit-remaining': '0', 'x-ratelimit-reset': reset}, {'message': 'API rate limit exceeded'})
+    with patch.object(sync.subprocess, 'run', return_value=limited), pytest.raises(RuntimeError, match='not a permission problem'):
+        sync.graphql('query {a}', {})
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'denied'))
+    denied = gh_output(403, {'x-ratelimit-remaining': '4000'}, {'message': 'Resource not accessible'})
+    with patch.object(sync.subprocess, 'run', return_value=denied), pytest.raises(ValueError):
+        sync.graphql('query {a}', {})
+
+
+def test_graphql_keeps_the_existing_shape_for_ordinary_responses(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    with patch.object(sync.subprocess, 'run', return_value=gh_output(200, {}, {'data': {'x': 1}})):
+        assert sync.graphql('query {a}', {}) == {'x': 1}
