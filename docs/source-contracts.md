@@ -2662,6 +2662,42 @@ text, site-root paths and links inside frontmatter are not read and are listed u
 `unsupported`. Synthetic bundles establish this contract
 (`tests/unit/sources/test_source_knowledge_links.py`).
 
+### Knowledge-page correlated origins
+
+`sources.knowledge_origins.clusters(pages)` groups the pages of one authorized
+bundle that cite a common source, so several summaries of one session or document
+count once. It is an offline Python API with no CLI exposure. The caller supplies
+`(path, metadata)` pairs it already holds, such as
+`(p.path, p.metadata) for p in OKFExport.pages(source)`. Paths must be distinct text,
+at most 10,000 pages are accepted, and a page citing more than 1,000 resources or a
+resource over 2,048 characters is flagged `malformed_sources` instead of read.
+
+A page's `sources` list may hold strings or mappings with a `resource` string. Pages
+that share a resource, directly or through a chain of pages, form one cluster; page
+order, arrival order and similarity never decide membership. Each cluster reports its
+sorted paths and resources, a basis and flags:
+
+| Basis | Meaning |
+| --- | --- |
+| `shared_cited_source` | Several pages cite a common resource: one correlated origin |
+| `single_page` | One page, with at least one cited resource |
+| `no_cited_source` | No usable citation: the origin is unknown, never counted as independent |
+
+`Attested Computation` pages, and any page with an `executor` or `attester` field, are
+flagged `inert_execution_claim`. Both fields stay inert text: nothing is imported,
+executed or fetched, and the claimed attestation is not evidence.
+
+`summary(clusters)` reports counts only under profile `knowledge-origins-v1`:
+clusters, pages collapsed into a shared cluster, pages with an unknown origin,
+malformed-citation pages and inert execution claims. It sets `independent_roots: null`,
+`executed`, `files_read`, `remote_fetched`, `resource_text_included`,
+`truth_established` and `publication_allowed` to false and `authority: none`, and
+`public_export_allowed` rejects that profile. A cluster is a duplicate-collapsed origin
+count, not proof that the cited source exists, is true, or that clusters are
+independent. Citations of a different spelling of one resource are not merged.
+Synthetic metadata establishes this contract
+(`tests/unit/sources/test_source_knowledge_origins.py`).
+
 ## Shared HTTPS transport
 
 `sources.transport.JsonAPI` supplies the shared GET transport for explicitly
