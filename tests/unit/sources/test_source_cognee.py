@@ -46,6 +46,19 @@ def plain(nodes=NODES, edges=EDGES):
     """migration/formats.write_json: no dataset identity, edge properties flattened beside the endpoints."""
     return dict(nodes=copy.deepcopy(nodes), edges=[dict(source=s, target=t, relationship_name=r, **p) for s, t, r, p in edges])
 
+SESSION = 'invented-session-1'
+QA = dict(source='session', time='2031-05-01T10:00:00+00:00', qa_id='qa-1', question='invented question '+SECRET,
+          context='invented context', answer='invented answer', used_graph_element_ids=dict(node_ids=[ALICE], edge_ids=['edge-1']))
+HIT = dict(source='graph', kind='chunk', search_type='CHUNKS', text='invented chunk '+SECRET, score=0.42, dataset_id=DATASET_A)
+ANSWER = dict(HIT, kind='graph_completion', search_type='GRAPH_COMPLETION', text='invented generated answer', score=None)
+SKILL = dict(source='skills', text='invented: skill', skill=dict(name='invented'), score=0.2)
+
+
+def recall(*entries):
+    """A saved cognee.recall() result list (RecallResponse dumps)."""
+    return [copy.deepcopy(e) for e in entries]
+
+
 MANY = snapshot(nodes=[node(f'node-{i}', 'Entity') for i in range(20)], edges=[])
 
 
@@ -300,6 +313,54 @@ class TestCogneeSource:
         self.write(snapshot(), limits=dict(max_json_containers=5))
         with patch.object(cognee, 'parse', side_effect=AssertionError('decoded')), pytest.raises(HostileReport):
             self.connector.read(self.source)
+
+    def read_recall(self, entries, **selection):
+        return self.read(entries, **dict(dict(format='recall_results', session_id=SESSION), **selection))
+
+    def test_saved_recall_results_keep_source_session_score_and_origin_links_apart(self):
+        self.read()
+        graph_ids = {c.native_id_sha256 for c in self.connector.claims if c.detail == 'Entity'}
+        result = self.read_recall(recall(QA, HIT, ANSWER, SKILL, dict(source='trace', trace_id='t-1', origin_function='f', status='ok')))
+        summary, claims = self.connector.summary, {c.claim_type: c for c in self.connector.claims}
+        assert summary['claims']['graph'] == 2 and len(result.records) == 6 and len(claims) == 4
+        qa = claims['recall_session']
+        assert (qa.session_status, qa.timestamp_status, qa.graph_refs_status, qa.derivation) == ('declared', 'native', 'named', 'session_qa_entry')
+        # The cited node hashes to the claim a graph export of the same dataset carries for that node.
+        assert set(qa.graph_node_refs) <= graph_ids and len(qa.graph_node_refs) == 1
+        hits = [c for c in self.connector.claims if c.claim_type == 'recall_graph']
+        assert {(c.derivation, c.score, c.score_semantics) for c in hits} == {('retrieved_item', 0.42, 'unspecified'), ('generated_answer', None, 'none')}
+        assert (claims['recall_skills'].score_semantics, claims['recall_trace'].session_status) == ('vector_distance_lower_is_better', 'declared')
+        assert {'retrieval_scores_not_correctness', 'answers_not_graded_outcomes'} <= set(summary['warnings'])
+        assert (summary['cross_source_joins'], summary['recall_used'], summary['inference_used'], summary['network_used']) == ('disabled', False, False, False)
+        assert all((c.independent_case, c.factually_verified, c.task_outcome_verified) == (False,)*3 for c in self.connector.claims)
+
+    def test_recall_datasets_a_and_b_cannot_be_mixed_and_missing_ids_are_explicit(self):
+        with pytest.raises(ValueError, match='undeclared dataset'): self.read_recall(recall(dict(HIT, dataset_id=DATASET_B)))
+        self.read_recall(recall(HIT, dict(HIT, text='x', dataset_id=None)))
+        assert {c.dataset_status for c in self.connector.claims} == {'entry_matches_declaration', 'caller_declared'}
+        assert (self.connector.summary['cross_source_joins'], 'result_dataset_unverified' in self.connector.summary['warnings']) == ('disabled', True)
+        self.read_recall(recall(HIT))
+        assert self.connector.summary['cross_source_joins'] == 'dataset_id_bound'
+        self.read_recall(recall(QA, dict(QA, qa_id='qa-2', used_graph_element_ids=None, time='bad')), session_id=None)
+        assert {c.session_status for c in self.connector.claims} == {'unknown'}
+        assert {'session_id_missing', 'session_entry_without_graph_refs', 'invalid_timestamp'} <= set(self.connector.summary['warnings'])
+        assert self.connector.summary['session_lineage'] == 'unknown'
+        # The same result under another dataset ID is a different claim.
+        a = {c.native_id_sha256 for c in self.read_recall(recall(HIT)).records if c.record_type == 'cognee_recall_graph'}
+        b = {c.native_id_sha256 for c in self.read_recall(recall(dict(HIT, dataset_id=DATASET_B)), dataset_id=DATASET_B).records
+             if c.record_type == 'cognee_recall_graph'}
+        assert a and not a & b
+
+    def test_recall_results_fail_closed_and_stay_bounded(self):
+        for bad in ({}, ['text'], recall(dict(QA, used_graph_element_ids=dict(node_ids=[1])))):
+            with pytest.raises(ValueError): self.read_recall(bad)
+        self.read_recall(recall(dict(source='mystery'), HIT))
+        assert self.connector.summary['rows_rejected'] == dict(results=1) and len(self.connector.claims) == 1
+        self.read_recall(recall(HIT, HIT))
+        assert [c.occurrence for c in self.connector.claims] == [0, 1] and 'duplicate_native_id' in self.connector.summary['warnings']
+        with pytest.raises(HostileReport, match='row bound'): self.read_recall(recall(HIT, HIT, HIT), limits=dict(max_rows=3))
+        with pytest.raises(ValueError): self.read(recall(HIT), session_id=SESSION)  # session_id belongs to recall_results only
+        with pytest.raises(ValueError): self.read_recall(recall(HIT), session_id='bad id')
 
     def test_capture_change_is_refused(self):
         with patch.object(cognee, 'regular_sha256', lambda path, limit: '0'*64):

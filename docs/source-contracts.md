@@ -4697,11 +4697,42 @@ only lower them.
 provenance, origin tracing, dataset A/B separation, unknown lineage, missing
 references, conflicting chunk documents, edge and version revisions, refused
 releases and formats, bounds, capture changes, and CLI output and cache with no
-body, ID, name or path while Cognee is unimportable. Still open in #52: verifying
-the shape against a real export; `cogx` archives; sessions and session context;
-code-symbol references; `recall` result import and an opt-in, explicitly
-authorized, resource-marked retrieval mode; verified read-only API semantics;
-bounded cancellation of result streams; further releases and backends.
+body, ID, name or path while Cognee is unimportable.
+
+### Saved recall results
+
+`format: "recall_results"` reads a JSON list the user saved from their own
+`cognee.recall(...)` call (the pinned
+[`RecallResponse`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/recall/types/RecallResponse.py)
+union; the shape is read from code, `compatibility: unverified`). The adapter
+never runs `recall`, so no query, embedding or model call happens here and no
+on-demand retrieval mode exists; producing the list is the user's own,
+resource-consuming step. The selection may add `session_id`, a label the caller
+declares because the entries do not carry one. Each entry becomes one
+`RecallClaim` (`cognee_recall_<source>` record) for the `source` values `session`,
+`trace`, `session_context`, `graph`, `code`, `tools`, `skills` and `system`; any
+other value is skipped and counted, and a non-list file or non-object entry is
+refused.
+
+| Kept separately | Behaviour |
+| --- | --- |
+| Dataset | A `graph` or `code` entry naming another `dataset_id` refuses the file. An entry without one is `caller_declared` or `unknown`, with `result_dataset_unverified`. Session, trace and tool entries state no dataset (`not_applicable`). `cross_source_joins` is `dataset_id_bound` only when every claim states the declared ID, otherwise `disabled`. |
+| Session | Session, trace and session-context claims carry a hash of the declared `session_id` (scoped by instance, dataset and ID), or `unknown` and `session_id_missing`. |
+| Evidence type | `derivation` separates a `session_qa_entry`, `agent_trace_step`, `distilled_lesson`, `retrieved_item` (chunk, summary, code, rule, skill kinds), `generated_answer` (completion kinds), `tool_result` and `system_marker`; an unrecognized kind is `unclassified`. |
+| Score | The number is kept with `score_semantics`: `unspecified` (retriever-defined) or `vector_distance_lower_is_better` for skills. It is relevance, never correctness. |
+| Origin | A session entry's `used_graph_element_ids.node_ids` become node hashes equal to the claims of a graph export of the same instance, dataset and dataset ID; an entry without any is `session_entry_without_graph_refs`. Edge IDs cannot be joined and are not kept. |
+
+Every claim keeps `independent_case`, `factually_verified` and
+`task_outcome_verified` false, so a generated answer is never a graded harness
+outcome and a repeated result is a further `occurrence`, not a further case.
+Bodies, questions, answers and text are fingerprinted only. `max_rows`,
+`max_fields` and the JSON screens bound the file before mapping; a saved list is
+always `partial` because top-k truncation cannot be seen.
+
+Still open in #52: verifying either shape against a real export or result list;
+`cogx` archives; code-symbol reference mapping; an opt-in, explicitly authorized
+live `recall` connector with verified read-only API semantics and bounded
+cancellation of result streams; further releases and backends.
 
 ## OpenCode selected session exports
 

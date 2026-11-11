@@ -60,7 +60,7 @@ def main(argv):
         'mem0-oss-export (one selected Mem0 OSS v2.2.1 get_all/history JSON export; no server, Platform or network), '
         'mem0-platform-export (one selected Mem0 Platform v3 get-all page sequence plus history JSON export; no API call or network), '
         'hindsight-bank-archive (one extracted Hindsight v1.1.0 bank transfer archive; no recall, reflect, service or network) and '
-        'cognee-export (one selected Cognee v1.6.5 graph JSON export of one dataset; no recall, inference or store). '
+        'cognee-export (one selected Cognee v1.6.5 graph JSON export or saved recall result list of one dataset; never runs recall, inference or a store). '
         'opencode-export (one selected pinned-shape JSON session export; metadata only). '
         'opencode-sqlite-backup (one selected caller-supplied backup; metadata only). '
         'Rate limits: forge reads share a reserve, budget and quota state; see ahl sources github quota --help. '
