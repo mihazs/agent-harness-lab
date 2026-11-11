@@ -179,13 +179,16 @@ class HistoryStore(PrivateJournal):
             return dict(bundle_sha256=bundle,state='quarantined',event_sha256=events[-1][1],
                 historical_comparisons_invalidated=True,corrected_oracle_approved=False,publication_allowed=False)
 
-    def opened(self, run_id):
-        return self._opened(run_id,current_bank=True)
+    def opened(self, run_id, *, read_only=False):
+        return self._opened(run_id,current_bank=True,read_only=read_only)
 
-    def _opened(self, run_id, *, current_bank):
+    def _opened(self, run_id, *, current_bank, read_only=False):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
+        if read_only and (type(version) is not int or version != 1
+                or any(key in inputs for key in ('protected_access_sha256', 'derivation_binding_sha256'))):
+            raise ValueError('read-only saved analysis supports only unbound fixed history without protected access or derivation')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6,7,8) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4,5,6,7,8) else '')
@@ -313,8 +316,8 @@ class HistoryStore(PrivateJournal):
             for value in (*binding['fixtures'].values(),*binding['seed_states'].values()):sha256(value)
         return case,events,inputs,spec
 
-    def checked(self, run_id):
-        case,events,inputs,spec = self.opened(run_id)
+    def checked(self, run_id, *, read_only=False):
+        case,events,inputs,spec = self.opened(run_id,read_only=read_only)
         validity = 'invalidated' if any(self.oracle_events(b)[-1][0]['state'] != 'active' for b in inputs['dependencies']) else 'current'
         if events[-1][0]['state'] != 'sealed': return case,events,inputs,spec,None,'incomplete'
         result = self._sealed(case,events,inputs,spec)
@@ -535,8 +538,9 @@ class HistoryStore(PrivateJournal):
     def show(self, run_id):
         with self.locked(): return self.summary(run_id,self.checked(run_id))
 
-    def analyze(self, run_id):
-        with self.locked(): return self._analyze_checked(self.checked(run_id))
+    def analyze(self, run_id, *, read_only=False):
+        with self.locked(read_only=read_only):
+            return self._analyze_checked(self.checked(run_id,read_only=read_only))
 
     def _analyze_checked(self, checked):
         case,_,inputs,spec,result,validity = checked

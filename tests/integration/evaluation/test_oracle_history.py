@@ -1,7 +1,10 @@
 """Controller history controls with synthetic execution, not containment proof."""
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout, redirect_stderr
 from dataclasses import asdict
+import io
 import json
+import os
+import time
 from unittest.mock import patch
 
 from agent_harness_lab.evaluation.integrity import digest
@@ -79,6 +82,20 @@ class OracleHistoryTests(OfflineFixture):
                 patch.object(self.runner,'evaluate',side_effect=altered):
             return self.run_history()[0]
 
+    def analyze_saved(self, run_id, name='analysis-output'):
+        from agent_harness_lab.cli import main
+        project = self.root/'analysis-project'; project.mkdir(exist_ok=True)
+        events = self.root/'empty-events.jsonl'; events.write_text('')
+        out = io.StringIO()
+        args = ['analyze', str(project), '--events', str(events),
+                '--history-store', str(self.store_root), '--history-run', run_id]
+        if name is not None: args += ['--output', str(self.root/name)]
+        with redirect_stdout(out), redirect_stderr(io.StringIO()), \
+                patch.object(SandboxBackend, 'run', side_effect=AssertionError('saved analysis must not dispatch')), \
+                patch.object(HistoryStore, 'run', side_effect=AssertionError('saved analysis must not create a run')):
+            code = main(args)
+        return code, json.loads(out.getvalue())
+
 
 @pytest.fixture
 def history():
@@ -90,6 +107,121 @@ def assert_not_current(operation):
     try: result = operation()
     except (ValueError,OSError): return
     assert result['oracle_validity'] in ('invalidated','incomplete')
+
+
+def tree(history):
+    return {str(path):path.read_bytes() for path in history.store_root.rglob('*') if path.is_file()}
+
+
+def test_analysis_routes_explicit_saved_comparison_without_dispatch_or_authority(history):
+    from agent_harness_lab.cli import assets
+    from agent_harness_lab.evaluation.construction import views
+    from agent_harness_lab.evaluation.benchmark import public_export_allowed
+    run, _ = history.run_history()
+    before = tree(history)
+    code, receipt = history.analyze_saved(run['run_id'])
+    assert code == 0
+    method = receipt['analysis']['algorithms'][-1]
+    assert method['id'] == 'paired_history_analysis'
+    assert method['execution'] == 'completed'
+    assert method['authority'] == 'conditional_analysis_only'
+    assert method['result']['oracle_validity'] == 'current'
+    assert not method['result']['automatic_promotion']
+    assert method['result']['independence'] == 'unverified'
+    assert receipt['analysis']['evidence_state'] == 'observed'
+    not_run = [row['id'] for row in receipt['analysis']['not_run']]
+    assert 'paired_evaluation' in not_run and 'paired_history_analysis' not in not_run
+    assert tree(history) == before
+    data = json.loads((history.root/'analysis-output/analysis.json').read_text())
+    assert data['paired_history_analysis'] == method['result']
+    assert 'Saved comparison:' in (history.root/'analysis-output/report.md').read_text()
+    prepared = views(data, assets(), history.root/'history-role-views', time.monotonic()+30)
+    for folder in prepared.values():
+        assert json.loads((folder/'analysis-summary.json').read_text())['paired_history_analysis'] == method['result']
+    provenance = dict(source_kind='synthetic', source_ref='synthetic:history', approved_publication=True, derived_from_private=False)
+    for facet in (data['paired_history_analysis'], method):
+        for wrapper in (None, 'paired_history_analysis', 'analysis', 'receipt', 'context', 'binding', 'execution'):
+            marked = dict(facet, publication_allowed=True, provenance=provenance)
+            row = marked if wrapper is None else dict(provenance=provenance, publication_allowed=True, **{wrapper:marked})
+            assert not public_export_allowed([row])
+
+
+def test_analysis_preserves_unsealed_and_quarantined_saved_history(history):
+    def interrupted(*args, **kwargs): raise KeyboardInterrupt('synthetic interruption')
+    with pytest.raises(KeyboardInterrupt): history.run_history(execute=interrupted)
+    run_id = next(history.store_root.rglob('inputs.json')).parent.name
+    code, receipt = history.analyze_saved(run_id, 'incomplete-history')
+    result = receipt['analysis']['algorithms'][-1]['result']
+    assert code == 0
+    assert (result['status'], result['oracle_validity']) == ('incomplete', 'incomplete')
+    assert receipt['analysis']['evidence_state'] == 'incomplete'
+    assert not result['automatic_promotion']
+    complete, _ = history.run_history()
+    path, _ = history.quarantine_record(); history.store.quarantine(path)
+    _, receipt = history.analyze_saved(complete['run_id'], 'quarantined-history')
+    result = receipt['analysis']['algorithms'][-1]['result']
+    assert (result['status'], result['reason']) == ('blocked', 'oracle_quarantined')
+    assert receipt['analysis']['evidence_state'] == 'incomplete'
+
+
+def test_analysis_rejects_changed_saved_results_and_missing_history(history):
+    run, _ = history.run_history()
+    next(history.store_root.rglob('results.json')).write_text('{}')
+    for name, run_id in [('tampered-history', run['run_id']), ('foreign-history', 'a'*64)]:
+        with pytest.raises(SystemExit) as stopped:
+            history.analyze_saved(run_id, name)
+        assert stopped.value.code == 2
+
+
+def test_analysis_does_not_recreate_a_missing_history_lock(history):
+    run, _ = history.run_history()
+    lock = history.store_root/'.lock'; lock.unlink()
+    before = tree(history)
+    with pytest.raises(SystemExit) as stopped:
+        history.analyze_saved(run['run_id'])
+    assert stopped.value.code == 2
+    assert not lock.exists() and tree(history) == before
+
+
+def test_saved_analysis_rejects_output_and_state_overlaps_before_writing(history):
+    run, _ = history.run_history()
+    alias = history.root/'history-alias'; alias.symlink_to(history.store_root, target_is_directory=True)
+    before = tree(history)
+    for name, state in ((history.store_root/'analysis-output', history.root/'state'),
+                        (alias/'analysis-output', history.root/'state'),
+                        (None, history.store_root), (None, alias)):
+        with patch.dict(os.environ, XDG_STATE_HOME=str(state)), pytest.raises(SystemExit) as stopped:
+            history.analyze_saved(run['run_id'], name)
+        assert stopped.value.code == 2
+        assert tree(history) == before
+        assert not (history.store_root/'analysis-output').exists()
+        assert not (history.store_root/'agent-harness-lab').exists()
+
+
+def test_improve_rejects_history_state_overlap_before_locking(history):
+    from agent_harness_lab.cli import main
+    run, _ = history.run_history()
+    before = tree(history)
+    project = history.root/'improve-project'; project.mkdir()
+    with patch.dict(os.environ, XDG_STATE_HOME=str(history.store_root)), \
+            redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), pytest.raises(SystemExit) as stopped:
+        main(['improve', str(project), '--history-store', str(history.store_root), '--history-run', run['run_id']])
+    assert stopped.value.code == 2 and tree(history) == before
+    assert not (history.store_root/'agent-harness-lab').exists()
+
+
+def test_read_only_analysis_rejects_advanced_profiles_before_transitive_validation(history):
+    run, _ = history.run_history()
+    path = history.store.case(run['run_id'])/'inputs.json'
+    original = json.loads(path.read_text())
+    for version in (2, 3, 4, 5, 6):
+        path.write_text(json.dumps(dict(original, schema_version=version)))
+        before = tree(history)
+        with patch('agent_harness_lab.evaluation.oracle_history.bank_authority', side_effect=AssertionError('no bank validation scratch')), \
+                patch('agent_harness_lab.evaluation.certification_access.historical', side_effect=AssertionError('no dependency lock creation')), \
+                pytest.raises(ValueError, match='supports only unbound fixed history'):
+            history.store.analyze(run['run_id'], read_only=True)
+        assert tree(history) == before
 
 
 def test_complete_controller_run_and_analysis_are_current(history):

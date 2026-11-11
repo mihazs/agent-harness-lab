@@ -43,7 +43,7 @@ def public_export_allowed(records):
                 or record.get('execution_kind','synthetic') not in PUBLIC_EXECUTION_KINDS
                 or not isinstance(provenance.get('source_ref'),str) or not 0 < len(provenance['source_ref']) <= 4096):
             return False
-        wrappers=(record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval'))
+        wrappers=(record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval'),record.get('paired_history_analysis'))
         # Preparation contexts carry the private invocation as a known child.
         invocations=tuple(value.get('invocation') for value in wrappers if isinstance(value,dict))
         for metadata in (*wrappers,*invocations):
@@ -69,7 +69,7 @@ def public_export_allowed(records):
                         'owned-evidence-views-v1','owned-closed-input-closure-v1','ahl-single-run-decision-disposition-v1',
                         'ahl-static-audit-v1','ahl-reviewed-comparison-evidence-v1','diagnostic-binary-triage-evaluation-v2',
                         'diagnostic-triage-evaluation-v4')
-                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding','realized_schedule'))
+                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding','realized_schedule','paired_history_analysis'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):

@@ -78,17 +78,33 @@ def summarize(data):
             corpus_revision=retrieval['revision'], query_sha256=retrieval['query_sha256'],
             coverage=dict(input_records=retrieval['input_records']), authority='untrusted_evidence_only',
             approval=retrieval['approval']))
-    dependencies = [dict(id='captured_events', methods=[method['id'] for method in methods if method['id'] != 'incident_retrieval'], independence='unverified')]
+    history = data.get('paired_history_analysis')
+    if history is not None:
+        methods.append(dict(id='paired_history_analysis', algorithm='controller-checked fixed paired-root analysis',
+            profile='ahl-analysis-execution-v1', publication_allowed=False,
+            status='completed', selected=True, execution='completed',
+            selection_reason='Explicit unbound fixed store/run passed existing history checks; sealed evidence is analyzed under its frozen policy, and unqualified history retains its disposition.',
+            dependency_group='explicit_controller_history', authority='conditional_analysis_only',
+            outputs=dict(primary_estimates=int(isinstance(history.get('primary'), dict)),
+                         family_estimates=len(history.get('families', {}))),
+            coverage=dict(recorded_roots=history.get('roots'), recorded_trials=history.get('trials')),
+            result=history))
+    dependencies = [dict(id='captured_events', methods=[method['id'] for method in methods if method['dependency_group'] == 'captured_events'], independence='unverified')]
     if retrieval is not None:
         dependencies.append(dict(id='explicit_incident_corpus', methods=['incident_retrieval'],
                                  independence='unverified', overlap_with_captured_events='unknown'))
+    if history is not None:
+        dependencies.append(dict(id='explicit_controller_history', methods=['paired_history_analysis'],
+                                 independence='unverified', overlap_with_other_evidence='unknown'))
     contributions = [method['id'] for method in methods if method['selected'] and any(method['outputs'].values())]
     unqualified = [method['id'] for method in methods if not method['selected'] and any(method['outputs'].values())]
     outcomes = data.get('evaluation_outcomes', [])
     caveats = list(data.get('caveats', []))
+    if history is not None and history['status'] in ('blocked', 'incomplete'):
+        caveats.append('Selected controller history remains '+history['status']+'; its analysis does not qualify historical outcomes.')
     if mining.get('invalid_timestamps'):
         caveats.append('Some timestamp metadata is invalid; capture order is retained.')
-    if not events and not outcomes and not (caveats and data.get('sources')):
+    if not events and not outcomes and history is None and not (caveats and data.get('sources')):
         state = 'empty'
         action = REMEDIATION['no_data']
     elif caveats:
@@ -105,8 +121,9 @@ def summarize(data):
                     policy=execution.get('policy', 'unavailable'),
                     stage='after_streaming_coverage_discovery', inputs=inputs,
                     target='method_dispatch' if execution.get('policy') == 'structural_prerequisites_v1' else 'supported_interpretation',
-                    output_values_used_for_selection=False, optional_execution_authorized=retrieval is not None,
-                    authorized_optional_methods=['incident_retrieval'] if retrieval is not None else []),
+                    output_values_used_for_selection=False, optional_execution_authorized=retrieval is not None or history is not None,
+                    authorized_optional_methods=(['incident_retrieval'] if retrieval is not None else [])
+                        + (['paired_history_analysis'] if history is not None else [])),
                 synthesis=dict(profile='ahl-analysis-execution-v1',
                     status='descriptive_patterns' if contributions else 'no_supported_patterns',
                     contributing_methods=contributions, unqualified_method_outputs=unqualified,
@@ -118,9 +135,11 @@ def summarize(data):
                 not_run=[dict(id=name, reason=reason) for name, reason in (
                     ('incident_retrieval', 'Requires explicit --incident-corpus and --incident-query with reviewed approval declarations; standalone ahl incident-search is also available.'),
                     ('classifier_benchmark', 'Requires explicit labeled data and selected local backends; use ahl benchmark.'),
+                    ('paired_history_analysis', 'Requires explicit --history-store and --history-run; reads existing controller evidence without dispatching trials.'),
                     ('paired_evaluation', 'Read-only analysis does not run task trials; ahl improve owns applicable evaluations.'),
                     ('candidate_search', 'Read-only analysis does not propose or execute harness changes.'))
-                    if name != 'incident_retrieval' or retrieval is None],
+                    if not (name == 'incident_retrieval' and retrieval is not None
+                            or name == 'paired_history_analysis' and history is not None)],
                 caveats=caveats, next_action=action, publication_allowed=False)
 
 
@@ -130,6 +149,10 @@ def report(receipt):
     for method in receipt['algorithms']:
         outputs = ', '.join(f'{key}: {value}' for key, value in method['outputs'].items())
         lines.append(f"| {method['algorithm']} | {method['status']} | {outputs} | {method['selection_reason']} |")
+        if method['id'] == 'paired_history_analysis':
+            result = method['result']
+            lines += ['', f"Saved comparison: {result['status']}; oracle validity: {result['oracle_validity']}.",
+                      'Its frozen analysis is conditional; oracle review and root independence remain unverified. No trials, retries or promotion were authorized.', '']
     lines += ['', '## Complementary analysis', '', receipt['synthesis']['interpretation'],
               'Capture methods share events; explicit incident-corpus overlap and independence remain unverified. No vote, causal confidence or promotion authority is derived.',
               'Excluded cases remain in the descriptive graph; skipped methods are not negative diagnoses.', '']

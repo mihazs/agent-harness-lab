@@ -55,6 +55,16 @@ class TestCertificationAccess:
                 access_reservation=ident,**extra)
         return result,workers.call_count
 
+    def test_saved_analysis_rejects_advanced_history_without_creating_dependency_lock(self):
+        run, _ = self.run_protected(self.reserve())
+        lock = self.f.store_root/'protected-access.lock'; lock.unlink()
+        before = {str(path):path.read_bytes() for path in self.f.store_root.rglob('*') if path.is_file()}
+        with pytest.raises(SystemExit) as stopped:
+            self.f.analyze_saved(run['run_id'])
+        assert stopped.value.code == 2
+        assert not lock.exists()
+        assert before == {str(path):path.read_bytes() for path in self.f.store_root.rglob('*') if path.is_file()}
+
     def invoke(self, action, *extra):
         f = self.f; stdout = io.StringIO()
         args = ['experiment-history','--store',str(f.store_root),action,'--manifest',str(f.args.manifest),
