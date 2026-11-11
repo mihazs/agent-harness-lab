@@ -9,7 +9,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs; wire predictions into proposal sessions and the coverage report |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
@@ -136,6 +136,15 @@ Both inputs must be regular files with no symlink in their path, each at most 64
 the trial selector must match exactly one result. Receipts are private and must not be published.
 The estimand is the effect of skill availability (intent-to-treat), with all eligible
 trials retained irrespective of their receipt; no receipt alone establishes a causal effect.
+
+Each evaluator trial also records `skill_availability`, one row per staged skill bundle
+delivered through either the `skills` route or `harness_paths` (`.claude/skills/<name>/` and
+`.agents/skills/<name>/` files): `route`, `name`, `state` (`present` or `absent`),
+`entry_sha256`, `bundle_sha256` and `activated`. Identical staged content has equal hashes
+through both routes, so availability is comparable while only `route` differs. A version
+that lacks the entry point is `absent` (a removal), and `activated` is always `null`:
+placement is not discovery, reading or use. For `harness_paths`, the bundle hash covers
+only the files the manifest lists.
 
 Skill injection is availability evidence, not activation. Each evaluator trial records
 `skill_preload_requested` as true when the manifest requests a preload prompt for
