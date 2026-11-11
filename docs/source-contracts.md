@@ -694,8 +694,8 @@ checkpoints describe committed captures, not the current live source or a histor
 execution's version. Declared Codex and Claude Code instruction inventories are
 described below, as are the static hook inventory and path-scoped rules. Managed
 and global instruction capture remains open in #46. Observed loading,
-independently evidenced execution bindings and GitLab or Gitea commit
-reconciliation (the Git/GitHub joins are below) remain open in #58/#77–#80.
+independently evidenced execution bindings and Gitea commit reconciliation
+(the Git/GitHub and Git/GitLab joins are below) remain open in #58/#77–#80.
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
@@ -765,7 +765,7 @@ atomically through the existing journal. Cached status and explicit analyze/doct
 context can inspect those facets without reading Git. Older checkpoints retain
 their captured graph when HEAD, refs or current files change. `task test:sources:git`
 runs the native synthetic Git contract and compatibility cases. Historical execution
-binding, GitLab and Gitea reconciliation and independent proof persistence remain
+binding, Gitea reconciliation and independent proof persistence remain
 open in #58.
 
 ### Explicit local Git relationship recheck
@@ -899,6 +899,41 @@ through both built-in readers. The [PR commit-role join](#offline-pr-commit-role
 below answers the PR head and merge-result questions this join leaves open. The
 remaining cross-source chain, persisted proofs, contradiction reports and the
 diagnostic-utility study stay open in #58.
+
+### Offline Git/GitLab merge request commit join
+
+`sources.commit_join.join_merge_request_commit(git_source, git_store, gitlab_source,
+gitlab_store, selection=SEL, project_id=ID, iid=IID, commit_sha=SHA)` relates one
+exact local commit to one GitLab merge request's server-reported commit listing,
+across a `local_git/git` journal and an `api/gitlab` journal captured with a
+[schema 9](#explicit-gitlab-rest-v4-captures) selection that includes `commits`
+and the IID. Like the GitHub joins it reads only the two selected journals, runs
+no Git, makes no network or model calls, changes neither journal, and has no CLI
+exposure yet. The SHA must be full, lowercase, 40-hex; the IID and numeric project
+ID must be positive integers; the GitLab source must carry the selection's
+project and scope fingerprints. Violations raise before any journal is read.
+
+The Git source must declare the selection's project fingerprint, which is the
+declared instance plus project selector (numeric ID or case-insensitive path),
+not a verified repository identity. The numeric `project_id` is part of the
+project, MR and commit record identities, and the `gitlab_project` and
+`gitlab_merge_request` records must be current in the latest GitLab checkpoint.
+Statuses follow the GitHub commit join: `matched` (the commit record is current in
+both latest checkpoints and the GitLab MR-commit record for that MR is current),
+`stale` (seen in a journal's history but not its latest checkpoint), `unlinked`
+(different declared project fingerprints) and `unknown` (unavailable checkpoint
+or graph, missing project or MR record, unobserved, reference-only, truncated or
+ambiguous). A `matched` report carries one `same_commit` candidate receipt with
+basis `source_declaration`, and states `membership: server_reported` and
+`ancestry: unknown`. GitLab merge, squash and head SHAs are not ancestry, so a
+squash or rebase commit is not related to the original. No outcome, grade,
+independent root, verification or execution authority follows. The report holds
+fingerprints only, has `publication_allowed: false` and profile
+`cross-journal-gitlab-mr-commit-join-v1`, and public benchmark export rejects it.
+Gitea has no equivalent graph yet and stays open in #46.
+`task test:sources:commit-join` runs synthetic controls for foreign scopes,
+stale membership, missing records and invalid inputs, plus one case through both
+built-in readers.
 
 ### Offline PR commit-role join
 
@@ -3543,6 +3578,14 @@ the resulting records. GitLab can limit the file list without a reliable marker,
 so coverage remains incomplete and blocks checkpoints even for an empty list.
 The claims do not verify content, ancestry, execution or outcomes; reads are
 non-atomic. Schema 8 has a distinct scope from schemas 1–7.
+
+An opt-in selection schema 9 accepts every capability of schemas 4–8 and also emits
+an evidence graph with one `commit_on` candidate join per server-reported MR commit
+(commit record to MR record, namespace `gitlab.native`). It adds no request, so
+the graph holds only what `commits` already captured, and schemas 1–8 keep their
+graph-less checkpoints. Schema 9 has a distinct scope from schemas 1–8.
+[`join_merge_request_commit`](#offline-gitgitlab-merge-request-commit-join) reads
+that graph.
 
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,

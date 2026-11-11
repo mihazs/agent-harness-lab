@@ -560,6 +560,16 @@ class TestGitLabSource(GitLabFixture):
         changed, _ = self.read(selection)
         assert self.nodes(changed, 'gitlab_mr_commit')[0]['native_id_sha256'] == before
 
+    def test_v9_graph_holds_only_reported_commit_membership_edges(self):
+        selection = replace(self.v4_commit_selection(), schema_version=9)
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        _, snapshot = self.read(selection)
+        graph = snapshot.graph
+        assert {j.relation for j in graph.joins} == {'commit_on'} and len(graph.joins) == 1
+        assert all((j.status, j.basis, j.reason) == ('candidate', 'native_fields', 'not_validated') for j in graph.joins)
+        assert len(graph.nodes) == len(snapshot.records)
+        assert self.read(self.v4_commit_selection())[1].graph is None
+
     def test_v4_same_commit_and_iid_in_different_projects_remain_distinct(self):
         selection = self.v4_commit_selection()
         self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
@@ -1135,7 +1145,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=9),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=10),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
