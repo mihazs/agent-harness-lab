@@ -968,6 +968,26 @@ merge versus base, foreign repositories, other PR IDs, missing edges, a dropped 
 ambiguous PR revisions and private export. One native case runs through both
 built-in readers.
 
+### Link precision and false-link scoring
+
+`sources.link_study.score(cases)` scores join outcomes against an adjudicated
+fixture. Each case is exactly `case_id`, `truth` (`link`, `no_link` or `ambiguous`)
+and the join report's `status`. `matched`, `verified` and `reviewed` count as a
+positive link; `candidate`, `conflicted`, `unlinked`, `stale` and `unknown` do not.
+An `ambiguous` control promoted to a positive link is a false link, so a resolver
+earns no credit for guessing. The report gives precision, recall and false-link rate
+with counts and 95% Wilson intervals (`value` and interval are `None` when the
+denominator is zero). It is offline, reads nothing and has profile
+`cross-source-link-study-v1`.
+
+The score describes only the supplied fixture. It sets `diagnostic_utility_claimed`,
+`agent_success_claimed` and `publication_allowed` to false and `independent_roots`
+to `None`: it does not measure incremental diagnostic utility against a session-only
+baseline, production precision or agent success. Use reproducible synthetic or
+public cases only. `task test:sources:commit-join` also runs the commit join over
+seven synthetic controls (exact, fork, unrelated checkout, force-push, different
+commit, Git-reference-only, missing repository identity) and expects zero false links.
+
 ### Declared Codex project instruction inventory
 
 An optional `instruction_profile` in the Git selection enables instruction
