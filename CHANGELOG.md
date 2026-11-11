@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.164.0
+
+### Minor Changes
+
+- 6550ad2: Add triage evaluation profile v5 with descriptive Brier, reliability and risk/coverage diagnostics
+
 ## 0.163.0
 
 ### Minor Changes
