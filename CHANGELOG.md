@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.153.1
+
+### Patch Changes
+
+- 5494772: Explain how to review changed evaluation manifests and mismatched trial partitions.
+- 5494772: Reject fixed-comparison results if configuration or inference settings change during execution.
+
 ## 0.153.0
 
 ### Minor Changes
