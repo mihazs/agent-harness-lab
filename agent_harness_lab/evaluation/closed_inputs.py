@@ -142,8 +142,8 @@ def before_collection(handle,args,*,source_context=None):
         raise ValueError('focus is unsupported by the closed input profile')
     # These inputs would reach role views without a signed closed-domain source.
     if (source_context is not None or getattr(args,'memory_manifest',None) is not None
-            or getattr(args,'incident_corpus',None) is not None or getattr(args,'incident_query',None) is not None):
-        raise ValueError('source context, memory and incident inputs are outside the closed input profile')
+            or any(getattr(args,name,None) is not None for name in ('incident_corpus','incident_query','history_store','history_run'))):
+        raise ValueError('source context, memory, incident and saved history inputs are outside the closed input profile')
     if value['projection'] is not None or value.get('collection_started'):
         raise ValueError('closed inputs cannot be recollected')
     from agent_harness_lab.one_call import allowed_paths
