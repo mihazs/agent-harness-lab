@@ -38,7 +38,22 @@ def write_json(path, value):
     atomic_json(path, value)
 
 
+def reject_history_overlap(args):
+    """Refuse before any lock, directory or scratch exists when a write destination touches the selected history."""
+    store, run = getattr(args, 'history_store', None), getattr(args, 'history_run', None)
+    if (store is None) != (run is None):
+        raise ValueError('--history-store and --history-run must be supplied together')
+    if store is None: return
+    history = Path(store).resolve()
+    output = None if getattr(args, 'output', None) is None else Path(args.output).resolve()
+    state = state_root().resolve()
+    for destination in (state / 'locks', state / 'runs' / identity(args.project), *([output] if output else [])):
+        if destination.is_relative_to(history) or history.is_relative_to(destination):
+            raise ValueError('analysis output and state must not overlap the selected history store')
+
+
 def output_dir(args, *, deadline=None):
+    reject_history_overlap(args)
     parent = state_root() / 'runs' / identity(args.project)
     from .read_only import require_external_output
     require_external_output(args.project, parent if args.output is None else args.output)
@@ -97,6 +112,13 @@ def evidence(args, output, source_context=None, *, progress=None):
     incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
+    paired_history = None
+    if getattr(args, 'history_store', None) is not None:
+        reject_history_overlap(args)
+        from .evaluation.oracle_history import HistoryStore
+        progress('saved_history_analysis')
+        paired_history = dict(HistoryStore(args.history_store).analyze(args.history_run, read_only=True),
+            profile='ahl-analysis-execution-v1', publication_allowed=False)
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8', dir=output) as events, contextlib.ExitStack() as captures:
         selected, source_format, memory_summary = args.events, args.format, None
         source_identity = {}
@@ -121,6 +143,8 @@ def evidence(args, output, source_context=None, *, progress=None):
     if source_context is not None: data['source_context'] = source_context
     if incident_retrieval is not None:
         data['incident_retrieval'] = incident_retrieval
+    if paired_history is not None:
+        data['paired_history_analysis'] = paired_history
     if memory_summary is not None:
         data['memory_source'] = memory_summary
         # Source insufficiency must reach the receipt and next action, not read as a clean observation.
@@ -1083,6 +1107,7 @@ def improve(args):
         args=copy(args)
     from .read_only import require_writable
     require_writable(args.project)
+    reject_history_overlap(args)
     with project_lock(args.project):
         return _run_improvement(args, parent_started=getattr(args, '_entry_started', None))
 

@@ -8,8 +8,8 @@ for the operating steps.
 Evidence and ledger staging use the selected output directory instead of the
 ambient temporary directory. Output paths must remain stable and trusted during
 the run: path-based operations do not prevent a concurrent directory replacement.
-This placement does not establish a no-write guarantee for other input stores or
-enable saved-history analysis.
+Saved-history analysis (below) is the only route that reads another input store;
+it adds a destination check but no no-write guarantee against a concurrent writer.
 
 ## Default methods
 
@@ -185,6 +185,7 @@ Without `--public`, the existing private report input path is unchanged.
 | Capability | Current entrypoint / prerequisite | Default analysis? |
 | --- | --- | --- |
 | Lexical incident retrieval | Explicit `--incident-corpus` and `--incident-query`, or standalone `ahl incident-search` | Only when both inputs are supplied |
+| Saved paired-history analysis | Explicit existing `--history-store` and `--history-run` | Only when both inputs are supplied; no new trials |
 | Classifier comparison | `ahl benchmark`, supplied labels and selected local models | No |
 | Paired baseline/candidate execution | Applicable `ahl improve` workflow or explicit evaluation/experiment | No model execution in read-only analysis |
 | Bounded candidate search | Guarded search APIs with explicit contracts | Not part of read-only analysis |
@@ -219,6 +220,46 @@ and matches never establish a mechanism, a vote or adoption authority. Contextua
 results and their marked facets remain blocked by the supported publication guards,
 including when synthetic or public corpus records were supplied. Generic standalone
 lexical retrieval retains its existing contract.
+
+### Explicit saved comparison analysis
+
+`ahl analyze . --history-store /private/history --history-run RUN_SHA256`
+uses the existing controller-history analyzer for that exact run. Both options
+are required together and also apply to the evidence stage of `ahl improve`.
+No history is discovered, initialized, resumed or retried, and the read dispatches
+no task trials. Ordinary improvement retains its separately authorized runtime
+behavior.
+
+Supported contract, which fails closed:
+
+- Only schema-1 unbound fixed histories are read. Bank-bound, protected, derived,
+  sequential and preservation/cohort histories fail explicitly before their
+  transitive validators run, because those validators may create dependency locks
+  or signature-verification scratch inside the store. Their standalone commands
+  keep their own contracts.
+- The store must already be initialized, owner-only and hold its existing lock
+  file; a missing lock fails without being recreated.
+- The resolved `--output`, the default run directory and the lock directory under
+  the state root must not equal, contain or sit inside the store. Symlink aliases
+  are resolved first. The check runs before any lock, directory or scratch exists,
+  for both `analyze` and `improve`.
+- The check is a path comparison at start. Output and state paths must stay stable
+  and trusted; a concurrent replacement of a directory ancestor, or a concurrent
+  writer to the store, is outside this contract and is not prevented.
+
+The existing analyzer checks frozen input identities, oracle state and sealed
+trial evidence before computing its frozen fixed paired-root analysis. Unsealed
+runs stay incomplete, quarantined runs stay blocked, and malformed or changed
+evidence fails explicitly. Project `results.json` files are never substituted for
+authenticated controller history.
+
+The method receipt, private JSON, Markdown and improvement role views carry the
+same conditional result and disposition. A statistical `supported` result does not
+verify root independence or oracle review, grant promotion, or make capture-method
+agreement independent corroboration; overlap with the captures stays unknown. The
+completed historical read is distinct from executing paired evaluation, which the
+receipt still lists as not run. All results stay private even when the original
+experiment used synthetic tasks.
 
 The audit identified missing default graph integration and unclear method receipts,
 tracked in [#174](https://github.com/mihazs/agent-harness-lab/issues/174) and

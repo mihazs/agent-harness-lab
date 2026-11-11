@@ -47,7 +47,10 @@ def test_serialized_domain_cannot_collect_or_read():
     pytest.param({},dict(kind='synthetic-context'),id='source-context'),
     pytest.param(dict(memory_manifest=Path('/synthetic/memory.json')),None,id='memory-manifest'),
     pytest.param(dict(incident_corpus=Path('/synthetic/corpus.json')),None,id='incident-corpus'),
-    pytest.param(dict(incident_query='synthetic query'),None,id='incident-query')])
+    pytest.param(dict(incident_query='synthetic query'),None,id='incident-query'),
+    pytest.param(dict(history_store=Path('/synthetic/history'),history_run='synthetic-run'),None,id='saved-history'),
+    pytest.param(dict(history_store=Path('/synthetic/history')),None,id='saved-history-store-only'),
+    pytest.param(dict(history_run='synthetic-run'),None,id='saved-history-run-only')])
 def test_unsigned_context_memory_and_incident_inputs_reject_before_collection(extra,source_context):
     from agent_harness_lab.diagnostics import retrieval
     value=dict(projection=None)
@@ -55,6 +58,7 @@ def test_unsigned_context_memory_and_incident_inputs_reject_before_collection(ex
         _closed_input_domain=object(),**extra)
     with patch.object(closed_inputs,'owned',return_value=value), \
             patch.object(retrieval,'contextual_search',side_effect=AssertionError('incident input must not be read')), \
+            patch('agent_harness_lab.evaluation.oracle_history.HistoryStore',side_effect=AssertionError('history must not be read')), \
             patch.object(workflow,'collect',side_effect=AssertionError('unsigned input must not be collected')):
         with pytest.raises(ValueError, match='outside the closed input profile'):
             workflow.evidence(args,Path('/synthetic/output'),source_context)

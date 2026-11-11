@@ -93,7 +93,7 @@ def test_analysis_alias_runs_all_default_methods_and_reports_insufficient_author
     assert synthesis['dependency_groups'][0]['independence'] == 'unverified'
     assert not synthesis['promotion_authority']
     assert synthesis['profile'] == 'ahl-analysis-execution-v1'
-    assert len(receipt['analysis']['not_run']) == 4
+    assert len(receipt['analysis']['not_run']) == 5
     data = json.loads((pipeline.root/'output/analysis.json').read_text())
     assert data['execution'] == receipt['analysis']
     assert 'independent_roots' not in data['analysis']['process_mining']
@@ -150,6 +150,14 @@ def test_explicit_lexical_method_executes_and_keeps_retrieval_untrusted(pipeline
             marked = dict(facet, publication_allowed=True, provenance=provenance)
             record = marked if wrapper is None else dict(provenance=provenance, publication_allowed=True, **{wrapper:marked})
             assert not public_export_allowed([record])
+
+
+@pytest.mark.parametrize('extra', [('--history-store', 'missing'), ('--history-run', 'a'*64)])
+def test_saved_history_requires_both_explicit_options(pipeline, extra):
+    with patch('agent_harness_lab.evaluation.oracle_history.HistoryStore.analyze', side_effect=AssertionError('no implicit history read')):
+        with pytest.raises(SystemExit) as stopped:
+            pipeline.invoke(extra=extra)
+    assert stopped.value.code == 2
 
 
 def test_no_match_or_empty_capture_does_not_skip_explicit_retrieval(pipeline):

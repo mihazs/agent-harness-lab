@@ -105,7 +105,7 @@ class PrivateJournal:
         self.max_events,self.max_metadata,self.max_entries=max_events,max_metadata,max_entries
 
     @contextmanager
-    def locked(self, *, create=False):
+    def locked(self, *, create=False, read_only=False):
         """Hold the store's lock; marker and event publication stay relative to the locked store's descriptor.
 
         The store is opened once by the no-follow walk and the lock is created in that descriptor. Every
@@ -113,6 +113,7 @@ class PrivateJournal:
         (a swapped link raises 'input crosses a symlink', a replaced directory 'case store changed while
         locked'); the files themselves are made from the held descriptor, so a later swap cannot move them."""
         require_writable(self.root)
+        if read_only and create: raise ValueError('read-only history cannot initialize a store')
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError('case store crosses a symlink')
         if create:
@@ -136,7 +137,7 @@ class PrivateJournal:
             if marked(): validate_marker()
             elif not create or unrelated():
                 raise ValueError('case store is uninitialized or contains unrelated files')
-            descriptor = os.open('.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=store)
+            descriptor = os.open('.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC | (0 if read_only else os.O_CREAT), 0o600, dir_fd=store)
             try:
                 info = os.fstat(descriptor)
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077:
