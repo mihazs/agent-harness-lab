@@ -14,7 +14,7 @@ from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VER
 from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
 from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
 from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
-from .mem0 import PROVIDER as MEM0, SOURCE_VERSION as MEM0_VERSION, Mem0Export
+from .mem0 import PROVIDER as MEM0, PLATFORM_PROVIDER as MEM0_PLATFORM, SOURCE_VERSION as MEM0_VERSION, Mem0Export, Mem0PlatformExport
 from .hindsight_model_refs import PROVIDER as HINDSIGHT_REFS, SOURCE_VERSION as HINDSIGHT_REFS_VERSION, HindsightModelReferences
 from .hindsight_models import PROVIDER as HINDSIGHT_MODELS, SOURCE_VERSION as HINDSIGHT_MODELS_VERSION, HindsightModels
 from .hindsight_knowledge import PROVIDER as HINDSIGHT_KNOWLEDGE, SOURCE_VERSION as HINDSIGHT_KNOWLEDGE_VERSION, HindsightKnowledge
@@ -57,6 +57,7 @@ def main(argv):
         'Local providers include ahl-metadata, ai-memory-okf, git, test-results, claude-jsonl, codex-rollout, '
         'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network), '
         'mem0-oss-export (one selected Mem0 OSS v2.2.1 get_all/history JSON export; no server, Platform or network), '
+        'mem0-platform-export (one selected Mem0 Platform v3 get-all page sequence plus history JSON export; no API call or network), '
         'hindsight-bank-archive (one extracted Hindsight v1.1.0 bank transfer archive; no recall, reflect, service or network) and '
         'cognee-export (one selected Cognee v1.6.5 graph JSON export of one dataset; no recall, inference or store). '
         'opencode-export (one selected pinned-shape JSON session export; metadata only). '
@@ -109,6 +110,8 @@ def main(argv):
                 connector = MemPalaceDrawer(args.manifest)
             elif source.provider == MEM0:
                 connector = Mem0Export(args.manifest)
+            elif source.provider == MEM0_PLATFORM:
+                connector = Mem0PlatformExport(args.manifest)
             elif source.provider == HINDSIGHT_REFS:
                 connector = HindsightModelReferences(args.manifest)
             elif source.provider == HINDSIGHT_MODELS:
@@ -142,6 +145,7 @@ def main(argv):
             registry.register(Capability('local_file', MEMPALACE_LIST, MEMPALACE_LIST_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE, MEMPALACE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', MEM0_PLATFORM, MEM0_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_REFS, HINDSIGHT_REFS_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_MODELS, HINDSIGHT_MODELS_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_KNOWLEDGE, HINDSIGHT_KNOWLEDGE_VERSION, ('contextual_assertion',)), connector)
