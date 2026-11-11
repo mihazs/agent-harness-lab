@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -219,11 +220,38 @@ def test_noninteractive_ambiguous_runtime_does_not_prompt_or_dispatch(one):
         code, result = one.invoke('--agent', 'auto')
     assert (code, result['status'], result['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
     assert '--agent' in result['remediation']
+    assert result['preflight_plan']['choice'] == dict(option='--agent', values=['codex', 'claude'])
+    assert result['preflight_plan']['runtime_selection'] == dict(policy='ask_once', runtime=None, host=None)
+    assert 'authorizes the bounded default workflow' in result['preflight_plan']['authorization']
     assert one.skill.read_bytes() == before
 
 
+@pytest.mark.parametrize('marker,host', [('CLAUDECODE', 'claude'), ('CODEX_THREAD_ID', 'codex')])
+def test_ambiguous_runtime_resolves_to_the_invoking_host(one, monkeypatch, marker, host):
+    monkeypatch.setenv(marker, '1')
+    from agent_harness_lab.one_call import preflight
+    args = SimpleNamespace(agent='auto', codex='codex', claude='claude', trial_limit=config.DEFAULT_TRIALS)
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
+        assert preflight(args) is None
+    assert (args.agent, args._runtime_selection) == (host, dict(policy='invoking_host', runtime=host))
+
+
+def test_both_host_markers_or_an_explicit_agent_do_not_guess(one, monkeypatch):
+    monkeypatch.setenv('CLAUDECODE', '1'); monkeypatch.setenv('CODEX_THREAD_ID', 'x')
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
+        assert one.invoke()[1]['reason'] == 'select_one_runtime_with_agent'
+
+
+def test_single_runtime_is_selected_and_recorded(one):
+    from agent_harness_lab.one_call import preflight
+    args = SimpleNamespace(agent='auto', codex='codex', claude='claude', trial_limit=config.DEFAULT_TRIALS)
+    with patch('agent_harness_lab.one_call.shutil.which', side_effect=lambda name: '/x' if name == 'claude' else None):
+        assert preflight(args) is None
+    assert (args.agent, args._runtime_selection) == ('claude', dict(policy='single_installed', runtime='claude'))
+
+
 def test_blocked_preflight_gives_a_reason_specific_remediation(one):
-    from agent_harness_lab.one_call import REMEDIATION
+    from agent_harness_lab.one_call import REMEDIATION, AUTHORIZATION
     with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
         _, ambiguous=one.invoke()
     config.create(one.project,config.defaults())
@@ -233,7 +261,9 @@ def test_blocked_preflight_gives_a_reason_specific_remediation(one):
     assert ambiguous['remediation'] != offline['remediation']
     assert ambiguous['preflight_plan'] == dict(requested_runtime='auto', observed_runtimes=['codex', 'claude'],
         configured_scope=None, limits=dict(seconds=2700, trials=config.DEFAULT_TRIALS),
-        next_step=ambiguous['remediation'], candidate_prepared=False, evidence_prepared=False, execution_authority=False)
+        runtime_selection=dict(policy='ask_once', runtime=None, host=None),
+        choice=dict(option='--agent', values=['codex', 'claude']),
+        next_step=ambiguous['remediation'], authorization=AUTHORIZATION, candidate_prepared=False, evidence_prepared=False, execution_authority=False)
     plan = offline['preflight_plan']
     assert plan['observed_runtimes'] is None
     assert plan['configured_scope'] == []

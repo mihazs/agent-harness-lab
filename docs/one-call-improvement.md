@@ -52,9 +52,36 @@ After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
 
-No manual analyze/manifest/evaluate sequence is required. If both runtimes are
-available, `--agent codex` or `--agent claude` selects one. Authentication remains
+No manual analyze/manifest/evaluate sequence is required. Authentication remains
 the runtime's responsibility; AHL does not inspect credential contents.
+
+### Runtime selection without `ahl.json`
+
+With `--agent auto` (the default) and no configured runtime, AHL applies this
+fixed order and records the outcome as `runtime_selection` in the preflight plan
+and `invocation.json`:
+
+1. Exactly one supported executable on `PATH`: use it (`single_installed`).
+2. Several installed and the invoking host is a supported runtime: use that
+   runtime (`invoking_host`). The host is read from the presence of `CLAUDECODE`
+   or a `CODEX_*` session variable, never from credential contents. If both or
+   neither are present the host is unknown.
+3. Otherwise stop with `select_one_runtime_with_agent` (`ask_once`) before any
+   spend. The plan's `choice` lists the runtimes; ask the user once, then rerun
+   the same command with `--agent <choice>`.
+
+An explicit `--agent`, `--codex` or `--claude` and a trusted `ahl.json` runtime
+always take precedence, and the policy never changes a model, provider or
+permission. Choosing the host's runtime does not run the host session itself:
+AHL starts its own isolated child process of that executable, so the host runtime
+is acceptable for the cooperative `codex` and `claude` profiles. Choose an
+isolated runtime explicitly (a configured `responses` pipeline) when the
+evaluation must not share the host's tooling or account. A user-level default
+that persists the choice is not provided yet.
+
+An explicit invocation is the authorization to run this bounded default
+workflow. `execution_authority: false` in a blocked plan only states that
+nothing was dispatched.
 
 For an already prepared controlled Responses environment, the [Responses configuration variant](onboarding.md#configure-controlled-responses-once)
 persists its settings and worker references. Plain `ahl improve .` resolves that

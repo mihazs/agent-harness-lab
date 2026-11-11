@@ -26,7 +26,7 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
         bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',config.DEFAULT_TRIALS),
         remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
         remaining_trials=getattr(args,'trial_limit',config.DEFAULT_TRIALS) if remaining_trials is None else remaining_trials,
-        execution_authority=False,publication_allowed=False)
+        execution_authority=False,publication_allowed=False,runtime_selection=getattr(args,'_runtime_selection',None))
 
 
 def resolve(args, explicit):
@@ -80,9 +80,13 @@ def preflight(args):
     if args.agent == 'auto':
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]
         args._preflight_runtimes = found
-        if len(found) != 1:
+        host = invoking_host()
+        if len(found) == 1: args._runtime_selection = dict(policy='single_installed', runtime=found[0])
+        elif len(found) > 1 and host in found: args._runtime_selection = dict(policy='invoking_host', runtime=host)
+        else:
+            args._runtime_selection = dict(policy='ask_once', runtime=None, host=host) if found else None
             return 'select_one_runtime_with_agent' if found else 'agent_runtime_unavailable'
-        args.agent = found[0]
+        args.agent = args._runtime_selection['runtime']
     if args.agent != 'responses':
         available = bool(shutil.which(getattr(args, args.agent)))
         args._preflight_runtimes = [args.agent] if available else []
@@ -95,6 +99,19 @@ def preflight(args):
     return None
 
 
+HOST_MARKERS = (('claude', ('CLAUDECODE',)), ('codex', ('CODEX_THREAD_ID', 'CODEX_CI', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED')))
+
+
+def invoking_host():
+    """The supported runtime that launched this process, from variable presence only; None when absent or both."""
+    hosts = [name for name, markers in HOST_MARKERS if any(os.environ.get(marker) for marker in markers)]
+    return hosts[0] if len(hosts) == 1 else None
+
+
+AUTHORIZATION = ('An explicit invocation authorizes the bounded default workflow within the stated limits. '
+    'execution_authority describes this plan only: false because nothing was dispatched, not because a run is disallowed.')
+
+
 # One actionable step per preflight reason; no step grants authorization or changes a setting itself.
 DEFAULT_REMEDIATION = 'Select a supported runtime/profile and budget; see ahl improve --help'
 
@@ -104,7 +121,9 @@ def preflight_plan(args, reason):
     return dict(requested_runtime=args._preflight_requested_runtime, observed_runtimes=args._preflight_runtimes,
         configured_scope=settings['harness_paths'] if settings else None,
         limits=dict(seconds=args.timeout, trials=args.trial_limit),
-        next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
+        runtime_selection=getattr(args, '_runtime_selection', None),
+        choice=dict(option='--agent', values=args._preflight_runtimes) if reason == 'select_one_runtime_with_agent' else None,
+        next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION), authorization=AUTHORIZATION,
         candidate_prepared=False, evidence_prepared=False, execution_authority=False)
 
 
