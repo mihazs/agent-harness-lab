@@ -1,4 +1,5 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
+from .evaluation.manifest_contract import REASONS as CONTRACT_REASONS
 
 REMEDIATION = {
     'target_filesystem_read_only': 'Use a separately authorized writable execution context or keep analysis read-only.',
@@ -65,6 +66,7 @@ REMEDIATION = {
     'inference_response_bytes_exhausted': 'Review the configured inference response byte limit.',
     'inference_protocol_error_no_retry': 'Inspect the recorded inference protocol error before any retry.',
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
+    **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
 }
 
@@ -110,6 +112,9 @@ def guidance(result):
     steps = result.get('next_steps')
     if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
         action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"
+    violation = result.get('contract_violation')
+    if reason in CONTRACT_REASONS and isinstance(violation, dict):
+        action += f" Stage: {violation.get('stage')}; file: {violation.get('file')}; field: {violation.get('field') or 'none'}; origin: {violation.get('origin')}."
     events = analysis.get('events')
     cases = analysis.get('cases')
     coverage = f'{events} events, {cases} cases' if type(events) is int and type(cases) is int else 'unavailable'

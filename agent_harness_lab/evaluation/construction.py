@@ -6,6 +6,7 @@ import shutil
 from .integrity import contained, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
 from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .manifest_contract import ContractError, check_authored, contract_text
 from .analysis_inputs import AnalysisInputs
 from .. import surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
@@ -80,7 +81,7 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True):
     if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
@@ -100,7 +101,8 @@ prompt and artifacts. Keep all fixture/control directories disjoint from every g
 Each task needs broken, partial and complete controls in grader_self_tests (task/state/fixture).
 All declared artifacts must exist in controls. Add grader_bundles={task_id:{"path":"relative bundle"}}.
 Each complete bundle contains grade.py.txt, expected.json and all imports/data dependencies.
-Do not supply task grader argv or bundle digests; the controller constructs/freezes them.
+Do not supply task grader argv or bundle/control digests; the controller constructs/freezes them.
+'''+contract_text()+'''
 Graders read argv[1] as the artifact directory and argv[2] as expected.json, emit JSON
 {schema_version:1,valid:true,outcome:boolean,grader_id:string,grader_version:string}, and exit0
 for true or exit1 for false. Broken/partial must produce valid false and complete valid true.
@@ -142,12 +144,32 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
+    try:
+        if repairs is not None:_check_shape(state)  # only the improve pipeline consumes the authored shape
+    except ContractError as error:
+        if not error.repairable or not repair_allowed or repairs:raise
+        # One bounded repair pass in the same workspace and budget; the typed reason is recorded in the receipt.
+        repairs.append(dict(error.receipt(),attempt=1,outcome='requested'))
+        workspace=state.publish(workspace.with_name(workspace.name+'-repair'),deadline)  # seed the repair with the rejected output
+        state,more = run_role(client,backend,workspace,inputs,'evaluator_author',
+            instructions,prompt+'\n'+error.repair_instruction(),deadline)
+        commands=[*commands,*more]; check_deadline(deadline)
+        _check_shape(state); repairs[-1]['outcome']='repaired'
     state.snapshot=normalize_author_snapshot(state.snapshot,destination,deadline=deadline)
     published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
     if derivation is not None:
         from .derivations import record_author_output
         record_author_output(derivation,published)
     return manifest_path,commands
+
+
+def _check_shape(state):
+    """Validate the authored manifest shape right after the author finishes, before any other stage."""
+    raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
+    if raw is None: raise ContractError('evaluation_manifest_unreadable','evaluation_construction')
+    try: manifest=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
+    except (ValueError,RecursionError) as exc: raise ContractError('evaluation_manifest_unreadable','evaluation_construction') from exc
+    check_authored(manifest,stage='evaluation_construction')
 
 
 def normalize_author_snapshot(snapshot,destination,*,deadline=None):

@@ -18,6 +18,7 @@ from agent_harness_lab import config, surfaces
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
+from agent_harness_lab.evaluation import manifest_contract
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -354,13 +355,15 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             raise ValueError('fixed improvement experiment selection differs')
     bundles = manifest.get('grader_bundles', {})
     grader_contracts = {}
-    if grader_backend is not None:
-        from .evaluation.bank_tools import frozen_grader, regrade_artifacts
-        from .evaluation.integrity import contained, digest
-        from .evaluation.sandbox import Limits
+    from .evaluation.integrity import contained, digest
+    if grader_backend is not None or bundles:
+        # Bundle digests are controller-computed from the frozen author output, even without a grader sandbox.
+        if grader_backend is not None:
+            from .evaluation.bank_tools import frozen_grader, regrade_artifacts
+            from .evaluation.sandbox import Limits
         if (not isinstance(bundles, dict) or len({task['id'] for task in tasks}) != len(tasks)
                 or set(bundles) != {task['id'] for task in tasks}):
-            raise ValueError('every sandboxed grader requires a frozen bundle')
+            raise ValueError('every task requires a frozen grader bundle')
         for task in tasks:
             declaration = bundles[task['id']]
             if not isinstance(declaration, dict) or set(declaration) not in ({'path'}, {'path', 'digest'}):
@@ -371,11 +374,13 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             if 'digest' in declaration and declaration['digest'] != frozen:
                 raise ValueError('declared grader bundle integrity mismatch')
             bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
-            grader_contracts[task['id']] = (*frozen_grader(path.parent, task, bundles[task['id']]), frozen)
-        fixtures = [contained(path.parent, task['fixture']) for task in tasks]
-        for folder, _, _ in grader_contracts.values():
-            if any(folder == fixture or folder.is_relative_to(fixture) or fixture.is_relative_to(folder) for fixture in fixtures):
-                raise ValueError('grader bundle and task fixtures must not overlap')
+            if grader_backend is not None:
+                grader_contracts[task['id']] = (*frozen_grader(path.parent, task, bundles[task['id']]), frozen)
+        if grader_backend is not None:
+            fixtures = [contained(path.parent, task['fixture']) for task in tasks]
+            for folder, _, _ in grader_contracts.values():
+                if any(folder == fixture or folder.is_relative_to(fixture) or fixture.is_relative_to(folder) for fixture in fixtures):
+                    raise ValueError('grader bundle and task fixtures must not overlap')
         manifest['grader_bundles'] = bundles
     controls = manifest.get('grader_self_tests', [])
     if not isinstance(controls, list) or any(not isinstance(c, dict) or not isinstance(c.get('fixture'), str) for c in controls):
@@ -407,6 +412,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 raise ValueError('grader control differs from actual author output')
             bounded_fixture(workspace, runner)
             check_owned()
+            check['digest'] = digest(workspace)  # controller-computed; any authored value is replaced
             if any(p.is_file() and p.is_relative_to(workspace) for p in programs):
                 raise ValueError('Graders must be outside control fixtures')
             available = remaining()
@@ -828,12 +834,16 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='blocked', reason=configured['blocked_reason'])
                 break
         elif controlled:
+            made = []
+            args._evaluation_repairs = made
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                    prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True)
+                    prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made)
             else:
-                manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
-            write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
+                try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
+                finally: made[:] = access.repair_log()
+            write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands,
+                manifest_repairs=made))
         else:
             evaluation.mkdir()
             write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
@@ -856,7 +866,7 @@ The same grader must reject broken and partial states and accept complete states
 expectations stay outside agent-writable fixtures. Use fresh held-out inputs for this attempt.
 Do not tune tests to the candidate; it is frozen and deliberately not supplied. Do not run model
 trials. The parent checks grader controls, freezes inputs, executes both versions and owns adoption.
-"""
+""" + manifest_contract.contract_text(controller_grader=False) + '\n'
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -873,18 +883,33 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
             write_json(output / f'evaluation-construction-{attempt}.environment.json',
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
-            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt, env=environment)
-            (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
-            (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
-            check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
-            if runner.trace_result(check, agent)[0] != 'completed':
-                result['status'] = 'execution_error'
+            made = args._evaluation_repairs = []
+            suffix = ''
+            while True:
+                construction = runner.execute(command, evaluation, remaining(), evaluation_prompt + suffix, env=environment)
+                (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
+                (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
+                check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
+                if runner.trace_result(check, agent)[0] != 'completed':
+                    result['status'] = 'execution_error'
+                    break
+                try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
+                    manifest_contract.check_file(manifest_path, stage='evaluation_construction',
+                        controller_grader=False, grading=grading is not None)
+                    break
+                except manifest_contract.ContractError as error:
+                    if not error.repairable or made or remaining() <= 0: raise
+                    made.append(dict(error.receipt(), attempt=1, outcome='requested'))
+                    suffix = '\n' + error.repair_instruction()
+            if result['status'] == 'execution_error':
                 break
+            if made: made[-1]['outcome'] = 'repaired'
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
         validation_options = dict(grader_backend=grading)
         if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
-        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
+        with manifest_contract.boundary('manifest_validation'):
+            (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
         if instruction is not None:
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
             instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
@@ -920,7 +945,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.sandbox_backend = grading
         for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256'):
             if getattr(args,name,None) is not None:setattr(options,name,getattr(args,name))
-        runner.evaluate(options)
+        with manifest_contract.boundary('evaluation'):
+            runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         if hasattr(args, 'project_settings'):
             from .one_call import unchanged
@@ -1044,6 +1070,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
+    if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
     if proposed is not None:
@@ -1126,6 +1153,9 @@ def _run_improvement(args, *, parent_started=None):
             except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
 
         if inference_error: result['reason'] = str(exc)
+        if isinstance(exc, manifest_contract.ContractError):
+            result.update(reason=exc.reason, contract_violation=exc.receipt())
+        if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
             result['isolation_qualification']=permission_backend.permission_qualification()
@@ -1253,6 +1283,7 @@ def watch(args):
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
+                                      **({'reason': exc.reason} if isinstance(exc, manifest_contract.ContractError) else {}),
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())

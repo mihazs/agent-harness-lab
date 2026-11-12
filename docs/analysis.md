@@ -375,6 +375,12 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `instruction_validation_blocked` | Review the instruction validation findings before retrying. |
 | `isolation_qualification_unverified` | Verify the required isolation qualification before retrying. |
 | `missing_or_duplicate_trials` | Review the trial records and restore complete, unique trial coverage. |
+| `evaluation_manifest_controller_field_supplied` | Remove the named controller-owned field from manifest.json; the controller computes it. Then rerun. |
+| `evaluation_manifest_controls_incomplete` | Give every task one broken, one partial and one complete grader self-test, then rerun. |
+| `evaluation_manifest_field_invalid` | Correct the named manifest field to the documented shape, then rerun. |
+| `evaluation_manifest_field_missing` | Add the named manifest field with the documented shape, then rerun. |
+| `evaluation_manifest_unreadable` | Write manifest.json as one JSON object in the evaluation directory, then rerun. |
+| `internal_contract_error` | This is an AHL contract defect, not an input defect; report it with the named stage and field. |
 | `evaluation_manifest_changed` | Review the changed evaluation manifest before starting a fresh evaluation. |
 | `grader_changed_after_trials` | The grader or acceptance boundary changed after trials started; the comparison cannot support adoption. Run fresh trials under the new grader as a new comparison. |
 | `trial_split_mismatch` | Review the trial records and manifest partitions before starting a fresh evaluation. |

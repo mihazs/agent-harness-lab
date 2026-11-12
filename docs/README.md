@@ -21,7 +21,7 @@ reader purpose.
 
 ## Look up behavior and contracts
 
-- [Command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), and [evaluation contracts and prerequisites](evaluation-foundation.md).
+- [Command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md).
 - [Campaign specification and planned records](campaign-specification.md).
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
