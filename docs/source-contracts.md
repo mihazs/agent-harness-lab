@@ -3901,6 +3901,26 @@ search, embedding, backend or network operation is performed by this profile.
 An empty result does not establish that no memory exists. A local import
 checkpoint does not establish source coverage.
 
+`local_file/mempalace-kg/v1` separately reads one caller-supplied result shaped
+like the pinned `mempalace_kg_query` response. Its descriptor contains
+`schema_version`, `upstream_commit`, `instance`, `export`, `entity_sha256`,
+`as_of` (`null`, `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SSZ`) and `direction`
+(`outgoing`, `incoming` or `both`). The entity fingerprint is
+`digest(("mempalace.kg_entity", instance, entity))` and must equal the source
+project fingerprint. The graph is not wing-scoped: this profile does not
+establish that a fact belongs to any wing. The result must be error-free, hold
+at most 1,000 facts, and report a count and `as_of` that match the selection.
+Each fact must touch the selected entity in a selected direction, carry valid
+dates, and agree with its `current` flag (`valid_to` absent). The validity
+window is part of the fact identity, so an ended fact and its successor for
+the same triple remain separate claims; neither is promoted to truth. Subject,
+predicate, object and source closet are fingerprinted (private and guessable);
+confidence and the validity window are retained as the producer's claims.
+Producer, version, graph completeness and lineage remain unverified; a fact is
+not a task outcome. No query, mutation, embedding or network operation is
+performed. Live retrieval, backend selection and remote endpoints remain
+unsupported and are never inferred from database files.
+
 ## Offline Claude-Mem exports
 
 Select `local_file/claude-mem-export/v1` in the existing local source declaration,
