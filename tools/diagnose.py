@@ -360,6 +360,40 @@ def report(result, *, source_context=None):
     return '\n'.join(lines) + '\n'
 
 
+def findings_pieces(result):
+    """Pieces whose concatenation is exactly json.dumps(result, indent=2).
+
+    The top-level mapping and its list values are walked here and every element is encoded whole by the C encoder.
+    json.dumps on the entire result builds one text of about twice the analysis state, and json.dump is several
+    times slower because only the C encoder is fast. Anything else is encoded whole, so the output cannot differ.
+    """
+    if not isinstance(result, dict) or not result or not all(type(key) is str for key in result):
+        yield json.dumps(result, indent=2)
+        return
+    yield '{'
+    for number, (key, value) in enumerate(result.items()):
+        yield (',\n  ' if number else '\n  ') + json.dumps(key) + ': '
+        if type(value) is list and value:
+            yield '['
+            for position, item in enumerate(value):
+                yield (',\n    ' if position else '\n    ') + json.dumps(item, indent=2).replace('\n', '\n    ')
+            yield '\n  ]'
+        else:
+            yield json.dumps(value, indent=2).replace('\n', '\n  ')
+    yield '\n}'
+
+
+def write_findings(path, result):
+    try:
+        with path.open('w') as stream:
+            for piece in findings_pieces(result):
+                stream.write(piece)
+            stream.write('\n')
+    except BaseException:
+        path.unlink(missing_ok=True)  # a truncated findings.json must never look complete
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Input: redacted JSONL; normalized rows require case_id, event_id and activity.\n'
@@ -384,7 +418,7 @@ def main():
         with args.events.open('rb') as stream:
             result['input_sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
         args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
-        (args.output / 'findings.json').write_text(json.dumps(result, indent=2) + '\n')
+        write_findings(args.output / 'findings.json', result)
         (args.output / 'report.md').write_text(report(result))
     except FileExistsError:
         parser.exit(2, f'diagnosis error: output directory {args.output} already exists; choose a fresh --output path. Existing directories are never overwritten or deleted.\n')
