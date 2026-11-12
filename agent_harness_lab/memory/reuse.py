@@ -121,8 +121,9 @@ def plan(requests, prior=None, live=None, *, source_freshness='unknown', graph=G
     for stage in order(graph):
         request, record, checks = requests[stage], prior.get(stage), live.get(stage, {})
         upstream = [outcome[d] for d in graph[stage]]
-        if any(o[1] == 'blocked_role_access' for o in upstream):
-            settle(stage, 'excluded', 'blocked_role_access')
+        blocked = {o[0] for o in upstream if o[1] == 'blocked_role_access'}
+        if blocked:  # a definitive block stays a block; an unchecked upstream role stays unknown downstream
+            settle(stage, 'excluded' if 'excluded' in blocked else 'unknown', 'blocked_role_access')
             continue
         fresh = source_freshness == 'verified' or stage not in NEEDS_FRESHNESS
         known = all(o[0] == 'reused' for o in upstream)
@@ -131,20 +132,27 @@ def plan(requests, prior=None, live=None, *, source_freshness='unknown', graph=G
                            request['policy'])
         # None: an upstream stage is not reused, so its output digest is not known yet
         parts['inputs'] = sorted({*external, *(o[2] for o in upstream)}) if known else None
+        want = node_key(parts)  # canonicalizes the current request: rejects floats, volatile fields and oversize values
         if not fresh:
             settle(stage, 'unknown', 'miss_freshness_unknown')
         elif not record or record.get('status') != 'complete' or not isinstance(record.get('components'), dict):
             settle(stage, 'executed', 'miss_no_prior')  # failed and interrupted stages are never reusable
         elif (reason := _diff(record['components'], parts)):
             settle(stage, 'executed', reason)
+        elif parts['inputs'] is None:
+            settle(stage, 'executed', 'miss_input_changed')
         else:
-            key = node_key(record['components'])
+            key = want
             gates = [('bytes', 'invalid_integrity'), ('role', 'blocked_role_access')]
             if stage in NEEDS_ORACLE:
                 gates.append(('oracle', 'invalid_oracle_quarantine'))
             if stage in NEEDS_BANK:
                 gates.append(('bank', 'invalid_bank_authority'))
-            if record.get('node_key') != key or not isinstance(record.get('output'), str) \
+            try:  # == treats 1.0 and True as 1: only the canonical key proves the record is for this exact request
+                same = record['components'].get('stage') == stage and node_key(record['components']) == key
+            except ValueError:
+                same = False
+            if not same or record.get('node_key') != key or not isinstance(record.get('output'), str) \
                     or not DIGEST.fullmatch(record['output']):
                 settle(stage, 'executed', 'invalid_integrity', key)
                 continue

@@ -210,3 +210,49 @@ def test_plan_rejects_unknown_or_missing_stages():
     del reqs['trend_view']
     with pytest.raises(ValueError):
         run(reqs, {})
+
+
+def test_cross_stage_record_is_invalid_integrity():
+    reqs = requests()
+    ledger = committed(reqs)
+    parts = {**ledger['source_status']['components'], 'inputs': sorted(reqs['harness_inventory']['external_inputs'])}
+    ledger['harness_inventory'] = {**ledger['source_status'], 'components': parts, 'node_key': reuse.node_key(parts)}
+    receipt = run(reqs, ledger)
+    assert reasons(receipt)['harness_inventory'] == 'invalid_integrity'
+    assert 'harness_inventory' not in {r['stage'] for r in receipt['reused']}
+
+
+def test_record_equal_only_under_python_equality_is_not_a_hit():
+    reqs = requests()
+    ledger = committed(reqs)
+    reqs['harness_inventory']['config'] = {'a': True}
+    parts = {**ledger['harness_inventory']['components'], 'config': {'a': 1}}
+    ledger['harness_inventory'].update(components=parts, node_key=reuse.node_key(parts))
+    assert reasons(run(reqs, ledger))['harness_inventory'] == 'invalid_integrity'
+
+
+def test_float_in_current_request_is_rejected():
+    reqs = requests()
+    ledger = committed(reqs)
+    reqs['harness_inventory']['config'] = {'a': 1.0}
+    with pytest.raises(ValueError):
+        run(reqs, ledger)
+
+
+def test_reported_key_is_the_current_requests_key():
+    reqs = requests()
+    receipt = run(reqs, committed(reqs))
+    row = next(r for r in receipt['reused'] if r['stage'] == 'source_status')
+    assert row['node_key'] == reuse.node_key(reuse.components('source_status', '1', reqs['source_status']['external_inputs'],
+                                                              reqs['source_status']['scope'], {}, reqs['source_status']['policy']))
+
+
+def test_unchecked_upstream_role_stays_unknown_downstream():
+    reqs = requests()
+    live = {s: dict(GOOD) for s in reuse.GRAPH}
+    del live['normalized_capture']['role']
+    receipt = run(reqs, committed(reqs), live)
+    assert not receipt['excluded']
+    assert {r['stage'] for r in receipt['unknown']} == {'normalized_capture', 'diagnostic_process_mining',
+                                                         'deterministic_grade', 'statistical_report', 'trend_view',
+                                                         'wiki_projection'}

@@ -54,7 +54,7 @@ source freshness that an adapter verified. Failed, interrupted or unknown record
 | `invalid_integrity` | Stored key or output, or the bytes, failed verification |
 | `invalid_oracle_quarantine` | Live oracle check failed (`deterministic_grade`) |
 | `invalid_bank_authority` | Live bank check failed (`deterministic_grade`) |
-| `blocked_role_access` | Inputs are not authorized for the role; dependents are excluded too |
+| `blocked_role_access` | Inputs are not authorized for the role; dependents are excluded too, or stay unknown when the upstream role was never checked |
 | `nonreplayable_live_trial` | Live trials and proposals are historical evidence only |
 
 A live check passes only on `True`. A missing result is unknown and listed under
