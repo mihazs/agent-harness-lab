@@ -2,7 +2,7 @@
 import hashlib
 from pathlib import Path, PurePosixPath
 from .native import guarded, jsonl, number, text, timestamp
-from .schema import SOURCE_ORDER, event
+from .schema import SOURCE_ORDER, event, message_fingerprint
 from ..sources.config_inventory import telemetry_server_sha256
 from ..sources.schema import digest
 from ..surfaces import skill_prefixes
@@ -164,12 +164,15 @@ class Projection:
                     usage = (raw.get('input_tokens'), raw.get('output_tokens'), base.get('reported_model_fingerprint'))
                     if response is None or any(value is None for value in usage[:2]): self.unattributed += 1
             content = message.get('content')
-            if isinstance(content, str): content = [dict(type='text')]
+            if isinstance(content, str): content = [dict(type='text', text=content)]
             if not isinstance(content, list): raise ValueError('invalid native Claude content blocks')
             for index, block in enumerate(content):
                 if not isinstance(block, dict): raise ValueError('invalid native Claude content block')
                 block_type = block.get('type')
-                if block_type == 'text': emit('user_message' if kind == 'user' else 'agent_message', index)
+                if block_type == 'text' and kind == 'user':
+                    fingerprint = message_fingerprint(block['text'], case) if isinstance(block.get('text'), str) else None
+                    emit('user_message', index, **({} if fingerprint is None else dict(message_fingerprint=fingerprint)))
+                elif block_type == 'text': emit('agent_message', index)
                 elif block_type in ('thinking', 'redacted_thinking') and kind == 'assistant': emit('reasoning', index)
                 elif block_type == 'tool_use' and kind == 'assistant':
                     name = text(block.get('name')); metadata = dict(tool_name=name if name in KNOWN_TOOLS else 'tool:'+digest(name))

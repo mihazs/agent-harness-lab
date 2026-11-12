@@ -1,6 +1,8 @@
 """Strict, content-free v2 event envelope with v1 compatibility."""
+import hashlib
 import json
 import math
+import re
 
 TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'actor', 'timestamp', 'tool_name', 'input_fingerprint', 'result_fingerprint',
@@ -12,7 +14,7 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
         'reported_model_fingerprint', 'native_stop_reason_fingerprint',
-        'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+        'message_fingerprint', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
 # A declared within-record subordinal: (segment, capture_order, suborder) under a pinned profile.
@@ -23,6 +25,22 @@ SOURCE_ORDER_PRODUCERS = {'claude-native-order-v1': ('claude', 'claude-jsonl-2.1
 SOURCE_ORDER_PROFILES = frozenset(SOURCE_ORDER_PRODUCERS)
 FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', *SOURCE_ORDER}
 PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model_hypothesis', 'unknown'}
+
+
+FINGERPRINT = re.compile(r'[0-9a-f]{16}\Z')
+MIN_FINGERPRINT_WORDS = 4
+
+
+def message_fingerprint(text, case_id):
+    """Content-free fingerprint of a user message, comparable only within one case; None when too short to be structural.
+
+    Words are case-folded and punctuation and spacing are dropped, then hashed with the case id as salt and cut to
+    64 bits. See docs/telemetry.md for the collision and privacy analysis.
+    """
+    words = re.findall(r'\w+', text.casefold())
+    if len(words) < MIN_FINGERPRINT_WORDS:
+        return None
+    return hashlib.sha256((case_id + '\0' + ' '.join(words)).encode()).hexdigest()[:16]
 
 
 def event(value):
@@ -44,6 +62,8 @@ def event(value):
             raise ValueError('invalid measurement: ' + key)
         if key == 'capture_order' and (type(val) is not int or val < 0):
             raise ValueError('invalid capture order')
+    if 'message_fingerprint' in result and (result['activity'] != 'user_message' or not FINGERPRINT.match(result['message_fingerprint'])):
+        raise ValueError('invalid message fingerprint')
     declared = [key in result for key in SOURCE_ORDER]
     if any(declared) and not (all(declared) and 'capture_order' in result
             and isinstance(result['source_order_profile'], str) and result['source_order_profile'] in SOURCE_ORDER_PROFILES

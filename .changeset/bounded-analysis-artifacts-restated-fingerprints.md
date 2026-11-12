@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Bound the private analysis artifacts of long histories and finish the analysis-brief slice of #666. `analysis.json` is now capped at 64 MiB with at most 1000 rows per detail list and 50 evidence references per row, and `events.v2.jsonl` at 64 MiB and 300 seconds of writing; analysis still reads every event, the brief and mechanism summaries are cap-independent, and `artifact_bounds` records only counts of what was cut, never a success or independence label. `--full-detail` on `ahl analyze` and `ahl improve` writes everything. The controlled Responses proposer and evaluator-author views now receive `analysis-brief.json` and are told to start from it; their complete `analysis-summary.json` is unchanged. Pinned native Claude and Codex captures add a content-free, case-salted `message_fingerprint` to user messages of four or more words, so the `restated_instructions` weak-outcome signal becomes an `observed_pattern` count when fingerprints exist and stays `unknown` otherwise; see the collision and privacy analysis in `docs/telemetry.md`. Adds the `docs/hypothesis-probes.md` design explanation.

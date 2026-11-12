@@ -538,3 +538,25 @@ descriptively (`unverified`, even at the pinned version), while the pinned expli
 `discovery.capture_counts` object lists `selected`, `parsed` and `skipped` captures
 and `skipped_reasons`; `selected = parsed + skipped`, so no capture is dropped
 without a reason.
+
+## Message fingerprints
+
+A pinned native Claude or Codex user message with at least four words carries
+`message_fingerprint`: the first 16 hex characters of SHA-256 over the case ID, a NUL byte and the
+message's case-folded words joined by single spaces. Punctuation, spacing and case do not change
+it; wording, word order and every word do. The message text is never stored. The field is valid
+only on `user_message` events and is absent for shorter messages and for sources that do not
+expose message text, which leaves the restated-instruction signal `unknown` rather than absent.
+
+**Collisions.** A fingerprint compares only within one case. With 64 bits, two different messages in
+a case collide with probability about n^2 / 2^65 (n messages), negligible below millions of messages.
+Identical normalized text always matches, including a pasted block or a repeated short approval of
+four or more words, so a match is an observed pattern with listed competing explanations, not a
+restatement proof. Paraphrases never match, so zero is not a clean result.
+
+**Privacy.** The salt makes equal messages in different cases unlinkable and a precomputed table
+useless across cases, but anyone who holds the private ledger and can guess a message can confirm
+it by hashing the guess with that case ID. The mitigations are the four-word minimum (it excludes the
+most guessable confirmations), the 64-bit truncation, and that the field lives only in the private
+run ledger: the brief, mechanism summaries and role views never contain it. Treat the ledger as
+private; do not publish it.

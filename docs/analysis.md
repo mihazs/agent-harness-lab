@@ -83,8 +83,13 @@ exact prerequisite each missing method lacks, weak-outcome signals, and a
 retries, edit-then-revert) are `observed_pattern` with competing explanations. A
 signal whose input is not captured is `unknown`, and a zero count is
 `not_observed_capture_unverified`; neither is a clean result. Restated instructions
-need content-free structural fingerprints of user messages, which the event envelope
-does not carry, so that signal stays `unknown`.
+count a user message whose `message_fingerprint` equals an earlier one in the same case.
+The field is a salted, normalized word-set hash that never stores text, and it exists
+only on pinned native captures of messages with at least four words (see
+[message fingerprints](telemetry.md#message-fingerprints)). Paraphrases do not match, so
+the count is a lower bound; a capture without fingerprints leaves the signal `unknown`.
+No shared ignored-instruction detector exists yet (#655), so this is the only restated-instruction
+matcher; it needs no wording from that work and can be reused by it.
 
 ### Bound and truncation provenance
 
@@ -92,8 +97,32 @@ The brief shrinks its lists from the end until it fits and records
 `bounds.truncated`. Mechanism groups are capped at 2000 per run (further groups merge
 into an `other` class) and case and root sets at 5000 per group, which sets
 `counts_are_lower_bounds`. Truncation is reported and never turns missing data into a
-success or an independence label. The size of `analysis.json` and `events.v2.jsonl`
-is not yet capped.
+success or an independence label.
+
+### Artifact size and time bounds
+
+Analysis always reads every event. The brief and the mechanism summaries are computed from
+the complete stream, so no cap below changes them. Only the detail written to disk is bounded:
+
+| Artifact | Default bound | What is cut | Provenance |
+| --- | --- | --- | --- |
+| `analysis.json` | 64 MiB rendered; at most 1000 rows per detail list (findings per kind, recurring sequences, graph edges) and 50 evidence references per row | Rows and references beyond the limits | `artifact_bounds.truncated.sections` holds `total` and `kept` counts per section; `evidence_total` on a shortened row |
+| `events.v2.jsonl` | 64 MiB and 300 seconds of writing | Events after the first limit reached | `artifact_bounds.event_store` holds `events_written`, `events_omitted` and the `reason` (`byte_limit` or `time_limit`) |
+
+If the list caps still leave `analysis.json` above its byte bound, the row limit is halved until it
+fits; when the remaining sections alone exceed it, `exceeds_byte_limit` is set rather than hidden.
+Writes stream to disk, so memory for the file is not the size of the rendered text. The time bound
+covers only the event-store write, the one phase whose duration scales with the stored volume;
+the single analysis pass has no wall-clock cutoff, so use `--max-events` to bound it.
+
+Capped detail changes nothing the brief or the receipts compute. The brief's `bounds.artifacts`
+flags say which artifact was capped, `missing_evidence` gains a `full_detail_artifacts` entry, and
+omitted rows carry no success, failure or independence label; a disposition still needs verified
+outcomes, never the size of an artifact. Pass `--full-detail`
+to `ahl analyze` or `ahl improve` to write every row and every event without these bounds; expect
+gigabytes on a history of thousands of sessions. The role views given to controlled proposers keep their complete
+`analysis-summary.json` (unlimited analysis admission is unchanged) and additionally receive `analysis-brief.json`,
+which their instructions name as the place to start.
 
 ## Evidence-based method selection
 

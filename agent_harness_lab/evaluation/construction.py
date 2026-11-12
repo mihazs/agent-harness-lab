@@ -10,9 +10,13 @@ from .manifest_contract import ContractError, check_authored, contract_text
 from .analysis_inputs import AnalysisInputs
 from .. import surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
+from ..diagnostics.brief import rendered
+
+BRIEF_LINE = ('\nStart from /inputs/fixture/analysis-brief.json: a bounded, content-free brief of mechanism summaries, weak-outcome signals '
+    'and missing evidence. Its patterns are observed, not diagnoses; a missing_evidence entry is unknown, not a clean result.')
 
 
-def views(data, assets, root, deadline, *, closed_domain=None):
+def views(data, assets, root, deadline, *, closed_domain=None, brief=None):
     analysis = data['analysis']
     summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining','method_inputs','method_execution')}
     summary['profile'] = 'ahl-analysis-execution-v1'
@@ -29,6 +33,8 @@ def views(data, assets, root, deadline, *, closed_domain=None):
     for role, skills in (('proposer',('harness-evaluation','harness-self-improvement')),('evaluator_author',('harness-evaluation',))):
         folder = root/role; folder.mkdir(parents=True,mode=0o700)
         (folder/'analysis-summary.json').write_text(json.dumps(summary,allow_nan=False))
+        if brief is not None:
+            (folder/'analysis-brief.json').write_bytes(rendered(brief))
         for skill in skills:
             check_deadline(deadline)
             shutil.copytree(Path(assets)/'skills'/skill,folder/'methodology'/skill,symlinks=True,
@@ -66,6 +72,7 @@ Write proposal.json as {"status":"no_change","reason":"supported explanation"} i
 or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded repair.
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
+    if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
@@ -140,6 +147,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
             'result.json to contain that object recursively with matching JSON types.\n'+program)
     prompt = ('Construct exposed development variants from the supplied source. No independent or untouched evaluation claim is supported.'
         if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
+    if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)

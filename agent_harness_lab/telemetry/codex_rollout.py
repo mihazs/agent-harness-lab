@@ -1,6 +1,6 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
 from pathlib import Path
-from .schema import event
+from .schema import event, message_fingerprint
 from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded  # noqa: F401 - re-exported for existing importers
 from ..sources.schema import digest
 
@@ -111,7 +111,10 @@ class Projection:
         elif kind == 'compacted': record['activity'] = 'compaction'
         elif kind == 'event_msg':
             item = payload.get('type')
-            if item in ACTIVITIES: record['activity'] = ACTIVITIES[item]
+            if item in ACTIVITIES:
+                record['activity'] = ACTIVITIES[item]
+                fingerprint = message_fingerprint(payload['message'], record['case_id']) if item == 'user_message' and isinstance(payload.get('message'), str) else None
+                if fingerprint is not None: record['message_fingerprint'] = fingerprint
             elif item == 'exec_command_end':
                 code = payload.get('exit_code')
                 if type(code) is not int or not -(2**31) <= code < 2**31: raise ValueError('invalid native command exit code')

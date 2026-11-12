@@ -173,17 +173,13 @@ def test_uncaptured_inputs_stay_unknown_and_zero_is_not_a_clean_result(pipeline)
     assert any(row['id'] == 'verified_outcomes' and row['command'] for row in brief['missing_evidence'])
 
 
-@pytest.mark.xfail(strict=True, reason='restated-instruction detection needs content-free user-message fingerprints in the event '
-                   'envelope (field name provisional), tracked in #666')
 def test_restated_instructions_are_observed_from_structural_fingerprints(pipeline):
-    rows = [dict(row, message_fingerprint='f1') if row['activity'] == 'user_message' else row for row in history(SMALL)]
+    rows = [dict(row, message_fingerprint='0123456789abcdef') if row['activity'] == 'user_message' else row for row in history(SMALL)]
     brief = json.loads(analyze(pipeline, rows)[0])
     row = next(row for row in brief['weak_outcome_signals'] if row['id'] == 'restated_instructions')
     assert row['status'] == 'observed_pattern' and row['competing_explanations']
 
 
-@pytest.mark.xfail(strict=True, reason='size and time bounds with truncated provenance for analysis.json and the event store are '
-                   'not delivered, tracked in #666')
 def test_analysis_artifact_and_event_store_bounds_are_documented_and_enforced():
     text = re.sub(r'\s+', ' ', (ROOT/'docs/analysis.md').read_text())
     assert 'is not yet capped' not in text
