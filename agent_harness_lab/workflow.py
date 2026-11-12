@@ -1207,7 +1207,7 @@ def _run_improvement(args, *, parent_started=None):
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
-    for name in ('_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started'):
+    for name in ('_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started
@@ -1226,6 +1226,14 @@ def _run_improvement(args, *, parent_started=None):
 
         if getattr(args, 'repair_contracts', False):
             return contracts(args)
+        from . import scope as scopes
+        if scopes.selected(args) != 'project':
+            scopes.layers(args)  # a missing, ambiguous or unsafe user-level location is an input error, not a blocked run
+            output = output_dir(args,deadline=started+args.timeout)
+            result = scopes.blocked_result(args, output, REMEDIATION[scopes.BLOCKED_REASON])
+            construction_receipt(result, args)
+            write_json(output/'workflow.json', result)
+            return result
         if hasattr(args, 'project_settings'):
             reason = preflight(args)
             if now()>=started+args.timeout:raise TimeoutError('preflight exhausted improvement budget')
@@ -1272,6 +1280,8 @@ def _run_improvement(args, *, parent_started=None):
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
         construction_receipt(result, args)
+        from .scope import interrupted
+        result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
             result['isolation_qualification']=permission_backend.permission_qualification()
@@ -1328,7 +1338,15 @@ def improve(args):
     require_writable(args.project)
     reject_history_overlap(args)
     with project_lock(args.project):
-        return _run_improvement(args, parent_started=getattr(args, '_entry_started', None))
+        result = _run_improvement(args, parent_started=getattr(args, '_entry_started', None))
+    if 'layers' not in result and isinstance(result.get('status'), str):
+        # One receipt shape for every scope: the model-driven project path gains its scope fields here, in its receipt file too.
+        from .scope import combine
+        result = combine(args, [('project', result)], base=result)
+        output = result.get('output')
+        if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
+            write_json(Path(output)/'workflow.json', result)
+    return result
 
 
 def watch_configuration(args):

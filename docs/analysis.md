@@ -441,6 +441,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
+| `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |

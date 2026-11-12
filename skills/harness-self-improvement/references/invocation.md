@@ -78,6 +78,13 @@ writes a project file for it). Relay `remediation` verbatim. A request the comma
 cannot satisfy, such as a historical-session evidence input, must be reported as
 unsupported, not silently dropped.
 
+User-level skills are in scope only when the user explicitly asks for them. Then add
+`--repair-contracts --scope global --agent codex|claude` (or `--scope project+global`);
+the default scope never touches them and a project file cannot select them. Without
+`--repair-contracts` the command returns `blocked` (model evaluation of the user-level
+layer is not available). Report each layer's row from the receipt, relay its `rollback`
+command, and never call a blocked, exhausted or failed layer a success.
+
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its
 private artifacts and report the concrete remaining requirement. Recovery must
