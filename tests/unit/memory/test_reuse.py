@@ -149,8 +149,12 @@ def test_unknown_freshness_is_unknown_never_a_hit_and_ttl_cannot_authenticate():
     reqs = requests()
     ledger = committed(reqs)
     receipt = run(reqs, ledger, freshness='unknown')
-    assert [r['stage'] for r in receipt['unknown']] == ['normalized_capture', 'source_status']
-    assert reasons(receipt)['source_status'] == 'miss_freshness_unknown'
+    stale = ['deterministic_grade', 'diagnostic_process_mining', 'normalized_capture', 'source_status',
+             'statistical_report', 'trend_view', 'wiki_projection']
+    assert [r['stage'] for r in receipt['unknown']] == stale  # dependents are unknown, not changed
+    assert set(reasons(receipt).values()) == {'miss_freshness_unknown', 'hit_verified'}
+    assert [r['stage'] for r in receipt['reused']] == ['harness_inventory']
+    assert not receipt['executed'] and receipt['counts']['executed_deterministic'] == 0
     assert receipt['source_freshness'] == 'unknown'
     assert reasons(run(reqs, ledger, freshness='ttl-ok'))['source_status'] == 'miss_freshness_unknown'
     with pytest.raises(ValueError):
@@ -173,8 +177,10 @@ def test_unchecked_authority_is_unknown_not_a_pass():
     live = {s: dict(GOOD) for s in reuse.GRAPH}
     del live['deterministic_grade']['oracle']
     receipt = run(reqs, committed(reqs), live)
-    assert [(r['stage'], r['reason']) for r in receipt['unknown']] == [('deterministic_grade', 'invalid_oracle_quarantine')]
+    unknown = ['deterministic_grade', 'statistical_report', 'trend_view', 'wiki_projection']
+    assert [(r['stage'], r['reason']) for r in receipt['unknown']] == [(s, 'invalid_oracle_quarantine') for s in unknown]
     assert 'deterministic_grade' not in {r['stage'] for r in receipt['reused']}
+    assert not receipt['executed'] and receipt['counts']['executed_deterministic'] == 0
 
 
 def test_role_access_exclusion_propagates_downstream():
@@ -256,3 +262,62 @@ def test_unchecked_upstream_role_stays_unknown_downstream():
     assert {r['stage'] for r in receipt['unknown']} == {'normalized_capture', 'diagnostic_process_mining',
                                                          'deterministic_grade', 'statistical_report', 'trend_view',
                                                          'wiki_projection'}
+
+
+def role_denied(stage, **gone):
+    live = {s: dict(GOOD) for s in reuse.GRAPH}
+    live[stage]['role'] = False
+    for name in gone:
+        del live[stage][name]
+    return live
+
+
+def test_role_denial_without_prior_is_excluded_with_dependents():
+    reqs = requests()
+    ledger = committed(reqs)
+    del ledger['normalized_capture']
+    receipt = run(reqs, ledger, role_denied('normalized_capture'))
+    assert {r['stage'] for r in receipt['excluded']} == {'normalized_capture', 'diagnostic_process_mining',
+                                                         'deterministic_grade', 'statistical_report', 'trend_view',
+                                                         'wiki_projection'}
+    assert {r['reason'] for r in receipt['excluded']} == {'blocked_role_access'}
+    assert not receipt['executed'] and not receipt['unknown']
+
+
+def test_role_denial_wins_over_changed_input_and_version():
+    reqs = requests()
+    ledger = committed(reqs)
+    reqs['normalized_capture'] = request('normalized_capture', version='2')
+    receipt = run(reqs, ledger, role_denied('normalized_capture'))
+    assert reasons(receipt)['normalized_capture'] == 'blocked_role_access'
+    assert reasons(receipt)['wiki_projection'] == 'blocked_role_access'
+    reqs = requests()
+    reqs['source_status'] = request('source_status', inputs=[h('rev-2')])
+    got = reasons(run(reqs, ledger, role_denied('harness_inventory')))
+    assert got['source_status'] == 'miss_input_changed'
+    assert got['harness_inventory'] == got['diagnostic_process_mining'] == got['wiki_projection'] == 'blocked_role_access'
+
+
+def test_role_denial_wins_over_unchecked_bytes_and_unknown_freshness():
+    reqs = requests()
+    ledger = committed(reqs)
+    receipt = run(reqs, ledger, role_denied('harness_inventory', bytes=None))
+    assert {r['stage'] for r in receipt['excluded']} == {'harness_inventory', 'diagnostic_process_mining',
+                                                         'statistical_report', 'trend_view', 'wiki_projection'}
+    assert not receipt['executed'] and not receipt['unknown']
+    # normalized_capture is unknown for freshness, harness_inventory is denied: the denial wins downstream
+    got = reasons(run(reqs, ledger, role_denied('harness_inventory'), freshness='unknown'))
+    assert got['normalized_capture'] == 'miss_freshness_unknown'
+    assert got['diagnostic_process_mining'] == 'blocked_role_access'
+    assert reasons(run(reqs, ledger, role_denied('normalized_capture'), freshness='unknown'))['normalized_capture'] \
+        == 'blocked_role_access'
+
+
+def test_unchecked_bytes_make_dependents_unknown_not_executed():
+    reqs = requests()
+    live = {s: dict(GOOD) for s in reuse.GRAPH}
+    live['harness_inventory']['bytes'] = None
+    receipt = run(reqs, committed(reqs), live)
+    assert {r['stage'] for r in receipt['unknown']} == {'harness_inventory', 'diagnostic_process_mining',
+                                                         'statistical_report', 'trend_view', 'wiki_projection'}
+    assert not receipt['executed'] and receipt['counts']['executed_deterministic'] == 0

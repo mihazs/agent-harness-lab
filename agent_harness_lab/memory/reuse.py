@@ -121,10 +121,6 @@ def plan(requests, prior=None, live=None, *, source_freshness='unknown', graph=G
     for stage in order(graph):
         request, record, checks = requests[stage], prior.get(stage), live.get(stage, {})
         upstream = [outcome[d] for d in graph[stage]]
-        blocked = {o[0] for o in upstream if o[1] == 'blocked_role_access'}
-        if blocked:  # a definitive block stays a block; an unchecked upstream role stays unknown downstream
-            settle(stage, 'excluded' if 'excluded' in blocked else 'unknown', 'blocked_role_access')
-            continue
         fresh = source_freshness == 'verified' or stage not in NEEDS_FRESHNESS
         known = all(o[0] == 'reused' for o in upstream)
         external = list(request.get('external_inputs', ()))
@@ -133,7 +129,13 @@ def plan(requests, prior=None, live=None, *, source_freshness='unknown', graph=G
         # None: an upstream stage is not reused, so its output digest is not known yet
         parts['inputs'] = sorted({*external, *(o[2] for o in upstream)}) if known else None
         want = node_key(parts)  # canonicalizes the current request: rejects floats, volatile fields and oversize values
-        if not fresh:
+        unknown = [o[1] for o in upstream if o[0] == 'unknown']
+        if _check(checks, 'role') is False or any(o[0] == 'excluded' for o in upstream):
+            # a definitive denial wins over every other outcome, including an unknown upstream or gate
+            settle(stage, 'excluded', 'blocked_role_access', want if known else None)
+        elif unknown:  # an unknown upstream output means this stage's inputs are unknown, not changed
+            settle(stage, 'unknown', unknown[0])
+        elif not fresh:
             settle(stage, 'unknown', 'miss_freshness_unknown')
         elif not record or record.get('status') != 'complete' or not isinstance(record.get('components'), dict):
             settle(stage, 'executed', 'miss_no_prior')  # failed and interrupted stages are never reusable
@@ -159,8 +161,7 @@ def plan(requests, prior=None, live=None, *, source_freshness='unknown', graph=G
             for name, code in gates:
                 state = _check(checks, name)
                 if state is not True:
-                    settle(stage, 'unknown' if state is None else 'excluded' if code == 'blocked_role_access'
-                           else 'executed', code, key)
+                    settle(stage, 'unknown' if state is None else 'executed', code, key)
                     break
             else:
                 settle(stage, 'reused', 'hit_verified', key, record['output'])

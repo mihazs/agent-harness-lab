@@ -46,7 +46,7 @@ source freshness that an adapter verified. Failed, interrupted or unknown record
 | --- | --- |
 | `hit_verified` | Reused |
 | `miss_no_prior` | No complete prior record |
-| `miss_input_changed` | An input digest changed, directly or through an upstream stage |
+| `miss_input_changed` | An input digest changed, directly or through an upstream stage that is executed |
 | `miss_algorithm_changed` | Stage version, config or canonicalizer changed |
 | `miss_policy_changed` | Policy changed |
 | `miss_scope_mismatch` | Scope changed |
@@ -54,11 +54,17 @@ source freshness that an adapter verified. Failed, interrupted or unknown record
 | `invalid_integrity` | Stored key or output, or the bytes, failed verification |
 | `invalid_oracle_quarantine` | Live oracle check failed (`deterministic_grade`) |
 | `invalid_bank_authority` | Live bank check failed (`deterministic_grade`) |
-| `blocked_role_access` | Inputs are not authorized for the role; dependents are excluded too, or stay unknown when the upstream role was never checked |
+| `blocked_role_access` | The role is denied; dependents are excluded too, or stay unknown when the upstream role was never checked |
 | `nonreplayable_live_trial` | Live trials and proposals are historical evidence only |
 
 A live check passes only on `True`. A missing result is unknown and listed under
-`unknown`, never as a pass. Changing a grader hash (carried in config) misses
+`unknown`, never as a pass. An unknown stage makes every dependent unknown, carrying the
+upstream reason: nothing changed and nothing ran, so a dependent is never reported as
+executed or as `miss_input_changed`, and it adds nothing to the executed count.
+
+An explicit `role: False` is checked first, whether or not a prior record exists, an input
+or version changed, freshness or another check is unknown. It always excludes the stage
+(`blocked_role_access`) and its dependents, and wins over an unknown upstream. Changing a grader hash (carried in config) misses
 `deterministic_grade` and its dependents while the upstream capture still hits, so raw
 evidence is retained but prior scoring is not silently re-authorized.
 
