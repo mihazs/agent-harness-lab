@@ -4,7 +4,7 @@
 
 This reference records what the repository already enforces for each authoritative
 store or reader, so a later persistent-evidence slice adapts to it instead of guessing.
-It describes current behavior on `main`; no store, planner or CLI exists for it yet.
+It describes current behavior on `main`; the [private memory store](memory-store.md) provides the persistence layer, and no planner reads it yet.
 Every module path below is checked by a test, and the characterization tests in
 `tests/unit/docs/test_memory_reuse_contract.py` execute the bounds and projections
 quoted here with synthetic data only.
