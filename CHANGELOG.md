@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.177.0
+
+### Minor Changes
+
+- 05b7651: Add an offline `sources.ci_join.join_ci_evidence` that relates one exact commit's imported JUnit/pytest results to the GitHub Actions jobs captured for the same head. It reports failed jobs with their failing step numbers and failed cases, links a case to a job and step only through a caller-declared report origin, and keeps reruns correlated, causal status unknown and task outcomes unverified (part of #53).
+- d7744fe: Improvement receipts record seeded-run provenance (digest-only `agent_supplied_hypothesis`, `independent_corroboration: false`), a deterministic `evidence_strength` label with the controls not run, `grader_changed_after_trials` detection that voids adoption support, and a read-only `pre_edit_check`. `python -m agent_harness_lab.report_lint` fails a report number without a receipt source, and the self-improvement skill gains compact reporting and continuation rules. Closes #696.
+
+### Patch Changes
+
+- cf1fd26: Report a typed `capture_version_differs_from_pin` reason (observed and pinned versions, counts only) when an explicit native Claude or Codex selection meets a capture recorded by another runtime version, record `pin_compatibility` (`exact`, `declared_range`, `unverified`) per source, report selected, parsed and skipped capture counts with reasons, and accept `--session` for `ahl improve --history`. Closes #697.
+
 ## 0.176.0
 
 ### Minor Changes
