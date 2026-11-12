@@ -70,7 +70,7 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
    which `HistoryStore.analyze(read_only=True)` limits to schema-1 history without protected
    access or derivation. `incident_retrieval` is the operator-supplied reviewed-incident
    search result from `agent_harness_lab/diagnostics/retrieval.py` `contextual_search`; it
-   carries incident ids, summaries, labels and evidence references. Its approval is a caller
+   carries incident ids, summaries, evidence references and scores. Its approval is a caller
    declaration (`caller_declared_reviewed_approval_unverified`), each row is marked
    `untrusted_evidence_only`, and the summary's own limitations say so. Source context,
    evaluation outcomes and per-finding evidence are not projected. Any other historical
