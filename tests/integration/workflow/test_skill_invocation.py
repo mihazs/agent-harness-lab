@@ -361,6 +361,14 @@ class TestEntryReceiptParity:
         assert entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2') == ['plan_sha256']
         assert entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b') == ['origin']
 
+    def test_stage_timings_may_differ_between_routes_but_stage_names_and_options_may_not(self):
+        def receipt(spent, remaining, option='--timeout SECONDS'):
+            return dict(evaluation_construction_seconds=spent, budget_stages=dict(remaining_seconds=remaining, raise_budget_option=option,
+                stages=dict(construction=dict(allotted_seconds=30.0, spent_seconds=spent), trials=dict(allotted_seconds=48.0, spent_seconds=spent))))
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(2.5, 88.0), '/a', '/b') == []
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(1.0, 90.0, '--budget'), '/a', '/b') == [
+            'budget_stages.raise_budget_option']
+
     def test_environment_parity_still_detects_authentication_changes(self):
         original = dict(trials=[dict(environment=dict(names=['CODEX_API_KEY'], sha256='exact-a',
                                                         comparison_sha256='normalized-a', inherited=False))])

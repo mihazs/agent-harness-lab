@@ -459,6 +459,9 @@ def test_configured_trial_ceiling_stops_before_a_second_proposal(configured_work
     output=Path(result['output'])
     assert (output/'evaluation-0/results.json').exists()
     assert not (output/'preparation/proposal-1').exists()
+    exhausted=result['budget_exhaustion']  # an exhausted run says where the budget went and concludes nothing
+    assert (exhausted['evidence_label'],exhausted['conclusion'],exhausted['observed']['trials_recorded']) == ('insufficient','not_established',6)
+    assert result['budget_stages']['stages']['trials']['spent_seconds'] >= 0 and result['budget_stages']['raise_budget_option'] == '--timeout SECONDS'
     assert (fixture.project/'AGENTS.md').read_text() == 'bad'
 
 

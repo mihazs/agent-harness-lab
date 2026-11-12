@@ -79,6 +79,8 @@ If both are installed, specify
 permissions and hooks come from that runtime. Permission bypass is never enabled.
 The default whole-run budget is 45 minutes and 24 shared preparation/task roles;
 project configuration can narrow these limits. Use `--timeout SECONDS` to set a smaller budget.
+The budget is split by stage, with a time box on evaluation construction set by
+`--construction-fraction`; see [stage budgets and early stops](budget-stages.md).
 Input/configuration preparation and freezing consume that budget too. Evaluation
 inherits the controller's original deadline, so a later stage cannot restart the
 clock; exhausted preparation prevents new runtime probes or model trials.

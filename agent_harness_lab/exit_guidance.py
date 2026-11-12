@@ -38,6 +38,8 @@ REMEDIATION = {
     'no_change_harness_supported': 'Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion.',
     'no_change_evidence_insufficient': 'The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
+    'evaluation_uninformative': 'Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun.',
+    'refinement_budget_unavailable': 'The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun.',
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
     'missing_or_duplicate_trials': 'Review the trial records and restore complete, unique trial coverage.',
@@ -121,6 +123,9 @@ def guidance(result):
     steps = result.get('next_steps')
     if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
         action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"
+    uninformative = result.get('evaluation_uninformative')
+    if reason == 'evaluation_uninformative' and isinstance(uninformative, dict):
+        action += f" Next step: {uninformative.get('next_step')}"
     violation = result.get('contract_violation')
     if reason in CONTRACT_REASONS and isinstance(violation, dict):
         action += f" Stage: {violation.get('stage')}; file: {violation.get('file')}; field: {violation.get('field') or 'none'}; origin: {violation.get('origin')}."

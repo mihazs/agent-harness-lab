@@ -26,6 +26,8 @@ REASONS = {
     'authored_digest_not_accepted': (AGENT, True, 'Omit every digest field from manifest.json; the controller computes and freezes all digests. Then rerun.'),
     'evaluation_manifest_controls_incomplete': (AGENT, True, 'Give every task one broken, one partial and one complete grader self-test, then rerun.'),
     'grader_input_changed_after_freeze': (AGENT, False, 'A frozen grader bundle or control fixture changed after the controller froze it; find what wrote into it (a grader or helper must write nothing beside its inputs), keep it unchanged, then rerun.'),
+    'evaluation_construction_timeout': (AGENT, True, 'The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun.'),
+    'evaluation_task_infeasible': (AGENT, False, 'The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun.'),
     'internal_contract_error': (AHL, False, 'This is an AHL contract defect, not an input defect; report it with the named stage and field.'),
 }
 

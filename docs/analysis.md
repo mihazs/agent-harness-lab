@@ -383,6 +383,10 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `configured_responses_requires_controlled_improvement` | Select the controlled Responses improvement workflow. |
 | `configured_runtime_differs_from_requested_runtime` | The requested runtime or executable differs from ahl.json; drop the override or update runtime in ahl.json. |
 | `configured_shared_trial_budget_infeasible` | Increase the shared trial limit for the requested comparison. |
+| `evaluation_construction_timeout` | The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun. |
+| `evaluation_task_infeasible` | The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun. |
+| `evaluation_uninformative` | Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun. |
+| `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
 | `instruction_markers_malformed` | Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update |
