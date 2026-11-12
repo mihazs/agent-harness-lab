@@ -3,6 +3,7 @@ import hashlib
 from collections import Counter
 import re
 from pathlib import Path, PurePosixPath
+from .claude_cwd import Places
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import SOURCE_ORDER, event, message_fingerprint
 from ..sources.config_inventory import telemetry_server_sha256
@@ -129,25 +130,29 @@ def skill_signal(project, tool, arguments):
 
 
 class Projection:
-    def __init__(self, project, limit, check, revisions=None, versions=VERIFIED):
+    def __init__(self, project, limit, check, revisions=None, versions=VERIFIED, places=None):
         self.versions, self.recorded, self.skipped = versions, set(), Counter()
         self.project, self.session, self.writer = Path(project), None, None
         self.limit, self.check = limit, check
         self.revisions, self.raw_revisions = revisions, {}
         self.rows, self.seen, self.responses = [], {}, {}
         self.unsupported, self.duplicates, self.unattributed = 0, 0, 0
+        self.places, self.attributed, self.cwd_rows = places or Places(project), False, Counter()
         self.segment = 0  # physical file within this projection; segments have no established order
 
     def scoped(self, *values): return digest(('claude-native-id-v1', str(self.project), *values))
 
     def add(self, row, position):
         if row.get('version') is not None and row['version'] not in self.versions: raise ValueError('unsupported native Claude version')
-        if row.get('cwd') is not None and Path(text(row['cwd'])) != self.project: raise ValueError('native Claude project mismatch')
+        kind = row.get('type')
+        if kind in ENTRY_TYPES and 'cwd' in row and 'sessionId' in row and not self.attributed:
+            # The launch directory (first attributable row) attributes the capture; later rows are only classified.
+            if Path(text(row['cwd'])) != self.project: raise ValueError('native Claude project mismatch')
+            self.attributed = True
         if row.get('sessionId') is not None:
             session = text(row['sessionId'])
             if self.session is not None and self.session != session: raise ValueError('mixed native Claude sessions')
             self.session = session
-        kind = row.get('type')
         if kind not in ENTRY_TYPES:
             self.unsupported += 1; self.skipped[type_label(kind)] += 1; return
         if row.get('version') not in self.versions or row.get('cwd') is None or row.get('sessionId') is None:
@@ -164,7 +169,8 @@ class Projection:
         self.writer = writer
         ident = text(row.get('uuid')); stamp = timestamp(row.get('timestamp'))
         case = self.scoped(self.session, writer)
-        base = dict(case_id=case, root_case_id=case, lineage_verified=False, timestamp=stamp,
+        where = self.places.classify(text(row['cwd']))
+        base = dict(case_id=case, cwd_class=where, root_case_id=case, lineage_verified=False, timestamp=stamp,
             capture_complete=False, source_format='claude', source_version=VERSION,
             runtime_fingerprint=digest(('claude-code', row['version'])), capture_order=position,
             source_order_profile=ORDER_PROFILE, source_order_segment=self.segment,
@@ -242,6 +248,7 @@ class Projection:
             if previous[0] != signature: raise ValueError('conflicting native Claude UUID metadata')
             self.duplicates += 1; return
         self.seen[ident] = (signature, len(observations))
+        self.cwd_rows[where] += 1
         if self.revisions is not None:
             self.raw_revisions[ident] = raw_revision
             for observation in observations:
@@ -289,13 +296,14 @@ class Projection:
 
 
 def decode(folder, name, project, max_records, *, revisions=None, versions=VERIFIED, **limits):
-    projection = Projection(project, max_records, folder.check, revisions, versions)
+    places = Places(project)
+    projection = Projection(project, max_records, folder.check, revisions, versions, places)
     sha256, partial, count = jsonl(folder, name, max_records, projection.add, **limits)
     rows, conflicts = projection.finish(folder.check)
     if max_records is not None and len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=0, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
-        input_records=count, skipped_entry_types=skipped_types(projection.skipped), recorded_versions=sorted(projection.recorded),
+        input_records=count, cwd_drift=places.report([projection.cwd_rows]), skipped_entry_types=skipped_types(projection.skipped), recorded_versions=sorted(projection.recorded),
         session_sha256=projection.scoped('session', projection.session), conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
         usage_semantics='observed_uncached_counts_only', served_model='unknown', effective_settings='unknown',
         independence='unknown', outcome='unknown', parent_session='unknown', source_read=True, network_used=False)

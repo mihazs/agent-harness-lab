@@ -579,7 +579,10 @@ Names narrow the scan and must agree with the records; they never establish
 identity alone. Each candidate is read only up to its first attributable
 envelope, whose explicit `version`, `cwd` and `sessionId` decide admission.
 Sanitization is lossy, so a colliding project's file in the same directory is
-rejected as `foreign_project`. A top-level `<uuid>.jsonl` must carry that
+rejected as `foreign_project`: only the first attributable envelope's `cwd` decides, and it
+must equal the project exactly. Later envelopes of an attributed file may record other
+directories; they stay events tagged with a `cwd_class` and are counted in
+`cwd_drift` (see [working-directory drift](telemetry.md#working-directory-drift-in-an-attributed-session)). A top-level `<uuid>.jsonl` must carry that
 `sessionId` with `isSidechain: false`; a `<uuid>/subagents/**/agent-<id>.jsonl`
 must carry parent `sessionId` `<uuid>`, `isSidechain: true` and `agentId` `<id>`,
 the filename mapping the pinned reader documents. Any disagreement yields an
@@ -612,7 +615,7 @@ the fixture-verified range; never parsed, see the [runtime version policy](telem
 `unsupported_native_envelope`, `invalid_native_record`, `partial_native_scope`,
 `unrecognized_native_layout`, `subagent_tree_limit` or `not_read_after_file_limit`. `native_summary.files` carries each accepted file's
 SHA-256, input records, partial tail, duplicates and unsupported counts;
-`discovery` counts selected and missing project directories, scanned, header-read,
+`cwd_drift` counts records per working-directory class; `discovery` counts selected and missing project directories, scanned, header-read,
 accepted, rejected and unknown files, unsafe entries, filesystem entries, bytes and
 reached limits, `capture_counts` (selected, parsed, skipped, skipped reasons and `pin_compatibility` counts),
 `observed_versions` (all recorded releases, counts per capture), `unverified_versions` (the subset outside the verified range), `verified_versions` and
@@ -630,7 +633,7 @@ receipts never become accepted captures or failure labels. Hard resource errors,
 conflicting claims and changes to selected files, scanned directories or the
 descriptor reject the operation. Recheck uses the same exact built-in reader.
 
-**Not established.** Git worktree aggregation, `CLAUDE_CONFIG_DIR`/home
+**Not established.** Reading sessions launched inside a worktree as the project (the launch directory must equal the project), `CLAUDE_CONFIG_DIR`/home
 resolution, session files outside the documented layout (not descended), `history.jsonl`, sidecar
 or subagent parent resolution, compressed or relocated histories, incremental byte
 cursors, live CLI wire validation and cross-source execution joins remain open in

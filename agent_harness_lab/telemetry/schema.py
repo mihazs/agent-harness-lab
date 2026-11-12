@@ -14,7 +14,9 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
         'reported_model_fingerprint', 'native_stop_reason_fingerprint',
-        'message_fingerprint', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+        'message_fingerprint', 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+# Where a row's working directory sat relative to the project that attributed the session; never a path or name.
+CWD_CLASSES = ('project_root', 'project_subdirectory', 'registered_worktree_of_project', 'other_location')
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
 # A declared within-record subordinal: (segment, capture_order, suborder) under a pinned profile.
@@ -62,6 +64,8 @@ def event(value):
             raise ValueError('invalid measurement: ' + key)
         if key == 'capture_order' and (type(val) is not int or val < 0):
             raise ValueError('invalid capture order')
+    if 'cwd_class' in result and result['cwd_class'] not in CWD_CLASSES:
+        raise ValueError('invalid working-directory class')
     if 'message_fingerprint' in result and (result['activity'] != 'user_message' or not FINGERPRINT.match(result['message_fingerprint'])):
         raise ValueError('invalid message fingerprint')
     declared = [key in result for key in SOURCE_ORDER]

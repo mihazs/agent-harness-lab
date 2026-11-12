@@ -44,12 +44,13 @@ def runtime_lag(sources):
 
 
 def summary(args, data):
+    from .telemetry.claude_cwd import from_sources
     """What was captured and what stays unknown; aggregate counts only, no paths or bodies."""
     analysis, lag = data['analysis'], runtime_lag(data['sources'])
     return dict(profile='ahl-history-evidence-v1', scope='project', source=args.history_source or 'native',
         since=args.since or 'first', since_basis='capture file modification time; unbounded for first',
         read_only=True, sessions_captured=sum(1 for row in data['sources'] if row.get('format') in ('codex', 'claude')),
         session_selected=args.session is not None, events=analysis['events'], cases=analysis['cases'],
-        capture_reasons=data.get('capture_reasons', []), pin_compatibility={kind: sum(1 for row in data['sources'] if row.get('pin_compatibility') == kind) for kind in ('declared_range', 'unverified')},
+        capture_reasons=data.get('capture_reasons', []), cwd_drift=from_sources(data['sources']), pin_compatibility={kind: sum(1 for row in data['sources'] if row.get('pin_compatibility') == kind) for kind in ('declared_range', 'unverified')},
         **({} if lag is None else dict(runtime_lag=lag)),
         unknown=['capture completeness', 'recurrence outside the captured sessions', 'sessions outside project scope or before --since'])

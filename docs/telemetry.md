@@ -183,12 +183,15 @@ supports one explicitly selected, consistently attributed writer per file.
 Synthetic fixtures validate the reader; no live CLI session was used.
 
 Attributable user/assistant/system/progress/attachment records require explicit
-`version` inside the verified range (see below), exact declared `cwd` matching `PROJECT`, `sessionId`, `uuid`,
-timezone timestamp and boolean `isSidechain`. Session/writer changes within a file
+`version` inside the verified range (see below), a `cwd`, `sessionId`, `uuid`,
+timezone timestamp and boolean `isSidechain`. The `cwd` of a file's first attributable
+record (the launch directory) must match `PROJECT` exactly; later records may record
+other directories (see [working-directory drift](#working-directory-drift-in-an-attributed-session)).
+Session/writer changes within a file
 reject. A sidechain also requires `agentId`; optional `teamName` participates in
 writer scoping. Metadata without a supported envelope contributes visible coverage
-gaps, not fabricated events. Incompatible provided versions or project labels
-reject. No directory name, timestamp, prompt text or filename establishes identity.
+gaps, not fabricated events. Incompatible provided versions or a launch directory
+naming another project reject. No directory name, timestamp, prompt text or filename establishes identity.
 The existing `claude-jsonl-v1` synthetic adapter remains supported. The `2.1.316` in this section's title
 is the first verified release; the declared range is described under
 [Runtime version policy](#runtime-version-policy-for-pinned-native-profiles). `ahl analyze
@@ -511,6 +514,50 @@ any ledger event. Only one root is accepted here; an archive or backup copy is
 analyzed separately or declared as an additional root in the source-journal
 profile. Analysis advances no source cursor, and the closed-input and bank
 requalification domains still accept only the pinned Codex root.
+
+### Working-directory drift in an attributed session
+
+Agents routinely enter a subdirectory, a git worktree or a temporary directory
+during one session. The first attributable record of each file (its launch directory)
+alone decides attribution: it must equal `PROJECT`, otherwise the file is
+`foreign_project` (default discovery never selects it either). A capture that
+begins elsewhere and later enters the project is not attributed. Sanitized-name
+collisions stay foreign because the launch directory is compared exactly.
+
+Every later record of an attributed file is kept as an event and tagged with a
+content-free `cwd_class` (the same tag is on the response usage and stop facets of
+that record):
+
+| `cwd_class` | The recorded directory is |
+| --- | --- |
+| `project_root` | `PROJECT` itself. |
+| `project_subdirectory` | below `PROJECT` and not in a registered worktree. |
+| `registered_worktree_of_project` | a registered git worktree of the project's repository, or below one. |
+| `other_location` | anywhere else, or not an absolute path without `..` segments. |
+
+Registered worktrees are read from the repository's own files and nothing else:
+`.git/worktrees/*/gitdir` (and `commondir` when `PROJECT` is itself a linked
+worktree). No `git` process, hook or repository-controlled command runs, symlinked
+metadata is refused, every file is at most 4,096 bytes, and at most 256 worktrees are
+read. The repository is read only when a record leaves the project root. When the
+metadata cannot be read or is malformed the listing is `unavailable`, no row is
+guessed to be a worktree, rows outside the root fall to `project_subdirectory` or
+`other_location`, and the `cwd_worktrees_unavailable` caveat and `capture_reasons`
+entry say so. A repository that does not exist has no worktrees (`not_a_repository`).
+A worktree that was pruned before analysis is no longer registered and reads as
+`other_location`.
+
+`native_coverage.cwd_drift` (and, summed over sources, `cwd_drift` in the analysis
+brief, the `ahl analyze` receipt and the `history` object) reports
+`captures` (files with a record outside the root), `rows` per class and `worktrees`
+(`not_needed`, `listed`, `not_a_repository` or `unavailable`). Each distinct record
+is counted once in exactly one class; duplicated copies merge as before. No path or
+directory name appears in events, summaries, the brief or the receipt. In the
+mechanism summaries a group of tool errors lists `errors_by_cwd_class`, so failures
+of `Edit` or `Write` can be compared across classes without storing a path; rows
+from a source that records no class count as `unknown`. A class is an observed
+location, not a diagnosis: a failure in a worktree may have many causes.
+An envelope without a usable `cwd` still rejects the whole capture.
 
 ### Runtime version policy for pinned native profiles
 

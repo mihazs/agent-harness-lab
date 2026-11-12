@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import unicodedata
+from .claude_cwd import Places
 from .claude_native import ENTRY_TYPES, NEWEST_VERIFIED, UPSTREAM_COMMIT, VERIFIED, VERSION, Projection, skipped_types
 from .native import WalkLimit, bounded_walk, capture_counts, correlated, invalid_constant, jsonl, lines, listing, observed_version, optional_limit
 from ..evaluation.integrity import unique_object
@@ -162,7 +163,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None, veri
         raise ValueError('overlapping native Claude source roots')
     base = Path(os.path.commonpath(roots)).parent
     limits = dict(max_bytes=max_bytes, max_line_bytes=max_line_bytes)
-    receipts, names, reached, versions = [], [], [], Counter()
+    receipts, names, reached, versions, places, drift = [], [], [], Counter(), Places(project), []
     counts = dict(foreign_files=0, unsupported_headers=0, unrecognized_files=0, missing_project_directories=0)
     with Folder(base, deadline, limit_total_bytes=False, limit_tree=False) as folder:
         directories = [d for root in roots for d in selected_directories(folder, str(root.relative_to(base)), project)]
@@ -206,7 +207,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None, veri
         records, files, sessions, consumed, conflicts, unattributed = [], [], {}, 0, 0, 0
         skipped_types_seen = Counter()
         for members in groups.values():
-            projection, offset = Projection(project, max_records, folder.check, revisions, verified), 0
+            projection, offset = Projection(project, max_records, folder.check, revisions, verified, places), 0
             for segment, (name, root, entry) in enumerate(members):
                 if max_records is not None and consumed >= max_records: raise ValueError('native discovery record budget exceeded')
                 # Offsets keep ordinals unique; the order between these files is not established.
@@ -220,7 +221,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None, veri
                 files.append(dict(path_sha256=entry['path_sha256'], sha256=sha256, input_records=count, partial_tail=partial,
                     duplicates_skipped=projection.duplicates-before[0], unsupported_records=projection.unsupported-before[1]))
             rows, found = projection.finish(folder.check)
-            conflicts += found; unattributed += projection.unattributed
+            conflicts += found; unattributed += projection.unattributed; drift.append(projection.cwd_rows)
             sessions[rows[0]['case_id']] = projection.scoped('session', projection.session)
             # The finished projection no longer needs its rows; draining releases each one once correlated.
             projection.rows.clear(); rows = deque(rows)
@@ -242,7 +243,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None, veri
             partial_tail=any(f['partial_tail'] for f in files), files=files, receipts=receipts, discovery=discovery,
             duplicates_skipped=sum(f['duplicates_skipped'] for f in files), unsupported_records=sum(f['unsupported_records'] for f in files),
             skipped_entry_types=skipped_types(skipped_types_seen),
-            conflicting_response_facets=conflicts, unattributed_usage_records=unattributed, usage_semantics='observed_uncached_counts_only',
+            conflicting_response_facets=conflicts, unattributed_usage_records=unattributed, cwd_drift=places.report(drift), usage_semantics='observed_uncached_counts_only',
             served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', parent_session='unknown',
             source_read=True, network_used=False)
         records = tuple(records)
