@@ -113,10 +113,14 @@ def test_role_projection_is_a_fixed_allow_list(tmp_path):
         (assets / 'skills' / skill).mkdir(parents=True); (assets / 'skills' / skill / 'SKILL.md').write_text('synthetic')
     data = dict(analysis=dict(events=1, findings=[dict(kind='k', status='s', explanation='e', evidence=['hidden'])]),
                 paired_history_analysis=dict(status='blocked'), source_context=dict(hidden=True),
+                incident_retrieval=dict(approval='caller_declared_reviewed_approval_unverified',
+                                        results=[dict(incident_id='i1', authority='untrusted_evidence_only')]),
                 evaluation_outcomes=['hidden'], sources=['hidden'])
     folders = views(data, assets, tmp_path / 'views', time.monotonic() + 60)
     summary = json.loads((folders['proposer'] / 'analysis-summary.json').read_text())
     assert summary['paired_history_analysis'] == dict(status='blocked')
+    assert summary['incident_retrieval'] == data['incident_retrieval']
+    assert 'untrusted evidence' in ' '.join(summary['limitations'])
     assert summary['findings'] == [dict(kind='k', status='s', explanation='e')]
     assert not {'source_context', 'evaluation_outcomes', 'sources'} & set(summary)
 

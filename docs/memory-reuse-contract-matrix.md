@@ -37,7 +37,7 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
 | Preservation cohorts, `agent_harness_lab/evaluation/cohorts.py`, `agent_harness_lab/evaluation/cohort_history.py`, `agent_harness_lab/evaluation/preservation_analysis.py` | Manifest SHA-256 and qualification bindings to prior sealed runs | `capture`, `validate_snapshot`, `revalidate` | 1 MiB manifest; qualification depth at most 8 | Operator | `replayable`; membership is `current_membership_only` |
 | Process mining, `agent_harness_lab/diagnostics/process_mining.py`, `tools/diagnose.py` | Profile strings `ahl-private-diagnosis-v1`, `ahl-analysis-execution-v1`, `ahl-analysis-process-graph-v1` | `ProcessMiner`, `analyze` | Streaming; optional `max_events`; event bodies are not retained | Operator | `reusable`; descriptive only |
 | Resource decisions, `agent_harness_lab/evaluation/resource_decision.py`, `agent_harness_lab/evaluation/resource_history.py` | Contract SHA-256 and profile `resource-noninferiority-v1` to `v4` | `validate`, `decide`; sealed evidence through `resource_history.validate` | 64 token endpoints, 1,000 token requests | Operator | `reusable` as a pure function; unknown never becomes zero |
-| Role projection, `agent_harness_lab/evaluation/construction.py` | Fixed allow-list of summary keys | `views` | Allow-listed keys only | Proposer and evaluator-author roles | See finding 4 |
+| Role projection, `agent_harness_lab/evaluation/construction.py` | Fixed allow-list of summary keys | `views` | Allow-listed keys only; two optional historical keys, `incident_retrieval` and `paired_history_analysis`, are copied whole | Proposer and evaluator-author roles | See finding 4 |
 | Event envelope, `agent_harness_lab/telemetry/schema.py` | `schema_version` 1 or 2 | `event` | Unlisted fields are dropped; listed text fields are kept as given | Operator | `reusable`; content-free by field list, not by value |
 
 ## Findings that settle the open questions
@@ -65,11 +65,16 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
    references, `HistoryStore` has no list or search action, and model identity is proven
    only as an inference-settings hash for schema versions 6 to 8.
 4. **Role projection.** `construction.views` copies a fixed key list. Beyond aggregate
-   analysis counts, the only historical item it passes is one explicitly selected
-   `paired_history_analysis`, which `HistoryStore.analyze(read_only=True)` limits to
-   schema-1 history without protected access or derivation. Source context, evaluation
-   outcomes and per-finding evidence are not projected. Any other historical finding
-   would require a new reviewed key.
+   analysis counts, it passes two optional historical items verbatim to both roles in
+   `analysis-summary.json`. `paired_history_analysis` is one explicitly selected result,
+   which `HistoryStore.analyze(read_only=True)` limits to schema-1 history without protected
+   access or derivation. `incident_retrieval` is the operator-supplied reviewed-incident
+   search result from `agent_harness_lab/diagnostics/retrieval.py` `contextual_search`; it
+   carries incident ids, summaries, labels and evidence references. Its approval is a caller
+   declaration (`caller_declared_reviewed_approval_unverified`), each row is marked
+   `untrusted_evidence_only`, and the summary's own limitations say so. Source context,
+   evaluation outcomes and per-finding evidence are not projected. Any other historical
+   finding would require a new reviewed key.
 5. **Legacy enumeration and capacity.** `PrivateJournal.case_ids(maximum)` is the only
    enumeration. It returns sorted ids without separating oracle cases from run cases and
    raises when `maximum` is exceeded; `case_ids(None)` removes only that bound.
