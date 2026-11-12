@@ -8,7 +8,7 @@ from .github import integer
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import EvidenceRecord, digest
 from .snapshot import Snapshot
-from .transport import MAX_UNPAGED_ROWS, Unavailable, capture_state, guarded_get
+from .transport import MAX_UNPAGED_ROWS, Unavailable, capture_state, guarded_get, guarded_post
 
 # A declared capability gap (an endpoint the server lacks) is not a blocked read and still checkpoints.
 CHECKPOINTABLE = ('captured', 'unsupported_endpoint')
@@ -32,8 +32,11 @@ class CaptureLedger:
         self.records, self.nodes, self.relations, self.coverage = {}, {}, set(), []
         self.collected = datetime.now(timezone.utc).isoformat()
 
-    def fetch(self, target):
-        return guarded_get(self.api, target, self.state, authorization=self.authorization)
+    def fetch(self, target, *, payload=None, credential_header='Authorization'):
+        """One JSON read; a ``payload`` makes it the POST of a provider whose read-only query takes a body."""
+        if payload is None:
+            return guarded_get(self.api, target, self.state, authorization=self.authorization, credential_header=credential_header)
+        return guarded_post(self.api, target, self.state, payload, authorization=self.authorization, credential_header=credential_header)
 
     def emit(self, identity, kind, node, original=None):
         """Add one native record; the same identity with another revision fails the capture."""

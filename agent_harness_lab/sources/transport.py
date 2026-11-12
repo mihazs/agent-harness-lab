@@ -178,16 +178,18 @@ def budget_spent(api, state):
         or state['deadline'] is not None and time.monotonic() >= state['deadline'])
 
 
-def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None, not_modified=False):
+def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None, not_modified=False,
+        credential_header='Authorization'):
     """One request charged to the capture budget; returns the JSON value and lowercase response headers.
 
     ``ceiling`` caps this one response below whatever remains of the cumulative byte budget.
     ``not_modified`` admits a 304 answer as ``NOT_MODIFIED``; only a caller that sent a validator sets it.
+    ``credential_header`` names the header that carries ``authorization`` for a provider that does not use Authorization.
     The limiter may refuse the request (RateLimited), and a rate-limited GET is retried only after a short allowed wait.
     """
     from .ratelimit import classify, identity_digest, resource_for, signals
     headers = {'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader', **headers}
-    if authorization is not None: headers['Authorization'] = authorization
+    if authorization is not None: headers[credential_header] = authorization
     limiter, host, who, bucket = api.limiter, api.origin[0], identity_digest(authorization), resource_for(target)
     attempt = 0
     while True:
@@ -214,16 +216,27 @@ def metered_exchange(api, target, headers, state, *, authorization=None, body=No
         return value, lowered
 
 
-def guarded_get(api, target, state, *, authorization=None):
+def guarded_get(api, target, state, *, authorization=None, credential_header='Authorization'):
     """One JSON GET below the instance path; denials, rate limits and spent budgets raise Unavailable, never retry."""
+    return _guarded(api, target, state, authorization, credential_header, None)
+
+
+def guarded_post(api, target, state, payload, *, authorization=None, credential_header='Authorization'):
+    """One JSON POST for a read-only query that takes its filters in a body; never retried, otherwise as guarded_get."""
+    body = json.dumps(payload, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+    return _guarded(api, target, state, authorization, credential_header, body)
+
+
+def _guarded(api, target, state, authorization, credential_header, body):
     if state['halted'] is not None: raise Unavailable(state['halted'])
     if budget_spent(api, state):
         state['halted'] = 'budget_exhausted'
         raise Unavailable('budget_exhausted')
     remaining = None if api.max_bytes is None else api.max_bytes-state['used']
     try:
-        value, metadata = metered_exchange(api, api.path+target, {'Accept': 'application/json'}, state,
-            authorization=authorization, ceiling=MAX_RESPONSE_BYTES)
+        headers = {'Accept': 'application/json'} if body is None else {'Accept': 'application/json', 'Content-Type': 'application/json'}
+        value, metadata = metered_exchange(api, api.path+target, headers, state, authorization=authorization,
+            credential_header=credential_header, body=body, ceiling=MAX_RESPONSE_BYTES)
     except RateLimited:
         state['halted'] = 'rate_limited'
         raise Unavailable('rate_limited') from None
