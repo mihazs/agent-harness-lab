@@ -5,6 +5,8 @@ an explicit `ahl skills invoke .` exited 3 in a fraction of a second (blocked, s
 although the invoking host was known, and the skill's no-repeat rule left the agent unable to proceed.
 Runtimes are stub executables on PATH; nothing here starts a real runtime or touches the network.
 """
+# fixed-in: 69d4773b -k not history_evidence
+# fixed-in: fdf03660 -k history_evidence
 import hashlib
 import json
 import os

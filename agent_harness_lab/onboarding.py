@@ -38,6 +38,17 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
     installed = all((assets()/name).is_file() for name in ('skills/harness-evaluation/SKILL.md', 'skills/harness-evaluation/scripts/run_evaluation.py', 'skills/harness-self-improvement/SKILL.md'))
     add('assets', 'pass' if installed else 'blocked', True, 'filesystem_metadata',
         'present' if installed else 'missing', 'Reinstall AHL from a verified release or use a complete source checkout.')
+    from . import installation
+    from .cli import version
+    install = installation.inspect(version(), assets())
+    if install['warnings']:
+        status, observed = 'warn', '; '.join(w['message'] for w in install['warnings'])
+        advice = f'Run `{installation.FIX}`; `{installation.FIX} --check` first compares with the latest published release without downloading.'
+    else:
+        status = 'pass' if install['release_installation'] else 'not_checked'
+        observed = f"release {install['launcher_release']}; {len(install['skill_links'])} skill links" if install['release_installation'] else 'not_a_release_installation'
+        advice = 'Offline check of launcher and global skill links; `ahl update --check` compares with the latest published release.'
+    add('installation', status, False, 'filesystem_metadata', observed, advice)
     effective, invalid_config = None, False
     try:
         if not safe:
@@ -111,6 +122,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             'Confirm target-project binding and declared coverage before using source context as evidence.')
     result = dict(schema_version=1, profile=profile, status='invalid' if invalid_config else 'blocked' if any(c['required_for_profile'] and c['status'] != 'pass' for c in checks) else 'ready',
                   checks=checks, automatic_promotion=False, external_runtime_executed=False)
+    result['installation'] = install
     if controlled:result['readiness_scope']='local_configuration_and_references_only'
     if context is not None: result['source_context'] = context
     return result
@@ -148,6 +160,13 @@ def main(argv):
                 print(f"{result['profile']}: {result['status']}")
                 for item in result['checks']:
                     print(f"{item['check_id']}: {item['status']} ({item['observed_value']}). {item['remediation']}")
+                if result['installation']['release_installation']:
+                    state = result['installation']
+                    print(f"launcher: {state['launcher'] or 'not on PATH'} -> {state['launcher_resolves_to'] or 'unresolved'} (release {state['launcher_release'] or 'unknown'})")
+                    for link in state['skill_links']:
+                        print(f"skill {link['path']} -> {link['resolves_to']} (release {link['release'] or 'unknown'})")
+                for warning in result['installation']['warnings']:
+                    print(f"WARNING {warning['code']}: {warning['message']}. Fix: {warning['fix']}")
                 context = result.get('source_context')
                 if context is not None:
                     print(f"source context: {context['status']}; sources: {context['source_count']}; omitted: {context['omitted_sources']}; truncated: {context['truncated']}")

@@ -48,6 +48,22 @@ Already downloaded the assets? Use the release's `install.py` with
 `--archive agent-harness-lab-VERSION.tar.gz --checksums SHA256SUMS`.
 `--root` and `--bin-dir` select alternative application/launcher locations.
 
+## Check that the installation is current
+
+A fix that is released but not installed has no effect on you. `ahl doctor` reports,
+offline, the installed version, where the `ahl` launcher on PATH and each global skill
+link resolve, and prints a visible `WARNING` with the fix `ahl update` when the launcher
+and the skill links point at different releases or the launcher is older than the
+minimum `ahl` version a linked skill declares ("Requires `ahl` X or later"). The JSON
+report has an `installation` object and an `installation` check with status `warn`;
+a warning never changes the readiness exit code. Source checkouts and pip installs are
+reported as `not_checked`, not as a pass.
+
+`ahl update --check` additionally compares the installed version with the latest
+published release. It makes one read-only HTTPS metadata request, downloads nothing and
+changes nothing; it prints `update available, run: ahl update` or `up to date` and exits
+2 if the release metadata cannot be fetched. `ahl doctor` itself never uses the network.
+
 ## Platform evidence
 
 The source quickstart and both test suites were exercised on Linux with Python

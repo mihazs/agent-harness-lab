@@ -5,6 +5,9 @@ description: Evaluate and improve agent instructions and skills when the user ex
 
 # Harness self-improvement
 
+Requires `ahl` 0.169.0 or later. If `ahl --version` is older, or `ahl doctor` prints an
+`installation` WARNING, tell the user to run `ahl update` before dispatching.
+
 ## Invocation mode
 
 Choose the mode before following the manual steps below. Read

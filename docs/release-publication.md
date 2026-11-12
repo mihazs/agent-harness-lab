@@ -52,3 +52,23 @@ publishes every missing version in order.
 
 Run the offline tests with
 `python -m pytest tests/integration/packaging/test_publish_pending_releases.py`.
+
+## How-to: verify the installed artifact after publication
+
+`task release:verify COMMIT=SHA` downloads the published archive, checks its checksums
+and tag, then installs it with the downloaded `install.py` into a temporary prefix with
+a temporary `HOME` and state directory (no network after the download) and runs the
+reported scenarios through the installed `ahl` launcher with stub `claude`/`codex`
+executables on PATH: zero-config runtime selection with and without a host marker,
+`--history` read-only toward a synthetic session store, the size-capped analysis brief and
+both honest no-change dispositions, the state-home override and `ahl doctor`'s installation
+report. Reference: the scenarios live in `tests/integration/packaging/installed_scenarios.py`
+and are shared with the build-from-checkout test, so a reverted fix fails both.
+
+## Reference: regression pin markers
+
+A pin test file declares `# fixed-in: COMMIT [-k EXPRESSION]` on its own comment line,
+one per fix. `python scripts/check_pins.py` (`task test:pins`) copies the file into a
+temporary worktree at `COMMIT^` and runs it. Verdicts: `non-vacuous` (tests fail there),
+`VACUOUS` (passes on the unfixed parent, exit 1) and `INCONCLUSIVE` (cannot run: missing
+commit, collection error, no tests selected, timeout; exit 3). Inconclusive is never a pass.
