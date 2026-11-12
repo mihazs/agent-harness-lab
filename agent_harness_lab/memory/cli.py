@@ -18,13 +18,14 @@ def main(argv):
                         help='Absolute store directory outside any checkout (default: $AHL_MEMORY_STORE); no default location exists')
     parser.add_argument('--exclude', action='append', default=[],
                         help='Directory the store must not overlap (project, bank, source, workspace, image, credential or protected store); repeatable')
-    parser.add_argument('--dry-run', action='store_true', help='reindex: report what would be rebuilt without changing anything')
+    parser.add_argument('--dry-run', action='store_true', help='reindex: report what would be rebuilt without changing anything; gc: plan only (the default)')
     parser.add_argument('--apply', action='store_true', help='gc: remove the planned objects (default is a plan only)')
+    parser.add_argument('--json', action='store_true', help='Accepted for uniformity with other commands; output is always JSON')
     args = parser.parse_args(argv)
     if not args.store:
         parser.exit(2, 'ahl memory: --store (or AHL_MEMORY_STORE) is required; there is no default location\n')
-    if args.dry_run and args.command != 'reindex' or args.apply and args.command != 'gc':
-        parser.exit(2, 'ahl memory: --dry-run applies to reindex and --apply to gc only\n')
+    if args.dry_run and args.command not in ('reindex', 'gc') or args.apply and args.command != 'gc' or args.dry_run and args.apply:
+        parser.exit(2, 'ahl memory: --dry-run applies to reindex and gc, --apply to gc only, and not together\n')
     try:
         store = (MemoryStore.init if args.command == 'init' else MemoryStore.open)(args.store, excluded=args.exclude)
         if args.command == 'verify':

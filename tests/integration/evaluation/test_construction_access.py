@@ -306,14 +306,15 @@ class TestConstructionAccess(ConstructionAccessHarness):
         with self.controller(),redirect_stdout(io.StringIO()): assert workflow.watch(args) == 3
         assert len(self.f.histories) == 32
 
-    @pytest.mark.parametrize('location',['project','runtime-image','methodology','credential'])
-    def test_store_inside_project_runtime_methodology_or_credentials_rejects_before_reads(self,location):
+    @pytest.mark.parametrize('location',['project','runtime-image','methodology','credential','memory-store'])
+    def test_store_inside_project_runtime_methodology_credentials_or_memory_store_rejects_before_reads(self,location):
         from agent_harness_lab.cli import assets
+        memory=self.f.root/'private-memory'
         selected={'project':self.f.project/'controller','runtime-image':self.f.args.image_root/'controller',
-                  'methodology':assets()/'skills'/'controller','credential':self.f.key}[location]
+                  'methodology':assets()/'skills'/'controller','credential':self.f.key,'memory-store':memory/'controller'}[location]
         self.f.args.evaluation_store=selected
         with patch.object(workflow,'evidence') as evidence,patch.object(responses,'request') as provider, \
-                pytest.raises(ValueError): self.f.run_controlled()
+                patch.dict(os.environ,{'AHL_MEMORY_STORE':str(memory)}), pytest.raises(ValueError): self.f.run_controlled()
         evidence.assert_not_called(); provider.assert_not_called()
 
     def test_noncontrolled_and_contract_repair_combination_rejects_before_dispatch(self):
