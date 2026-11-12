@@ -503,8 +503,16 @@ and is never a deliberate stop. A natural-language `claim` is retained but never
 satisfies a postcondition. Clarification topics and stop reasons are identifiers
 that a trusted runner assigns to observed events; the grader does not judge free
 text, and semantic adjudication remains a separate step. Receipts never authorize
-publication or promotion. Replay fixtures, scripted user replies and evaluator
-integration remain later work under the same issue.
+publication or promotion. The synthetic pair controls below exercise the grader;
+evaluator integration remains later work under the same issue.
+
+Six paired control families (ambiguous versus specified, already-correct versus
+defective, prohibited versus authorized, infeasible versus feasible, ask then
+authorized completion, legitimate stop versus abandonment) are exercised in
+`tests/unit/evaluation/test_interaction_control_families.py`. No constant policy
+(always edit, always ask, never edit, always stop) passes both members of any pair,
+and an ask-only episode satisfies a boundary endpoint without being whole-task
+complete. They are synthetic grader controls, not task-bank members or model results.
 
 ### Live response facts
 
@@ -520,6 +528,25 @@ transport configuration remain trusted; the fact does not establish provider or
 model identity, user replies, delivery, transient effects, semantic success, or
 certification. Missing observations remain unknown, and the view grants no
 promotion or adoption authority.
+
+### Exact scripted response fixture
+
+`scripted_interaction.reply` is a private, opt-in fixture for one live Responses
+observation. Its versioned oracle declares task and root identifiers, exact
+accepted text alternatives, and a hidden reply. It checks the oracle bytes against
+a caller-supplied SHA-256, checks the live task and root, and returns the reply
+only when the single retained output-text part exactly matches an alternative.
+A successful return can occur once per live trial within this process. This
+limit does not survive a restart and is not delivery custody. It does not expose
+the reply in a report, deliver it to an agent, or continue a run. The oracle bytes
+and reply must remain private to the trusted caller.
+
+The digest is a caller assertion, not proof of a reviewed task-bank oracle or
+independence; same-process code can access inputs. Exact matching is a fixture
+rule, not semantic adjudication of other valid questions. This fixture does not
+grade interaction or establish user-reply receipt, completion, or authority.
+Replay, frozen task-bank custody, scripted delivery and evaluator integration
+remain future work.
 
 ## Offline validation and limits
 
