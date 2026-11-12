@@ -591,9 +591,9 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py -v'
   test:sources:claude-mem:
-    desc: Run offline Claude-Mem v15.9.0 export controls with synthetic invented exports
+    desc: Run offline Claude-Mem v15.9.0 export, native-session correlation and saved MCP tool-listing controls with synthetic invented inputs
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/unit/sources/test_source_claude_mem_tools.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
   test:sources:mem0:
     desc: Run offline Mem0 OSS v2.2.1 and Platform v3 memory/history export controls with synthetic invented exports
     cmds:
