@@ -1,5 +1,7 @@
-"""Content-free Claude Code 2.1.316 records; native claims are not execution proofs."""
+"""Content-free Claude Code native records for the fixture-verified releases; native claims are not execution proofs."""
 import hashlib
+from collections import Counter
+import re
 from pathlib import Path, PurePosixPath
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import SOURCE_ORDER, event, message_fingerprint
@@ -8,12 +10,49 @@ from ..sources.schema import digest
 from ..surfaces import skill_prefixes
 
 VERSION = 'claude-jsonl-2.1.316'
-RUNTIME_VERSION = '2.1.316'  # the only runtime version the pinned contract fixtures verify; no range is declared
+RUNTIME_VERSION = '2.1.316'  # the first verified release; source-journal profiles stay exact at this version
+# Declared compatibility range: every release in it needs a contract fixture (tests/fixtures/claude_contract/<version>.jsonl);
+# a test refuses a version without one. Add a release by adding its fixture, then widening or merging the entries.
+VERIFIED_RANGES = (('2.1.316', '2.1.316'), ('2.1.318', '2.1.318'))
+
+
+def release(version):
+    parts = version.split('.') if isinstance(version, str) else ()
+    return tuple(int(part) for part in parts) if len(parts) == 3 and all(part.isdigit() for part in parts) else None
+
+
+def expand(low, high):
+    """Every patch release from low to high within one minor line; ranges never cross a major or minor boundary."""
+    first, last = release(low), release(high)
+    if first is None or last is None or first[:2] != last[:2] or first > last: raise ValueError('invalid verified range')
+    return tuple('%d.%d.%d' % (*first[:2], patch) for patch in range(first[2], last[2]+1))
+
+
+VERIFIED = tuple(version for low, high in VERIFIED_RANGES for version in expand(low, high))
+NEWEST_VERIFIED = max(VERIFIED, key=release)
+EXACT = (RUNTIME_VERSION,)
 # Declared subordinal within one native line of one file (segment); never execution or cross-file order.
 ORDER_PROFILE = 'claude-native-order-v1'
 UNORDERED = frozenset(('capture_order', *SOURCE_ORDER))
 UPSTREAM_COMMIT = '2146f9d8985513053e904b13200c8f744b36785a'
 ENTRY_TYPES = ('user', 'assistant', 'system', 'progress', 'attachment')
+# Record kinds the verified releases write that carry no conversation event; skipped, counted and typed per kind.
+# Any other kind is skipped as unknown_entry_type. Extra keys on known kinds are ignored: only named fields are read.
+NON_EVENT_TYPES = ('file-history-snapshot', 'queue-operation', 'last-prompt', 'ai-title', 'mode', 'atis-latch', 'api-request',
+    'api-request-shape', 'api-request-blob', 'tools-used', 'file-history-delta', 'cost-state')
+NAME = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,47}\Z')
+
+
+def type_label(kind):
+    """An entry type as a printable schema name; anything else is 'unrecognized' so no capture text passes through."""
+    return kind if isinstance(kind, str) and NAME.match(kind) else 'unrecognized'
+
+
+def skip_reason(label): return 'declared_non_event_entry' if label in NON_EVENT_TYPES else 'unknown_entry_type'
+
+
+def skipped_types(counter):
+    return {label: dict(count=count, reason=skip_reason(label)) for label, count in sorted(counter.items())}
 KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Agent', 'Task', 'Skill',
     'WebFetch', 'WebSearch', 'NotebookEdit', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode')
 # Project-owned bundle layout from the surface classifier; only an exact entry-point path under the project qualifies.
@@ -90,7 +129,8 @@ def skill_signal(project, tool, arguments):
 
 
 class Projection:
-    def __init__(self, project, limit, check, revisions=None):
+    def __init__(self, project, limit, check, revisions=None, versions=VERIFIED):
+        self.versions, self.recorded, self.skipped = versions, set(), Counter()
         self.project, self.session, self.writer = Path(project), None, None
         self.limit, self.check = limit, check
         self.revisions, self.raw_revisions = revisions, {}
@@ -101,7 +141,7 @@ class Projection:
     def scoped(self, *values): return digest(('claude-native-id-v1', str(self.project), *values))
 
     def add(self, row, position):
-        if row.get('version') is not None and row['version'] != '2.1.316': raise ValueError('unsupported native Claude version')
+        if row.get('version') is not None and row['version'] not in self.versions: raise ValueError('unsupported native Claude version')
         if row.get('cwd') is not None and Path(text(row['cwd'])) != self.project: raise ValueError('native Claude project mismatch')
         if row.get('sessionId') is not None:
             session = text(row['sessionId'])
@@ -109,8 +149,8 @@ class Projection:
             self.session = session
         kind = row.get('type')
         if kind not in ENTRY_TYPES:
-            self.unsupported += 1; return
-        if row.get('version') != '2.1.316' or row.get('cwd') is None or row.get('sessionId') is None:
+            self.unsupported += 1; self.skipped[type_label(kind)] += 1; return
+        if row.get('version') not in self.versions or row.get('cwd') is None or row.get('sessionId') is None:
             raise ValueError('native Claude envelope lacks explicit scope/version')
         sidechain = row.get('isSidechain')
         if type(sidechain) is not bool: raise ValueError('native Claude writer type unavailable')
@@ -118,6 +158,7 @@ class Projection:
         if agent is not None: text(agent)
         if team is not None: text(team)
         if sidechain and agent is None: raise ValueError('native Claude sidechain owner unavailable')
+        self.recorded.add(row['version'])
         writer = (sidechain, agent, team)
         if self.writer is not None and writer != self.writer: raise ValueError('mixed native Claude writers')
         self.writer = writer
@@ -125,7 +166,7 @@ class Projection:
         case = self.scoped(self.session, writer)
         base = dict(case_id=case, root_case_id=case, lineage_verified=False, timestamp=stamp,
             capture_complete=False, source_format='claude', source_version=VERSION,
-            runtime_fingerprint=digest(('claude-code', '2.1.316')), capture_order=position,
+            runtime_fingerprint=digest(('claude-code', row['version'])), capture_order=position,
             source_order_profile=ORDER_PROFILE, source_order_segment=self.segment,
             native_message_fingerprint=self.scoped(self.session, writer, ident))
         if row.get('parentUuid') is not None:
@@ -247,14 +288,15 @@ class Projection:
         return tuple(self.rows), conflicts
 
 
-def decode(folder, name, project, max_records, *, revisions=None, **limits):
-    projection = Projection(project, max_records, folder.check, revisions)
+def decode(folder, name, project, max_records, *, revisions=None, versions=VERIFIED, **limits):
+    projection = Projection(project, max_records, folder.check, revisions, versions)
     sha256, partial, count = jsonl(folder, name, max_records, projection.add, **limits)
     rows, conflicts = projection.finish(folder.check)
     if max_records is not None and len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=0, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
-        input_records=count, session_sha256=projection.scoped('session', projection.session), conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
+        input_records=count, skipped_entry_types=skipped_types(projection.skipped), recorded_versions=sorted(projection.recorded),
+        session_sha256=projection.scoped('session', projection.session), conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
         usage_semantics='observed_uncached_counts_only', served_model='unknown', effective_settings='unknown',
         independence='unknown', outcome='unknown', parent_session='unknown', source_read=True, network_used=False)
     return rows, summary, sha256

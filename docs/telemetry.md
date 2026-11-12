@@ -183,13 +183,15 @@ supports one explicitly selected, consistently attributed writer per file.
 Synthetic fixtures validate the reader; no live CLI session was used.
 
 Attributable user/assistant/system/progress/attachment records require explicit
-`version: 2.1.316`, exact declared `cwd` matching `PROJECT`, `sessionId`, `uuid`,
+`version` inside the verified range (see below), exact declared `cwd` matching `PROJECT`, `sessionId`, `uuid`,
 timezone timestamp and boolean `isSidechain`. Session/writer changes within a file
 reject. A sidechain also requires `agentId`; optional `teamName` participates in
 writer scoping. Metadata without a supported envelope contributes visible coverage
 gaps, not fabricated events. Incompatible provided versions or project labels
 reject. No directory name, timestamp, prompt text or filename establishes identity.
-The existing `claude-jsonl-v1` synthetic adapter remains supported. `ahl analyze
+The existing `claude-jsonl-v1` synthetic adapter remains supported. The `2.1.316` in this section's title
+is the first verified release; the declared range is described under
+[Runtime version policy](#runtime-version-policy-for-pinned-native-profiles). `ahl analyze
 --source-root` selects a bounded Claude `projects` directory with this pinned
 version (see [bounded Claude project-root selection](#bounded-claude-project-root-selection)),
 through the reader of the `2.1.316-v2` source-journal profile in
@@ -512,32 +514,66 @@ requalification domains still accept only the pinned Codex root.
 
 ### Runtime version policy for pinned native profiles
 
-A pinned profile (`claude-jsonl-2.1.316`, `codex-rollout-0.166.0`) accepts exactly
-one recorded runtime version: `2.1.316` and `0.166.0`. No compatible range is
-declared, because no contract fixture verifies one; a newer release is never
-accepted silently. A capture whose first attributable envelope records another
-version string is not parsed with the pinned adapter. Its file receipt carries the
-typed reason `capture_version_differs_from_pin` (Codex counts it under
-`discovery`), and the collection reports the observed versions (dotted digits only,
-anything else is `unrecognized`) with their file counts next to the pinned version.
-A missing or non-string version keeps `unsupported_native_version`.
+The Codex profile (`codex-rollout-0.166.0`) accepts exactly one recorded runtime
+version, `0.166.0`: no compatible range is declared, because no contract fixture
+verifies one. The Claude profile (`claude-jsonl-2.1.316`; the name is the first
+verified release) accepts a **declared range**: each release in `VERIFIED_RANGES`
+(`agent_harness_lab/telemetry/claude_native.py`) must have a synthetic contract
+fixture in `tests/fixtures/claude_contract/<version>.jsonl`, and a test fails when
+the accepted versions and the fixtures differ. A range stays within one minor line.
+Today the verified releases are those fixtures; a release between or beyond them is
+not accepted until its fixture exists. Add one with
+[the maintainer guide](verify-claude-release.md).
+
+A capture whose first attributable envelope records a release outside the accepted
+set is not parsed with the verified adapter. Its file receipt carries the typed
+reason `capture_version_differs_from_pin` (Codex counts it under `discovery`), and
+the collection reports the observed versions (dotted digits only, anything else is
+`unrecognized`) with their file counts next to the verified versions. A missing or
+non-string version keeps `unsupported_native_version`. A single file whose records
+name different releases is read only when every one of them is verified.
 
 Each source records `pin_compatibility`:
 
 | Value | Meaning |
 | --- | --- |
-| `exact` | Every parsed capture recorded the pinned version and was read with the pinned adapter. Default discovery never reports it. |
-| `declared_range` | Reserved: the version lies in a range verified by contract fixtures. No profile declares one yet. |
-| `unverified` | No capture was parsed under the pin (explicit selection of only differing releases), or default discovery parsed the capture with the descriptive adapter, whatever version it recorded. Findings stay descriptive observed patterns. |
+| `exact` | Codex only: every parsed capture recorded the pinned version and was read with the pinned adapter. |
+| `declared_range` | Claude: every parsed capture recorded releases inside the fixture-verified range and was read with the verified adapter, by explicit `--source-root` selection or by default discovery. |
+| `unverified` | No capture was parsed by a verified adapter: explicit selection of only differing releases, or default discovery read the capture descriptively because its release is outside the range or the strict contract did not hold. Findings stay descriptive observed patterns. |
 
-Explicit `--source-root` selection and default project-filtered discovery select
-the same project captures: both identify a project by the recorded working
-directory, not by the sanitized directory name. They differ in one respect, and it
-is reported rather than silent: default discovery parses every capture
-descriptively (`unverified`, even at the pinned version), while the pinned explicit path skips a differing release. The
-`discovery.capture_counts` object lists `selected`, `parsed` and `skipped` captures
-and `skipped_reasons`; `selected = parsed + skipped`, so no capture is dropped
-without a reason.
+Default discovery reads each project capture with the verified Claude adapter when
+the capture satisfies the strict contract, and otherwise with the descriptive
+adapter. Each source says which one in `adapter` (`verified_native` or
+`descriptive_unverified`) and carries `recorded_versions` and `adapter_evidence`
+(counts of cases, cases without a declared order, tool events and tool events
+without a name). Explicit `--source-root` selection and default discovery select
+the same project captures, because both identify a project by the recorded working
+directory, not by the directory name. `discovery.capture_counts` lists `selected`,
+`parsed` and `skipped` captures and `skipped_reasons`; `selected = parsed + skipped`,
+so no capture is dropped without a reason. The source-journal profiles
+`2.1.316-v1` and `2.1.316-v2` stay exact at 2.1.316.
+
+### Unknown records and fields in the verified Claude profile
+
+Only entry types `user`, `assistant`, `system`, `progress` and `attachment` produce
+events. Every other entry type is skipped, counted and typed in the capture summary's
+`skipped_entry_types`: `declared_non_event_entry` for the bookkeeping kinds the
+profile lists (`file-history-snapshot`, `file-history-delta`, `queue-operation`,
+`last-prompt`, `ai-title`, `mode`, `atis-latch`, `api-request`, `api-request-shape`,
+`api-request-blob`, `tools-used`, `cost-state`) and `unknown_entry_type` for any other
+kind. A type name that is not identifier-shaped is reported as `unrecognized`, so no
+capture text becomes a label. An unknown type never fails a capture and never
+changes an event; `ahl analyze` adds an `unknown_entry_type` caveat.
+
+Unknown extra fields on a known entry, message or content block are tolerated by one
+rule: the adapter reads only the fields the contract names and ignores every other
+key without interpreting it. An unknown content-block type becomes an
+`unsupported_native_block` coverage event. A missing required field still rejects the
+capture.
+
+The verified fixtures were derived from the structure of scripted synthetic sessions
+and keep field names only; every id, path, timestamp and text in them is an invented
+placeholder.
 
 ## Message fingerprints
 

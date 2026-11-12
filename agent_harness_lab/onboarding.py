@@ -49,6 +49,16 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
         observed = f"release {install['launcher_release']}; {len(install['skill_links'])} skill links" if install['release_installation'] else 'not_a_release_installation'
         advice = 'Offline check of launcher and global skill links; `ahl update --check` compares with the latest published release.'
     add('installation', status, False, 'filesystem_metadata', observed, advice)
+    from .history import runtime_lag
+    from .telemetry.claude_discovery import recorded_versions
+    try:
+        found = recorded_versions([Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects'], project.resolve()) if safe else {}
+    except (OSError, ValueError, NotImplementedError):
+        found = {}
+    lag = runtime_lag([dict(format='claude', recorded_versions=[version]) for version, count in found.items() for _ in range(count)])
+    if lag:
+        add('claude_runtime_lag', 'warn', False, 'session_header_versions',
+            'recorded %s; newest verified %s' % (lag['newest_recorded'], lag['newest_verified']), lag['next_step'])
     effective, invalid_config = None, False
     try:
         if not safe:

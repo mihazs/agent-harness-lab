@@ -1,6 +1,6 @@
 """Explicit pinned Claude native journals; no account or transcript discovery."""
 from ..evaluation.integrity import contained
-from ..telemetry.claude_native import decode
+from ..telemetry.claude_native import EXACT, decode
 from ..telemetry.native import optional_limit
 from .native import NativeCapture
 from .schema import digest
@@ -20,7 +20,8 @@ class ClaudeCapture(NativeCapture):
             raise ValueError('unsupported native Claude source version')
         if source.version == SOURCE_VERSION:
             descriptor, selected, project, _ = self.select(source, {'schema_version', 'project', 'capture', 'max_records'})
-            return self.file(source, descriptor, selected, project, decode)
+            # Journal profiles are named for 2.1.316 and stay exact; the declared range applies to analyze and improve captures.
+            return self.file(source, descriptor, selected, project, lambda *args, **options: decode(*args, versions=EXACT, **options))
         from ..telemetry.claude_discovery import capture
         descriptor, selected, project, limit = self.select(source, ROOT_FIELDS)
         if type(selected['source_roots']) is not list or not selected['source_roots']: raise ValueError('select native Claude source roots')
@@ -29,7 +30,7 @@ class ClaudeCapture(NativeCapture):
         for name in ('max_files', 'max_scan_files'): optional_limit(selected.get(name))
         revisions = {}
         with capture(roots, project, session=selected['session'], max_files=selected.get('max_files'),
-                max_scan_files=selected.get('max_scan_files'), max_records=limit, revisions=revisions) as (events, summary, sha256, folder, sessions):
+                max_scan_files=selected.get('max_scan_files'), max_records=limit, revisions=revisions, verified=EXACT) as (events, summary, sha256, folder, sessions):
             self.sessions = sessions
             return self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
 

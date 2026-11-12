@@ -181,7 +181,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         raise ValueError('unsupported evidence format')
     from .telemetry.adapters import CAPABILITIES
     from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION, PINNED_VERSION as CODEX_RUNTIME_VERSION
-    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION, RUNTIME_VERSION as CLAUDE_RUNTIME_VERSION
+    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION, VERIFIED as CLAUDE_VERIFIED
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
     native_order = source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
     pinned = codex_pinned or native_order
@@ -251,6 +251,14 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
             elif pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
             else: source['path'] = str(path)
             sources.append(source)
+            # Default discovery reads a capture with the verified adapter when its recorded releases are all fixture-verified and the
+            # strict contract holds; otherwise the descriptive adapter reads it and the source stays unverified.
+            verified = None
+            if not pinned and events is None and fmt == 'claude':
+                from .telemetry.claude_native import read as verified_read
+                try: verified = verified_read(path, project, max_records=max_events)
+                except (ValueError, OSError, NotImplementedError): verified = None
+            native = pinned or verified is not None
             def scoped_rows():
                 active = events is not None
                 for accepted, row in enumerate(_rows(path, caveats, source_digest,
@@ -264,52 +272,72 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     if active:
                         row.setdefault('id', str(accepted))
                         yield row
-            versions = set()
-            if pinned:
-                if source_format == 'claude':
-                    from .telemetry.claude_native import read
+            versions, seen_cases, ordered_cases, tool_events = set(), set(), set(), [0, 0]
+            if native:
+                if verified is not None: records, coverage, native_digest = verified
                 else:
-                    from .telemetry.codex_rollout import read
-                try:
-                    if source_root is None: records, coverage, native_digest = read(path, project, max_records=max_events)
-                    elif source_format == 'claude':
-                        # The root is one Claude `projects` directory; only the project's mapped directories are read.
-                        from .telemetry.claude_discovery import scan
-                        records, coverage, native_digest = scan([path], project, session=session, max_files=max_files,
-                            max_scan_files=max_scan_files, max_records=max_events)
+                    if source_format == 'claude':
+                        from .telemetry.claude_native import read
                     else:
-                        from .telemetry.codex_discovery import scan
-                        records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
-                            max_scan_files=max_scan_files, max_records=max_events)
-                except OSError: raise ValueError('native capture is unavailable or unsafe') from None
+                        from .telemetry.codex_rollout import read
+                    try:
+                        if source_root is None: records, coverage, native_digest = read(path, project, max_records=max_events)
+                        elif source_format == 'claude':
+                            # The root is one Claude `projects` directory; only the project's mapped directories are read.
+                            from .telemetry.claude_discovery import scan
+                            records, coverage, native_digest = scan([path], project, session=session, max_files=max_files,
+                                max_scan_files=max_scan_files, max_records=max_events)
+                        else:
+                            from .telemetry.codex_discovery import scan
+                            records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
+                                max_scan_files=max_scan_files, max_records=max_events)
+                    except OSError: raise ValueError('native capture is unavailable or unsafe') from None
                 # Analysis consumes events once; draining frees each native event when analysis no longer needs it.
                 from .telemetry.native import drained
                 records = drained(deque(records))
-                source.update(native_coverage=coverage, pin_compatibility='exact')
+                source.update(native_coverage=coverage, pin_compatibility='exact' if fmt == 'codex' else 'declared_range', adapter='verified_native')
+                if coverage.get('recorded_versions'): source['recorded_versions'] = coverage['recorded_versions']
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
                 # Claude root summaries carry no inherited-record count: subagent transcripts are separate files.
-                if coverage['unsupported_records'] or coverage.get('inherited_records_skipped'):
+                if pinned and (coverage['unsupported_records'] or coverage.get('inherited_records_skipped')):
                     _warn(caveats, 'Native capture contains unsupported or inherited records; coverage is partial.')
+                unknown = {k: v['count'] for k, v in coverage.get('skipped_entry_types', {}).items() if v['reason'] == 'unknown_entry_type'}
+                if unknown:
+                    _warn(caveats, 'unknown_entry_type: %d record(s) of unrecognized entry type(s) %s were skipped and not interpreted; '
+                        'run ahl sources claude pin-check --events FILE on a capture to compare its structure with the verified contract.'
+                        % (sum(unknown.values()), ', '.join('%s (%d)' % item for item in unknown.items())))
                 if source_root is not None:
                     discovery = coverage['discovery']
                     if (discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']
                             or discovery.get('unrecognized_files')):
                         _warn(caveats, 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.')
                     mismatch = discovery['version_mismatch_files']
-                    source['pin_compatibility'] = 'exact' if discovery['accepted_files'] else 'unverified'
+                    codex = source_format == 'codex'
+                    source['pin_compatibility'] = ('exact' if codex else 'declared_range') if discovery['accepted_files'] else 'unverified'
                     if mismatch:
-                        reasons.append(dict(reason='capture_version_differs_from_pin', captures=mismatch,
-                            observed_versions=discovery['observed_versions'], pinned_version=discovery['pinned_version']))
-                        _warn(caveats, 'capture_version_differs_from_pin: %d selected capture(s) were recorded by runtime version(s) %s, not the pinned %s, '
-                            'and were not parsed; the pin is exact and declares no compatible range. Next: run the same command without --source-root for '
-                            'descriptive, unverified project-filtered discovery, or use an adapter pin verified for that version.'
-                            % (mismatch, ', '.join('%s (%d)' % item for item in discovery['observed_versions'].items()), discovery['pinned_version']))
+                        seen = discovery['observed_versions'] if codex else discovery['unverified_versions']
+                        pin = discovery['pinned_version'] if codex else ', '.join(discovery['verified_versions'])
+                        reasons.append(dict(reason='capture_version_differs_from_pin', captures=mismatch, observed_versions=seen,
+                            **(dict(pinned_version=pin) if codex else dict(verified_versions=discovery['verified_versions']))))
+                        found = ', '.join('%s (%d)' % item for item in seen.items())
+                        if codex:
+                            _warn(caveats, 'capture_version_differs_from_pin: %d selected capture(s) were recorded by runtime version(s) %s, not the pinned %s, '
+                                'and were not parsed; the pin is exact and declares no compatible range. Next: run the same command without --source-root for '
+                                'descriptive, unverified project-filtered discovery, or use an adapter pin verified for that version.' % (mismatch, found, pin))
+                        else:
+                            _warn(caveats, 'capture_version_differs_from_pin: %d selected capture(s) were recorded by runtime version(s) %s, outside the verified '
+                                'versions %s, and were not parsed. Next: run the same command without --source-root for descriptive, unverified discovery, or verify '
+                                'that release with ahl sources claude pin-check --events FILE and add its contract fixture.' % (mismatch, found, pin))
                     if not discovery['accepted_files'] and not mismatch:
                         _warn(caveats, 'No matching native capture was found; completeness remains unknown.')
             else: records = normalize(scoped_rows(), fmt, project='local', source_version=source_version)
             for event in records:
                 event = telemetry_event(event)
                 case = event['case_id']
+                if fmt in ('codex', 'claude'):
+                    seen_cases.add(case)
+                    if 'source_order_profile' in event: ordered_cases.add(case)
+                    if event['activity'] in ('tool_call', 'tool_result'): tool_events[0] += 1; tool_events[1] += 'tool_name' not in event
                 if not pinned: event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
                 if not pinned and fmt in ('codex', 'claude'):
                     root = event.get('root_case_id', case)
@@ -317,7 +345,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 tool_error = event.get('execution_status') == 'error'
                 # The pinned Claude adapter derives source order from capture_order, the hashed block index and the
                 # file read, so it stays out of that fingerprint. Caller-supplied ledgers declare it, so it is hashed.
-                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if native_order and 'source_order_profile' in event else event
+                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if native and (native_order or events is None) and 'source_order_profile' in event else event
                 fingerprint.update(json.dumps(dict(event=hashed, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1
@@ -331,22 +359,32 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 if event_sink is not None:
                     event_sink(event)
                 yield event
-            source['sha256'] = native_digest if pinned else source_digest.hexdigest()
-            if not pinned and fmt in ('codex', 'claude'):
-                # No pinned contract reads this parse, so it is never `exact`; a release other than the pin is also typed.
-                pin = CLAUDE_RUNTIME_VERSION if fmt == 'claude' else CODEX_RUNTIME_VERSION
-                source['pin_compatibility'] = 'unverified'
-                if history_session is not None and versions != {pin}:
-                    from .telemetry.native import observed_version
-                    seen = {observed_version(v): 1 for v in versions} or {'unrecognized': 1}
-                    reasons.append(dict(reason='capture_version_differs_from_pin', captures=1, observed_versions=seen, pinned_version=pin))
-                    _warn(caveats, 'capture_version_differs_from_pin: the selected session was recorded by runtime version %s, not the pinned %s; '
+            if fmt in ('codex', 'claude'):
+                # Counts only: what this capture lacks, to be attributed to the adapter by the brief.
+                source['adapter_evidence'] = dict(cases=len(seen_cases), cases_without_declared_order=len(seen_cases - ordered_cases),
+                    tool_events=tool_events[0], tool_events_without_name=tool_events[1])
+            source['sha256'] = native_digest if native else source_digest.hexdigest()
+            if not native and fmt in ('codex', 'claude'):
+                # No verified contract read this parse, so it is never `exact` or `declared_range`; a release outside the verified set is typed.
+                from .telemetry.native import observed_version
+                claude = fmt == 'claude'
+                known = tuple(CLAUDE_VERIFIED) if claude else (CODEX_RUNTIME_VERSION,)
+                seen = {observed_version(v): 1 for v in versions} or {'unrecognized': 1}
+                source.update(pin_compatibility='unverified', adapter='descriptive_unverified', recorded_versions=sorted(seen))
+                if history_session is not None and not (versions and all(v in known for v in versions)):
+                    reasons.append(dict(reason='capture_version_differs_from_pin', captures=1, observed_versions=seen,
+                        **(dict(verified_versions=list(known)) if claude else dict(pinned_version=known[0]))))
+                    shown = ', '.join(known) if claude else known[0]
+                    _warn(caveats, 'capture_version_differs_from_pin: the selected session was recorded by runtime version %s, not the verified %s; '
+                        'it was parsed descriptively without the verified contract and is unverified. Next: treat findings as observed patterns only, '
+                        'or verify that release with ahl sources claude pin-check --events FILE.' % (', '.join(seen), shown) if claude else
+                        'capture_version_differs_from_pin: the selected session was recorded by runtime version %s, not the pinned %s; '
                         'it was parsed descriptively without the pinned contract and is unverified. Next: treat findings as observed patterns only, '
-                        'or use an adapter pin verified for that version.' % (', '.join(seen), pin))
+                        'or use an adapter pin verified for that version.' % (', '.join(seen), shown))
         notify('analysis', events=total_events, captures=len(selected))
 
     # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
-    attribution = dict(source_order_declared_by='native_adapter') if native_order else {}
+    attribution = dict(source_order_declared_by='native_adapter') if native_order or events is None else {}
     analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True, **attribution)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])

@@ -235,7 +235,7 @@ def main(argv=None):
             command.add_argument('--history-store', type=Path, help='Explicit existing owner-only HistoryStore for read-only saved comparison analysis; requires --history-run; supports unbound fixed history only, no trials, retries or promotion; output and state paths must stay outside it')
             command.add_argument('--history-run', help='Exact existing controller run SHA-256 paired with --history-store; current sealed unbound fixed history is analyzed conditionally; advanced profiles fail explicitly, incomplete or quarantined runs keep their dispositions')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized',help='Explicit capture adapter for --events/--source-root; normalized expects event JSONL (default: %(default)s)')
-        command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316')
+        command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316 (accepts every fixture-verified Claude Code release; see ahl sources claude pin-check --help)')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
         if name == 'analyze':
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')
