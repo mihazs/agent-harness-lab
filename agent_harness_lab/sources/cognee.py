@@ -18,7 +18,9 @@ LIMITS = dict(max_export_bytes=32*1024*1024, max_rows=100000, max_fields=128, ma
 # cognee.export(format=...): GraphSnapshot.save() JSON, or migration/formats.write_json. Other formats are refused.
 FORMATS = dict(
     graph_snapshot=dict(envelope=('dataset_name', 'dataset_id', 'nodes', 'edges'), edge=('source_id', 'target_id', 'relationship')),
-    nodes_edges=dict(envelope=('nodes', 'edges'), edge=('source', 'target', 'relationship_name')))
+    nodes_edges=dict(envelope=('nodes', 'edges'), edge=('source', 'target', 'relationship_name')),
+    # A user-saved JSON list of cognee.recall() results (RecallResponse); the saved file, never a live call.
+    recall_results=dict(envelope=(), edge=()))
 CLAIMS = ('document', 'chunk', 'entity', 'graph_node', 'relation')
 DERIVATION = dict(document='ingested_source', chunk='document_segment', entity='model_extraction',
                   graph_node='unmodelled_datapoint', relation='graph_edge')
@@ -38,6 +40,13 @@ TIMESTAMPS = ('native', 'missing', 'invalid', 'conflicting', 'not_modelled')
 ORIGINS = ('self', 'traced', 'not_exported', 'missing', 'conflicting', 'multiple', 'untraced')
 # Neither pinned writer emits a version; any version-like key must agree with the declared release.
 VERSION_KEYS = ('version', 'cognee_version', 'schema_version')
+RESULT_SOURCES = ('session', 'trace', 'session_context', 'graph', 'code', 'tools', 'skills', 'system')
+RESULT_DERIVATION = dict(session='session_qa_entry', trace='agent_trace_step', session_context='distilled_lesson',
+                         graph='retrieved_item', code='retrieved_item', tools='tool_result', skills='skill_metadata',
+                         system='system_marker')
+# SearchResultKind values at the pin that are retrieved items; completion kinds are generated answers.
+RETRIEVED = ('chunk', 'summary', 'cypher', 'coding_rule', 'code', 'skill')
+GENERATED = ('graph_completion', 'rag_completion', 'triplet_completion', 'natural_language', 'temporal', 'structured')
 SELECTION = {'schema_version', 'cognee_version', 'instance', 'dataset', 'dataset_id', 'format', 'export'}
 
 
@@ -84,6 +93,49 @@ class GraphClaim(Contract):
             raise ValueError('graph claims never establish independence, factual correctness or outcomes')
 
 
+@dataclass(frozen=True)
+class RecallClaim(Contract):
+    """One saved recall result; a relevance score or generated answer is never a fact or a graded outcome."""
+    claim_type: str
+    native_id_sha256: str
+    occurrence: int
+    derivation: str
+    dataset_sha256: str
+    body_sha256: str
+    dataset_status: str
+    session_status: str
+    graph_refs_status: str
+    score_semantics: str
+    timestamp_status: str
+    session_sha256: str | None = None
+    search_type: str | None = None
+    score: float | None = None
+    original_at: str | None = None
+    graph_node_refs: tuple = ()
+    independent_case: bool = False
+    factually_verified: bool = False
+    task_outcome_verified: bool = False
+    schema_version: int = 1
+
+    def __post_init__(self):
+        self.validate(('native_id_sha256', 'dataset_sha256'), {
+            'claim_type': tuple('recall_'+name for name in RESULT_SOURCES),
+            'derivation': tuple(RESULT_DERIVATION.values()) + ('generated_answer', 'unclassified'),
+            'dataset_status': ('entry_matches_declaration', 'caller_declared', 'unknown', 'not_applicable'),
+            'session_status': ('declared', 'unknown', 'not_applicable'), 'graph_refs_status': ('named', 'none', 'not_applicable'),
+            'score_semantics': ('none', 'unspecified', 'vector_distance_lower_is_better'), 'timestamp_status': TIMESTAMPS})
+        fingerprint(self.body_sha256)
+        for value in (self.session_sha256, *self.graph_node_refs):
+            if value is not None: fingerprint(value)
+        if self.search_type is not None: label(self.search_type)
+        if type(self.occurrence) is not int or self.occurrence < 0: raise ValueError('invalid claim counter')
+        if (self.score is None) != (self.score_semantics == 'none') or type(self.score) not in (float, int, type(None)):
+            raise ValueError('score and its semantics must agree')
+        if (self.session_sha256 is not None) != (self.session_status == 'declared'): raise ValueError('session hash and status disagree')
+        if (self.independent_case, self.factually_verified, self.task_outcome_verified) != (False,)*3:
+            raise ValueError('recall results never establish independence, factual correctness or outcomes')
+
+
 class CogneeExport(LocalExport):
     """Reads one selected export file; never imports Cognee, runs recall/cognify, opens a store or contacts a service."""
 
@@ -91,7 +143,8 @@ class CogneeExport(LocalExport):
         if (source.kind, source.provider, source.version) != ('local_file', PROVIDER, SOURCE_VERSION):
             raise ValueError('unsupported Cognee source version')
         descriptor, selection = self.selection(source)
-        if (not isinstance(selection, dict) or set(selection) - {'limits'} != SELECTION
+        recall = isinstance(selection, dict) and selection.get('format') == 'recall_results'
+        if (not isinstance(selection, dict) or set(selection) - {'limits'} != SELECTION | ({'session_id'} if recall else set())
                 or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
             raise ValueError('invalid Cognee selection descriptor')
         if digest(selection) != source.scope_sha256: raise ValueError('Cognee selection scope mismatch')
@@ -103,6 +156,7 @@ class CogneeExport(LocalExport):
         if declared is not None and (not isinstance(declared, str) or not canonical_uuid(declared)):
             raise ValueError('Cognee dataset_id must be a canonical UUID or null')
         label(selection['instance']); label(selection['dataset']); relative(selection['export'])
+        if selection.get('session_id') is not None: label(selection['session_id'])
         bounds = limits(selection.get('limits'), LIMITS)
         decoded = []
         def consume(position, raw, export_sha256): decoded.append(load_json(raw, bounds, 'Cognee export'))
@@ -120,6 +174,9 @@ def canonical_uuid(value):
 
 
 def provenance(claim):
+    if isinstance(claim, RecallClaim):
+        return 'model_hypothesis' if claim.derivation == 'generated_answer' else 'native_field' if claim.claim_type in (
+            'recall_session', 'recall_trace') else 'unknown'
     if claim.claim_type != 'relation': return NODE_PROVENANCE[claim.claim_type]
     return 'native_field' if claim.detail in STRUCTURAL else 'model_hypothesis'
 
@@ -138,6 +195,7 @@ def text(value):
 def parse(value, selection, bounds):
     """Map one decoded export to claims plus a coverage summary; refuses shapes the pin does not describe."""
     shape = FORMATS[selection['format']]
+    if selection['format'] == 'recall_results': return parse_recall(value, selection, bounds)
     if not isinstance(value, dict) or any(not isinstance(value.get(kind), list) for kind in ('nodes', 'edges')):
         raise ValueError('Cognee export requires nodes and edges lists')
     # The two writers differ in their envelope: a snapshot always names its dataset, the plain JSON never does.
@@ -261,6 +319,72 @@ def parse(value, selection, bounds):
         timestamps={status: timestamps.get(status, 0) for status in TIMESTAMPS[:-1]},
         warnings=sorted(warnings | {'entities_model_extracted', 'edges_not_independent', 'sessions_not_in_export',
                                     'retrieval_scores_not_in_export'}),
+        recall_used=False, inference_used=False, graph_mutated=False, network_used=False, database_opened=False,
+        bodies_stored=False, task_outcomes_verified=False, independent_trials=None, publication_allowed=False,
+        capture_completeness='partial')
+    return tuple(claims), summary
+
+
+def parse_recall(value, selection, bounds):
+    """Map a saved recall() result list to claims; the file's own entries are the only inputs, nothing is re-run."""
+    if not isinstance(value, list): raise ValueError('Cognee recall results must be a list')
+    if len(value) + 1 > bounds['max_rows']: raise HostileReport('Cognee row bound exceeded')
+    declared, session_id, warnings, rejected = selection['dataset_id'], selection.get('session_id'), set(), Counter()
+    def scoped(*parts): return digest(['cognee', selection['instance'], selection['dataset'], declared, *parts])
+    session = digest(['cognee_session', selection['instance'], selection['dataset'], declared, session_id]) if session_id else None
+    claims, seen = [], Counter()
+    for entry in value:
+        if not isinstance(entry, dict): raise ValueError('Cognee recall results must be objects')
+        if len(entry) > bounds['max_fields']: raise HostileReport('Cognee field bound exceeded')
+        source = entry.get('source')
+        if source not in RESULT_SOURCES: rejected['results'] += 1; warnings.add('result_source_unrecognized'); continue
+        # Dataset A's results never fill dataset B's scope; an entry that names another dataset refuses the whole file.
+        found = text(entry.get('dataset_id')) if source in ('graph', 'code') else None
+        if found is not None and found != declared: raise ValueError('Cognee result belongs to an undeclared dataset')
+        dataset = 'not_applicable' if source not in ('graph', 'code') else 'entry_matches_declaration' if found else (
+            'caller_declared' if declared else 'unknown')
+        if dataset in ('caller_declared', 'unknown'): warnings.add('result_dataset_unverified')
+        body = digest(entry)
+        identity = text(entry.get('qa_id')) or text(entry.get('trace_id')) or body
+        occurrence = seen[(source, identity)]; seen[(source, identity)] += 1
+        if occurrence: warnings.add('duplicate_native_id')
+        kind = entry.get('kind')
+        derivation = RESULT_DERIVATION[source]
+        if source in ('graph', 'code'):
+            derivation = 'retrieved_item' if kind in RETRIEVED else 'generated_answer' if kind in GENERATED else 'unclassified'
+            if derivation == 'unclassified': warnings.add('result_kind_unrecognized')
+        search = entry.get('search_type')
+        try: label(search) if search is not None else None
+        except ValueError: search = None; warnings.add('invalid_search_type')
+        score = entry.get('score')
+        if type(score) not in (int, float): score = None
+        if entry.get('score') is not None and score is None: warnings.add('invalid_score')
+        semantics = 'none' if score is None else 'vector_distance_lower_is_better' if source == 'skills' else 'unspecified'
+        scoped_session = source in ('session', 'trace', 'session_context')
+        if scoped_session and session is None: warnings.add('session_id_missing')
+        refs, refs_status = (), 'not_applicable'
+        if source == 'session':
+            used = entry.get('used_graph_element_ids') or {}
+            ids = used.get('node_ids', []) if isinstance(used, dict) else None
+            if not isinstance(ids, list) or any(not isinstance(i, str) for i in ids): raise ValueError('Cognee node_ids must be strings')
+            if len(ids) > bounds['max_fields']: raise HostileReport('Cognee field bound exceeded')
+            # The same hash a graph export claim for that node carries under this instance, dataset and dataset ID.
+            refs = tuple(scoped('node', i, 0) for i in ids)
+            refs_status = 'named' if refs else 'none'
+            if not refs: warnings.add('session_entry_without_graph_refs')
+        original, stamped = instant(entry.get('time'), None) if source == 'session' else (None, 'not_modelled')
+        if source == 'session' and stamped != 'native': warnings.add(stamped+'_timestamp')
+        claims.append(RecallClaim('recall_'+source, scoped('recall', session, source, identity, occurrence), occurrence, derivation,
+            scoped('dataset'), body, dataset, 'declared' if scoped_session and session else 'unknown' if scoped_session else 'not_applicable',
+            refs_status, semantics, stamped, session if scoped_session and session else None, search, score, original, refs))
+    counts = Counter(c.claim_type for c in claims)
+    summary = dict(schema_version=1, profile=PROFILE, cognee_version=selection['cognee_version'],
+        upstream_commit=PINNED[selection['cognee_version']], export_format='recall_results', version_attestation='caller_declared',
+        upstream_shape='source_inferred', compatibility='unverified', dataset_sha256=scoped('dataset'),
+        cross_source_joins='dataset_id_bound' if claims and all(c.dataset_status == 'entry_matches_declaration' for c in claims) else 'disabled',
+        session_lineage='caller_declared' if session else 'unknown',
+        claims={name: counts.get('recall_'+name, 0) for name in RESULT_SOURCES}, rows_rejected=dict(results=rejected['results']),
+        warnings=sorted(warnings | {'retrieval_scores_not_correctness', 'answers_not_graded_outcomes', 'results_not_independent'}),
         recall_used=False, inference_used=False, graph_mutated=False, network_used=False, database_opened=False,
         bodies_stored=False, task_outcomes_verified=False, independent_trials=None, publication_allowed=False,
         capture_completeness='partial')
