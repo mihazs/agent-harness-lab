@@ -95,8 +95,8 @@ All storage and exports remain private, including synthetic-source declarations.
 The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
 No public exporter is included. The next slices still need verified grouping,
-a production review authentication policy, protected
-evaluation access and the #74 classifier gate. A
+a production review authentication policy, a certification-role evaluation and
+the #74 classifier gate's use of real models. A
 reviewed diagnostic annotation remains distinct from #8's independently
 reproduced and graded executable regression case.
 
@@ -161,7 +161,7 @@ This profile shows that local adjudicated declarations can be scored under the
 corpus's own split and root groups without exposing protected items. It is not
 evidence of classifier accuracy. Real reviewed gold labels need authenticated,
 independent human reviewers and an agreed gold-label policy, both still open in
-#73. The same applies to protected held-out evaluation and the #74 acceptance gate.
+#73. The same applies to certification-role evaluation and the #74 acceptance gate.
 
 ## Class-wise annotation plan
 
@@ -177,6 +177,49 @@ is reported so a plan can be frozen before outcomes are seen, but the order of
 preregistration and root independence are not verified. The report is
 `planning_only`: it estimates annotation need, not precision or recall, and grants no
 certification, classifier-selection or publication authority.
+
+## Protected validation access
+
+The validation partition has no label export. `CorpusStore.evaluate_protected` is the
+only path that uses those labels for an evaluator, and it releases none: it returns a
+report from the frozen v5 [multi-class triage policy](diagnostic-triage.md#multi-class-policy-schema-v2)
+and retires the evaluated cases. Calibration and threshold partitions are not reachable
+this way, and the certification partition stays reserved for a genuine qualification
+issuer ([protected diagnostic access](protected-diagnostic-access.md) states the same
+limit for executable comparisons).
+
+1. Fit and freeze a model from `export_development`. `protected_inputs()` returns
+   `plan_sha256`, the corpus revision and, for every untouched validation case, its
+   `case_id` and human `summary`. It carries no label, root ID, author or predicted
+   summary. Unreviewed cases are listed too, so the list shows no review progress.
+2. Score those texts outside the store, one score per policy class.
+3. `evaluate_protected(plan_sha256, policy, model_sha256, scores)` takes a policy whose
+   classes are exactly the four corpus terminal outcomes, whose `model_sha256` matches,
+   and whose declared fit, calibration and threshold root lists are disjoint from each
+   other and from the evaluated roots. `scores` covers exactly the planned case IDs.
+   Any change to the store since `protected_inputs()` (a new case, review, requeue or
+   decision) makes the plan stale.
+
+The triage policy evaluation runs before anything is written, so an invalid policy, score
+or model digest retires nothing and can be retried. A returned result means each labeled
+case was appended an `exposed` event naming the access ID, so it now counts as
+development data and a later `export_development` carries it with its retirement
+reference. A validation label therefore supports one evaluation; a rejected result is
+still a consumed one.
+
+Only a root whose every current case has an eligible, known adjudication and one agreed
+outcome is labeled. Other roots (unreviewed, `unknown`, incomplete capture, unapproved
+evidence or conflicting outcomes) are scored as unlabeled roots, stay protected and
+count in `unlabeled_cases`. The returned `evaluation` is the policy report: aggregate
+class metrics, confusion counts, abstentions and hashed root decisions. Its `status` is
+`rejected` or `insufficient_evidence`; nothing issues acceptance.
+
+This is an exposure record, not custody. The store owner can read the journal files, a
+model owner can refit after seeing the report, and a crash during retirement can leave
+some cases retired without a returned result. Operator-attested labels, unverified
+reviewer and root independence, `gold_label: false` and no classifier-selection or
+publication authority all carry over. The access runs offline and needs no model, network
+or optional ML dependency.
 
 Run `task test:diagnostics:corpus` for native synthetic controls, including the
 benchmark profile. The same task is
