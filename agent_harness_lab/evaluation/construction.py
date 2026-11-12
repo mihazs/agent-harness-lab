@@ -154,7 +154,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
-    _drop_authored_digests(state,ignored)  # before the shape check, publication and any seal: every later reader sees the stripped manifest
+    if repairs is not None: _drop_authored_digests(state,ignored)  # before the shape check, publication and any seal; bank conversion stays strict
     try:
         if repairs is not None:_check_shape(state)  # only the improve pipeline consumes the authored shape
     except ContractError as error:
@@ -196,14 +196,14 @@ def _check_shape(state):
     check_authored(manifest,stage='evaluation_construction')
 
 
-def normalize_author_snapshot(snapshot,destination,*,deadline=None):
+def normalize_author_snapshot(snapshot,destination,*,deadline=None,drop_digests=False):
     """Apply the existing controller-owned manifest normalization exactly once."""
     raw=next((raw for name,_,raw in snapshot.files if name=='manifest.json'),None)
     if raw is None: raise ValueError('authored manifest required')
     manifest = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(manifest,dict) or manifest.get('skills') != [] or manifest.get('harness_paths') != []:
         raise ValueError('controlled construction requires empty skill and harness injection lists')
-    strip_authored_digests(manifest)  # idempotent with the author-time strip; keeps a seal's recomputed output identical
+    if drop_digests: strip_authored_digests(manifest)  # same drop as author time, so a seal recomputes the identical output
     tasks,bundles = manifest.get('tasks'),manifest.get('grader_bundles')
     if not isinstance(tasks,list) or not isinstance(bundles,dict): raise ValueError('authored tasks and grader bundles are required')
     identifiers = []

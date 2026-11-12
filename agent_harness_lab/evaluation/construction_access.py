@@ -308,7 +308,7 @@ class WorkflowAccess:
             seal=None
             if capture is not None:
                 from .construction_seals import finish,read
-                seal=finish(capture,original,destination=active/'published')
+                seal=finish(capture,original,destination=active/'published',drop_digests=bank_conversion is None)
                 sealed=read(seal,stage_scope)
             children=[]; references=None
             if role=='evaluator_author':
