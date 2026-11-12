@@ -163,6 +163,7 @@ def main(argv):
             registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEM0_PLATFORM, MEM0_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_REFS, HINDSIGHT_REFS_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', HINDSIGHT_REFS, 'v2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_MODELS, HINDSIGHT_MODELS_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_KNOWLEDGE, HINDSIGHT_KNOWLEDGE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_ZIP, HINDSIGHT_ZIP_VERSION, ('contextual_assertion',)), connector)

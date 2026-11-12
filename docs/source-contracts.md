@@ -4463,6 +4463,18 @@ retained; fingerprints are guessable. The producer and overall completeness
 remain unverified, and a local-file checkpoint does not establish bank coverage.
 The reader does not invoke reflect, models, a backend or the network.
 
+`local_file/hindsight-model-references/v2` adds one case. The [pinned exporter](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/engine/transfer/export.py)
+defaults `bank_rows_json_encoding` to `serialized`, so a JSONB column such as
+`reflect_response` can arrive as a JSON string; `v1` reports that as unknown. `v2`
+decodes a string `reflect_response` only when the manifest declares
+`bank_rows_json_encoding: "serialized"`. Without that declaration, with an object
+value under it, or with malformed, duplicate-key or non-object text, the lists
+stay unknown. Each nested string is decoded under the archive's one JSON
+container and value budget, and text that exceeds a depth or budget bound rejects
+the whole capture. The declaration comes from the caller-supplied archive and stays
+unverified (`row_encoding_declaration_unverified`). References remain unverified
+claims.
+
 `local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
 as the extracted archive profile below, with `archive` naming one explicitly
 selected ZIP file. It reads the ZIP in memory without extracting files. The
@@ -4622,10 +4634,12 @@ later file is decoded.
 | `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
 
 `limits` may only lower these ceilings. `task test:sources:hindsight` runs the
-synthetic controls. Still open in #51: reading the ZIP archive directly, an
-optional bank-specific read mode over a verified read-only API with an explicit
-URL and least-privilege token, mental models and knowledge pages as synthesized
-claims, verifying the shape against a real archive, and further releases.
+synthetic controls. Still open in #51, and not implementable offline: an optional
+bank-specific read mode over a verified read-only API with an explicit URL and
+least-privilege token, verifying the shape against a real archive, and further
+releases. The pinned OpenAPI lists GET operations for `memories/list`, `documents`
+and `mental-models`, but whether they are free of side effects and inference cost,
+and which token scopes they need, can be shown only against a Hindsight server.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not

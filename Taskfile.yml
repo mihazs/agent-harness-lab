@@ -601,7 +601,7 @@ tasks:
   test:sources:hindsight:
     desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py tests/unit/sources/test_source_hindsight_zip.py tests/unit/sources/test_source_hindsight_models.py tests/unit/sources/test_source_hindsight_knowledge.py tests/unit/sources/test_source_hindsight_model_refs.py tests/unit/sources/test_source_hindsight_serialized_refs.py -v'
   test:sources:cognee:
     desc: Run offline Cognee v1.6.5 graph export controls with synthetic invented datasets
     cmds:

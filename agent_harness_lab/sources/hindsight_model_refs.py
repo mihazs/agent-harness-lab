@@ -1,6 +1,6 @@
 """Unverified references reported by selected Hindsight model rows; no verified edges."""
 from dataclasses import dataclass
-from .hardened import HostileReport, limits
+from .hardened import HostileReport, limits, load_json
 from .hindsight import LIMITS
 from .hindsight_knowledge import HindsightBankPart, _identity
 from .schema import digest
@@ -37,7 +37,12 @@ class HindsightModelReferences(HindsightBankPart):
     """Read one bank's reported model references without asserting source relationships."""
 
     def read(self, source):
-        selection, rows, hashes = self._bank_part(source, PROVIDER, 'mental_models.json', 'mental_model_count', False)
+        version = source.version
+        if version not in ('v1', 'v2'): raise ValueError('unsupported Hindsight reference version')
+        result = self._bank_part(source, PROVIDER, 'mental_models.json', 'mental_model_count', False,
+            version=version, metadata=version == 'v2')
+        selection, rows, hashes = result[:3]
+        manifest, remaining = result[3:] if version == 'v2' else (None, None)
         instance, bank = selection['instance'], selection['bank_id']
         bounds = limits(selection.get('limits'), LIMITS)
         claims, seen, references = [], set(), 0
@@ -49,6 +54,21 @@ class HindsightModelReferences(HindsightBankPart):
             seen.add(native)
             model = digest(('hindsight.knowledge', instance, bank, 'model', native))
             response = row.get('reflect_response')
+            if (version == 'v2' and manifest.get('bank_rows_json_encoding') == 'serialized'
+                    and isinstance(response, str)):
+                spent = []
+                try:
+                    response = load_json(response.encode('utf-8'), dict(bounds, **remaining), 'Hindsight model reference', spent=spent)
+                except HostileReport:
+                    raise
+                except (ValueError, UnicodeEncodeError):
+                    response = None
+                finally:
+                    if spent:
+                        remaining['max_json_containers'] -= spent[0][0]
+                        remaining['max_json_values'] -= spent[0][1]
+            elif version == 'v2' and manifest.get('bank_rows_json_encoding') == 'serialized':
+                response = None
             based = response.get('based_on') if isinstance(response, dict) else None
             states = {}
             for category in CATEGORIES:
@@ -70,4 +90,6 @@ class HindsightModelReferences(HindsightBankPart):
             claims.append(ReferenceCoverage('model_reference_coverage', coverage, model, **states))
         warnings = ['archive_origin_unverified', 'reported_references_not_verified_edges', 'model_output_is_synthesis',
                     'encoded_or_missing_fields_unknown', 'lineage_unknown', 'completeness_unknown']
-        return self._snapshot(source, selection, claims, hashes, PROVIDER, warnings, 'model_hypothesis', 'hindsight.model_refs_archive')
+        if version == 'v2': warnings.append('row_encoding_declaration_unverified')
+        return self._snapshot(source, selection, claims, hashes, PROVIDER, warnings, 'model_hypothesis',
+            'hindsight.model_refs_archive', version=version)

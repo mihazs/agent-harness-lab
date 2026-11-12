@@ -43,16 +43,16 @@ class KnowledgePage:
 class HindsightBankPart(LocalExport):
     """Read one explicitly selected bank-scoped transfer component."""
 
-    def _snapshot(self, source, selection, claims, hashes, provider, warnings, provenance, archive_kind):
+    def _snapshot(self, source, selection, claims, hashes, provider, warnings, provenance, archive_kind, *, version=SOURCE_VERSION):
         self.claims = claims
-        self.summary = dict(schema_version=1, provider=provider, source_version=SOURCE_VERSION,
+        self.summary = dict(schema_version=1, provider=provider, source_version=version,
             producer_version='unverified', source_identity='caller_declared_unverified', capture_completeness='unknown',
             task_outcomes_verified=False, returned=len(claims), warnings=warnings)
         native = digest((archive_kind, selection['instance'], selection['bank_id'], selection['archive']))
         return claim_snapshot(source, 'hindsight_', claims, lambda c: provenance, native, digest(hashes), self.summary)
 
-    def _bank_part(self, source, provider, filename, count_field, exact):
-        if (source.kind, source.provider, source.version) != ('local_file', provider, SOURCE_VERSION):
+    def _bank_part(self, source, provider, filename, count_field, exact, *, version=SOURCE_VERSION, metadata=False):
+        if (source.kind, source.provider, source.version) != ('local_file', provider, version):
             raise ValueError('unsupported Hindsight knowledge source')
         descriptor, selection = self.selection(source)
         fields = {'schema_version', 'hindsight_version', 'instance', 'bank_id', 'archive'}
@@ -96,7 +96,7 @@ class HindsightBankPart(LocalExport):
         if (not isinstance(rows, list) or len(rows) > bounds['max_rows']
                 or exact and len(rows) != count or not exact and len(rows) < count):
             raise ValueError('Hindsight bank part count mismatch')
-        return selection, rows, hashes
+        return (selection, rows, hashes, manifest, left) if metadata else (selection, rows, hashes)
 
 
 class HindsightKnowledge(HindsightBankPart):
