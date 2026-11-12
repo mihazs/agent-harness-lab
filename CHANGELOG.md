@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.188.0
+
+### Minor Changes
+
+- 319780d: The installer and `ahl update` now keep one marked region (`<!-- agent-harness-lab:start ... -->` to `<!-- agent-harness-lab:end -->`) of the global instruction files in step with the release: `CLAUDE.md` in `CLAUDE_CONFIG_DIR` (default `~/.claude`), `AGENTS.md` in `CODEX_HOME` (default `~/.codex`) and an existing `~/.agents/AGENTS.md`, following `--agent`. The text is a compact project-agnostic template shipped in the verified archive; every byte outside the markers stays identical, a changed file is backed up first and written atomically with its mode and line endings, symlinks are followed only to files you own that are not world-writable, malformed markers are refused, and a hand-edited region is replaced with the typed note `region_edited_by_user_replaced`. `--no-instructions` is remembered in `installation.json` and `--instructions` re-enables it; a refused or failed file leaves the launcher and skill links complete and exits 3 with the exact fix. `ahl doctor` reports each target as current, stale, absent, skipped or refused, and `ahl rollback install-NAME` restores the previous files, launcher, links and receipt. Closes #744.
+
+### Patch Changes
+
+- 405c219: Allow an interrupted improvement to finalize a completed no-change proposal without repeating model actions.
+
 ## 0.187.0
 
 ### Minor Changes
