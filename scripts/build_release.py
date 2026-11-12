@@ -19,7 +19,7 @@ def build(root, output):
     version = json.loads((root / 'package.json').read_text())['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', version):
         raise ValueError('invalid version')
-    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py')]
+    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py', 'global-instructions.md')]
     files += sorted((root / 'agent_harness_lab').rglob('*.py'))
     files += sorted((root / 'tools').glob('*.py'))
     fixture_root = root / 'agent_harness_lab/evaluation/fixtures'
@@ -27,7 +27,7 @@ def build(root, output):
     for path in (root / 'skills').rglob('*'):
         if path.is_file() and '__pycache__' not in path.parts and not path.name.startswith('test_') and path.suffix in ('.md', '.py', '.yaml', '.json'):
             files.append(path)
-    required = ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py', 'agent_harness_lab/cli.py')
+    required = ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py', 'global-instructions.md', 'agent_harness_lab/cli.py')
     if any(name not in tracked or not (root / name).is_file() or (root / name).is_symlink() for name in required):
         raise ValueError('required release input missing, untracked, or symlinked')
     files = [path for path in files if str(path.relative_to(root)) in tracked]

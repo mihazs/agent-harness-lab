@@ -6,6 +6,7 @@ Offline, with a temporary HOME and state directory; the real home and state dire
 """
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -36,6 +37,25 @@ def installed(tmp_path_factory):
 @pytest.mark.parametrize('scenario', scenarios.SCENARIOS, ids=lambda f: f.__name__.removeprefix('scenario_'))
 def test_reported_scenario_passes_through_the_installed_launcher(scenario, installed, tmp_path):
     scenario(installed, scenarios.Sandbox(installed, tmp_path))
+
+
+def test_update_replaces_only_the_region_and_rollback_restores_the_previous_bytes(installed, tmp_path):
+    """Install the archive, update to a newer one with the installed release's own installer, then undo it."""
+    first = scenarios.install(installed.release / 'install.py', installed.archive, installed.checksums, tmp_path)
+    claude = first.home / '.claude/CLAUDE.md'
+    before = {path: path.read_bytes() for path in (claude, first.home / '.codex/AGENTS.md')}
+    newer, sums = scenarios.reversioned(installed.archive, '999.0.0', tmp_path / 'next')
+    second = scenarios.install(first.release / 'install.py', newer, sums, tmp_path, update=True)
+    after = claude.read_bytes()
+    assert b'version=999.0.0 sha256=' in after and b'version=' + installed.version.encode() not in after
+    assert scenarios.REGION.sub(b'', after) == scenarios.HAND_WRITTEN == scenarios.REGION.sub(b'', before[claude])
+    assert second.release.name == '999.0.0' and 'Undo this installation with: ahl rollback install-' in second.output
+    name = re.search(r'ahl rollback (install-\S+)', second.output)[1]
+    env = {'PATH': str(Path(sys.executable).parent), 'HOME': str(first.home)}
+    done = subprocess.run([str(second.launcher), 'rollback', name], env=env, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert {path: path.read_bytes() for path in before} == before
+    assert (tmp_path / 'bin/ahl').resolve().parent.name == installed.version
 
 
 def test_installed_launcher_reports_the_expected_version(installed):

@@ -15,7 +15,7 @@ def assert_clean(root):
         raise ValueError('release publication requires a clean committed working tree')
     untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '-z'], cwd=root).decode().split('\0')
     application = ('agent_harness_lab/', 'tools/', 'skills/', 'scripts/')
-    metadata = ('ahl', 'install.py', 'package.json', 'LICENSE', 'README.md')
+    metadata = ('ahl', 'install.py', 'global-instructions.md', 'package.json', 'LICENSE', 'README.md')
     if any(name in metadata or name.startswith(application) for name in untracked if name):
         raise ValueError('untracked application files must be reviewed before publication')
 

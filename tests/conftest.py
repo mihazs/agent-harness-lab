@@ -31,3 +31,5 @@ def _isolated_home(tmp_path_factory, monkeypatch):
     """Doctor reads the global skill links under HOME; no test may inspect the real home directory."""
     monkeypatch.setenv('npm_config_cache', os.environ.get('npm_config_cache') or os.path.join(os.path.expanduser('~'), '.npm'))  # offline npm tests
     monkeypatch.setenv('HOME', str(tmp_path_factory.mktemp('home')))
+    # The release installer and doctor resolve the global instruction files from these two; a test that needs them sets them.
+    for name in ('CLAUDE_CONFIG_DIR', 'CODEX_HOME'): monkeypatch.delenv(name, raising=False)
