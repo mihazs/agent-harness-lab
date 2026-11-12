@@ -87,6 +87,9 @@ def main(argv=None):
     if argv and argv[0] == 'update':
         from agent_harness_lab.updater import main as update_main
         return update_main(argv[1:])
+    if argv and argv[0] == 'config':
+        from .user_config import main as config_main
+        return config_main(argv[1:])
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
@@ -183,6 +186,7 @@ def main(argv=None):
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
         'memory':'Create and maintain an opt-in private evidence store with a rebuildable index; offline',
+        'config':'Show or clear the remembered runtime choice (user-level, never a project file)',
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
@@ -244,7 +248,7 @@ def main(argv=None):
             if name=='improve':
                 command.add_argument('--history', action='store_true', help='Use captured past project sessions as read-only evidence; the receipt reports what was captured and what stays unknown')
                 command.add_argument('--since', help="With --history: 'first' (default, every available session) or an ISO 8601 date; selects capture files modified on or after it (UTC without an offset)")
-                command.add_argument('--source', dest='history_source', choices=('native', 'ai-memory'), help='With --history: native Codex/Claude sessions (default); ai-memory is reported as unsupported with its next step')
+                command.add_argument('--source', dest='history_source', choices=('native', 'codex', 'claude', 'ai-memory'), help='With --history: native Codex and Claude sessions (default), or only codex or only claude; ai-memory is reported as unsupported with its next step')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto',help='Execution backend; auto resolves the supported configured or unambiguous local runtime; Responses needs explicit settings and isolation')
             command.add_argument('--inference-settings', type=Path, help='Schema-1 controlled Responses settings JSON, including credential_file and shared request/tool/output caps; requires the explicit isolated worker configuration')
@@ -261,6 +265,7 @@ def main(argv=None):
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
+            command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
             command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration (default: %(default)s); completed unchanged work is not repeated')
@@ -309,6 +314,8 @@ def main(argv=None):
             if args.command == 'improve':
                 from .history import prepare
                 prepare(args)
+                if args.remember_runtime and (args.agent not in ('codex', 'claude') or '--agent' not in explicit):
+                    raise ValueError('--remember-runtime requires an explicit --agent codex or --agent claude')
             started = time.monotonic()
             args._entry_started = started
             resolve(args, explicit)

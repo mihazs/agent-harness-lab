@@ -61,23 +61,48 @@ With `--agent auto` (the default) and no configured runtime, AHL applies this
 fixed order and records the outcome as `runtime_selection` in the preflight plan
 and `invocation.json`:
 
-1. Exactly one supported executable on `PATH`: use it (`single_installed`).
-2. Several installed and the invoking host is a supported runtime: use that
+1. An explicit `--agent`, then a trusted project `ahl.json` runtime.
+2. The runtime remembered in the user-level configuration, when its executable is
+   on `PATH` (`user_remembered`). A remembered runtime that is not installed is
+   ignored.
+3. Exactly one supported executable on `PATH`: use it (`single_installed`).
+4. Several installed and the invoking host is a supported runtime: use that
    runtime (`invoking_host`). The host is read from the presence of `CLAUDECODE`
    or a `CODEX_*` session variable, never from credential contents. If both or
    neither are present the host is unknown.
-3. Otherwise stop with `select_one_runtime_with_agent` (`ask_once`) before any
+5. Otherwise stop with `select_one_runtime_with_agent` (`ask_once`) before any
    spend. The plan's `choice` lists the runtimes; ask the user once, then rerun
    the same command with `--agent <choice>`.
 
-An explicit `--agent`, `--codex` or `--claude` and a trusted `ahl.json` runtime
-always take precedence, and the policy never changes a model, provider or
-permission. Choosing the host's runtime does not run the host session itself:
+The policy never changes a model, provider or permission. Choosing the host's
+runtime does not run the host session itself:
 AHL starts its own isolated child process of that executable, so the host runtime
 is acceptable for the cooperative `codex` and `claude` profiles. Choose an
 isolated runtime explicitly (a configured `responses` pipeline) when the
-evaluation must not share the host's tooling or account. A user-level default
-that persists the choice is not provided yet.
+evaluation must not share the host's tooling or account.
+
+### Remember the runtime choice
+
+Remembering is opt-in. Add `--remember-runtime` to a run with an explicit
+`--agent codex` or `--agent claude`; the choice is stored once that run passes
+preflight. Without the flag nothing is written, and the flag without an explicit
+`--agent` is an input error (exit 2).
+
+```sh
+ahl improve . --agent codex --remember-runtime
+ahl config show     # {"path": ..., "runtime": "codex", "reason": null}
+ahl config clear    # deletes the file
+```
+
+The file is a versioned `{schema_version, runtime}` document of at most 1 KiB at
+`$XDG_CONFIG_HOME/agent-harness-lab/user-config.json` (`~/.config` when unset), or
+`$AHL_STATE_HOME/user-config.json` when that run-state override is set. It is
+written atomically with owner-only permissions, holds no executable path,
+credential or token, and is never read from or written to a project, so a project
+file cannot override it. A corrupt, oversized, non-regular or not owner-only file
+is ignored (`ahl config show` names the `reason`). The remembered runtime only
+chooses among installed runtimes: it never overrides `--agent` or a project
+`ahl.json` and grants no execution authority.
 
 To evaluate from sessions already recorded, add `--history`; see
 [improve from past sessions](improve-from-past-sessions.md).

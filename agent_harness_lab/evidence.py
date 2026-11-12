@@ -170,7 +170,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None, history_runtime=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -211,6 +211,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     else:
         roots = [(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions', 'codex'),
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
+        roots = [root for root in roots if history_runtime in (None, root[1])]
         # since_ns bounds capture-file modification time; a session's own start time is not read here.
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
                       for mtime, name, path in _capture_candidates(root)

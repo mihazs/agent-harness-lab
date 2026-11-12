@@ -11,7 +11,7 @@ import shutil
 import shlex
 import time
 
-from . import config, surfaces
+from . import config, surfaces, user_config
 from .exit_guidance import REMEDIATION as REMEDIATION
 
 
@@ -83,7 +83,9 @@ def preflight(args):
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]
         args._preflight_runtimes = found
         host = invoking_host()
-        if len(found) == 1: args._runtime_selection = dict(policy='single_installed', runtime=found[0])
+        remembered = user_config.load()['runtime']
+        if remembered in found: args._runtime_selection = dict(policy='user_remembered', runtime=remembered)
+        elif len(found) == 1: args._runtime_selection = dict(policy='single_installed', runtime=found[0])
         elif len(found) > 1 and host in found: args._runtime_selection = dict(policy='invoking_host', runtime=host)
         else:
             args._runtime_selection = dict(policy='ask_once', runtime=None, host=host) if found else None
@@ -98,6 +100,8 @@ def preflight(args):
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
     if getattr(args,'_configured_responses',False):
         args._response_references=config.response_references(args.project,vars(args))
+    if getattr(args, 'remember_runtime', False) and user_config.load()['runtime'] != args.agent:
+        user_config.remember(args.agent)  # only the explicit flag writes, and only after the run passed preflight
     return None
 
 
@@ -124,7 +128,7 @@ def preflight_plan(args, reason):
         configured_scope=settings['harness_paths'] if settings else None,
         limits=dict(seconds=args.timeout, trials=args.trial_limit),
         runtime_selection=getattr(args, '_runtime_selection', None),
-        choice=dict(option='--agent', values=args._preflight_runtimes) if reason == 'select_one_runtime_with_agent' else None,
+        choice=dict(option='--agent', values=args._preflight_runtimes, remember_option='--remember-runtime') if reason == 'select_one_runtime_with_agent' else None,
         next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION), authorization=AUTHORIZATION,
         candidate_prepared=False, evidence_prepared=False, execution_authority=False)
     if getattr(args, 'history', False): plan['history'] = dict(since=args.since or 'first', source=args.history_source or 'native')

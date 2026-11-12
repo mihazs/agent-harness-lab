@@ -26,8 +26,8 @@ Choose the mode before following the manual steps below. Read
   failed, exhausted or ambiguous result. One exception: a `blocked` preflight
   that spent nothing and whose `remediation` is a user choice (for example
   `select_one_runtime_with_agent`) is not a failed run. Ask the user that one
-  question, then re-dispatch once with the answer using the exact command in
-  `remediation`; a second block is final. Say that an explicit invocation
+  question (offer to remember it; add `--remember-runtime` only on a yes), then
+  re-dispatch once with the answer using the exact command in `remediation`; a second block is final. Say that an explicit invocation
   authorizes the bounded default run and that `execution_authority: false`
   on a blocked plan means only that nothing was dispatched. To use the user's
   past sessions as evidence, pass `--history [--since DATE|first]`; relay a
