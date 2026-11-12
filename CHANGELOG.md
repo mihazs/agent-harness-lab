@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.171.1
+
+### Patch Changes
+
+- a72d032: Document the evidence reuse contract matrix with synthetic reuse and invalidation fixtures
+
 ## 0.171.0
 
 ### Minor Changes
