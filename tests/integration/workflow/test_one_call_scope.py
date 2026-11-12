@@ -249,6 +249,17 @@ def test_default_scope_refuses_a_project_that_is_a_user_level_location(one, home
     assert code == 0 and json.loads(out.getvalue())['layers_changed'] == ['global']
 
 
+@pytest.mark.parametrize('where', ['home', 'claude', 'skills'])
+def test_default_model_driven_run_refuses_a_user_level_project_before_any_work(one, home, capsys, where):
+    project = dict(home=home.path, claude=home.claude, skills=home.claude / 'skills')[where]
+    before = tree(home.path)
+    with contextlib.redirect_stdout(io.StringIO()), pytest.raises(SystemExit) as raised:
+        main(['improve', str(project), '--agent', 'claude'])
+    error = capsys.readouterr().err
+    assert raised.value.code == 2 and 'overlaps a user-level harness location' in error and '--scope global' in error
+    assert tree(home.path) == before and not (one.root / 'state/runs').exists() and not (one.root / 'state/promotions').exists()
+
+
 def test_project_and_global_layers_must_not_overlap(one, home, capsys):
     inside = home.claude / 'skills/work'
     home.add(inside / 'SKILL.md', BOM + skill('work'))

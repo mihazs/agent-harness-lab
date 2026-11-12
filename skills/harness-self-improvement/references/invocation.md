@@ -158,7 +158,9 @@ an authenticated CLI application result. Use executable evidence for applied
 changes and name unavailable runtime/evidence prerequisites. Do not bootstrap a
 new runner or silently install tools to simulate adapter availability.
 
-Automated global scope is unsupported. An explicitly authorized manual global
-task retains its exact named scope, snapshots, evaluation and rollback boundaries.
+Automated global scope is limited to the deterministic skill-header repair
+(`--repair-contracts --scope global|project+global --agent`); any other global task
+is manual. An explicitly authorized manual global task retains its exact named
+scope, snapshots, evaluation and rollback boundaries.
 Project invocation does not authorize global discovery links, global instructions
 or another project's changes.

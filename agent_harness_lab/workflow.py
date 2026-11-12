@@ -1215,6 +1215,8 @@ def _run_improvement(args, *, parent_started=None):
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
+        from . import scope as scopes
+        if scopes.selected(args) == 'project': scopes.layers(args)  # refuse a user-level project directory on every project run, before any snapshot or model stage
         if getattr(args,'from_audit',None) is not None and getattr(args,'repair_contracts',False):
             raise ValueError('audit hypothesis cannot be combined with contract repair')
         check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
@@ -1226,7 +1228,6 @@ def _run_improvement(args, *, parent_started=None):
 
         if getattr(args, 'repair_contracts', False):
             return contracts(args)
-        from . import scope as scopes
         if scopes.selected(args) != 'project':
             scopes.layers(args)  # a missing, ambiguous or unsafe user-level location is an input error, not a blocked run
             output = output_dir(args,deadline=started+args.timeout)
