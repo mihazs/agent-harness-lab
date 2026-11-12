@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.183.0
+
+### Minor Changes
+
+- 3ca98f0: Add a private exact-response scripted interaction fixture and paired synthetic control families for clarification, stop and no-change grading.
+
 ## 0.182.0
 
 ### Minor Changes
