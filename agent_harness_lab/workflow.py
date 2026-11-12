@@ -138,7 +138,8 @@ def evidence(args, output, source_context=None, *, progress=None):
         data = collect(args.project, events=selected, source_format=source_format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
-            session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
+            session=None if getattr(args, 'history', False) else getattr(args, 'session', None),
+            history_session=getattr(args, 'session', None) if getattr(args, 'history', False) else None, max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None), **source_identity)
@@ -190,6 +191,7 @@ def analyze_project(args):
                   analysis=data['execution'], next_action=data['execution']['next_action'])
     if context is not None: result['source_context'] = context
     if 'memory_source' in data: result['memory_source'] = data['memory_source']
+    if data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     write_json(output / 'workflow.json', result)
     return result
 

@@ -5,6 +5,7 @@ from contextlib import closing
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath
 import stat
 from .adapters import correlate
@@ -19,6 +20,21 @@ def text(value):
 def number(value, maximum=2**63-1):
     if type(value) is not int or not 0 <= value <= maximum: raise ValueError('invalid native metadata integer')
     return value
+
+
+def observed_version(value):
+    """A runtime version recorded in a capture, reduced to dotted digits so no capture text can pass through."""
+    return value if isinstance(value, str) and re.fullmatch(r'[0-9]{1,6}(\.[0-9]{1,6}){1,3}', value) else 'unrecognized'
+
+
+def capture_counts(parsed, reasons):
+    """Selected = parsed + skipped; every skipped capture carries a typed reason (counts only).
+
+    Parsed captures match the pin exactly (no runtime range is declared); a differing release is never parsed.
+    """
+    skipped = sum(reasons.values())
+    return dict(selected=parsed+skipped, parsed=parsed, skipped=skipped, skipped_reasons=dict(sorted(reasons.items())),
+        pin_compatibility=dict(exact=parsed, declared_range=0, unverified=reasons.get('capture_version_differs_from_pin', 0)))
 
 
 def invalid_constant(_): raise ValueError('nonfinite native JSON is unsupported')

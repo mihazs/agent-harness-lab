@@ -20,8 +20,8 @@ CALLS = 300
 EXPECTED = {
     'codex_read': '0d68b2a1b4c1b012303da05a794b791970445857af8723d2baf05fc1207f0d85',
     'claude_read': 'db2e68e46b8095370dcafbfab65c87d058684b31a63d6768ef19a7e93a9fdc4c',
-    'codex_discovery': 'a7acb38facb4833f8e3a928ff27b1a3d0c1a8c388d03e413a92fbb05164e2d2c',
-    'claude_discovery': '6847021ce2464e3edc9139bd1dbe1d07ac7da7207f24c5c9e860df1663ea86ea',
+    'codex_discovery': 'b0a1406ea7cdb2cee174d39a63a5826d0b45efe49a7935714179f8240a3b811a',
+    'claude_discovery': '45aa7b5925f2e09ae34b2f8fe62f49f1c56520ce50a27cca4e49a21153ba9a49',
 }
 
 

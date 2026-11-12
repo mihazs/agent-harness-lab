@@ -1,5 +1,6 @@
 """Read-only historical-session evidence request for improve; it reuses the existing collection and adds no adapter."""
 from datetime import datetime, timezone
+import re
 
 
 def prepare(args):
@@ -12,6 +13,8 @@ def prepare(args):
         return
     if args.events is not None or args.source_root is not None:
         raise ValueError('--history selects the project session store; drop --events/--source-root, or drop --history')
+    if args.session is not None and not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', args.session):
+        raise ValueError('--session must be an exact native Codex thread or Claude session UUID')
     if args.since not in (None, 'first'):
         try:
             moment = datetime.fromisoformat(args.since)
@@ -28,5 +31,6 @@ def summary(args, data):
     return dict(profile='ahl-history-evidence-v1', scope='project', source=args.history_source or 'native',
         since=args.since or 'first', since_basis='capture file modification time; unbounded for first',
         read_only=True, sessions_captured=sum(1 for row in data['sources'] if row.get('format') in ('codex', 'claude')),
-        events=analysis['events'], cases=analysis['cases'],
+        session_selected=args.session is not None, events=analysis['events'], cases=analysis['cases'],
+        capture_reasons=data.get('capture_reasons', []), pin_compatibility=dict(unverified=sum(1 for row in data['sources'] if row.get('pin_compatibility') == 'unverified')),
         unknown=['capture completeness', 'recurrence outside the captured sessions', 'sessions outside project scope or before --since'])

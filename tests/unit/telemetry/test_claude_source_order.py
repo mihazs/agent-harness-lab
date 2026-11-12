@@ -18,7 +18,7 @@ VERSION = 'claude-jsonl-2.1.316'
 PROFILE = 'claude-native-order-v1'
 # Computed by the implementation before declared source order existed (8350dce) from fixture.outputs.
 BASE = {'read': '131eba0a4973954193b352917bc2559ec6fe1297ab539f012c79bdbed7f889d8',
-        'discovery': 'f63ce426882474b839da025a58c92ecebc77aff42007134d43915311cb0e8979'}
+        'discovery': 'ed247dbcc766853828689bc2319de45c356a52b23ef899e242eb4c6431d8ed10'}
 
 
 def strip(row): return {key: value for key, value in row.items() if key not in SOURCE_ORDER}
