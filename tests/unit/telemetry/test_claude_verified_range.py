@@ -60,10 +60,17 @@ def test_each_verified_release_yields_ordered_events_with_tool_names_call_ids_an
 
 
 def test_the_current_release_matches_what_the_pinned_release_yields():
-    old, new = (read(FIXTURES/f'{version}.jsonl', PROJECT) for version in ('2.1.316', '2.1.318'))
-    for events in (old[0], new[0]):
+    for events in (read(FIXTURES/f'{version}.jsonl', PROJECT)[0] for version in ('2.1.316', '2.1.317', '2.1.318')):
         assert {status for _, status, _ in shape(events)} >= {'error', 'returned'}
         assert {k for e in events for k in e} >= {'tool_name', 'call_id', 'execution_status', 'source_order_profile'}
+
+
+def test_the_middle_release_counts_the_kinds_it_adds_as_unknown_with_a_typed_reason_and_drops_nothing(tmp_path):
+    _, summary, _ = read(FIXTURES/'2.1.317.jsonl', PROJECT)
+    unknown = {name for name, value in summary['skipped_entry_types'].items() if value['reason'] == 'unknown_entry_type'}
+    assert unknown == {'session-owner', 'permission-mode', 'pr-link', 'agent-name'}
+    assert {name for name, value in summary['skipped_entry_types'].items() if value['reason'] == 'declared_non_event_entry'} >= set(LISTED)
+    assert summary['recorded_versions'] == ['2.1.317'] and sum(v['count'] for v in summary['skipped_entry_types'].values()) <= summary['unsupported_records']
 
 
 def test_unknown_and_declared_non_event_entry_types_are_counted_with_a_typed_reason_never_dropped(tmp_path):
@@ -102,10 +109,10 @@ def test_unknown_extra_fields_on_known_types_are_tolerated_and_change_nothing(tm
 
 
 def test_a_release_outside_the_range_or_mixed_into_a_capture_is_never_parsed_as_verified(tmp_path):
-    for version in ('2.1.315', '2.1.317', '2.1.319', '2.2.0', '3.0.0'):
+    for version in ('2.1.315', '2.1.319', '2.2.0', '3.0.0'):
         records = [dict(row, version=version) if 'version' in row else row for row in rows('2.1.318')]
         with pytest.raises(ValueError, match='unsupported native Claude version'): read(write(tmp_path, records), PROJECT)
-    mixed = rows('2.1.318'); mixed[-1] = dict(mixed[2], version='2.1.317')
+    mixed = rows('2.1.318'); mixed[-1] = dict(mixed[2], version='2.1.319')
     with pytest.raises(ValueError): read(write(tmp_path, mixed, 'mixed.jsonl'), PROJECT)
 
 
