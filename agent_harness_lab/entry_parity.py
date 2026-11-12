@@ -8,7 +8,10 @@ is not a public receipt.
 Each route allocates its own private run directory, so string values are
 compared, including mapping keys, after replacing that route's run directory
 with ``RUN_PLACEHOLDER``. Every other allowed difference is listed below with
-its cause.
+its cause. Measured durations may differ in value because each route times its own
+work; every receipt field derived from a clock must be listed here, and
+``tests/unit/workflow/test_entry_parity_durations.py`` derives those fields from the
+code and fails when one is missing.
 """
 from fnmatch import fnmatchcase
 import json
@@ -26,13 +29,17 @@ ENTRY_ONLY_ARTIFACTS = {'invocation.json': 'skill'}
 # Artifact pattern -> dotted key patterns that may differ. A ``*`` stands for a
 # list index. The plan's references are keyed by name.
 _RUN_TIMING = ('invocation.deadline', 'invocation.remaining_seconds')
+# Measured wall time of evaluation construction: the receipt total and each repair's elapsed time.
+_CONSTRUCTION_TIMING = ('evaluation_construction_seconds', 'evaluation_construction_repairs.*.elapsed_seconds')
 ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
-                      'decision.bindings.manifest_sha256',
+                      'decision.bindings.manifest_sha256', *_CONSTRUCTION_TIMING,
                       # An application mints a new deployment ID; its rollback command embeds it.
                       'deployment', 'rollback'),
+    # The recovery record embeds the receipt it will return.
+    'recovery.json': tuple(f'receipt.{field}' for field in _CONSTRUCTION_TIMING),
     'change-plan.json': ('plan_sha256', 'harness_change_plan.affected_controls_sha256',
                          'harness_change_plan.references.evidence'),
     # Measured trial durations, and the digest of a manifest that carries the
@@ -45,6 +52,7 @@ ALLOWED_DIFFERENCES = {
                         'trials.*.environment.sha256', 'trials.*.grader_environment.sha256'),
     'preparation-*.environment.json': ('sha256',),
     'evaluation-construction-*.environment.json': ('sha256',),
+    'evaluation-construction-*.json': ('manifest_repairs.*.elapsed_seconds',),
     'preparation/evaluation-*/manifest.json': ('budget_seconds', 'timeout_seconds'),
     # Descriptive invocation context given to preparation children: the entry
     # origin, the parent run identity and the remaining budget.
