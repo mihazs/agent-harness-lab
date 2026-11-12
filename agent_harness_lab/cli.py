@@ -220,6 +220,7 @@ def main(argv=None):
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
         command.add_argument('--max-events', type=int, help='Optional positive event limit; exceeding it fails explicitly; default: unlimited')
         command.add_argument('--sequence-length', type=int, help='Optional positive recurring-sequence length limit; default: unlimited')
+        command.add_argument('--full-detail', action='store_true', help='Write analysis.json and events.v2.jsonl without the default size and time bounds (can reach gigabytes on long histories); default: bounded with truncated provenance')
         if name != 'watch':
             command.add_argument('--incident-corpus', type=Path, help='Explicit local JSON list of reviewed Incident records declaring approved=true; requires --incident-query; declarations are unverified and results remain private untrusted evidence')
             command.add_argument('--incident-query', help='Explicit nonempty lexical query paired with --incident-corpus; no inferred query, corpus discovery or model calls')

@@ -331,14 +331,17 @@ def report(result, *, source_context=None):
     lines = ['# Trace diagnosis', '', f"Events: {result['events']}; cases: {result['cases']}.", '',
              '| Evidence field | Known / events |', '| --- | --- |']
     lines += [f"| {k} | {v['known']} / {v['total']} |" for k, v in result['field_coverage'].items()]
-    lines += ['', f"Observed findings: {len(result['findings'])}.",
-              f"Recurring sequences: {len(result['recurring_sequences'])}.", '',
+    totals = result.get('detail_totals', {})
+    lines += ['', f"Observed findings: {totals.get('findings', len(result['findings']))}.",
+              f"Recurring sequences: {totals.get('recurring_sequences', len(result['recurring_sequences']))}.", '',
               'Review recurring sequences against successful controls before proposing a skill or repair.', '']
     if 'process_mining' in result:
         mining = result['process_mining']
-        lines += [f"Directly-follows edges: {len(mining['raw_edges'])}; run-collapsed edges: {len(mining['projected_run_collapsed_edges'])}.",
+        lines += [f"Directly-follows edges: {totals.get('raw_edges', len(mining['raw_edges']))}; run-collapsed edges: {totals.get('projected_run_collapsed_edges', len(mining['projected_run_collapsed_edges']))}.",
                   f"Unusable timestamps: {mining['missing_timestamps']} (invalid: {mining['invalid_timestamps']}); timestamp reversals: {mining['timestamp_reversals']}.",
                   'Graphs describe capture order; reported roots are not verified independent samples.', '']
+    if totals:
+        lines += ['', 'Detail below is capped; per-section totals are in analysis.json artifact_bounds, and --full-detail keeps everything.']
     for finding in result['findings']:
         lines += ['', f"- {finding['kind']} ({finding['status']}): {finding['explanation']} Evidence: {finding['evidence']}"]
     lines += ['', 'Deferred questions:', '']

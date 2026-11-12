@@ -104,7 +104,7 @@ def project_lock(project):
 
 
 def evidence(args, output, source_context=None, *, progress=None):
-    from .diagnostics import brief
+    from .diagnostics import brief, bounds
     from .analysis_receipt import summarize, report as execution_report
     from .cli import _progress_reporter
     from .diagnostics.retrieval import contextual_search
@@ -146,7 +146,9 @@ def evidence(args, output, source_context=None, *, progress=None):
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None), **source_identity)
         events.seek(0)
-        Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
+        store = {}
+        # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
+        Ledger(output / 'events.v2.jsonl').ingest(bounds.store_rows(events, args, store))
         events.seek(0)
         observed = brief.Scan()
         for line in events:
@@ -169,13 +171,14 @@ def evidence(args, output, source_context=None, *, progress=None):
     if closed is not None:
         from .evaluation.closed_inputs import collected
         collected(closed, data)
-    write_json(output / 'analysis.json', data)
+    data_view = bounds.analysis_view(data, args, store)
+    write_json(output / 'analysis.json', data_view)
     scanned = observed.result()
     write_json(output / 'mechanism-summaries.json', brief.mechanism_summaries(scanned))
-    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output)
+    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store))
     write_json(output / 'analysis-brief.json', data_brief)
-    args._analysis_next_steps = next_steps
-    report_text = report(data['analysis'], source_context=source_context) + execution_report(data['execution'])
+    args._analysis_next_steps, args._analysis_brief = next_steps, data_brief
+    report_text = report(data_view['analysis'], source_context=source_context) + execution_report(data['execution'])
     if memory_summary is not None:
         report_text += ('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
                         +memory_summary['remediation']+'\n')
@@ -604,7 +607,7 @@ def _improve(args):
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
-        role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
+        role_views = construction.views(data,assets(),prepare/'role-inputs',deadline,brief=getattr(args,'_analysis_brief',None))
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):

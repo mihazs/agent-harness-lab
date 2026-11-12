@@ -17,6 +17,7 @@ MAX_SUMMARY_GROUPS = 200
 MAX_REFS = 5
 MAX_GROUPS = 2000
 MAX_IDS = 5000
+MAX_MESSAGES = 256
 OVERFLOW = 'other'
 BUCKETS = 4
 # Fixed vocabulary; captured events carry only the structured error flag, so the category is never inferred from text.
@@ -44,7 +45,8 @@ class Scan:
     def __init__(self):
         self.groups, self.calls, self.cases, self.events, self.width = {}, {}, {}, 0, 1
         self.signals = dict(user_turn_after_tool_error=0, consecutive_user_turns=0, interrupts=0,
-                            same_call_retries=0, fingerprinted_calls=0, edit_reverts=0, revision_events=0)
+                            same_call_retries=0, fingerprinted_calls=0, edit_reverts=0, revision_events=0,
+                            restated_instructions=0, fingerprinted_messages=0)
 
     def _settle(self, state, action):
         key, state['pending'] = state['pending'], None
@@ -64,7 +66,7 @@ class Scan:
         signals, case, activity = self.signals, event['case_id'], event['activity']
         bucket = self._bucket()
         self.events += 1
-        state = self.cases.setdefault(case, dict(pending=None, pending_tool=None, pending_input=None, last=None, last_kind=None, calls={}, revisions=[]))
+        state = self.cases.setdefault(case, dict(pending=None, pending_tool=None, pending_input=None, last=None, last_kind=None, calls={}, revisions=[], messages=set()))
         if activity == 'tool_call':
             tool = _label(event.get('tool_name'))[0]
             fingerprint = event.get('input_fingerprint')
@@ -103,6 +105,12 @@ class Scan:
                 state.update(pending=key, pending_tool=tool, pending_input=fingerprint, last_kind='result')
                 return
         elif activity == 'user_message':
+            fingerprint = event.get('message_fingerprint')
+            if fingerprint is not None:
+                signals['fingerprinted_messages'] += 1
+                # A repeat of an earlier structural fingerprint in the same case; the set is capped, so the count is a lower bound.
+                signals['restated_instructions'] += fingerprint in state['messages']
+                if len(state['messages']) < MAX_MESSAGES: state['messages'].add(fingerprint)
             if state['last_kind'] == 'user':
                 signals['consecutive_user_turns'] += 1
             if state['pending'] is not None:
@@ -174,7 +182,11 @@ def _signals(signals):
         row('edit_then_revert', signals['edit_reverts'], 'mutation state revision returning to the earlier value',
             ['Deliberate experiment or rollback.', 'Formatter or generator restoring a prior state.'])
         if signals['revision_events'] else unknown('edit_then_revert', 'state revisions on mutating events'),
-        unknown('restated_instructions', 'content-free structural fingerprints of user messages; the event envelope carries none'),
+        row('restated_instructions', signals['restated_instructions'], 'same content-free message fingerprint twice in one case',
+            ['User repeating a short confirmation or an answer to a repeated question.', 'Agent asked the same question twice.',
+             'Fingerprints match on normalized wording, so a quoted or pasted block can match without being a restated instruction.'])
+        if signals['fingerprinted_messages'] else
+        unknown('restated_instructions', 'content-free structural fingerprints of user messages (message_fingerprint); the capture carries none'),
     ]
 
 
@@ -198,7 +210,7 @@ def _methods(execution, inputs):
     return dict(ran=ran, not_run=not_ran, optional_not_run=skipped), exclusions
 
 
-def _missing(data, mechanisms, agent):
+def _missing(data, mechanisms, agent, signals, artifact_bounds):
     analysis, inputs = data['analysis'], data['analysis'].get('method_inputs', {})
     coverage = analysis.get('field_coverage', {})
     focus = mechanisms[0]['tool_class'] if mechanisms else None
@@ -219,8 +231,13 @@ def _missing(data, mechanisms, agent):
         rows.append(dict(id='event_order', what='Some cases have no usable event order.',
                          command='ahl analyze . --format claude --source-version claude-jsonl-2.1.316 --source-root <claude-projects-dir>',
                          unlocks='recurring-sequence mining on more cases'))
-    rows.append(dict(id='user_message_fingerprints', what='Restated instructions need content-free structural fingerprints of user messages.',
-                     command='ahl analyze --help', unlocks='restated-instruction signal'))
+    if not signals['fingerprinted_messages']:
+        rows.append(dict(id='user_message_fingerprints', what='Restated instructions need content-free structural fingerprints of user messages.',
+                         command='ahl analyze --help', unlocks='restated-instruction signal'))
+    stores = (artifact_bounds or {})
+    if (stores.get('analysis', {}).get('truncated', {}).get('applied') or stores.get('event_store', {}).get('truncated', {}).get('applied')):
+        rows.append(dict(id='full_detail_artifacts', what='Per-method detail in analysis.json or the event store was capped; the brief and summaries were not.',
+                         command='ahl analyze . --full-detail', unlocks='complete per-method detail for drill-down'))
     if focus is not None:
         rows.append(dict(id='targeted_probe', what='A recurring pattern exists without outcome evidence; a targeted run can test one repair.',
                          command=f'ahl improve . --agent {agent} --focus "recurring {focus} tool errors"', unlocks='a paired evaluation of one candidate'))
@@ -246,7 +263,7 @@ def _size(value):
     return len(rendered(value))
 
 
-def build(data, result, *, agent='codex', output='<run-dir>'):
+def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=None):
     """Return (brief, next_steps). The brief is deterministic and capped regardless of history size."""
     analysis, execution = data['analysis'], data.get('execution', {})
     ranked = sorted(result['groups'].items(), key=_rank)
@@ -259,10 +276,13 @@ def build(data, result, *, agent='codex', output='<run-dir>'):
                                verified_outcomes=len(data.get('evaluation_outcomes', [])), exclusions=exclusions),
                  methods=methods, mechanisms=mechanisms,
                  weak_outcome_signals=_signals(result['signals']),
-                 missing_evidence=_missing(data, mechanisms, agent),
+                 missing_evidence=_missing(data, mechanisms, agent, result['signals'], artifact_bounds),
                  sources=dict(brief='analysis-brief.json', private_summaries='mechanism-summaries.json', raw='analysis.json'),
                  bounds=dict(max_bytes=MAX_BRIEF_BYTES, mechanisms_total=len(ranked), mechanisms_listed=len(mechanisms),
-                             truncated=len(ranked) > TOP_MECHANISMS))
+                             truncated=len(ranked) > TOP_MECHANISMS,
+                             # Flags only: the brief itself never depends on the artifact caps.
+                             artifacts=dict(analysis_detail_truncated=bool((artifact_bounds or {}).get('analysis', {}).get('truncated', {}).get('applied')),
+                                            event_store_truncated=bool((artifact_bounds or {}).get('event_store', {}).get('truncated', {}).get('applied')))))
     for section in ('mechanisms', 'weak_outcome_signals', 'missing_evidence'):
         while _size(brief) > MAX_BRIEF_BYTES and brief[section]:
             brief[section].pop()
