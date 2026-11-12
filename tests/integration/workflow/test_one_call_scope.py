@@ -179,6 +179,17 @@ def test_project_configuration_cannot_select_global_scope(one, home, capsys):
     assert not (one.root / 'state').exists()  # nothing was created, not even private run state
 
 
+def test_user_level_plan_does_not_carry_the_projects_configuration(one, home):
+    (one.project / 'ahl.json').write_text(json.dumps(config.defaults() | dict(harness_paths=['.agents/skills/example/SKILL.md'])))
+    code, result = one.invoke('--repair-contracts', '--scope', 'project+global', '--agent', 'claude')
+    assert [(row['layer'], row['status']) for row in result['layers']] == [('global', 'applied'), ('project', 'inconclusive')]
+    plans = {row['layer']: json.loads(Path(row['plan']).read_text()) for row in result['layers']}
+    references = {layer: dict(plan['harness_change_plan']['references']) for layer, plan in plans.items()}
+    assert plans['global']['configuration_sha256'] is None and references['global']['configuration'] is None
+    assert plans['project']['configuration_sha256'] and references['project']['configuration'] == plans['project']['configuration_sha256']
+    assert references['global']['authorization'] != references['project']['authorization']
+
+
 @pytest.mark.parametrize('flags,needle', [
     ((), '--agent codex or --agent claude'),
     (('--agent', 'auto'), '--agent codex or --agent claude'),

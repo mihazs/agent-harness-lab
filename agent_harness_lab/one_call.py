@@ -316,10 +316,10 @@ def _layer_contracts(args, layer, output, folder, started, finish=None):
     common_plan=produce(args,original,proposed,analysis=dict(kind='deterministic_contract_inventory'),evidence=operations,
         diagnosis=dict(contract='minimal-agent-skill-header-without-bom-v1'),
         falsifiers=['outside_strict_header_contract','candidate_not_exact_bom_removal'],
-        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts,project=root)
+        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts,project=root,user_level=layer.label!='project')
     plan = dict(schema_version=1, kind='deterministic_contract', operations=operations,
                 profile='one-call-improvement-v1', publication_allowed=False,
-                configuration_sha256=getattr(args, 'configuration_sha256', None),
+                configuration_sha256=getattr(args, 'configuration_sha256', None) if layer.label == 'project' else None,
                 behavioral_certification=False, runtime_activation='unknown', deferred=deferred)
     attach(plan,common_plan)
     write_json(folder/'change-plan.json', plan)

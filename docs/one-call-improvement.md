@@ -793,7 +793,9 @@ With one layer the legacy top-level keys (`plan`, `plan_sha256`, `deployment`,
 layer and adds `precedence`. The model-driven project path returns the same keys with one
 `project` row. Each layer has its own change plan, guarded journal and rollback; a
 user-level plan binds the user-level directory as its project and the scope into its
-authorization digest, so its identity differs from a project plan's.
+authorization digest, so its identity differs from a project plan's. It carries no
+`configuration` reference and none of the project's settings, because the project's
+`ahl.json` never governed it.
 
 **Not yet available.** Model-driven evaluation of a user-level layer (it returns
 `blocked` with `global_scope_model_evaluation_unavailable`), user-level instruction,
