@@ -1,0 +1,18 @@
+{
+  "note": "Regression guards with generous slack over a baseline measured on a busy workstation, not targets. Startup limits are ratios to the bare interpreter so machine speed mostly cancels. Tighten them in the same pull request as an improvement they should lock in.",
+  "startup_ratio_max": {
+    "(no subcommand)": 9.0,
+    "diagnose": 9.0,
+    "mine": 9.0,
+    "analyze": 9.0,
+    "doctor": 9.0,
+    "regression-review": 11.0,
+    "experiment-history": 11.0,
+    "sources": 20.0
+  },
+  "diagnose": {
+    "20000": {"seconds_max": 1.5, "peak_rss_mb_max": 130},
+    "80000": {"seconds_max": 5.0, "peak_rss_mb_max": 400},
+    "240000": {"seconds_max": 15.0, "peak_rss_mb_max": 1100}
+  }
+}
