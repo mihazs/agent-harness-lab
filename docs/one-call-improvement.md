@@ -670,6 +670,10 @@ multiline definitions and the full Markdown grammar are not checked. A newly add
 an `orphan_asset`. A filename embedded within a longer filename does not count;
 when multiple bundle files share a basename, the added file requires its path.
 This is a static mention check, not proof that an agent loads or uses the asset.
+A newly created bundle whose name equals another bundle's in the candidate state, in
+the same kind of folder (`.claude/skills`, `.agents/skills` or a bare `skills`, never across kinds) at
+the same, an enclosing or a nested directory, is blocked as `shadowed_name`; sibling
+packages do not collide, and updates and removals are not compared.
 
 The check reads staged bytes and never runs them; executable files and
 hook-bearing frontmatter still go through the hook contract. `ahl improve`
@@ -681,8 +685,8 @@ When `ahl.json` `harness_paths` is configured, the snapshot holds only the liste
 files, so bundle membership is unknown: the entry point, dangling reference and
 orphan asset checks are skipped, the action is reported as `scoped`, and only
 the listed `SKILL.md` frontmatter, name and escaping links are judged.
-Same-name collisions across roots, references from other bundles to a removed
-one, and runtime activation are not checked or claimed.
+References from other bundles to a removed one, name collisions across kinds of folder, and runtime activation are not checked or
+claimed.
 
 ## Independently verified format repair
 
