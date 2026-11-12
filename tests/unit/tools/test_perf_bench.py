@@ -76,7 +76,8 @@ def test_check_reports_a_size_that_was_not_measured():
 
 
 def test_committed_budgets_are_well_formed():
-    budgets = json.loads((Path(perf_bench.ROOT) / 'tools/perf_budgets.json').read_text())
+    # Anchored on this file, not on the imported module: an installed package has no budgets file, the checkout does.
+    budgets = json.loads((Path(__file__).resolve().parents[3] / 'tools/perf_budgets.json').read_text())
     assert set(budgets) <= {'note', 'startup_ratio_max', 'diagnose'}
     assert all(limit > 0 for limit in budgets['startup_ratio_max'].values())
     assert all(set(limits) == {'seconds_max', 'peak_rss_mb_max'} for limits in budgets['diagnose'].values())
