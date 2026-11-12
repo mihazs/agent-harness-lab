@@ -156,6 +156,9 @@ def test_planned_instruction_candidates_are_validated_bound_and_staged_but_not_a
     # The root edit drops the active 'bad' line; regression controls in faithful trial workspaces preserved it.
     assert result['instruction_removal']['disposition'] == 'recommended'
     assert result['instruction_removal']['certification'] == 'required'
+    review=json.loads((Path(result['output'])/'change-plan.json').read_text())['instruction_review']
+    assert [(row['path'],row['decision'],row['evaluation_disposition']) for row in review['operations']] == [('AGENTS.md','update','recommended')]
+    assert (review['applied'],review['adoption_authority'],review['composed']) == ([],False,None)
     from agent_harness_lab.surfaces import adoptable_surfaces
     from agent_harness_lab.sources.instruction_validation import PROPOSER_GUIDANCE
     prompt=' '.join((Path(result['output'])/'preparation/proposer-prompt.txt').read_text().split())

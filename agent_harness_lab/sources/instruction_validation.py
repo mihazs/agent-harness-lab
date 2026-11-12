@@ -581,6 +581,40 @@ def removal_disposition(document, trials):
     return dict(removal, disposition=disposition, reason=reason)
 
 
+def review(document, removal=None, composed_with=()):
+    """Immutable operation-level review record for a valid, bound validation document; hashes only, no file text.
+    The evaluation disposition is the candidate-level removal gate's, carried by every operation that can lose
+    active guidance (anything but an add). composed_with names the skill or hook paths changed in the same candidate: a composed change has its
+    own identity and needs an interaction evaluation that no per-surface result supplies. A record grants no
+    adoption authority: application stays with the journal transaction."""
+    if document.get('status') != 'valid': raise ValueError('only a valid instruction validation can be reviewed')
+    removal = removal or document.get('removal') or {}
+    declared = {record['path']: record for record in document.get('decisions') or ()}
+    scope = document['scope']
+    operations = []
+    for item in document['operations']:
+        name = item['path']
+        kind_scope = _scope(name, document['runtime']) if item['kind'] == 'instruction' else None
+        loses = item['operation'] != 'add' and removal.get('required')
+        justification = declared.get(name)
+        operations.append(dict(path=name, kind=item['kind'], scope=kind_scope, decision=item['operation'],
+            before_sha256=item['before_sha256'], after_sha256=item['after_sha256'],
+            justification=None if justification is None else {key: justification[key] for key in (
+                'mechanism_id', 'evidence_refs', 'preserved', 'expected_change_sha256', 'falsifier_sha256')},
+            evaluation_disposition=removal.get('disposition') if loses else 'not_applicable'))
+    value = dict(schema_version=1, kind='instruction_operation_review', runtime=document['runtime'], scope_source=scope['source'],
+                 baseline_closure_sha256=document['baseline']['closure_sha256'],
+                 candidate_closure_sha256=document['candidate']['closure_sha256'],
+                 operations=operations, justified=document.get('decisions') is not None,
+                 observed_loading='unknown', effective='unknown', certification='required',
+                 blocked=[], staged=[item['path'] for item in operations],
+                 recommended=[item['path'] for item in operations if item['evaluation_disposition'] == 'recommended'], applied=[],
+                 composed=None if not composed_with else dict(with_paths=sorted(composed_with), interaction_evaluation='required'),
+                 publication_allowed=False, adoption_authority=False)
+    value['sha256'] = digest(value)
+    return value
+
+
 def hook(args, baseline, candidate, original, proposed, proposal, agent, *, deadline=None):
     """Workflow validation hook. None when the candidate changes no nested instruction or rule file and declares
     no plan, so root-only edits keep their previous path; otherwise a validation document. Sets the scope that

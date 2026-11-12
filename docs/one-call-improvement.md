@@ -583,6 +583,18 @@ again. A changed project instruction file or a modified evaluated candidate
 invalidates the recommendation, and the project is left untouched. The validator
 never reads evaluation manifests, graders or held-out inputs.
 
+When the workflow records a behavioral candidate, `change-plan.json` also holds an
+`instruction_review` made by `instruction_validation.review`. It lists each changed
+instruction or rule file with its scope directory, `add`, `update`, `remove` or
+`consolidate` decision, baseline and candidate hashes, the plan's justification (mechanism,
+evidence labels, preserved ids, text hashes) and the removal gate's evaluation disposition,
+which every operation except an `add` carries. Its `blocked`, `staged`, `recommended` and `applied` lists stay
+separate, `applied` is always empty, and it carries a `sha256` over its content, never the text of a
+file. It grants no adoption authority; the change-plan and the journal remain the only
+application path. When the same candidate also changes a skill or hook path, `composed` names those
+paths and marks an `interaction_evaluation` as `required`, because no per-surface result covers
+the combination.
+
 ## Validating staged agent and command definitions
 
 `sources/agents_validation.py` checks every created, updated or removed Claude
@@ -758,7 +770,8 @@ The receipt holds no file content.
 
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. Effective instruction hierarchy (#79, whose scoped rewrite
-validation is described above; operation-level delivery remains), skill lifecycle and
+validation and operation-level review are described above; actual loading evidence and
+the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
 and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)
