@@ -1123,6 +1123,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if access is not None:
         result['construction_access']=access.report()
         result['publication_allowed']=False
+    from .recovery import NO_CHANGE_REASONS, checkpoint
+    if result.get('reason') in NO_CHANGE_REASONS:
+        checkpoint(args,output,result,original,allowed_paths(args),proposal_path)
     write_json(output / 'workflow.json', result)
     return result
 

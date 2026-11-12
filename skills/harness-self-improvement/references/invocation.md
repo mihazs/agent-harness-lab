@@ -80,6 +80,15 @@ private artifacts and report the concrete remaining requirement. Recovery must
 use the controller's supported contract and cannot reset consumed budget or
 invent application by editing the target manually.
 
+After an interruption, do not restart through another adapter or manual trials.
+If the private output uses the default run directory, run `ahl skills invoke . --resume RUN_ID` with its final directory name. Recovery can finalize a completed
+no-change proposal whose receipt was not yet published; it checks the project,
+configuration and harness snapshot and never repeats a model call. Other stages,
+including an ambiguous in-flight action, require intervention and are not replayed.
+Keep the original private artifacts. Recovery does not reset the consumed budget
+or authorize a target edit. Custom output directories cannot be resumed. A hard
+crash may leave a lock; verify its recorded PID before removing a stale lock.
+
 ## Report integrity
 
 The receipt holds the facts a final report may state. Hazards it closes, and the rule for each:
