@@ -83,6 +83,8 @@ def plain(value):
         # Declared source order was added later and is pinned in test_claude_source_order; every other field stays pinned here.
         from agent_harness_lab.telemetry.schema import SOURCE_ORDER
         if 'source_order_profile' in value: value = {k: v for k, v in value.items() if k not in SOURCE_ORDER}
+        # The working-directory class and drift counts were added later and are pinned in test_claude_cwd_drift.
+        value = {k: v for k, v in value.items() if k not in ('cwd_class', 'cwd_drift')}
         return {repr(k) if isinstance(k, tuple) else k: plain(v) for k, v in value.items()}
     if isinstance(value, (set, frozenset)): return sorted((plain(v) for v in value), key=repr)
     if isinstance(value, (list, tuple)): return [plain(v) for v in value]

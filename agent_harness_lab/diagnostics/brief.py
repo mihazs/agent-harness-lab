@@ -8,6 +8,7 @@ import hashlib
 import json
 
 from ..telemetry import claude_native, codex_rollout
+from ..telemetry.claude_cwd import from_sources
 
 PROFILE = 'ahl-analysis-brief-v1'
 SUMMARY_PROFILE = 'ahl-mechanism-summaries-v1'
@@ -91,8 +92,11 @@ class Scan:
                 key = (tool, 'tool_reported_error')
                 if key not in self.groups and len(self.groups) >= MAX_GROUPS:
                     key = (OVERFLOW, 'tool_reported_error')
-                group = self.groups.setdefault(key, dict(errors=0, cases=set(), roots=set(), buckets=[0] * BUCKETS, next_action={}, refs=[], capped=False))
+                group = self.groups.setdefault(key, dict(errors=0, cases=set(), roots=set(), buckets=[0] * BUCKETS, next_action={}, refs=[], capped=False, classes={}))
                 group['errors'] += 1
+                # Rows without a recorded class stay 'unknown' rather than being assigned to one.
+                where = event.get('cwd_class', 'unknown')
+                group['classes'][where] = group['classes'].get(where, 0) + 1
                 for name, value in (('cases', case), ('roots', event.get('root_case_id', case))):
                     if len(group[name]) < MAX_IDS:
                         group[name].add(value)
@@ -150,6 +154,8 @@ def _mechanism(key, group, calls, refs):
                                  buckets_with_occurrence=sum(1 for n in group['buckets'] if n)),
                next_action={name: group['next_action'].get(name, 0) for name in NEXT_ACTIONS},
                counts_are_lower_bounds=group['capped'], competing_explanations=list(COMPETING))
+    if group['classes'] != dict(unknown=group['errors']):  # nothing to report for sources that record no class
+        row['errors_by_cwd_class'] = dict(sorted(group['classes'].items()))
     if refs:
         row['evidence_refs'] = list(group['refs'])
     return row
@@ -298,7 +304,7 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
                                incomplete=bool(data.get('caveats')), caveats=len(data.get('caveats', [])),
                                verified_outcomes=len(data.get('evaluation_outcomes', [])), exclusions=exclusions),
                  methods=methods, mechanisms=mechanisms,
-                 adapters=adapter_evidence(data.get('sources', [])),
+                 adapters=adapter_evidence(data.get('sources', [])), cwd_drift=from_sources(data.get('sources', [])),
                  weak_outcome_signals=_signals(result['signals']),
                  missing_evidence=_missing(data, mechanisms, agent, result['signals'], artifact_bounds),
                  sources=dict(brief='analysis-brief.json', private_summaries='mechanism-summaries.json', raw='analysis.json'),

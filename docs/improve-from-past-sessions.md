@@ -45,7 +45,7 @@ Both routes take the same options and return the same receipt shape and exit cod
 ## Read the result
 
 The receipt and the private `analysis.json` carry a `history` object with
-`sessions_captured`, `session_selected`, `pin_compatibility` counts (`declared_range` and `unverified`), `capture_reasons`, `runtime_lag` (only when a recorded release is newer than the newest verified one: counts per version and the exact next step), `events`, `cases`, `scope`, `since` and an `unknown` list.
+`sessions_captured`, `session_selected`, `pin_compatibility` counts (`declared_range` and `unverified`), `capture_reasons`, `cwd_drift` (records per working-directory class when native Claude captures changed directory; counts only), `runtime_lag` (only when a recorded release is newer than the newest verified one: counts per version and the exact next step), `events`, `cases`, `scope`, `since` and an `unknown` list.
 Capture completeness and recurrence outside the captured sessions are always
 listed as unknown; a repeated pattern is reported only when it was observed in
 the captured sessions. The object holds counts only, no paths or message bodies.

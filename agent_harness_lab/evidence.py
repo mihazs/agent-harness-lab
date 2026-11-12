@@ -272,7 +272,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     if active:
                         row.setdefault('id', str(accepted))
                         yield row
-            versions, seen_cases, ordered_cases, tool_events = set(), set(), set(), [0, 0]
+                    else: outside[0] += 1
+            versions, seen_cases, ordered_cases, tool_events, outside = set(), set(), set(), [0, 0], [0]
             if native:
                 if verified is not None: records, coverage, native_digest = verified
                 else:
@@ -298,6 +299,15 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 source.update(native_coverage=coverage, pin_compatibility='exact' if fmt == 'codex' else 'declared_range', adapter='verified_native')
                 if coverage.get('recorded_versions'): source['recorded_versions'] = coverage['recorded_versions']
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
+                drift = coverage.get('cwd_drift')
+                if drift and drift['worktrees'] == 'unavailable' and sum(drift['rows'][name] for name in drift['rows'] if name != 'project_root'):
+                    # Unknown stays unknown: without the repository's worktree list, a row outside the root may belong to a worktree.
+                    pending = next((r for r in reasons if r['reason'] == 'cwd_worktrees_unavailable'), None)
+                    if pending is None: reasons.append(pending := dict(reason='cwd_worktrees_unavailable', captures=0))
+                    pending['captures'] += drift['captures']
+                    _warn(caveats, 'cwd_worktrees_unavailable: the project repository\'s registered worktrees could not be read, so rows recorded outside the '
+                        'project root were classified as project_subdirectory or other_location, not as worktrees of the project. Next: restore read access to '
+                        'the repository\'s .git directory, or treat those class counts as lower bounds for registered_worktree_of_project.')
                 # Claude root summaries carry no inherited-record count: subagent transcripts are separate files.
                 if pinned and (coverage['unsupported_records'] or coverage.get('inherited_records_skipped')):
                     _warn(caveats, 'Native capture contains unsupported or inherited records; coverage is partial.')
@@ -363,6 +373,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 # Counts only: what this capture lacks, to be attributed to the adapter by the brief.
                 source['adapter_evidence'] = dict(cases=len(seen_cases), cases_without_declared_order=len(seen_cases - ordered_cases),
                     tool_events=tool_events[0], tool_events_without_name=tool_events[1])
+            # The descriptive reader keeps only rows whose recorded directory is the project; the rest are counted, never silently narrowed.
+            if outside[0]: source['skipped_rows'] = dict(cwd_outside_project=outside[0])
             source['sha256'] = native_digest if native else source_digest.hexdigest()
             if not native and fmt in ('codex', 'claude'):
                 # No verified contract read this parse, so it is never `exact` or `declared_range`; a release outside the verified set is typed.

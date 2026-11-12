@@ -118,10 +118,18 @@ class TestClaudeNative(ClaudeNativeTests):
 
     def test_foreign_version_project_session_or_missing_envelope_aborts_before_event_emission(self):
         original = deepcopy(self.rows)
-        for changed in (dict(version='future'), dict(cwd=str(self.root/'foreign')), dict(sessionId='other'), dict(version=None), dict(isSidechain=1)):
+        for changed in (dict(version='future'), dict(sessionId='other'), dict(version=None), dict(isSidechain=1)):
             self.rows = deepcopy(original); self.rows[3].update(changed); self.write(); emitted = []
             with pytest.raises(ValueError): self.collect(event_sink=emitted.append)
             assert emitted == []
+        # The first attributable row (launch directory) decides the project; a later row elsewhere is kept and classified (issue #724).
+        self.rows = deepcopy(original); self.rows[1].update(cwd=str(self.root/'foreign')); self.write(); emitted = []
+        with pytest.raises(ValueError, match='project mismatch'): self.collect(event_sink=emitted.append)
+        assert emitted == []
+        self.rows = deepcopy(original); self.rows[3].update(cwd=str(self.root/'elsewhere')); self.write(); emitted = []
+        self.collect(event_sink=emitted.append)
+        assert len(emitted) == 12 and sum(e.get('cwd_class') == 'other_location' for e in emitted) > 0
+        assert str(self.root) not in json.dumps(emitted)
 
     def test_partial_last_line_even_valid_json_is_not_projected(self):
         self.rows = self.rows[:-1]; self.write(); self.path.write_bytes(self.path.read_bytes().rstrip(b'\n'))

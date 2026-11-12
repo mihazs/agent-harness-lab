@@ -188,6 +188,7 @@ def evidence(args, output, source_context=None, *, progress=None):
 
 
 def analyze_project(args):
+    from .telemetry.claude_cwd import from_sources
     from .sources.context import load
     context = load(getattr(args, 'source_cache', None), getattr(args, 'source_project_sha256', None), getattr(args, 'source_scope_sha256', None))
     output = output_dir(args)
@@ -198,6 +199,7 @@ def analyze_project(args):
     if context is not None: result['source_context'] = context
     if 'memory_source' in data: result['memory_source'] = data['memory_source']
     if data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
+    if (drift := from_sources(data.get('sources', []))) is not None: result['cwd_drift'] = drift
     write_json(output / 'workflow.json', result)
     return result
 
