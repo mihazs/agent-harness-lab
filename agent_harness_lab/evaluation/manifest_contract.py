@@ -23,6 +23,7 @@ REASONS = {
     'evaluation_manifest_field_missing': (AGENT, True, 'Add the named manifest field with the documented shape, then rerun.'),
     'evaluation_manifest_field_invalid': (AGENT, True, 'Correct the named manifest field to the documented shape, then rerun.'),
     'evaluation_manifest_controller_field_supplied': (AGENT, True, 'Remove the named controller-owned field from manifest.json; the controller computes it. Then rerun.'),
+    'authored_digest_not_accepted': (AGENT, True, 'Omit every digest field from manifest.json; the controller computes and freezes all digests. Then rerun.'),
     'evaluation_manifest_controls_incomplete': (AGENT, True, 'Give every task one broken, one partial and one complete grader self-test, then rerun.'),
     'internal_contract_error': (AHL, False, 'This is an AHL contract defect, not an input defect; report it with the named stage and field.'),
 }
@@ -36,7 +37,8 @@ def contract_text(controller_grader=True):
     return ('Manifest contract: manifest.json holds ' + ', '.join(a['manifest']) + '; each task declares '
             + ', '.join(task) + '; each grader_self_tests entry has exactly ' + ', '.join(a['control'])
             + '; each grader_bundles entry has exactly ' + ', '.join(a['bundle'])
-            + '. The controller owns ' + ', '.join(owned) + ' and the run limits; never write them.')
+            + '. The controller owns ' + ', '.join(owned) + ' and the run limits; never write them. '
+            'Omit every digest: the controller computes bundle and control digests itself, and an authored digest is never an integrity claim.')
 
 
 class ContractError(ValueError):
@@ -116,8 +118,7 @@ def check_authored(manifest, *, stage, controller_grader=True, grading=True):
             declaration = bundles[ident]
             if not isinstance(declaration, dict): fail('evaluation_manifest_field_invalid', f'grader_bundles[{index}]')
             if 'path' not in declaration: fail('evaluation_manifest_field_missing', f'grader_bundles[{index}].path')
-            if 'digest' in declaration and controller_grader:
-                fail('evaluation_manifest_controller_field_supplied', f'grader_bundles[{index}].digest')
+            if 'digest' in declaration: fail('authored_digest_not_accepted', f'grader_bundles[{index}].digest')
             if not isinstance(declaration['path'], str) or not declaration['path']:
                 fail('evaluation_manifest_field_invalid', f'grader_bundles[{index}].path')
         if set(bundles) - set(ids): fail('evaluation_manifest_field_invalid', 'grader_bundles[*] (entry without a task)')
@@ -125,7 +126,7 @@ def check_authored(manifest, *, stage, controller_grader=True, grading=True):
         if not isinstance(control, dict): fail('evaluation_manifest_field_invalid', f'grader_self_tests[{index}]')
         for name in AUTHOR_FIELDS['control']:
             if name not in control: fail('evaluation_manifest_field_missing', f'grader_self_tests[{index}].{name}')
-        if 'digest' in control: fail('evaluation_manifest_controller_field_supplied', f'grader_self_tests[{index}].digest')
+        if 'digest' in control: fail('authored_digest_not_accepted', f'grader_self_tests[{index}].digest')
         if not isinstance(control['fixture'], str) or not control['fixture'] or control['task'] not in ids:
             fail('evaluation_manifest_field_invalid', f'grader_self_tests[{index}].task' if control['task'] not in ids else f'grader_self_tests[{index}].fixture')
         if control['state'] not in STATES: fail('evaluation_manifest_field_invalid', f'grader_self_tests[{index}].state')
@@ -135,14 +136,34 @@ def check_authored(manifest, *, stage, controller_grader=True, grading=True):
     return manifest
 
 
-def check_file(path, *, stage, **options):
-    """Read and shape-check an authored manifest file; unreadable or non-object content is a typed defect."""
+def strip_authored_digests(manifest):
+    """Drop every authored bundle or control digest in place and return how many; the controller recomputes them."""
+    if not isinstance(manifest, dict): return 0
+    bundles, controls = manifest.get('grader_bundles'), manifest.get('grader_self_tests')
+    entries = [*(bundles.values() if isinstance(bundles, dict) else []), *(controls if isinstance(controls, list) else [])]
+    owned = [e for e in entries if isinstance(e, dict) and 'digest' in e]
+    for entry in owned: del entry['digest']
+    return len(owned)
+
+
+def check_file(path, *, stage, strip_digests=False, **options):
+    """Read and shape-check an authored manifest file; unreadable or non-object content is a typed defect.
+
+    With strip_digests the authored digests are removed from the file first; returns (manifest, count stripped),
+    and a ContractError carries the count as digests_stripped.
+    """
     import json
     try:
         manifest = json.loads(path.read_text())
     except (OSError, ValueError) as exc:
         raise ContractError('evaluation_manifest_unreadable', stage) from exc
-    return check_authored(manifest, stage=stage, **options)
+    stripped = strip_authored_digests(manifest) if strip_digests else 0
+    if stripped: path.write_text(json.dumps(manifest))
+    try:
+        return check_authored(manifest, stage=stage, **options), stripped
+    except ContractError as error:
+        error.digests_stripped = stripped  # the file already lost them: the caller must still record the count
+        raise
 
 
 def typed(exc, stage='improve'):

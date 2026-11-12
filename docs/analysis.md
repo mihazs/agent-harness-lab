@@ -406,6 +406,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `isolation_qualification_unverified` | Verify the required isolation qualification before retrying. |
 | `missing_or_duplicate_trials` | Review the trial records and restore complete, unique trial coverage. |
 | `evaluation_manifest_controller_field_supplied` | Remove the named controller-owned field from manifest.json; the controller computes it. Then rerun. |
+| `authored_digest_not_accepted` | Omit every digest field from manifest.json; the controller computes and freezes all digests. Then rerun. |
 | `evaluation_manifest_controls_incomplete` | Give every task one broken, one partial and one complete grader self-test, then rerun. |
 | `evaluation_manifest_field_invalid` | Correct the named manifest field to the documented shape, then rerun. |
 | `evaluation_manifest_field_missing` | Add the named manifest field with the documented shape, then rerun. |

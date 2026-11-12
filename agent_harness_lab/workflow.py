@@ -649,6 +649,7 @@ def _improve(args):
     proposed = None
     grader_changed = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
+    args._authored_digest_ignored = 0
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
@@ -841,12 +842,14 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         elif controlled:
             made = []
             args._evaluation_repairs = made
+            authoring_started = time.monotonic()
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
                     prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made)
             else:
                 try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
                 finally: made[:] = access.repair_log()
+            args._construction_seconds = time.monotonic() - authoring_started
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands,
                 manifest_repairs=made))
         else:
@@ -890,8 +893,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
             made = args._evaluation_repairs = []
             suffix = ''
+            args._construction_seconds = 0.0
             while True:
+                attempt_started = time.monotonic()
                 construction = runner.execute(command, evaluation, remaining(), evaluation_prompt + suffix, env=environment)
+                args._construction_seconds += time.monotonic() - attempt_started
                 (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
                 (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
                 check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
@@ -899,12 +905,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     result['status'] = 'execution_error'
                     break
                 try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
-                    manifest_contract.check_file(manifest_path, stage='evaluation_construction',
+                    # Authored digests are never an integrity claim: dropped here, the controller freezes its own.
+                    _, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,
                         controller_grader=False, grading=grading is not None)
+                    args._authored_digest_ignored += ignored
                     break
                 except manifest_contract.ContractError as error:
+                    args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
                     if not error.repairable or made or remaining() <= 0: raise
-                    made.append(dict(error.receipt(), attempt=1, outcome='requested'))
+                    made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = '\n' + error.repair_instruction()
             if result['status'] == 'execution_error':
                 break
@@ -1075,7 +1084,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
-    if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
+    construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
     if proposed is not None:
@@ -1160,7 +1169,7 @@ def _run_improvement(args, *, parent_started=None):
         if inference_error: result['reason'] = str(exc)
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
-        if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
+        construction_receipt(result, args)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
             result['isolation_qualification']=permission_backend.permission_qualification()
@@ -1189,6 +1198,13 @@ def _run_improvement(args, *, parent_started=None):
             access=getattr(args,'_construction_access',None)
             if access is not None and os.getpid()==issuer:
                 access.retire()
+
+
+def construction_receipt(result, args):
+    """Content-free construction facts: repairs, authored digests dropped (count only) and elapsed seconds."""
+    if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
+    if getattr(args, '_authored_digest_ignored', 0): result['authored_digest_ignored'] = args._authored_digest_ignored
+    if getattr(args, '_construction_seconds', None) is not None: result['evaluation_construction_seconds'] = round(args._construction_seconds, 1)
 
 
 def improve(args):
