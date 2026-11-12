@@ -376,6 +376,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `isolation_qualification_unverified` | Verify the required isolation qualification before retrying. |
 | `missing_or_duplicate_trials` | Review the trial records and restore complete, unique trial coverage. |
 | `evaluation_manifest_changed` | Review the changed evaluation manifest before starting a fresh evaluation. |
+| `grader_changed_after_trials` | The grader or acceptance boundary changed after trials started; the comparison cannot support adoption. Run fresh trials under the new grader as a new comparison. |
 | `trial_split_mismatch` | Review the trial records and manifest partitions before starting a fresh evaluation. |
 | `no_data` | Run ahl audit . for a zero-model-cost static convention check; ahl improve may incur model costs. |
 | `offline_configuration_forbids_model_execution` | Use an offline operation or explicitly configure a supported runtime. |

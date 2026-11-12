@@ -260,6 +260,8 @@ def contracts(args):
                   profile=plan['profile'], publication_allowed=False,
                   behavioral_certification=False, deferred=plan['deferred'],plan_sha256=common_plan.sha256)
     if operations:
+        from .evidence_label import pre_edit_check
+        result['pre_edit_check'] = pre_edit_check(args.project, [o['path'] for o in operations])
         if common_plan.unresolved_operations:
             result.update(status='blocked',reason='unresolved_operation_requires_hook_contract')
         elif hook_contracts:
