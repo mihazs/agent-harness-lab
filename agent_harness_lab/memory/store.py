@@ -3,7 +3,7 @@
 Commit point of a publication: its manifest object is durable. The index transaction is validated first and
 committed last, so a record is either absent everywhere or recoverable by `reindex`. Nothing here writes to,
 or proves anything about, an external original store."""
-from contextlib import contextmanager, nullcontext
+from contextlib import closing, contextmanager, nullcontext
 import fcntl
 import hashlib
 import json
@@ -66,6 +66,8 @@ def _isolated(root, excluded):
     for ancestor in (root, *root.parents):
         if (ancestor / '.git').exists():
             raise MemoryStoreError('memory store must not live inside a source checkout')
+        if os.path.lexists(ancestor / '.store.json'):  # marker of every controller PrivateJournal store (history, review, ...)
+            raise MemoryStoreError('memory store must not live inside an existing protected controller store')
     for other in excluded:
         other = Path(os.path.realpath(Path(other).absolute()))
         if root.is_relative_to(other) or other.is_relative_to(root):
@@ -86,6 +88,18 @@ def _json(raw, limit):
 
 def _encode(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+def fts5_available():
+    """Runtime feature check for SQLite FTS5: True or False when SQLite answers, None when the probe itself failed."""
+    try:
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.execute('CREATE VIRTUAL TABLE probe USING fts5(body)')
+        return True
+    except sqlite3.OperationalError as error:
+        return False if 'no such module' in str(error) else None
+    except sqlite3.Error:
+        return None
 
 
 class MemoryStore:
@@ -494,7 +508,7 @@ class MemoryStore:
         names = sum(1 for p in base.iterdir() if p.is_dir() for q in p.iterdir() if not q.name.startswith('.tmp-')) \
             if base.is_dir() else None
         result = {'root': str(self.root), 'store_id': self.store_id, 'format_version': FORMAT_VERSION,
-                  'index_schema': schema.VERSION, 'object_files': names,
+                  'index_schema': schema.VERSION, 'object_files': names, 'fts5': fts5_available(),
                   'limits': {'max_files': self.max_files, 'max_bytes': self.max_bytes,
                              'max_object_bytes': self.max_object_bytes, 'max_results': MAX_RESULTS}}
         try:

@@ -22,17 +22,21 @@ ahl memory verify --store /abs/path/ahl-memory
 Repeat `--exclude` for every directory the store must never overlap: the project, task
 bank, source authority, trial workspaces, runtime image, credentials and any existing
 protected controller store. `init` refuses a path that is relative, contains `..`, crosses
-a symlink, sits inside a Git checkout, overlaps an excluded directory (compared after
-resolving the excluded path) or is not a new or empty owner-only directory.
+a symlink, sits inside a Git checkout or an existing controller store (any directory
+that holds a `.store.json` marker, such as an evaluation history), overlaps an excluded
+directory (compared after resolving the excluded path) or is not a new or empty owner-only directory.
+The refusal also runs the other way: a controlled `ahl improve` evaluation store that overlaps the
+directory named by `AHL_MEMORY_STORE` is refused before any read, so the two stores cannot nest.
 
 | Command | Effect |
 | --- | --- |
 | `init` | Creates the store; refuses a non-empty directory |
-| `status` | Cheap summary; object files are counted, not re-hashed. An unusable index prints `null` counts, never zero |
+| `status` | Cheap summary; object files are counted, not re-hashed. An unusable index prints `null` counts, never zero. `fts5` reports whether this SQLite build has FTS5 (`true`, `false`, or `null` when the probe failed); nothing here uses it yet |
 | `verify` | Re-hashes every object, checks the index and reconciles the two. Exit 3 when anything is wrong |
 | `reindex [--dry-run]` | Rebuilds the index from verified manifests, then swaps it in; the old index stays if the rebuild fails |
-| `gc [--apply]` | Plans removal of unreferenced objects and stale temp files; `--apply` deletes exactly that plan |
+| `gc [--dry-run \| --apply]` | Plans removal of unreferenced objects and stale temp files; planning is the default and `--dry-run` says so explicitly; `--apply` deletes exactly that plan |
 
+Every command prints JSON on stdout; `--json` is accepted for uniformity and changes nothing.
 Exit codes: 0 completed, 2 invalid input or refused path, 3 blocked (read-only store,
 busy writer, unusable index) or `verify` found problems.
 

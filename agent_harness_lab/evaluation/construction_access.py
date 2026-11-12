@@ -33,7 +33,14 @@ def _disjoint(path, inputs):
     for source in inputs:
         source=ledger._path(source)
         if path.is_relative_to(source) or source.is_relative_to(path):
-            raise ValueError('evaluation store must remain outside every role, bank and runtime input/output')
+            raise ValueError('evaluation store must remain outside every role, bank, runtime and configured memory-store input/output')
+
+
+def _memory_store():
+    """The private memory store named by AHL_MEMORY_STORE; a value that is not a canonical path cannot name a store."""
+    value=os.environ.get('AHL_MEMORY_STORE')
+    try: return ledger._path(value) if value else None
+    except ValueError: return None
 
 
 def selection(args, output=None):
@@ -50,7 +57,7 @@ def selection(args, output=None):
     bank=config.bank_path(args.project,args.project_settings) if getattr(args,'project_settings',None) else config.starter()
     inputs=[args.project,bank.parent,assets()/'skills']
     inputs.extend(value for value in (output or getattr(args,'output',None),getattr(args,'image_root',None),getattr(args,'inference_settings',None),
-        *[getattr(args,name,None) for name in ('events','source_root','source_cache')]) if value is not None)
+        _memory_store(),*[getattr(args,name,None) for name in ('events','source_root','source_cache')]) if value is not None)
     _disjoint(path,inputs)
     if getattr(args,'inference_settings',None) is None: raise ValueError('evaluation store requires explicit inference settings')
     settings,_=read_settings(args.inference_settings)

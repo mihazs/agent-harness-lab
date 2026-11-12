@@ -12,8 +12,10 @@ import textwrap
 import pytest
 
 from agent_harness_lab.cli import main as ahl
+from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from agent_harness_lab.memory import schema
-from agent_harness_lab.memory.store import (IndexUnavailable, MemoryStore, MemoryStoreError, ReadOnlyStore, StoreBusy)
+from agent_harness_lab.memory.store import (IndexUnavailable, MemoryStore, MemoryStoreError, ReadOnlyStore, StoreBusy,
+                                            fts5_available)
 
 ROOT = Path(__file__).resolve().parents[3]
 EVAL = {'table': 'evaluations', 'row': {'evaluation_id': 'e1', 'result': None, 'outcome': 'pass'}}
@@ -74,6 +76,15 @@ def test_store_inside_a_checkout_is_refused(tmp_path):
     (tmp_path / 'checkout/.git').mkdir(parents=True)
     with pytest.raises(MemoryStoreError, match='checkout'):
         MemoryStore.init(tmp_path / 'checkout/sub/store')
+
+
+def test_store_inside_an_existing_controller_store_is_refused(tmp_path):
+    with HistoryStore(tmp_path / 'history').locked(create=True):
+        pass
+    for marker in (tmp_path / 'history', tmp_path / 'history/nested'):
+        with pytest.raises(MemoryStoreError, match='protected controller store'):
+            MemoryStore.init(marker / 'memory', excluded=[])
+    assert MemoryStore.init(tmp_path / 'sibling').status()['index'] == 'ok'
 
 
 @pytest.mark.parametrize('protected', ['inside', 'contains', 'same'])
@@ -576,6 +587,30 @@ def test_cli_lifecycle_and_exit_codes(tmp_path, capsys):
     assert run(capsys, 'verify', '--store', path)[0] == 3
     assert json.loads(run(capsys, 'reindex', '--store', path)[1])['rebuilt'] is True
     assert run(capsys, 'verify', '--store', path)[0] == 0
+
+
+def test_fts5_runtime_check_reports_true_false_or_unknown(store, monkeypatch):
+    assert store.status()['fts5'] is fts5_available() and isinstance(fts5_available(), bool)
+
+    def refuse(message):
+        def connect(*_, **__):
+            raise sqlite3.OperationalError(message)
+        monkeypatch.setattr(sqlite3, 'connect', connect)
+    refuse('no such module: fts5')
+    assert fts5_available() is False
+    refuse('disk I/O error')  # the probe failed: unknown, never "absent"
+    assert fts5_available() is None
+
+
+def test_cli_accepts_json_and_a_gc_dry_run_that_never_deletes(tmp_path, capsys):
+    path = str(tmp_path / 'cli-store')
+    assert run(capsys, 'init', '--store', path, '--json')[0] == 0
+    MemoryStore.open(path)._put(b'orphan')
+    plan = json.loads(run(capsys, 'gc', '--store', path, '--dry-run', '--json')[1])
+    assert plan['orphan_count'] == 1 and plan['applied'] is False
+    assert run(capsys, 'gc', '--store', path, '--dry-run', '--apply')[0] == 2
+    assert run(capsys, 'status', '--store', path, '--dry-run')[0] == 2
+    assert json.loads(run(capsys, 'status', '--store', path)[1])['fts5'] in (True, False, None)
 
 
 def test_cli_requires_an_explicit_location_and_valid_flags(tmp_path, capsys, monkeypatch):
