@@ -325,7 +325,9 @@ class TestEntryReceiptParity:
 
     def test_a_bytecode_cache_appearing_between_the_routes_does_not_break_parity(self,make_fixture,tmp_path):
         """#758: a pytest worker importing a skill script can write __pycache__ into the shared source tree between the two routes."""
-        source=tmp_path/'assets';shutil.copytree(cli.assets()/'skills',source/'skills');shutil.copy(cli.assets()/'package.json',source)
+        source=tmp_path/'assets';shutil.copytree(cli.assets()/'skills',source/'skills')
+        manifest=cli.assets()/'package.json'  # only the checkout layout has it; the wheel layout does not
+        if manifest.exists():shutil.copy(manifest,source)
         fixture=make_fixture();(fixture.project/'mode').write_text('no_change');initial=(fixture.project/'AGENTS.md').read_bytes()
         with patch.object(cli,'assets',return_value=source):
             shutil.rmtree(source/'skills/harness-evaluation/scripts/__pycache__',ignore_errors=True)
