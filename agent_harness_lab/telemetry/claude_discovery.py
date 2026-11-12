@@ -3,7 +3,7 @@
 Directory naming follows the pinned SDK reader (``_sanitize_path``/``_find_project_dir``):
 ``<projects>/<sanitized-cwd>/<session>.jsonl`` and ``<session>/subagents/**/agent-*.jsonl``.
 """
-from collections import deque
+from collections import Counter, deque
 from contextlib import closing, contextmanager
 import json
 import os
@@ -11,8 +11,8 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import unicodedata
-from .claude_native import ENTRY_TYPES, UPSTREAM_COMMIT, VERSION, Projection
-from .native import WalkLimit, bounded_walk, correlated, invalid_constant, jsonl, lines, listing, optional_limit
+from .claude_native import ENTRY_TYPES, RUNTIME_VERSION, UPSTREAM_COMMIT, VERSION, Projection
+from .native import WalkLimit, bounded_walk, capture_counts, correlated, invalid_constant, jsonl, lines, listing, observed_version, optional_limit
 from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
 
@@ -86,7 +86,7 @@ def candidates(folder, directory, session, limited):
                 except WalkLimit: limited(nested)
 
 
-def scope(folder, name, project, expected, limits):
+def scope(folder, name, project, expected, limits, versions=None):
     """Read only through the first attributable envelope; return (status, reason, writer key)."""
     with closing(lines(folder, name, **limits)) as stream:
         for line in stream:
@@ -96,7 +96,12 @@ def scope(folder, name, project, expected, limits):
             except (ValueError, RecursionError): return 'unknown', 'invalid_native_record', None
             if not isinstance(row, dict): return 'unknown', 'invalid_native_record', None
             if row.get('type') not in ENTRY_TYPES or 'cwd' not in row or 'sessionId' not in row: continue
-            if row.get('version') != '2.1.316': return 'unknown', 'unsupported_native_version', None
+            version = row.get('version')
+            if version != RUNTIME_VERSION:
+                if not isinstance(version, str): return 'unknown', 'unsupported_native_version', None
+                # Never parsed: this adapter's contract was not verified against that release.
+                if versions is not None: versions[observed_version(version)] += 1
+                return 'unknown', 'capture_version_differs_from_pin', None
             if not isinstance(row['cwd'], str) or not row['cwd']: return 'unknown', 'native_scope_unavailable', None
             if Path(row['cwd']) != project: return 'rejected', 'foreign_project', None
             try: Projection(project, None, folder.check).add(row, 0)
@@ -130,7 +135,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
         raise ValueError('overlapping native Claude source roots')
     base = Path(os.path.commonpath(roots)).parent
     limits = dict(max_bytes=max_bytes, max_line_bytes=max_line_bytes)
-    receipts, names, reached = [], [], []
+    receipts, names, reached, versions = [], [], [], Counter()
     counts = dict(foreign_files=0, unsupported_headers=0, unrecognized_files=0, missing_project_directories=0)
     with Folder(base, deadline, limit_total_bytes=False, limit_tree=False) as folder:
         directories = [d for root in roots for d in selected_directories(folder, str(root.relative_to(base)), project)]
@@ -162,7 +167,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
                 reached.append('accepted_files')
                 for skipped, owner, _ in names[index:]: receipt(skipped, 'unknown', 'not_read_after_file_limit', owner)
                 break
-            status, reason, key = scope(folder, name, project, expected, limits)
+            status, reason, key = scope(folder, name, project, expected, limits, versions)
             probed += 1
             receipt(name, status, reason, root)
             if status != 'accepted':
@@ -195,11 +200,13 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
                 records.append(row)
         receipts.sort(key=lambda r: (r['path_sha256'], r['status'], r['reason']))
         statuses = [r['status'] for r in receipts]
+        skipped = Counter(r['reason'] for r in receipts if r['status'] != 'accepted' and r['reason'] not in ('foreign_project', 'unrecognized_native_layout'))
         discovery = dict(selected_directories=len(directories), scanned_files=len(names), headers_read=probed,
             accepted_files=accepted, rejected_files=statuses.count('rejected'),
             unknown_files=statuses.count('unknown'), **counts, unsafe_entries_skipped=folder.unsafe_entries, filesystem_entries=folder.entries,
             bytes_read=folder.bytes, input_records=consumed, max_files=max_files, max_scan_files=max_scan_files,
-            max_records=max_records, reached_limits=reached)
+            max_records=max_records, reached_limits=reached, capture_counts=capture_counts(accepted, skipped),
+            version_mismatch_files=sum(versions.values()), observed_versions=dict(sorted(versions.items())), pinned_version=RUNTIME_VERSION)
         summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial',
             partial_tail=any(f['partial_tail'] for f in files), files=files, receipts=receipts, discovery=discovery,
             duplicates_skipped=sum(f['duplicates_skipped'] for f in files), unsupported_records=sum(f['unsupported_records'] for f in files),

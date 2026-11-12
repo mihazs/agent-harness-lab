@@ -8,6 +8,7 @@ from ..sources.schema import digest
 from ..surfaces import skill_prefixes
 
 VERSION = 'claude-jsonl-2.1.316'
+RUNTIME_VERSION = '2.1.316'  # the only runtime version the pinned contract fixtures verify; no range is declared
 # Declared subordinal within one native line of one file (segment); never execution or cross-file order.
 ORDER_PROFILE = 'claude-native-order-v1'
 UNORDERED = frozenset(('capture_order', *SOURCE_ORDER))

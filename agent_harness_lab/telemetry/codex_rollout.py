@@ -5,6 +5,7 @@ from .native import text, number, timestamp, invalid_constant, jsonl, correlated
 from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'
+PINNED_VERSION = '0.166.0'  # the only runtime version the pinned contract fixtures verify; no range is declared
 UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
 # The pinned rollout records no instruction, rule, agent or hook load; the hierarchy stays unknown, never absent.
 LOADING_SIGNAL = 'no_native_loading_signal'
@@ -27,7 +28,7 @@ class Projection:
         if not isinstance(kind, str) or not isinstance(payload, dict): raise ValueError('invalid native rollout envelope')
         stamp = timestamp(row.get('timestamp'))
         if self.meta is None:
-            if kind != 'session_meta' or payload.get('cli_version') != '0.166.0':
+            if kind != 'session_meta' or payload.get('cli_version') != PINNED_VERSION:
                 raise ValueError('unsupported native Codex version or missing session metadata')
             if Path(text(payload.get('cwd'))) != self.project: raise ValueError('native capture project mismatch')
             if payload.get('history_mode', 'legacy') not in ('legacy', 'paginated'): raise ValueError('unsupported native history mode')

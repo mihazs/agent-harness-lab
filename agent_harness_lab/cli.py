@@ -215,7 +215,7 @@ def main(argv=None):
         if name == 'analyze':
             selection.add_argument('--memory-manifest', type=Path, help='Explicit scoped ai-memory session-observation manifest with pinned server/tool schema; read-only network retrieval, no atomic snapshot guarantee')
             command.add_argument('--authorization-file', type=Path, help='Existing private authorization header file for --memory-manifest; never printed or discovered automatically')
-        command.add_argument('--session', help='Exact native Codex thread ID or Claude session UUID within --source-root')
+        command.add_argument('--session', help='Exact native Codex thread ID or Claude session UUID within --source-root, or selecting one session with improve --history')
         command.add_argument('--max-captures', type=int, help='Optional positive matching-capture limit after project filtering; default: unlimited')
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
         command.add_argument('--max-events', type=int, help='Optional positive event limit; exceeding it fails explicitly; default: unlimited')

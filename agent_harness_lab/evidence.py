@@ -84,6 +84,12 @@ def _owned(path, project, caveats, tick=None):
     return False
 
 
+def _in_session(path, fmt, session):
+    """Exact session file names of the documented layouts: Claude <uuid>.jsonl and <uuid>/subagents/*, Codex rollout-*-<id>.jsonl."""
+    if fmt == 'codex': return path.stem.endswith('-' + session)
+    return path.stem == session or session in path.parent.parts
+
+
 def _capture_candidates(root):
     if not root.is_dir() or root.is_symlink():
         return
@@ -159,7 +165,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -169,8 +175,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     if source_format not in ('normalized', 'codex', 'claude', 'ai-memory'):
         raise ValueError('unsupported evidence format')
     from .telemetry.adapters import CAPABILITIES
-    from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION
-    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
+    from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION, PINNED_VERSION as CODEX_RUNTIME_VERSION
+    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION, RUNTIME_VERSION as CLAUDE_RUNTIME_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
     native_order = source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
     pinned = codex_pinned or native_order
@@ -179,11 +185,13 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         validate_fingerprint(source_identity)
         if events is None or pinned:
             raise ValueError('logical source identity requires an explicit unpinned event input')
+    if history_session is not None and (events is not None or source_root is not None or session is not None):
+        raise ValueError('history session selection excludes explicit native inputs')
     if source_root is not None and (not pinned or events is not None) or session is not None and source_root is None:
         raise ValueError('native source-root/session requires an explicit pinned Codex or Claude profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
-    caveats, sources, errors = [], [], []
+    caveats, sources, errors, reasons = [], [], [], []
     notify = progress or (lambda stage, **counts: None)
     notify('discovery', files=0, scanned=0, selected=0)
     fingerprint = hashlib.sha256()
@@ -200,7 +208,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
         # since_ns bounds capture-file modification time; a session's own start time is not read here.
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
-                      for mtime, name, path in _capture_candidates(root) if since_ns is None or mtime >= since_ns)
+                      for mtime, name, path in _capture_candidates(root)
+                      if (since_ns is None or mtime >= since_ns) and (history_session is None or _in_session(path, fmt, history_session)))
         scan_count = 0
         def discovered():
             nonlocal scan_count
@@ -241,11 +250,15 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 for accepted, row in enumerate(_rows(path, caveats, source_digest,
                         tick=lambda: notify('collection', captures=index - 1, events=total_events)), 1):
                     cwd = _cwd(row)
+                    if fmt in ('codex', 'claude'):
+                        found = row.get('version') if fmt == 'claude' else (row.get('payload') or {}).get('cli_version')
+                        if isinstance(found, str): versions.add(found)
                     if cwd is not None and events is None:
                         active = _matches(cwd, project)
                     if active:
                         row.setdefault('id', str(accepted))
                         yield row
+            versions = set()
             if pinned:
                 if source_format == 'claude':
                     from .telemetry.claude_native import read
@@ -266,7 +279,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 # Analysis consumes events once; draining frees each native event when analysis no longer needs it.
                 from .telemetry.native import drained
                 records = drained(deque(records))
-                source.update(native_coverage=coverage)
+                source.update(native_coverage=coverage, pin_compatibility='exact')
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
                 # Claude root summaries carry no inherited-record count: subagent transcripts are separate files.
                 if coverage['unsupported_records'] or coverage.get('inherited_records_skipped'):
@@ -276,7 +289,16 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     if (discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']
                             or discovery.get('unrecognized_files')):
                         _warn(caveats, 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.')
-                    if not discovery['accepted_files']:
+                    mismatch = discovery['version_mismatch_files']
+                    source['pin_compatibility'] = 'exact' if discovery['accepted_files'] else 'unverified'
+                    if mismatch:
+                        reasons.append(dict(reason='capture_version_differs_from_pin', captures=mismatch,
+                            observed_versions=discovery['observed_versions'], pinned_version=discovery['pinned_version']))
+                        _warn(caveats, 'capture_version_differs_from_pin: %d selected capture(s) were recorded by runtime version(s) %s, not the pinned %s, '
+                            'and were not parsed; the pin is exact and declares no compatible range. Next: run the same command without --source-root for '
+                            'descriptive, unverified project-filtered discovery, or use an adapter pin verified for that version.'
+                            % (mismatch, ', '.join('%s (%d)' % item for item in discovery['observed_versions'].items()), discovery['pinned_version']))
+                    if not discovery['accepted_files'] and not mismatch:
                         _warn(caveats, 'No matching native capture was found; completeness remains unknown.')
             else: records = normalize(scoped_rows(), fmt, project='local', source_version=source_version)
             for event in records:
@@ -304,6 +326,17 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     event_sink(event)
                 yield event
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
+            if not pinned and fmt in ('codex', 'claude'):
+                # Compatibility of the recorded release with the pin; this unpinned parse stays descriptive either way.
+                pin = CLAUDE_RUNTIME_VERSION if fmt == 'claude' else CODEX_RUNTIME_VERSION
+                source['pin_compatibility'] = 'exact' if versions == {pin} else 'unverified'
+                if history_session is not None and source['pin_compatibility'] == 'unverified':
+                    from .telemetry.native import observed_version
+                    seen = {observed_version(v): 1 for v in versions} or {'unrecognized': 1}
+                    reasons.append(dict(reason='capture_version_differs_from_pin', captures=1, observed_versions=seen, pinned_version=pin))
+                    _warn(caveats, 'capture_version_differs_from_pin: the selected session was recorded by runtime version %s, not the pinned %s; '
+                        'it was parsed descriptively without the pinned contract and is unverified. Next: treat findings as observed patterns only, '
+                        'or use an adapter pin verified for that version.' % (', '.join(seen), pin))
         notify('analysis', events=total_events, captures=len(selected))
 
     # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
@@ -322,4 +355,4 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
            edges=len(analysis['process_mining']['raw_edges']))
     return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
                 evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
-                fingerprint=fingerprint.hexdigest(), caveats=caveats)
+                fingerprint=fingerprint.hexdigest(), caveats=caveats, capture_reasons=reasons)

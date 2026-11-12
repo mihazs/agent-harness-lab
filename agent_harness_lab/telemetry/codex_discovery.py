@@ -1,10 +1,10 @@
 """Explicit bounded rollout discovery; headers filter scope before full reads."""
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from contextlib import closing, contextmanager
 import json
 from pathlib import Path
-from .codex_rollout import VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
-from .native import WalkLimit, bounded_walk, lines, optional_limit
+from .codex_rollout import VERSION, PINNED_VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
+from .native import WalkLimit, bounded_walk, capture_counts, lines, observed_version, optional_limit
 from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
 
@@ -40,6 +40,7 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
     suppressed_usage = set()
     files, names, limits = [], [], []
     foreign = other_session = unsupported = headers = duplicates = consumed = 0
+    versions = Counter()
     with Folder(root.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder:
         walk_limits = []
         try:
@@ -72,6 +73,10 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
                     foreign += 1; folder.observed.pop(name, None); continue
                 if session is not None and meta.get('id') != session:
                     other_session += 1; folder.observed.pop(name, None); continue
+                observed = meta.get('cli_version')
+                if isinstance(observed, str) and observed != PINNED_VERSION:
+                    # Never parsed: this adapter's contract was not verified against that release.
+                    versions[observed_version(observed)] += 1; unsupported += 1; folder.observed.pop(name, None); continue
                 Projection(project).add(header, 0)
             except (ValueError, TypeError, UnicodeError, RecursionError):
                 unsupported += 1; folder.observed.pop(name, None); continue
@@ -126,6 +131,9 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
             other_sessions=other_session, unsupported_headers=unsupported, unsafe_entries_skipped=folder.unsafe_entries,
             filesystem_entries=folder.entries, bytes_read=folder.bytes, input_records=consumed,
             max_files=max_files, max_scan_files=max_scan_files, max_records=max_records, reached_limits=limits,
+            capture_counts=capture_counts(len(files), Counter({k: v for k, v in (('capture_version_differs_from_pin', sum(versions.values())),
+                ('unsupported_native_header', unsupported-sum(versions.values()))) if v})),
+            version_mismatch_files=sum(versions.values()), observed_versions=dict(sorted(versions.items())), pinned_version=PINNED_VERSION,
             **(dict(walk_limits=walk_limits) if walk_limits else {}),
             **(dict(max_walk_entries=max_walk_entries) if max_walk_entries is not None else {}))
         totals = {key: sum(f['coverage'][key] for f in files) for key in ('inherited_records_skipped', 'duplicates_skipped', 'unsupported_records')}

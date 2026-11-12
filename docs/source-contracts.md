@@ -606,13 +606,16 @@ unknown exactly as in the file profile, and parent pointers are never traversed.
 per examined `.jsonl` file with status `accepted`, `rejected` or `unknown` and a
 reason: `scoped_native_records`, `partial_native_tail`, `foreign_project`,
 `native_location_mismatch`, `native_scope_unavailable` (no attributable envelope,
-such as metadata-only files), `unsupported_native_version`,
+such as metadata-only files), `capture_version_differs_from_pin` (a string version other
+than the pin; never parsed, see the [runtime version policy](telemetry.md#runtime-version-policy-for-pinned-native-profiles)),
+`unsupported_native_version` (no string version),
 `unsupported_native_envelope`, `invalid_native_record`, `partial_native_scope`,
 `unrecognized_native_layout`, `subagent_tree_limit` or `not_read_after_file_limit`. `native_summary.files` carries each accepted file's
 SHA-256, input records, partial tail, duplicates and unsupported counts;
 `discovery` counts selected and missing project directories, scanned, header-read,
 accepted, rejected and unknown files, unsafe entries, filesystem entries, bytes and
-reached limits. Paths, native IDs and bodies stay out of summaries.
+reached limits, `capture_counts` (selected, parsed, skipped, skipped reasons and `pin_compatibility` counts),
+`observed_versions` and `pinned_version`. Paths, native IDs and bodies stay out of summaries.
 
 **Admission.** Optional `max_files`, `max_scan_files` and `max_records` bound the
 run as in the Codex root profile; omission or `null` means unlimited, and coverage

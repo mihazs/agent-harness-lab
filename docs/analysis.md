@@ -334,6 +334,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
+| `capture_version_differs_from_pin` | Selected captures were recorded by a runtime version other than the pinned profile and were not parsed; the pin is exact and declares no range. Rerun without --source-root for descriptive, unverified project-filtered discovery, or use an adapter pin verified for that version. |
 | `certification_prerequisites_unverified` | Verify the certification prerequisites before drawing a conclusion. |
 | `codex_credentials_unavailable` | Authenticate the selected runtime before requesting model execution. |
 | `configuration_changed_before_execution` | Review the changed configuration before retrying. |
@@ -367,7 +368,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `inference_sandbox_unavailable` | Provide the required inference sandbox capabilities. |
 | `inference_tool_count_exhausted` | Review the configured inference tool-call limit. |
 | `inference_transport_failed_no_retry` | Inspect the recorded inference transport failure before any retry. |
-| `history_no_matching_sessions` | No captured events matched this project and --since; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
+| `history_no_matching_sessions` | No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
 | `history_source_ai_memory_unsupported` | ahl improve reads native Codex and Claude sessions only; rerun with --source native, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis. |
 | `instruction_removal_inconclusive` | Restore the missing behavioral controls before evaluating the removal. |
 | `instruction_removal_rejected` | Review the failed behavioral controls before revising the removal. |

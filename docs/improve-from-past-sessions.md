@@ -8,6 +8,7 @@ recorded, instead of only the current harness.
 ahl improve . --history                  # every captured session for this project
 ahl improve . --history --since 2025-01-31
 ahl skills invoke . --history --since first
+ahl improve . --history --session SESSION_ID   # one exact session only
 ```
 
 Both routes take the same options and return the same receipt shape and exit codes.
@@ -24,12 +25,19 @@ Both routes take the same options and return the same receipt shape and exit cod
   earliest available session is included. `--since DATE` keeps capture files
   modified on or after an ISO 8601 date (UTC when it has no offset). It filters by
   file modification time, not by the time of each event.
+- `--session ID` keeps only the exact Claude session UUID (its main and subagent
+  transcripts) or Codex thread ID; it combines with `--since`. A session recorded
+  by a runtime version other than the pinned profile is still read descriptively,
+  is marked `pin_compatibility: unverified` and adds the
+  `capture_version_differs_from_pin` caveat and `capture_reasons` entry to the
+  receipt (observed and pinned versions only). A session that matches nothing
+  stops with `history_no_matching_sessions`.
 - `--source native` is the only supported source (also the default).
 
 ## Read the result
 
 The receipt and the private `analysis.json` carry a `history` object with
-`sessions_captured`, `events`, `cases`, `scope`, `since` and an `unknown` list.
+`sessions_captured`, `session_selected`, `pin_compatibility` counts, `capture_reasons`, `events`, `cases`, `scope`, `since` and an `unknown` list.
 Capture completeness and recurrence outside the captured sessions are always
 listed as unknown; a repeated pattern is reported only when it was observed in
 the captured sessions. The object holds counts only, no paths or message bodies.
@@ -42,10 +50,10 @@ typed `reason` and the exact next step in `remediation`:
 | `reason` | Meaning |
 | --- | --- |
 | `history_source_ai_memory_unsupported` | `ahl improve` reads native sessions only. Use `ahl analyze . --memory-manifest MANIFEST --authorization-file FILE` for ai-memory evidence. |
-| `history_no_matching_sessions` | No captured events matched this project and `--since`. |
+| `history_no_matching_sessions` | No captured events matched this project, `--since` and `--session`. |
 
 Malformed requests exit 2 before any run starts: `--since` or `--source` without
-`--history`, an invalid `--since`, or `--history` together with `--events` or
+`--history`, an invalid `--since` or `--session`, or `--history` together with `--events` or
 `--source-root`.
 
 The full reason table is in [analysis](analysis.md#exit-reasons-and-next-actions).

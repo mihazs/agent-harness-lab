@@ -144,6 +144,10 @@ class TestCodexDiscovery:
         coverage = self.coverage(result)
         assert coverage['partial_tail']; assert coverage['discovery']['unsupported_headers'] == 2
         assert coverage['discovery']['scanned_files'] == 4
+        discovery = coverage['discovery']
+        assert (discovery['version_mismatch_files'], discovery['observed_versions'], discovery['pinned_version']) == (1, {'unrecognized': 1}, '0.166.0')
+        assert discovery['capture_counts']['skipped_reasons'] == {'capture_version_differs_from_pin': 1, 'unsupported_native_header': 1}
+        assert (discovery['capture_counts']['selected'], discovery['capture_counts']['parsed']) == (4, 2)
         assert result['analysis']['events'] == 6; assert complete.read_bytes() == original
 
     def test_unsafe_entries_are_skipped_without_following_or_blocking_and_defaults_are_not_discovered(self):
