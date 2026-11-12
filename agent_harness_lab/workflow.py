@@ -650,7 +650,8 @@ def _improve(args):
         plugin = prepare / '.harness-toolkit'
         (plugin / '.claude-plugin').mkdir(parents=True)
         write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
-        shutil.copytree(assets() / 'skills', plugin / 'skills')
+        # Bytecode caches appear in the source tree whenever another process imports a skill script; they are not skill content.
+        shutil.copytree(assets() / 'skills', plugin / 'skills', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     used_heldout = set()
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
                   analysis=data['execution'])
