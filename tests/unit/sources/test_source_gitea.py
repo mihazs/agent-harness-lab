@@ -285,6 +285,27 @@ class TestGiteaSource(GiteaFixture):
         with patch.object(gitea, 'MAX_PULL_COMMITS', 1):
             with pytest.raises(TransportError): self.read_commits()
 
+    def v6_commits(self):
+        return replace(self.v4_commits(), schema_version=6)
+
+    def test_v6_graph_holds_only_reported_commit_membership_edges(self):
+        self.routes[self.commit_target()] = lambda: Response([dict(sha='b'*40), dict(sha='a'*40)],
+            headers={**self.headers, 'X-Total': '2', 'X-HasMore': 'false', 'X-Page': '1'})
+        selection = self.v6_commits()
+        _, snapshot = self.read(selection, replace(self.spec(selection), version='v6'))
+        graph = snapshot.graph
+        assert {j.relation for j in graph.joins} == {'commit_on'} and len(graph.joins) == 2
+        assert all((j.status, j.basis, j.reason, j.namespace) == ('candidate', 'native_fields', 'not_validated', 'gitea.native')
+            for j in graph.joins)
+        assert len(graph.nodes) == len(snapshot.records)
+        assert self.read_commits()[1].graph is None
+
+    def test_v6_accepts_the_capabilities_of_schemas_3_to_5_and_nothing_later(self):
+        replace(self.v6_commits(), capture=('commits', 'files', 'pulls'))
+        replace(self.selection, schema_version=6, capture=('pulls', 'review_comments', 'reviews'), issues=())
+        with pytest.raises(ValueError): replace(self.v6_commits(), schema_version=7)
+        with pytest.raises(ValueError): replace(self.v6_commits(), capture=('commits', 'issues'), issues=(7,), pulls=())
+
     def v3_inline(self):
         return replace(self.selection, schema_version=3,
             capture=('comments', 'issues', 'pulls', 'review_comments', 'reviews'))
@@ -841,6 +862,20 @@ class TestGiteaConfiguration(GiteaFixture):
             code, result = self.invoke('preview', *env)
             assert code == 0 and result['checkpoint_ready']
             assert result['gitea_summary']['source_version'] == 'v4'
+            assert self.invoke('import', *env)[0] == 0
+
+    def test_v6_commit_cli_preview_reports_the_graph_and_imports(self):
+        self.selection = replace(self.selection, schema_version=6, capture=('commits', 'pulls'), issues=())
+        self.source = replace(self.spec(self.selection, auth_mode='configured'), version='v6')
+        target = self.repo_path+'/pulls/8/commits?page=1&limit=50&verification=false&files=false'
+        self.routes[target] = lambda: Response([dict(sha='b'*40)],
+            headers={**self.headers, 'X-Total': '1', 'X-HasMore': 'false'})
+        self.write()
+        env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready'] and result['gitea_summary']['source_version'] == 'v6'
+            assert result['evidence_graph']['joins'] == 1
             assert self.invoke('import', *env)[0] == 0
 
     def test_v3_inline_cli_preview_and_import_remain_blocked(self):
