@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.181.0
+
+### Minor Changes
+
+- 021f2d5: Staged skill bundle review blocks a newly created bundle that shadows, or is shadowed by, a same-named bundle in the same kind of skills folder (`.claude/skills`, `.agents/skills` or a bare `skills`) at the same, an enclosing or a nested directory, with the fixed reason `shadowed_name`. Updates, removals, sibling packages, cross-kind copies and scoped snapshots are not compared; this is static and claims no runtime activation. Part of #78.
+
+### Patch Changes
+
+- 76a4e02: Fix #713: the evaluation-construction agent can no longer fail a run by writing its own grader-bundle or control `digest`. The construction prompt now tells the agent to omit every digest, a host-grader run drops authored digests right after the agent writes `manifest.json` (receipt: `authored_digest_ignored`, a count only) so they never reach the late integrity comparison, and a controlled run classifies an authored digest as the fixable `authored_digest_not_accepted` defect that uses the one bounded repair pass. The controller-computed digest stays the only frozen value, a grader or fixture changed after freezing still invalidates the run, and bank and replay validation still reject a wrong declared digest. The receipt records `evaluation_construction_seconds` and the `elapsed_seconds` of a rejected attempt.
+- 52f081d: The shared test fixture now removes `AHL_STATE_HOME`, `AHL_MEMORY_STORE` and `AHL_MANAGED_PREPARATION` for the whole session, before module-scoped fixtures run, and from every test, so an exported override can no longer change a test result or receive writes from the suite; a guard test fails when product code reads an `AHL_*` variable the fixture does not neutralize. Test-only change. Closes #718.
+
 ## 0.180.0
 
 ### Minor Changes
