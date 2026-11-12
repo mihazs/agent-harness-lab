@@ -95,6 +95,12 @@ native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
 
+A test that bounds memory with `tracemalloc` should measure in a fresh interpreter through
+`tests/support/fresh_peak.py` rather than inside the pytest process: `tracemalloc` counts
+every thread, so another test's child process (three 128 KiB I/O buffers on Python 3.14) or
+a first-use cache can decide the result in one layout and not another. Keep the documented
+bound as it is and add a deliberate regression the bound must catch.
+
 `task setup:test` installs pinned pytest/xdist into the selected virtual environment.
 Taskfile test tasks run `python -m pytest`. Filter variables such as `KERNEL_TEST_FILTER`
 take one pytest `-k` expression, and pattern variables such as `REPEATED_TEST_PATTERN`
