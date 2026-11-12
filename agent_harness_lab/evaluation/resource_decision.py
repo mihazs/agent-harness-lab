@@ -215,6 +215,44 @@ def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_bounda
                 method=interval['method'])
 
 
+def _arm_spend(rows, endpoint):
+    """Spend over every assigned trial, failures included; any unusable row makes the arm unknown."""
+    total, successes, conditional, reasons = 0, 0, [], Counter()
+    for row in rows:
+        value = row.get('measurements', {}).get(endpoint) if isinstance(row.get('measurements'), dict) else None
+        if row.get('status') not in ('completed', 'agent_timeout'): reasons['status_' + str(row.get('status'))] += 1
+        elif not _finite_number(value): reasons['missing_measurement'] += 1
+        elif type(row.get('success')) is not bool or row['success'] and row['status'] != 'completed': reasons['success_unknown_or_contradictory'] += 1
+        else:
+            total += value; successes += row['success']
+            if row['success']: conditional.append(value)
+    known = not reasons and bool(rows)
+    mean = lambda values: sum(values) / len(values) if known and values else None
+    return dict(assigned=len(rows), successes=successes, unknown_reasons=dict(reasons) if rows else {'no_trials': 1},
+                all_assigned_mean=total / len(rows) if known else None,
+                success_conditional_mean=mean(conditional),
+                cost_per_success=total / successes if known and successes else None)
+
+
+def success_cost(pairs, endpoint, *, public=False):
+    """Descriptive cost-per-success and conditional-versus-all-assigned means for one endpoint.
+
+    Rows: {root, baseline, candidate}; arms carry status, success (bool) and measurements. A zero-success or
+    unknown arm has an undefined ratio and the comparison can never pass a gate or select a candidate."""
+    if public is not False: raise ValueError('resource success-cost view is private')
+    if not isinstance(pairs, list) or not all(isinstance(p, dict) and isinstance(p.get('baseline'), dict)
+                                              and isinstance(p.get('candidate'), dict) for p in pairs):
+        raise ValueError('paired resource rows required')
+    arms = {name: _arm_spend([pair[name] for pair in pairs], endpoint) for name in ('baseline', 'candidate')}
+    base, cand = (arms[name]['cost_per_success'] for name in ('baseline', 'candidate'))
+    if base and cand is not None: ratio, status = cand / base, 'descriptive'
+    elif base and not arms['candidate']['successes'] and not arms['candidate']['unknown_reasons']: ratio, status = None, 'unfavorable_no_candidate_success'
+    else: ratio, status = None, 'undefined'
+    return dict(profile='resource-success-cost-v1', endpoint=endpoint, baseline=arms['baseline'], candidate=arms['candidate'],
+                cost_ratio=ratio, status=status, scope='all_assigned_spend_per_success', inference='descriptive_no_interval',
+                gate_eligible=False, passes_gate=False, automatic_promotion=False, publication='private', publication_allowed=False)
+
+
 def decide(contract, pairs, quality_status):
     """Pair rows: {root, baseline, candidate}; each arm is {status, measurements: {endpoint: value}}."""
     validate(contract)

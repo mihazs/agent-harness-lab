@@ -111,8 +111,7 @@ Results retain the conditional and private-data limitations described above. No 
 from live or completed trial summaries to a resource decision is provided. Version 4 results are
 private and explicitly marked as disallowed for publication.
 
-Not included yet: ratios and cost-per-success (reported as `not_computed`), success-conditional
-latency, currency, automatic provenance capture and report integration.
+Not included yet: ratio inference (`decide` still reports `cost_per_success` as `not_computed`; see the descriptive view below), currency, automatic provenance capture and report integration.
 
 ## Responses controller usage
 
@@ -276,3 +275,16 @@ Resource measurements and cache states are caller-supplied and unverified; the
 similarity detector is heuristic and root independence is unverified. This helper
 does not assess quality, issue a resource decision, or authorize promotion. It is
 not an adapter from sealed trial evidence and does not establish billing completeness.
+
+## Descriptive cost per success
+
+`resource_decision.success_cost(pairs, endpoint)` returns a private `resource-success-cost-v1` view
+for one endpoint. Arms carry `status`, a Boolean `success` and `measurements`. It reports, per arm,
+the all-assigned mean (failures and timeouts included) beside the success-conditional mean, and
+spend per success (all assigned spend divided by successes). A zero-success arm has no cost per
+success, never zero, and a candidate that never succeeds against a baseline that does is
+`unfavorable_no_candidate_success`. Any unusable row (interrupted or cancelled status, missing
+measurement, missing or contradictory success such as a successful timeout) makes the arm unknown
+with the reason retained; unknown is not imputed. A ratio is computed only when both arms are defined
+and the baseline is nonzero. The view has no interval, is `gate_eligible: false`, never passes a
+gate, and does not alter `decide`. Success is caller-supplied and unverified.

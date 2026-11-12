@@ -449,3 +449,47 @@ def test_invalid_or_unsupported_contract_is_refused(edit):
     edit(bad)
     with pytest.raises(ValueError):
         decide(bad, pairs(60, 10), 'supported')
+
+
+def sc_arm(value, success, status='completed'):
+    return dict(status=status, success=success, measurements=dict(elapsed=value))
+
+
+def sc_pairs(baseline, candidate):
+    return [dict(root=f'r{i}', baseline=sc_arm(*b), candidate=sc_arm(*c)) for i, (b, c) in enumerate(zip(baseline, candidate))]
+
+
+def test_success_cost_exposes_slow_failures_beside_conditional_mean():
+    from agent_harness_lab.evaluation.resource_decision import success_cost
+    rows = sc_pairs([(10, True), (10, True)], [(10, True), (90, False, 'agent_timeout')])
+    view = success_cost(rows, 'elapsed')
+    assert view['candidate']['success_conditional_mean'] == 10 and view['candidate']['all_assigned_mean'] == 50
+    assert view['candidate']['cost_per_success'] == 100 and view['baseline']['cost_per_success'] == 10
+    assert (view['cost_ratio'], view['status'], view['passes_gate']) == (10, 'descriptive', False)
+
+
+def test_zero_success_is_unfavorable_never_zero_cost():
+    from agent_harness_lab.evaluation.resource_decision import success_cost
+    view = success_cost(sc_pairs([(10, True)], [(1, False)]), 'elapsed')
+    assert view['candidate']['cost_per_success'] is None and view['cost_ratio'] is None
+    assert (view['status'], view['passes_gate']) == ('unfavorable_no_candidate_success', False)
+    assert success_cost(sc_pairs([(10, False)], [(1, False)]), 'elapsed')['status'] == 'undefined'
+
+
+@pytest.mark.parametrize('bad', [dict(status='infrastructure_error', success=True, measurements=dict(elapsed=1)),
+                                 dict(status='completed', success=True, measurements={}),
+                                 dict(status='completed', measurements=dict(elapsed=1)),
+                                 dict(status='agent_timeout', success=True, measurements=dict(elapsed=1))])
+def test_success_cost_unknown_rows_are_not_zero(bad):
+    from agent_harness_lab.evaluation.resource_decision import success_cost
+    rows = [dict(root='r', baseline=sc_arm(10, True), candidate=bad)]
+    view = success_cost(rows, 'elapsed')
+    assert view['candidate']['unknown_reasons'] and view['candidate']['cost_per_success'] is None
+    assert view['status'] == 'undefined' and view['passes_gate'] is False
+
+
+def test_success_cost_is_private_and_needs_rows():
+    from agent_harness_lab.evaluation.resource_decision import success_cost
+    with pytest.raises(ValueError):
+        success_cost([], 'elapsed', public=True)
+    assert success_cost([], 'elapsed')['status'] == 'undefined'
