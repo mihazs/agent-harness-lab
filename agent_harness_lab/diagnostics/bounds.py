@@ -92,25 +92,45 @@ def analysis_view(data, args, store=None):
     return out
 
 
+def _marker(case):
+    from ..telemetry.schema import event
+    return event(dict(case_id=case, event_id='coverage:event_store_truncated:' + case, activity='capture_coverage',
+                      capture_complete=False, missing_reason='event_store_truncated'))
+
+
 def store_rows(lines, args, report):
     """Pass event lines through until a store bound is reached; later lines are counted, never written.
 
-    `report` receives the provenance after the stream is exhausted (counts only).
+    A truncated store ends with one content-free `capture_coverage` row (capture_complete=False,
+    missing_reason=event_store_truncated) per written case, so downstream readers see unknown rather than a
+    clean prefix. Their size is reserved inside the byte bound. `report` receives the provenance after the
+    stream is exhausted (counts only).
     """
+    from ..telemetry.schema import serialize
     cap = limits(args)
     full = bool(getattr(args, 'full_detail', False))
-    started, written, omitted, used, reason = time.monotonic(), 0, 0, 0, None
+    started, written, omitted, used, reason, markers, reserve = time.monotonic(), 0, 0, 0, None, set(), 0
     for line in lines:
-        if not full and reason is None:
-            used += len(line.encode()) + 1
-            if used > cap['store_bytes']:
-                reason = 'byte_limit'
-            elif time.monotonic() - started > cap['store_seconds']:
-                reason = 'time_limit'
         if reason is None:
-            written += 1
-            yield json.loads(line)
-        else:
-            omitted += 1
+            row = json.loads(line)
+            case = row.get('case_id')
+            extra = 0 if full or case in markers or not isinstance(case, str) or not case else len(serialize(_marker(case))) + 1
+            if not full:
+                if used + len(line.encode()) + 1 + reserve + extra > cap['store_bytes']:
+                    reason = 'byte_limit'
+                elif time.monotonic() - started > cap['store_seconds']:
+                    reason = 'time_limit'
+            if reason is None:
+                used += len(line.encode()) + 1
+                reserve += extra
+                if extra:
+                    markers.add(case)
+                written += 1
+                yield row
+                continue
+        omitted += 1
+    if reason is not None:
+        for case in sorted(markers):
+            yield _marker(case)
     report.update(profile=PROFILE, full_detail=full, byte_limit=cap['store_bytes'], seconds_limit=cap['store_seconds'],
                   events_written=written, truncated=dict(applied=reason is not None, reason=reason, events_omitted=omitted))

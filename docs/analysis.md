@@ -107,7 +107,7 @@ the complete stream, so no cap below changes them. Only the detail written to di
 | Artifact | Default bound | What is cut | Provenance |
 | --- | --- | --- | --- |
 | `analysis.json` | 64 MiB rendered; at most 1000 rows per detail list (findings per kind, recurring sequences, graph edges) and 50 evidence references per row | Rows and references beyond the limits | `artifact_bounds.truncated.sections` holds `total` and `kept` counts per section; `evidence_total` on a shortened row |
-| `events.v2.jsonl` | 64 MiB and 300 seconds of writing | Events after the first limit reached | `artifact_bounds.event_store` holds `events_written`, `events_omitted` and the `reason` (`byte_limit` or `time_limit`) |
+| `events.v2.jsonl` | 64 MiB and 300 seconds of writing | Events after the first limit reached | `artifact_bounds.event_store` holds `events_written`, `events_omitted` and the `reason` (`byte_limit` or `time_limit`); a truncated store also ends with one `capture_coverage` row per written case (`capture_complete=false`, `missing_reason=event_store_truncated`), counted inside the byte bound, so tools reading the file report `unknown` instead of treating the prefix as complete |
 
 If the list caps still leave `analysis.json` above its byte bound, the row limit is halved until it
 fits; when the remaining sections alone exceed it, `exceeds_byte_limit` is set rather than hidden.

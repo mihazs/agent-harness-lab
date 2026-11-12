@@ -45,15 +45,39 @@ def test_event_store_stays_under_its_byte_bound_for_hundreds_of_thousands_of_eve
     assert 0 < store.stat().st_size <= LIMITS['store_bytes']
     truncated = report['truncated']
     assert (truncated['applied'], truncated['reason']) == (True, 'byte_limit')
-    assert report['events_written'] + truncated['events_omitted'] == EVENTS and len(store.read_text().splitlines()) == report['events_written']
+    assert report['events_written'] + truncated['events_omitted'] == EVENTS
+    assert sum('capture_coverage' not in line for line in store.read_text().splitlines()) == report['events_written']
     assert not re.search(r'success|independen', json.dumps(report))
+
+
+def test_truncated_store_ends_with_unknown_coverage_so_receipts_stay_unknown(tmp_path):
+    from agent_harness_lab.evaluation.skills import activation_receipt
+
+    def rows():
+        yield serialize(dict(case_id='C1', event_id='s0', activity='tool_call', tool_name='Skill', skill_id='skill-a', capture_complete=True,
+                             skill_signal='declared_invocation', skill_signal_confidence='declared_name', capture_order=0))
+        for number in range(1, 200):
+            yield serialize(dict(case_id='C1', event_id=f'e{number}', activity='tool_call', capture_complete=True, capture_order=number))
+    complete = [json.loads(line) for line in rows()]
+    assert activation_receipt(complete[1:], case_id='C1', skill_id='skill-a')['state'] == 'unknown'  # no signal seen
+    complete[0]['skill_id'] = 'skill-b'
+    assert activation_receipt(complete, case_id='C1', skill_id='skill-a')['state'] == 'not_observed'
+    store, report = tmp_path/'events.v2.jsonl', {}
+    Ledger(store).ingest(bounds.store_rows(rows(), SimpleNamespace(_artifact_limits=dict(LIMITS, store_bytes=8000)), report))
+    kept = [json.loads(line) for line in store.read_text().splitlines()]
+    assert report['truncated']['applied'] and store.stat().st_size <= 8000
+    assert (kept[-1]['activity'], kept[-1]['capture_complete'], kept[-1]['missing_reason']) == ('capture_coverage', False, 'event_store_truncated')
+    kept[0]['skill_id'] = 'skill-b'
+    assert activation_receipt(kept, case_id='C1', skill_id='skill-a')['state'] == 'unknown'
+    untruncated = {}
+    assert not any(r['activity'] == 'capture_coverage' for r in bounds.store_rows(rows(), SimpleNamespace(_artifact_limits=LIMITS), untruncated))
 
 
 def test_event_store_time_bound_and_full_detail_opt_in(monkeypatch):
     clock = iter(range(10**6))
     monkeypatch.setattr(bounds, 'time', SimpleNamespace(monotonic=lambda: next(clock)))  # one tick per call
     slow, report = SimpleNamespace(_artifact_limits=dict(LIMITS, store_seconds=5)), {}
-    written = list(bounds.store_rows(lines(50), slow, report))
+    written = [r for r in bounds.store_rows(lines(50), slow, report) if r['activity'] != 'capture_coverage']
     assert 0 < len(written) < 50 and report['truncated']['reason'] == 'time_limit' and report['truncated']['events_omitted'] == 50-len(written)
     whole = {}
     assert len(list(bounds.store_rows(lines(500), SimpleNamespace(_artifact_limits=LIMITS, full_detail=True), whole))) == 500
