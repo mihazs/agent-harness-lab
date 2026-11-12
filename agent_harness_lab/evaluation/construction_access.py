@@ -196,7 +196,7 @@ class WorkflowAccess:
             configuration_sha256=getattr(args,'configuration_sha256',None),project_settings=deepcopy(getattr(args,'project_settings',None)),
             resources=_resources(args),resource_pin=_hash(_resources(args)),backend_pin=_hash(_backend_options(backend)),
             store_identity=store_identity(path),settings_path=ledger._path(args.inference_settings),settings_pin=settings_pin,settings=deepcopy(client.settings),
-            engine_pin=_hash(implementation),implementation=implementation,stages=[],attempts=[],feedback=None,last_author=None,repairs=[])
+            engine_pin=_hash(implementation),implementation=implementation,stages=[],attempts=[],feedback=None,last_author=None,repairs=[],ignored=[])
         if settings!=client.settings: raise ValueError('workflow client differs from actual frozen settings')
         _scope(self)
         closed=getattr(args,'_closed_input_domain',None)
@@ -296,10 +296,10 @@ class WorkflowAccess:
             else:
                 options={'analysis':True} if analysis else {}
                 if bank_conversion is not None:options['bank_qualification']=True
-                made=[]
+                made=[]; dropped=[]; options['ignored']=dropped
                 if bank_conversion is None:options.update(repairs=made,repair_allowed=closed is None)  # sealed closed-input stages allow no second pass
                 try:_,commands=construction.author(*args,derivation=handle,**options)
-                finally:data['repairs'].extend(made)
+                finally:data['repairs'].extend(made); data['ignored'].extend(dropped)
             if not owned['used']: raise ValueError('canonical role did not consume its actual handoff')
             _check(owned)
             if owned.get('produced_pin')!=_tree_pin(active/'published',deadline):
@@ -385,6 +385,9 @@ class WorkflowAccess:
 
     def author(self,context,destination,*,analysis=False,bank_conversion=None):
         return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion)
+
+    def ignored_digests(self):
+        return sum(_scope(self)['ignored'])
 
     def repair_log(self):
         return deepcopy(_scope(self)['repairs'])

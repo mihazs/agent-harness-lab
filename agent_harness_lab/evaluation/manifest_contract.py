@@ -25,6 +25,7 @@ REASONS = {
     'evaluation_manifest_controller_field_supplied': (AGENT, True, 'Remove the named controller-owned field from manifest.json; the controller computes it. Then rerun.'),
     'authored_digest_not_accepted': (AGENT, True, 'Omit every digest field from manifest.json; the controller computes and freezes all digests. Then rerun.'),
     'evaluation_manifest_controls_incomplete': (AGENT, True, 'Give every task one broken, one partial and one complete grader self-test, then rerun.'),
+    'grader_input_changed_after_freeze': (AGENT, False, 'A frozen grader bundle or control fixture changed after the controller froze it; find what wrote into it (a grader or helper must write nothing beside its inputs), keep it unchanged, then rerun.'),
     'internal_contract_error': (AHL, False, 'This is an AHL contract defect, not an input defect; report it with the named stage and field.'),
 }
 

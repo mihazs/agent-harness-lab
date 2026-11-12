@@ -361,6 +361,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             raise ValueError('fixed improvement experiment selection differs')
     bundles = manifest.get('grader_bundles', {})
     grader_contracts = {}
+    frozen_bundles = {}
     from .evaluation.integrity import contained, digest
     if grader_backend is not None or bundles:
         # Bundle digests are controller-computed from the frozen author output, even without a grader sandbox.
@@ -380,6 +381,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             if 'digest' in declaration and declaration['digest'] != frozen:
                 raise ValueError('declared grader bundle integrity mismatch')
             bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
+            frozen_bundles[task['id']] = (folder, frozen)
             if grader_backend is not None:
                 grader_contracts[task['id']] = (*frozen_grader(path.parent, task, bundles[task['id']]), frozen)
         if grader_backend is not None:
@@ -448,6 +450,12 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 run = runner.execute(argv, path.parent, min(30, available), env=runner.native_environment('grader'))
                 if any(file_state(p) != value for p, value in before.items()):
                     raise ValueError('Grader modified its own frozen program during self-test')
+                # The cheap place to find a grader that writes into frozen inputs: before any trial runs.
+                bundle = frozen_bundles.get(task['id'])
+                if bundle and digest(bundle[0]) != bundle[1]:
+                    raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'manifest_validation', 'grader_bundles')
+                if digest(workspace) != check['digest']:
+                    raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'manifest_validation', 'grader_self_tests.fixture')
                 expected = check['state'] == 'complete'
                 if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
                     raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
@@ -541,6 +549,7 @@ def _improve(args):
         if repeated.blocked_reason or not repeated.precision['execution_allowed']:
             result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
+            construction_receipt(result, args)
             write_json(output/'workflow.json',result);return result
     progress = getattr(args, '_progress', None) or _progress_reporter()
     data = evidence(args, output, progress=progress)
@@ -550,6 +559,7 @@ def _improve(args):
         reason = 'history_runtime_has_no_captures' if args.history_source in ('codex', 'claude') else 'history_no_matching_sessions'
         result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                       remediation=REMEDIATION[reason], history=data['history'], automatic_promotion=False)
+        construction_receipt(result, args)
         write_json(output/'workflow.json', result)
         return result
     progress('candidate_preparation', findings=len(data['analysis']['findings']))
@@ -576,6 +586,7 @@ def _improve(args):
             from .promotion.policy import implementation_prerequisites
             result['implementation_prerequisites']=implementation_prerequisites()
             result['implementation_prerequisites'].update(status='unknown',reason='capability_preflight_unavailable')
+            construction_receipt(result, args)
             write_json(output/'workflow.json', result)
             return result
     prepare = output / 'preparation'
@@ -651,7 +662,7 @@ def _improve(args):
     proposed = None
     grader_changed = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
-    args._authored_digest_ignored = 0
+    args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
@@ -845,13 +856,17 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             made = []
             args._evaluation_repairs = made
             authoring_started = time.monotonic()
-            if access is None:
-                manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                    prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made)
-            else:
-                try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
-                finally: made[:] = access.repair_log()
-            args._construction_seconds = time.monotonic() - authoring_started
+            dropped = []; seen = access.ignored_digests() if access is not None else 0
+            try:
+                if access is None:
+                    manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
+                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped)
+                else:
+                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
+                    finally: made[:] = access.repair_log(); dropped[:] = [access.ignored_digests() - seen]
+            finally:
+                args._authored_digest_ignored += sum(dropped)
+                args._construction_seconds += time.monotonic() - authoring_started
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands,
                 manifest_repairs=made))
         else:
@@ -895,7 +910,6 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
             made = args._evaluation_repairs = []
             suffix = ''
-            args._construction_seconds = 0.0
             while True:
                 attempt_started = time.monotonic()
                 construction = runner.execute(command, evaluation, remaining(), evaluation_prompt + suffix, env=environment)
@@ -962,7 +976,13 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256'):
             if getattr(args,name,None) is not None:setattr(options,name,getattr(args,name))
         with manifest_contract.boundary('evaluation'):
-            runner.evaluate(options)
+            try: runner.evaluate(options)
+            except manifest_contract.ContractError: raise
+            except ValueError as exc:  # a frozen grader input changed between freeze and trials: typed, never the bare sentence
+                if 'grader bundle integrity mismatch' in str(exc) or 'grader control integrity mismatch' in str(exc):
+                    raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'evaluation',
+                        'grader_bundles' if 'bundle' in str(exc) else 'grader_self_tests') from exc
+                raise
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         if hasattr(args, 'project_settings'):
             from .one_call import unchanged
@@ -1140,6 +1160,7 @@ def _run_improvement(args, *, parent_started=None):
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                               remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
                               preflight_plan=preflight_plan(args, reason))
+                construction_receipt(result, args)
                 write_json(output/'workflow.json', result)
                 return result
             check_configuration(args)
@@ -1206,10 +1227,10 @@ def _run_improvement(args, *, parent_started=None):
 
 
 def construction_receipt(result, args):
-    """Content-free construction facts: repairs, authored digests dropped (count only) and elapsed seconds."""
+    """Content-free construction facts on every terminal result: repairs, authored digests dropped (count only) and elapsed seconds (0 when the stage never ran)."""
     if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
-    if getattr(args, '_authored_digest_ignored', 0): result['authored_digest_ignored'] = args._authored_digest_ignored
-    if getattr(args, '_construction_seconds', None) is not None: result['evaluation_construction_seconds'] = round(args._construction_seconds, 1)
+    result['authored_digest_ignored'] = getattr(args, '_authored_digest_ignored', 0)
+    result['evaluation_construction_seconds'] = round(getattr(args, '_construction_seconds', 0.0), 1)
 
 
 def improve(args):
@@ -1311,6 +1332,7 @@ def watch(args):
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
                                       **({'reason': exc.reason} if isinstance(exc, manifest_contract.ContractError) else {}),
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
+                        construction_receipt(result, options)
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)

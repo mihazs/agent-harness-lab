@@ -7,7 +7,7 @@ import time
 from .integrity import contained, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
 from .working_state import WorkingState, analysis_snapshot, check_deadline
-from .manifest_contract import ContractError, check_authored, contract_text
+from .manifest_contract import ContractError, check_authored, contract_text, strip_authored_digests
 from .analysis_inputs import AnalysisInputs
 from .. import surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
@@ -89,7 +89,7 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True,ignored=None):
     if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
@@ -154,6 +154,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
+    _drop_authored_digests(state,ignored)  # before the shape check, publication and any seal: every later reader sees the stripped manifest
     try:
         if repairs is not None:_check_shape(state)  # only the improve pipeline consumes the authored shape
     except ContractError as error:
@@ -164,6 +165,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         state,more = run_role(client,backend,workspace,inputs,'evaluator_author',
             instructions,prompt+'\n'+error.repair_instruction(),deadline)
         commands=[*commands,*more]; check_deadline(deadline)
+        _drop_authored_digests(state,ignored)
         _check_shape(state); repairs[-1]['outcome']='repaired'
     state.snapshot=normalize_author_snapshot(state.snapshot,destination,deadline=deadline)
     published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
@@ -171,6 +173,18 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         from .derivations import record_author_output
         record_author_output(derivation,published)
     return manifest_path,commands
+
+
+def _drop_authored_digests(state,ignored=None):
+    """Remove authored bundle and control digests from the author's snapshot; the controller recomputes them. Counts only."""
+    raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
+    try: manifest=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number) if raw is not None else None
+    except (ValueError,RecursionError): return  # unreadable: the typed shape check reports it
+    count=strip_authored_digests(manifest)
+    if not count: return
+    normalized=json.dumps(manifest,allow_nan=False).encode('utf-8')
+    state.snapshot=replace(state.snapshot,files=tuple((name,mode,normalized if name=='manifest.json' else body) for name,mode,body in state.snapshot.files))
+    if ignored is not None: ignored.append(count)
 
 
 def _check_shape(state):
@@ -189,6 +203,7 @@ def normalize_author_snapshot(snapshot,destination,*,deadline=None):
     manifest = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(manifest,dict) or manifest.get('skills') != [] or manifest.get('harness_paths') != []:
         raise ValueError('controlled construction requires empty skill and harness injection lists')
+    strip_authored_digests(manifest)  # idempotent with the author-time strip; keeps a seal's recomputed output identical
     tasks,bundles = manifest.get('tasks'),manifest.get('grader_bundles')
     if not isinstance(tasks,list) or not isinstance(bundles,dict): raise ValueError('authored tasks and grader bundles are required')
     identifiers = []
