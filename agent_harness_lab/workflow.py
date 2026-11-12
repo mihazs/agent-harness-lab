@@ -144,7 +144,8 @@ def evidence(args, output, source_context=None, *, progress=None):
             history_session=getattr(args, 'session', None) if getattr(args, 'history', False) else None, max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
-            since_ns=getattr(args, '_history_since_ns', None), **source_identity)
+            since_ns=getattr(args, '_history_since_ns', None),
+            history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None, **source_identity)
         events.seek(0)
         store = {}
         # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
@@ -544,8 +545,9 @@ def _improve(args):
     if getattr(args, 'history', False) and not data['analysis']['events']:
         # Nothing was captured for this request; stop before any candidate preparation or model spend.
         from .one_call import REMEDIATION
-        result = dict(status='blocked', reason='history_no_matching_sessions', output=str(output), changed_files=[],
-                      remediation=REMEDIATION['history_no_matching_sessions'], history=data['history'], automatic_promotion=False)
+        reason = 'history_runtime_has_no_captures' if args.history_source in ('codex', 'claude') else 'history_no_matching_sessions'
+        result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                      remediation=REMEDIATION[reason], history=data['history'], automatic_promotion=False)
         write_json(output/'workflow.json', result)
         return result
     progress('candidate_preparation', findings=len(data['analysis']['findings']))

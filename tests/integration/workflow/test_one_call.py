@@ -220,7 +220,7 @@ def test_noninteractive_ambiguous_runtime_does_not_prompt_or_dispatch(one):
         code, result = one.invoke('--agent', 'auto')
     assert (code, result['status'], result['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
     assert '--agent' in result['remediation']
-    assert result['preflight_plan']['choice'] == dict(option='--agent', values=['codex', 'claude'])
+    assert result['preflight_plan']['choice'] == dict(option='--agent', values=['codex', 'claude'], remember_option='--remember-runtime')
     assert result['preflight_plan']['runtime_selection'] == dict(policy='ask_once', runtime=None, host=None)
     assert 'authorizes the bounded default workflow' in result['preflight_plan']['authorization']
     assert one.skill.read_bytes() == before
@@ -262,7 +262,7 @@ def test_blocked_preflight_gives_a_reason_specific_remediation(one):
     assert ambiguous['preflight_plan'] == dict(requested_runtime='auto', observed_runtimes=['codex', 'claude'],
         configured_scope=None, limits=dict(seconds=2700, trials=config.DEFAULT_TRIALS),
         runtime_selection=dict(policy='ask_once', runtime=None, host=None),
-        choice=dict(option='--agent', values=['codex', 'claude']),
+        choice=dict(option='--agent', values=['codex', 'claude'], remember_option='--remember-runtime'),
         next_step=ambiguous['remediation'], authorization=AUTHORIZATION, candidate_prepared=False, evidence_prepared=False, execution_authority=False)
     plan = offline['preflight_plan']
     assert plan['observed_runtimes'] is None

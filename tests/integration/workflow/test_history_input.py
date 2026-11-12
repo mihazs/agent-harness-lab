@@ -109,6 +109,19 @@ def test_unsupported_or_empty_requests_block_with_typed_reason_and_parity(store,
         assert store.digest() == before
 
 
+@pytest.mark.parametrize('prefix', [('improve',), ('skills', 'invoke')])
+def test_source_narrows_to_one_runtime_and_reports_a_typed_reason_when_it_has_no_captures(store, prefix):
+    store.session('codex-one', 1)
+    code, result, _ = store.improve('--history', '--source', 'codex', prefix=prefix)
+    assert result['history']['sessions_captured'] == 1 and result['history']['source'] == 'codex'
+    before = store.digest()
+    code, result, _ = store.improve('--history', '--source', 'claude', prefix=prefix)
+    assert (code, result['status'], result['reason']) == (3, 'blocked', 'history_runtime_has_no_captures')
+    assert result['remediation'] == REMEDIATION['history_runtime_has_no_captures']
+    assert result['history']['source'] == 'claude' and result['history']['sessions_captured'] == 0
+    assert store.digest() == before
+
+
 def test_receipts_match_across_entry_routes(store):
     store.session('recent', 1)
     results = []

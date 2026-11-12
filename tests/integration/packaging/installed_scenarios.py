@@ -76,6 +76,7 @@ class Sandbox:
 
     def invoke(self, *args, **env):
         code, receipt, err = self.ahl('skills', 'invoke', self.project, '--timeout', '30', *args, **env)
+        assert receipt is not None, err
         return code, receipt, Path(receipt['output']), err
 
     def codex_session(self, name='s1'):
@@ -111,7 +112,7 @@ def scenario_no_marker_blocks_once_then_the_chosen_runtime_passes(installed, sb)
     code, receipt, run, _ = sb.invoke()
     assert (code, receipt['status'], receipt['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
     plan = receipt['preflight_plan']
-    assert plan['choice'] == dict(option='--agent', values=['codex', 'claude'])
+    assert plan['choice'] == dict(option='--agent', values=['codex', 'claude'], remember_option='--remember-runtime')
     assert plan['runtime_selection'] == dict(policy='ask_once', runtime=None, host=None)
     assert 'authorizes the bounded default workflow' in plan['authorization']
     assert 'nothing was dispatched' in plan['authorization'] and plan['execution_authority'] is False

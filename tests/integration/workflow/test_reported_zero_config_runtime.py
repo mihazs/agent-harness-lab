@@ -81,7 +81,7 @@ def test_both_runtimes_without_a_host_marker_block_once_then_the_chosen_agent_co
     code, receipt, run, _ = world.run(['skills', 'invoke'])
     assert (code, receipt['status'], receipt['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
     plan = receipt['preflight_plan']
-    assert plan['choice'] == dict(option='--agent', values=['codex', 'claude'])
+    assert plan['choice'] == dict(option='--agent', values=['codex', 'claude'], remember_option='--remember-runtime')
     assert plan['runtime_selection'] == dict(policy='ask_once', runtime=None, host=None)
     for command in ('rerun the same command', '--agent codex', '--agent claude'):
         assert command in receipt['remediation']
@@ -168,10 +168,60 @@ def test_history_evidence_input_is_accepted_and_never_modifies_the_source_store(
     assert digest() == before and json.loads(stdout)['status']
 
 
-@pytest.mark.xfail(strict=True, reason='user-level persistence of the runtime choice is not delivered, tracked in #663')
-def test_runtime_choice_can_be_persisted_at_user_level_on_request():
-    text = re.sub(r'\s+', ' ', (ROOT/'docs/one-call-improvement.md').read_text())
-    assert 'A user-level default that persists the choice is not provided yet' not in text
+def _config_file(world):
+    from agent_harness_lab import user_config
+    return user_config.path()
+
+
+def test_runtime_choice_is_remembered_only_on_request_and_precedes_the_host_marker(world, monkeypatch):
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(world.root/'config')); monkeypatch.delenv('AHL_STATE_HOME', raising=False)
+    world.install('claude', 'codex')
+    code, receipt, run, _ = world.run(['skills', 'invoke'], '--agent', 'codex')
+    assert not _config_file(world).exists() and not list(world.project.glob('*.json')), 'nothing is written without the flag'
+    code, receipt, run, _ = world.run(['skills', 'invoke'], '--agent', 'codex', '--remember-runtime')
+    saved = _config_file(world)
+    assert saved.is_relative_to(world.root/'config') and oct(saved.stat().st_mode & 0o777) == '0o600'
+    assert json.loads(saved.read_text()) == dict(schema_version=1, runtime='codex')
+    assert sorted(path.name for path in world.project.iterdir()) == ['AGENTS.md'], 'no project file is written'
+    # The remembered choice completes a later ambiguous run and wins over a contrary host marker.
+    world.env.setenv('CLAUDECODE', '1')
+    reason, args = world.preflight()
+    assert (reason, args.agent, args._runtime_selection) == (None, 'codex', dict(policy='user_remembered', runtime='codex'))
+    code, receipt, run, _ = world.run(['skills', 'invoke'])
+    assert receipt.get('reason') != 'select_one_runtime_with_agent'
+    assert json.loads((run/'invocation.json').read_text())['runtime_selection'] == dict(policy='user_remembered', runtime='codex')
+    # An explicit --agent still wins, and a remembered runtime that is not installed is ignored.
+    assert world.preflight('claude')[1].agent == 'claude'
+    (world.bin/'codex').unlink()
+    reason, args = world.preflight()
+    assert (reason, args._runtime_selection) == (None, dict(policy='single_installed', runtime='claude'))
+
+
+def test_remember_requires_an_explicit_runtime_and_the_file_is_managed_by_config_show_and_clear(world, monkeypatch, capsys):
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(world.root/'config')); monkeypatch.delenv('AHL_STATE_HOME', raising=False)
+    world.install('claude', 'codex')
+    code, stdout, stderr = invoke(['improve', str(world.project), '--remember-runtime'])
+    assert code == 2 and '--remember-runtime requires an explicit --agent' in stderr and not _config_file(world).exists()
+    from agent_harness_lab import user_config
+    user_config.remember('claude')
+    assert user_config.main(['show']) == 0 and json.loads(capsys.readouterr().out)['runtime'] == 'claude'
+    assert user_config.main(['clear']) == 0 and json.loads(capsys.readouterr().out)['runtime'] is None
+    assert not _config_file(world).exists()
+    with pytest.raises(SystemExit) as bad: user_config.main(['bogus'])
+    assert bad.value.code == 2
+
+
+@pytest.mark.parametrize('content,mode,reason', [('{not json', 0o600, 'corrupt'), ('{"schema_version": 1, "runtime": "responses"}', 0o600, 'corrupt'),
+    ('{"schema_version": 2, "runtime": "codex"}', 0o600, 'corrupt'), ('{"schema_version": 1, "runtime": "codex", "token": "x"}', 0o600, 'corrupt'),
+    ('x'*5000, 0o600, 'too_large'), ('{"schema_version": 1, "runtime": "codex"}', 0o644, 'not_owner_only')])
+def test_a_corrupt_or_unsafe_user_file_is_ignored(world, monkeypatch, content, mode, reason):
+    from agent_harness_lab import user_config
+    monkeypatch.setenv('AHL_STATE_HOME', str(world.root/'state-home'))
+    path = user_config.path(); path.parent.mkdir(parents=True); path.write_text(content); path.chmod(mode)
+    assert path.parent == world.root/'state-home'
+    assert user_config.load() == dict(runtime=None, reason=reason)
+    world.install('claude', 'codex')
+    assert world.preflight()[0] == 'select_one_runtime_with_agent'
 
 
 def test_new_regression_tests_contain_no_real_project_data():

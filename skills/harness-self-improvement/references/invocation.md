@@ -68,7 +68,9 @@ A zero-spend `blocked` preflight whose `remediation` is a user choice (the
 `choice` field of `preflight_plan` lists the options) is the one allowed
 re-dispatch: ask the user the single question, then rerun the same
 `ahl skills invoke` once with the answer appended (`--agent <choice>`), without a
-second configuration step. Relay `remediation` verbatim. A request the command
+second configuration step. Offer to remember the answer; append `--remember-runtime`
+only if the user says yes (`ahl config show`/`clear` manage it; the skill never
+writes a project file for it). Relay `remediation` verbatim. A request the command
 cannot satisfy, such as a historical-session evidence input, must be reported as
 unsupported, not silently dropped.
 

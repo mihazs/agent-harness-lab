@@ -6,6 +6,7 @@ defaults, units, side effects and exit states:
 ```sh
 ahl --help
 ahl analyze --help
+ahl config --help
 ahl sources --help
 ahl sources lineage --help
 ahl sources inventory --help
