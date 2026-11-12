@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.187.0
+
+### Minor Changes
+
+- 598d76a: Show the runtime, scope, time and trial ceilings, authorization statement and an explicitly unknown model cost before any charged improvement work.
+
 ## 0.186.0
 
 ### Minor Changes
