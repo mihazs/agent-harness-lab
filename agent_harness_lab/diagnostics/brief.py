@@ -257,10 +257,11 @@ def adapter_evidence(sources):
         if row.get('format') not in ('codex', 'claude'): continue
         adapter = row.get('adapter', 'unknown')
         produced[adapter] = produced.get(adapter, 0) + 1
-        if adapter == 'descriptive_unverified':
+        # Codex default discovery is always descriptive and is not a Claude release gap, so only Claude captures are attributed.
+        if adapter == 'descriptive_unverified' and row['format'] == 'claude':
             for key in lacking: lacking[key] += row.get('adapter_evidence', {}).get(key, 0)
     if not produced: return None
-    descriptive = produced.get('descriptive_unverified', 0)
+    descriptive = any(r.get('format') == 'claude' and r.get('adapter') == 'descriptive_unverified' for r in sources)
     return dict(captures_by_adapter=dict(sorted(produced.items())), attributable_to_descriptive_adapter=lacking if descriptive else None,
         unlock='Use a verified adapter: the verified Claude range reads default discovery directly; for a release outside it, run '
                '`ahl sources claude pin-check --events <capture.jsonl>` and add its contract fixture.' if descriptive else None)

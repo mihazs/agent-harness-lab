@@ -50,7 +50,8 @@ Never commit a real session file or a skeleton you have not reviewed.
 
 - `ahl doctor` adds one `claude_runtime_lag` warning when the session headers of
   the project record a release newer than the newest verified one. It reads
-  dotted version strings only, from at most the first 200 session files.
+  dotted version strings only, from at most the first 200 session files, under every
+  profile including `offline`. The check is never required.
 - The `ahl improve --history` receipt carries `history.runtime_lag` once, with counts
   per version and this same next step.
 - The analysis brief lists `adapters`: the adapter that produced each capture, and

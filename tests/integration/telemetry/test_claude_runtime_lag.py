@@ -88,6 +88,14 @@ class TestRuntimeLag:
         step = next(row for row in rows if row['id'] == 'verified_adapter')
         assert 'descriptive, unverified adapter' in step['what'] and step['command'].startswith('ahl sources claude pin-check')
 
+    def test_descriptive_codex_captures_get_no_claude_attribution_or_command(self):
+        codex = dict(format='codex', adapter='descriptive_unverified', adapter_evidence=dict(cases=3, cases_without_declared_order=3, tool_events=2, tool_events_without_name=2))
+        evidence = brief.adapter_evidence([codex])
+        assert evidence['captures_by_adapter'] == dict(descriptive_unverified=1)
+        assert evidence['attributable_to_descriptive_adapter'] is None and evidence['unlock'] is None
+        data = dict(sources=[codex], analysis=dict(method_inputs={}), caveats=[], evaluation_outcomes=[])
+        assert not [row for row in brief._missing(data, [], 'codex', dict(fingerprinted_messages=1), None) if row['id'] == 'verified_adapter']
+
     def test_a_brief_over_only_verified_captures_makes_no_adapter_attribution(self):
         self.store('2.1.318', '2.1.316')
         with self.env(): data = collect(self.project, source_format='claude')
