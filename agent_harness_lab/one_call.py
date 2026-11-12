@@ -26,7 +26,7 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
         bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',config.DEFAULT_TRIALS),
         remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
         remaining_trials=getattr(args,'trial_limit',config.DEFAULT_TRIALS) if remaining_trials is None else remaining_trials,
-        execution_authority=False,publication_allowed=False,runtime_selection=getattr(args,'_runtime_selection',None))
+        execution_authority=False,publication_allowed=False,runtime_selection=getattr(args,'_runtime_selection',None),cost_preview=getattr(args,'_cost_preview',None))
 
 
 def resolve(args, explicit):
@@ -133,6 +133,22 @@ def preflight_plan(args, reason):
         candidate_prepared=False, evidence_prepared=False, execution_authority=False)
     if getattr(args, 'history', False): plan['history'] = dict(since=args.since or 'first', source=args.history_source or 'native')
     return plan
+
+
+def cost_preview(args):
+    """Ceilings and authorization shown once preflight passes, before any model dispatch. Cost is never estimated."""
+    settings = getattr(args, 'project_settings', None)
+    return dict(runtime=args.agent, harness_scope=settings['harness_paths'] if settings else 'project default',
+        max_seconds=args.timeout, max_trials=args.trial_limit, authorization=AUTHORIZATION,
+        model_cost='unknown: model usage is billed by the runtime provider and AHL does not measure tokens or money; '
+                   'the ceilings above bound time and trials, not spend')
+
+
+def announce_cost(args):
+    """Record the preview for the run context and show it via the CLI hook when one is attached."""
+    args._cost_preview = preview = cost_preview(args)
+    show = getattr(args, '_preview', None)
+    if show: show(preview)
 
 
 def pinned_bank(args):

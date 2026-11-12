@@ -1164,6 +1164,8 @@ def _run_improvement(args, *, parent_started=None):
                 write_json(output/'workflow.json', result)
                 return result
             check_configuration(args)
+            from .one_call import announce_cost
+            announce_cost(args)
         if time.monotonic()>=started+args.timeout:
             raise TimeoutError('construction preflight exhausted improvement budget')
         if getattr(args,'from_audit',None) is not None:

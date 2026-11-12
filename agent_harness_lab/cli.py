@@ -28,6 +28,14 @@ def _progress_reporter(stream=None, clock=None):
     return emit
 
 
+def _show_preview(preview):
+    scope = preview['harness_scope']
+    scope = scope if isinstance(scope, str) else ','.join(scope)
+    print(f"ahl: preview runtime={preview['runtime']} scope={json.dumps(scope)} max_seconds={preview['max_seconds']} "
+          f"max_trials={preview['max_trials']} model_cost={json.dumps(preview['model_cost'])} "
+          f"authorization={json.dumps(preview['authorization'])}", file=sys.stderr, flush=True)
+
+
 def _improve_summary(result, elapsed, budget=None):
     from .exit_guidance import guidance
     status = result['status']
@@ -282,6 +290,7 @@ def main(argv=None):
         if option in options: explicit.add(option)
         elif len(matches) == 1: explicit.add(matches[0])
     args._progress = _progress_reporter()
+    args._preview = _show_preview
     started = None
     def summarize(result):
         now = time.monotonic()
