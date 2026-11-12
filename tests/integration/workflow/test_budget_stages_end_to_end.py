@@ -4,6 +4,7 @@ A stub runtime on PATH plays the construction, proposer and trial agents. A virt
 offset the stub scripts advance through a file) makes every overrun deterministic without sleeping. Everything is synthetic.
 """
 import json
+import shutil
 import time
 
 import pytest
@@ -215,3 +216,15 @@ def test_the_construction_fraction_option_moves_the_time_box_and_rejects_values_
     _, receipt, _, _ = stub.run(capsys, {}, '--construction-fraction', '0.5')
     assert receipt['budget_stages']['construction_fraction'] == 0.5 and receipt['budget_stages']['stages']['construction']['allotted_seconds'] == 60.0
     assert stub.improve(capsys, '{}', '--construction-fraction', '1')[0] == 2
+
+
+def test_the_toolkit_copy_leaves_bytecode_caches_out_so_two_routes_start_from_identical_skills(stub, capsys, tmp_path, monkeypatch):
+    from agent_harness_lab import cli
+    root = tmp_path / 'assets'
+    shutil.copytree(cli.assets() / 'skills', root / 'skills', ignore=shutil.ignore_patterns('__pycache__'))
+    (root / 'skills/harness-evaluation/scripts/__pycache__').mkdir()
+    (root / 'skills/harness-evaluation/scripts/__pycache__/run_evaluation.cpython-314.pyc').write_bytes(b'cache')
+    monkeypatch.setattr(cli, 'assets', lambda: root)
+    _, _, run, _ = stub.run(capsys, {})
+    toolkit = run / 'preparation/.harness-toolkit/skills/harness-evaluation'
+    assert (toolkit / 'SKILL.md').is_file() and not list(toolkit.rglob('__pycache__')) and not list(toolkit.rglob('*.pyc'))
