@@ -1,6 +1,5 @@
 """One entrypoint for local analysis and recommendation-only candidate evaluation."""
 import argparse
-import importlib.metadata
 import importlib.util
 import json
 import os
@@ -64,10 +63,21 @@ def version():
     package = assets() / 'package.json'
     if package.exists():
         return json.loads(package.read_text())['version']
+    import importlib.metadata  # about 20 ms of startup; only an installed package without package.json needs it
     try:
         return importlib.metadata.version('agent-harness-lab')
     except importlib.metadata.PackageNotFoundError:
         return '0.1.0'
+
+
+class _VersionAction(argparse.Action):
+    """Like action='version', but resolves the version only when --version is given."""
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest, nargs=0, default=default, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(version())
+        parser.exit()
 
 
 def evaluator():
@@ -168,7 +178,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
-    parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
+    parser.add_argument('--version', action=_VersionAction, help='Print the installed AHL version and exit without running a command')
     sub = parser.add_subparsers(dest='command', required=True,help='Select an operation; COMMAND --help describes its inputs and side effects')
     sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match, or an installation backup (ahl rollback install-NAME).')
     sub.add_parser('update', help='Update a release installation, its skill links and the managed region of the global instruction files',description='Download and verify a release for an existing archive installation; preserve its owned launcher and skill links, and refresh the marked region of the global CLAUDE.md and AGENTS.md (--no-instructions opts out).')
