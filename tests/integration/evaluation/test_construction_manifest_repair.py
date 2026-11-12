@@ -30,7 +30,7 @@ def harness(request):
         with patch.object(fixtures, 'AUTHOR', VARIANT):
             yield case
     finally:
-        case.doCleanups()
+        case.cleanups.close()
 
 
 def run(case):
@@ -39,7 +39,7 @@ def run(case):
 
 
 def test_defect_is_repaired_once_inside_the_budget_and_recorded(harness):
-    harness.f.mode = 'drop-prompt'; harness.f.repair_seeded = True
+    harness.f.mode = 'drop-prompt'
     result = run(harness)
     assert result['status'] == 'inconclusive', result
     assert [(r['reason'], r['field'], r['stage'], r['outcome']) for r in result['evaluation_construction_repairs']] == [
@@ -56,7 +56,7 @@ def test_defect_is_repaired_once_inside_the_budget_and_recorded(harness):
 
 
 def test_second_defect_ends_with_the_typed_reason_after_exactly_one_repair(harness):
-    harness.f.mode = 'drop-always'; harness.f.repair_seeded = True
+    harness.f.mode = 'drop-always'
     with pytest.raises(contract.ContractError) as caught:
         run(harness)
     assert (caught.value.reason, caught.value.field) == ('evaluation_manifest_field_missing', 'tasks[0].prompt')

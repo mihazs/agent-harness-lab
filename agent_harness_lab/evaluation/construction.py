@@ -81,7 +81,7 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True):
     if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
@@ -144,9 +144,10 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
-    try: _check_shape(state)
+    try:
+        if repairs is not None:_check_shape(state)  # only the improve pipeline consumes the authored shape
     except ContractError as error:
-        if not error.repairable or repairs is None or repairs:raise
+        if not error.repairable or not repair_allowed or repairs:raise
         # One bounded repair pass in the same workspace and budget; the typed reason is recorded in the receipt.
         repairs.append(dict(error.receipt(),attempt=1,outcome='requested'))
         workspace=state.publish(workspace.with_name(workspace.name+'-repair'),deadline)  # seed the repair with the rejected output

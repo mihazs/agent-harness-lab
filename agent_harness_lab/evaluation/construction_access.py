@@ -297,7 +297,7 @@ class WorkflowAccess:
                 options={'analysis':True} if analysis else {}
                 if bank_conversion is not None:options['bank_qualification']=True
                 made=[]
-                if bank_conversion is None and closed is None:options['repairs']=made  # sealed closed-input stages allow no second pass
+                if bank_conversion is None:options.update(repairs=made,repair_allowed=closed is None)  # sealed closed-input stages allow no second pass
                 try:_,commands=construction.author(*args,derivation=handle,**options)
                 finally:data['repairs'].extend(made)
             if not owned['used']: raise ValueError('canonical role did not consume its actual handoff')

@@ -246,3 +246,16 @@ def test_construction_prompt_and_every_consumer_agree_on_the_authored_fields(wf)
     assert all(field in validated['grader_self_tests'][0] for field in contract.CONTROLLER_FIELDS['control'])
     assert all(field in validated for field in contract.CONTROLLER_FIELDS['manifest'])
     assert manifest  # the minimal manifest is built from AUTHOR_FIELDS alone
+
+
+@pytest.mark.parametrize('raised, expected', [
+    (KeyError('digest'), 'internal_contract_error'),
+    (contract.ContractError('evaluation_manifest_field_missing', 'evaluation_construction', 'tasks[0].prompt'), 'evaluation_manifest_field_missing')])
+def test_cli_prints_a_typed_reason_and_never_a_bare_exception_message(wf, raised, expected, capsys):
+    from agent_harness_lab.cli import main
+    with patch('agent_harness_lab.workflow.improve', side_effect=raised), pytest.raises(SystemExit) as caught:
+        main(['improve', str(wf.project), '--agent', 'codex', '--codex', str(wf.agent)])
+    assert caught.value.code == 2
+    err = capsys.readouterr().err
+    assert f'ahl: {expected}:' in err and "ahl: 'digest'" not in err
+    assert 'origin=' in err and 'Next:' in err

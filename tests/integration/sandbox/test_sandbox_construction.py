@@ -187,7 +187,7 @@ class ControlledWorkflow:
         self.runner = fixtures.fixtures.evaluator()
         self.backend = Mock(permission_audit=None); self.backend.capability.return_value = dict(status='available'); self.backend.run.side_effect = self.execute
         self.histories = []; self.roles = []; self.proposals = self.authors = 0
-        self.mode = 'complete'; self.repair_seeded = False
+        self.mode = 'complete'
         workflow.collect.return_value['evaluation_failures'] = [dict(split='heldout',result='SYNTHETIC_PRIOR_HELDOUT_SECRET')]
 
     def write_settings(self):
@@ -221,7 +221,7 @@ class ControlledWorkflow:
         assert b'SYNTHETIC_CONTROLLER_KEY' not in b''.join(raw for _,_,raw in state.snapshot.files)
         assert set(inputs) == ({'harness'} if role=='executor' else {'harness','fixture'})
         if role=='evaluator_author':
-            assert not state.snapshot.files or self.roles.count('evaluator_author')>1 and self.repair_seeded  # a repair pass starts from the rejected output
+            assert not state.snapshot.files or self.roles.count('evaluator_author')>1  # a repair pass starts from the rejected output
             for folder in inputs.values():
                 text = b'\n'.join(path.read_bytes() for path in folder.rglob('*') if path.is_file())
                 assert b'SYNTHETIC_CANDIDATE_SECRET' not in text; assert b'SYNTHETIC_PRIOR_HELDOUT_SECRET' not in text
@@ -341,7 +341,8 @@ def test_controlled_connection_failure_requires_intervention_without_transient_r
 
 def test_user_authored_host_command_is_rejected_before_any_grader_or_trial(controlled):
     controlled.mode = 'bad-argv'
-    with pytest.raises(ValueError, match='controller owns authored grader commands'):
+    with pytest.raises(ValueError, match=r'evaluation_manifest_controller_field_supplied: stage=evaluation_construction file=manifest.json field=tasks\[0\]\.grader'):
         controlled.run_controlled()
     assert 'grader' not in controlled.roles; assert 'executor' not in controlled.roles
+    assert controlled.roles.count('evaluator_author') == 2  # the original pass and exactly one repair pass
     assert (controlled.project/'AGENTS.md').read_text() == 'bad'

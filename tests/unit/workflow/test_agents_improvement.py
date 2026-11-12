@@ -9,6 +9,7 @@ import pytest
 
 from agent_harness_lab import workflow
 from agent_harness_lab.sources.agents_validation import review, review_tree
+from agent_harness_lab.evaluation.manifest_contract import ContractError
 from agent_harness_lab.workflow import adopt, candidate_states, improve, snapshot
 
 AGENT = b'---\nname: reviewer\ndescription: Reviews synthetic diffs\n---\nCheck the diff.\n'
@@ -225,8 +226,14 @@ class Workspace:
 
     def improve(self, files):
         (self.project / 'files.json').write_text(json.dumps(files))
-        return improve(argparse.Namespace(project=self.project, events=None, format='normalized', output=None,
-            agent='codex', codex=str(self.agent), claude='missing', timeout=30, interval=1, once=True, focus=None))
+        args = argparse.Namespace(project=self.project, events=None, format='normalized', output=None,
+            agent='codex', codex=str(self.agent), claude='missing', timeout=30, interval=1, once=True, focus=None)
+        try:
+            return improve(args)
+        except ContractError as error:
+            # The fake author writes no manifest: the run reaches evaluation construction and stops with a typed reason.
+            assert error.reason == 'evaluation_manifest_unreadable' and error.stage == 'evaluation_construction'
+            return json.loads((Path(args._run_output) / 'workflow.json').read_text())
 
     def stage(self, before, after):
         (self.project / '.claude/agents').mkdir(parents=True)
