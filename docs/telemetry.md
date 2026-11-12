@@ -334,8 +334,8 @@ prompts are never copied.
 its payload. These shapes are unverified and supported only by synthetic fixtures.
 A rule file is expected as a `nested_memory` attachment with its own path. Every
 other attachment type, a relative path or a `content.path` that differs from
-`path` stays `unsupported_native_entry`. Claude Code 2.1.317 captures are not
-supported, because no documented attachment shape is pinned for that version.
+`path` stays `unsupported_native_entry`. Attachment payload shapes remain
+assumptions backed only by synthetic fixtures, whatever the Claude Code version.
 
 **Not established.** An attachment shows that the runtime named a file in its
 context, not that the model followed it. An agent or MCP request is a model
