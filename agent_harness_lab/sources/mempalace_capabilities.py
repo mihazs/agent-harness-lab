@@ -63,6 +63,7 @@ def compare(listing):
         schema = advertised[name].get('inputSchema')
         found = schema.get('properties') if isinstance(schema, dict) else None
         needed = schema.get('required', []) if isinstance(schema, dict) else None
+        if isinstance(needed, list) and not all(isinstance(item, str) for item in needed): raise ValueError('non-string required name')
         if not isinstance(found, dict) or not isinstance(needed, list):
             rows.append(dict(tool=name, status='schema_differs', missing_properties=list(properties))); continue
         missing, unexpected = sorted(set(properties)-set(found)), set(found)-set(properties)

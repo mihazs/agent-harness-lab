@@ -91,10 +91,14 @@ def test_a_tool_that_differs_from_the_pin_is_incompatible(tmp_path, case):
     assert SECRET not in out
 
 
-@pytest.mark.parametrize('case', ['not_json', 'not_a_listing', 'duplicate_name', 'duplicate_key', 'symlink', 'missing', 'oversized'])
+@pytest.mark.parametrize('case', ['not_json', 'not_a_listing', 'duplicate_name', 'duplicate_key', 'symlink', 'missing', 'oversized',
+    'required_object', 'required_list', 'required_number'])
 def test_invalid_listing_is_refused_without_echoing_it(tmp_path, case):
     path = tmp_path/'tools.json'
-    path.write_text({'not_json': '{' + SECRET, 'not_a_listing': json.dumps([SECRET]),
+    bad_required = lambda item: json.dumps(dict(tools=[dict(name='mempalace_search', inputSchema=dict(properties={}, required=[item]))]))
+    path.write_text({'required_object': bad_required({SECRET: SECRET}), 'required_list': bad_required([SECRET]),
+        'required_number': bad_required(1),
+        'not_json': '{' + SECRET, 'not_a_listing': json.dumps([SECRET]),
         'duplicate_name': json.dumps(dict(tools=[dict(name=SECRET), dict(name=SECRET)])),
         'duplicate_key': '{"tools": [], "tools": []}'}.get(case, '{"tools": []}'))
     if case == 'symlink': link = tmp_path/'link.json'; link.symlink_to(path); path = link
