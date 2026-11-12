@@ -209,8 +209,8 @@ outcome, success/failure or independence label, and recurrence and matching
 outputs keep their descriptive authority. One file holds one writer and therefore
 one reported root, so recurrence over pinned Claude captures still needs three
 roots, for example a normalized file combining exported ledgers of separate
-sessions. Claude records carry no input/result/state signatures, so state-aware
-matching stays unselected for them.
+sessions. Pinned native Claude records carry an input fingerprint but no result or
+state signatures, so duplicate-observation matching stays unselected for them.
 
 For the pinned Claude adapter the new fields stay outside event IDs, journal
 record identities and revisions, the collection fingerprint and duplicate-UUID
