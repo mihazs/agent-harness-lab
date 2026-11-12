@@ -334,11 +334,14 @@ def main(argv=None):
             print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
         parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
+        from .evaluation.manifest_contract import typed
+        exc = typed(exc, getattr(args, 'command', None) or 'cli')  # an unexpected KeyError/TypeError is never printed as its bare message
+        reason = getattr(exc, 'reason', None)
         if started is not None:
-            summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None)))
+            summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None), reason=reason))
         else:
             from .exit_guidance import summary
-            print('ahl: ' + summary({'status': 'invalid_input'}), file=sys.stderr)
+            print('ahl: ' + summary({'status': 'invalid_input', 'reason': reason}), file=sys.stderr)
         parser.exit(2, f'ahl: {exc}\n')
 
 

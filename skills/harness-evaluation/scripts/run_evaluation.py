@@ -406,7 +406,11 @@ def _evaluate(args):
         from agent_harness_lab.evaluation.integrity import contained, digest as bundle_digest
         if set(declared_bundles) != set(ids):
             raise ValueError('every task must declare its complete grader bundle')
-        for task_id, bundle in declared_bundles.items():
+        from agent_harness_lab.evaluation.manifest_contract import ContractError
+        for index, (task_id, bundle) in enumerate(declared_bundles.items()):
+            if not isinstance(bundle, dict) or 'path' not in bundle or 'digest' not in bundle:
+                # The controller freezes every bundle digest before evaluation; an unfrozen manifest is an AHL defect.
+                raise ContractError('internal_contract_error', 'evaluation', f'grader_bundles[{index}].' + ('digest' if isinstance(bundle, dict) and 'path' in bundle else 'path'))
             folder = contained(manifest_path.parent, bundle['path'])
             if output==folder or output.is_relative_to(folder) or folder.is_relative_to(output):
                 raise ValueError('output and grader bundle must not overlap')
@@ -415,6 +419,14 @@ def _evaluate(args):
             if bundle_digest(folder) != bundle['digest']:
                 raise ValueError('declared grader bundle integrity mismatch')
             frozen_bundles[str(folder)] = bundle['digest']
+    # Controller-computed control digests; a control changed after freeze invalidates the run.
+    frozen_controls = {(manifest_path.parent / c['fixture']).resolve(): c['digest']
+                       for c in manifest.get('grader_self_tests', []) if isinstance(c, dict) and 'digest' in c}
+    if frozen_controls:
+        application_modules()
+        from agent_harness_lab.evaluation.integrity import digest as control_digest
+        if any(control_digest(p) != h for p, h in frozen_controls.items()):
+            raise ValueError('declared grader control integrity mismatch')
     agent = args.agent
     def inputs_unchanged():
         try:
@@ -423,6 +435,7 @@ def _evaluate(args):
                     and hashlib.sha256(manifest_path.read_bytes()).hexdigest() == manifest_hash
                     and all(Path(p).is_file() and hashlib.sha256(Path(p).read_bytes()).hexdigest() == h for p, h in grader_files.items())
                     and (not frozen_bundles or all(bundle_digest(Path(p)) == h for p, h in frozen_bundles.items()))
+                    and all(control_digest(p) == h for p, h in frozen_controls.items())
                     and (not controlled or response_runtime.read_settings(inference_path)[1] == inference_hash)
                     and (configured is None or (evaluation_unchanged(Path(args.config), configured)
                          and all(bundle_digest(root) == configured['harness_digests'][name] for name, root in versions.items())
