@@ -14,6 +14,7 @@ from tests.unit.sources.test_source_transport import Response
 
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.sources.commit_join import join_pull_request_commit
+from agent_harness_lab.sources.execution import RecordRef
 from agent_harness_lab.sources.gitea import GiteaAPI, GiteaSelection
 from agent_harness_lab.sources.git import GitExport
 from agent_harness_lab.sources.graph import JoinReceipt
@@ -39,11 +40,22 @@ class PullJoinFixture(CommitJoinFixture):
 
     def lab_records(self, sha=SHA, repository=REPOSITORY, pull=PULL, number=NUMBER):
         chosen, repo = self.selection, self.selection.native_sha256(repository)
+        self.parents = getattr(self, 'parents', {})
         natives = (('gitea_repository', chosen.record_sha256('gitea_repository', repo, 'repository')),
             ('gitea_pull', chosen.record_sha256('gitea_pull', repo, chosen.native_sha256(pull))),
             ('gitea_pull_commit', chosen.record_sha256('gitea_pull_commit', repo, (number, digest(sha)))))
-        return tuple(EvidenceRecord(self.lab.source_key, native, digest((kind, native)), digest((kind, native)),
+        records = tuple(EvidenceRecord(self.lab.source_key, native, digest((kind, native)), digest((kind, native)),
             'development_artifact', kind, STAMP, provenance='native_field', capture_completeness='partial') for kind, native in natives)
+        self.parents[natives[2][1]] = natives[1][1]
+        return records
+
+    def capture(self, source, *records, **options):
+        """Like a real Gitea capture, tie each listed commit record to its own PR record with a native commit_on edge."""
+        refs = {r.native_id_sha256: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in records}
+        parents = getattr(self, 'parents', {})
+        joins = tuple(JoinReceipt(refs[c], refs[p], 'commit_on', 'gitea.native', 'gitea-claims-v1', (refs[c], refs[p]), basis='native_fields')
+            for c, p in parents.items() if c in refs and p in refs and source is self.lab)
+        return super().capture(source, *records, joins=joins, **options)
 
     def join(self, git=None, lab=None, **options):
         git, lab = git or self.git, lab or self.lab
@@ -83,6 +95,25 @@ class TestPullRequestCommitJoin(PullJoinFixture):
         self.capture(self.lab, *self.lab_records())
         result = self.join(**options)
         assert result['status'] in ('unknown', 'stale') and not result['receipt']
+
+    def test_swapped_pull_object_and_number_are_not_joined(self):
+        self.selection = replace(self.selection, pulls=(NUMBER, 9))
+        self.lab = replace(self.lab, scope_sha256=self.selection.sha256)
+        self.capture(self.git, git_commit(self.git, SHA), git_commit(self.git, OTHER))
+        repository, pull, commit = self.lab_records()
+        _, other_pull, other_commit = self.lab_records(sha=OTHER, pull=90, number=9)
+        self.capture(self.lab, repository, pull, other_pull, commit, other_commit)
+        self.expect(self.join(), 'matched', 'exact_pull_request_commit_membership')
+        # Both records are current, but PR 8's commit is not listed under the PR object with ID 90.
+        self.expect(self.join(pull_id=90), 'unknown', 'commit_link_unobserved')
+        self.expect(self.join(pull_id=PULL, number=9, commit_sha=OTHER), 'unknown', 'commit_link_unobserved')
+
+    def test_commit_record_without_a_listing_edge_stays_unknown(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        records = self.lab_records()
+        self.parents = {}
+        self.capture(self.lab, *records)
+        self.expect(self.join(), 'unknown', 'commit_link_unobserved')
 
     def test_foreign_git_scope_stays_unlinked(self):
         foreign = replace(self.git, project_sha256=digest('other-repository'))

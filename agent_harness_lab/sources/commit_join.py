@@ -171,11 +171,13 @@ def _check(git_source, remote_source, provider, commit_sha):
 
 
 def _membership(git_source, git_store, remote_source, remote_store, key, commit_sha, natives, *, host, profile, resolver, namespace,
-        reasons, **extra):
+        reasons, link=None, **extra):
     """Join one local commit to a forge's server-reported change-request membership.
 
     natives maps the project, change-request and member record types to their native IDs. reasons names the
     project-unobserved, request-unobserved and matched outcomes. Membership is the server's claim, never ancestry.
+    link, a (namespace, resolver) pair, also requires the graph's native commit_on join from the member to the
+    request: when the record identities do not bind the caller's request ID to its number, only that join does.
     """
     git = _observe(git_store, git_source, dict(git_commit=digest(('git_commit', commit_sha)),
         git_object_reference=digest(('git_object_reference', digest(commit_sha)))))
@@ -193,6 +195,9 @@ def _membership(git_source, git_store, remote_source, remote_store, key, commit_
     if 'stale' in (local, remote): return outcome('stale', 'not_in_current_checkpoint')
     if (local, remote) == ('current', 'current'):
         left, right = git['refs']['git_commit'], hub['refs'][member]
+        if link and not any(j.relation == 'commit_on' and j.right is not None and (j.namespace, j.resolver_version, j.status) == (*link, 'candidate')
+                and (j.left.key, j.right.key) == (right.key, hub['refs'][request].key) for j in hub['graph'].joins):
+            return outcome('unknown', 'commit_link_unobserved')
         return outcome('matched', reasons[2], JoinReceipt(left, right, 'same_commit', namespace, resolver,
             (left, right, hub['refs'][project], hub['refs'][request])))
     if local == 'unobserved' and git['observations']['git_object_reference'] == 'current': return outcome('unknown', 'commit_reference_only')
@@ -246,4 +251,4 @@ def join_pull_request_commit(git_source, git_store, gitea_source, gitea_store, *
     return _membership(git_source, git_store, gitea_source, gitea_store, selection.project_sha256, commit_sha, natives,
         host='gitea', profile=GITEA_PROFILE, resolver=GITEA_RESOLVER_VERSION, namespace='git-gitea.pull-commit',
         reasons=('repository_identity_unobserved', 'pull_unobserved', 'exact_pull_request_commit_membership'),
-        pull_request_sha256=natives['gitea_pull'], membership='server_reported', ancestry='unknown')
+        link=('gitea.native', 'gitea-claims-v1'), pull_request_sha256=natives['gitea_pull'], membership='server_reported', ancestry='unknown')

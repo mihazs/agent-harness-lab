@@ -962,11 +962,16 @@ declare the selection's repository fingerprint, which is the declared instance
 plus the case-insensitive `owner/repo` name, not a verified repository identity.
 The `gitea_repository` and `gitea_pull` records must be current in the latest Gitea
 checkpoint. Statuses follow the GitLab join: `matched` (the commit record is
-current in both latest checkpoints and the PR-commit record for that PR is
-current), `stale`, `unlinked` (different declared fingerprints) and `unknown`
-(unavailable checkpoint or graph, missing repository or PR record, unobserved,
-reference-only, truncated or ambiguous). A `matched` report carries one
-`same_commit` candidate receipt with basis `source_declaration`, and states
+current in both latest checkpoints, the PR-commit record for that PR is current and
+the latest Gitea graph holds the server-reported `commit_on` edge from that
+PR-commit record to that PR record), `stale`, `unlinked` (different declared
+fingerprints) and `unknown` (unavailable checkpoint or graph, missing repository or
+PR record, unobserved, reference-only, truncated or ambiguous, or
+`commit_link_unobserved` when no such edge ties the two records). The edge is what
+binds `pull_id` to `number`: the PR object record is keyed on the object ID alone
+and the PR-commit record on the number alone, so a caller-supplied pair naming two
+different selected PRs finds both records current but no edge, and is not matched.
+A `matched` report carries one `same_commit` candidate receipt with basis `source_declaration`, and states
 `membership: server_reported` and `ancestry: unknown`. Gitea merge and head SHAs
 are not ancestry, so a squash or rebase commit is not related to the original. No
 outcome, grade, independent root, verification or execution authority follows. The
