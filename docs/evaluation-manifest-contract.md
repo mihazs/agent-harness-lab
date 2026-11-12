@@ -13,12 +13,18 @@ controller owns, the typed reasons for a violation, and the one repair pass.
 | `grader_bundles` entry | `path` | `digest` |
 
 The controller computes every digest from the frozen author output it already owns. An
-author never writes a hash. In a controlled run an authored `digest` is rejected as
-`evaluation_manifest_controller_field_supplied`; a host-grader run accepts a supplied
-bundle digest only when it equals the computed one. Nothing authored replaces a computed digest.
+author never writes a hash: the construction prompt says to omit `digest`, because a hash
+the author computes with its own algorithm can never be the frozen value. In a controlled
+run an authored `digest` is rejected as `authored_digest_not_accepted`, a fixable agent
+output defect that triggers the one repair pass. In a host-grader run the controller drops
+every authored bundle and control `digest` from `manifest.json` right after the author
+finishes and records only how many in the receipt as `authored_digest_ignored`; the
+dropped value is never compared with anything. Nothing authored replaces a computed digest.
 A control fixture or bundle changed after freezing fails the run before any trial.
 Runs that grade with host-side graders (no sandbox) declare `grader` themselves, but
-declared bundles are frozen the same way.
+declared bundles are frozen the same way. The optional `{path, digest}` declaration
+remains valid only where the controller or a recorded bank declares the digest (bank and
+replay validation); a mismatch there is still rejected as an integrity failure.
 
 ## Typed reasons
 
@@ -34,6 +40,7 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `evaluation_manifest_field_missing` | agent output defect | yes |
 | `evaluation_manifest_field_invalid` | agent output defect | yes |
 | `evaluation_manifest_controller_field_supplied` | agent output defect | yes |
+| `authored_digest_not_accepted` | agent output defect | yes |
 | `evaluation_manifest_controls_incomplete` | agent output defect | yes |
 | `internal_contract_error` | AHL contract mismatch | no |
 
@@ -50,7 +57,9 @@ grading or other stage, so a contract defect costs seconds. For a repairable rea
 author runs once more, in the same workspace and inside the same budget, with the typed
 reason appended to its task. The attempt is recorded as `evaluation_construction_repairs`
 in `workflow.json` (reason, stage, file, field, origin, outcome `repaired` or
-`requested`). A second defect ends the run with its typed reason. Sealed closed-input
+`requested`). Each receipt entry and the run receipt also carry the elapsed seconds of the construction
+attempt (`elapsed_seconds`, `evaluation_construction_seconds`), so a rejected manifest shows
+what it cost. A second defect ends the run with its typed reason. Sealed closed-input
 stages and bank conversion allow no second pass.
 
 ## Recover from a rejected manifest

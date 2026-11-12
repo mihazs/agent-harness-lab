@@ -15,10 +15,13 @@ import json,sys
 if Path('manifest.json').exists() and sys.argv[2]!='drop-always':
  value=json.loads(Path('manifest.json').read_text())
  for task in value['tasks']: task.setdefault('prompt','Produce the synthetic result')
+ for bundle in value['grader_bundles'].values(): bundle.pop('digest',None)
  Path('manifest.json').write_text(json.dumps(value)); raise SystemExit
 '''
 VARIANT = REPAIR + fixtures.AUTHOR.replace(
-    "Path('manifest.json').write_text(", "if sys.argv[2].startswith('drop'): tasks[0].pop('prompt')\nPath('manifest.json').write_text(")
+    "Path('manifest.json').write_text(", "if sys.argv[2].startswith('drop'): tasks[0].pop('prompt')\n"
+    "Path('manifest.json').write_text(").replace("grader_bundles={task['id']:dict(path='oracle') for task in tasks}",
+    "grader_bundles={task['id']:dict(path='oracle',**({'digest':'0'*64} if sys.argv[2]=='digest' else {})) for task in tasks}")
 
 
 @pytest.fixture(params=['store', 'plain'])
@@ -53,6 +56,19 @@ def test_defect_is_repaired_once_inside_the_budget_and_recorded(harness):
     assert all(set(b) == {'path', 'digest'} for b in frozen['grader_bundles'].values())
     receipt = json.loads((Path(result['output']) / 'evaluation-construction-0.json').read_text())
     assert receipt['manifest_repairs'] == result['evaluation_construction_repairs']
+
+
+def test_authored_bundle_digest_is_a_fixable_defect_repaired_once_and_never_frozen(harness):
+    harness.f.mode = 'digest'
+    result = run(harness)
+    assert result['status'] == 'inconclusive', result
+    assert [(r['reason'], r['field'], r['outcome']) for r in result['evaluation_construction_repairs']] == [
+        ('authored_digest_not_accepted', 'grader_bundles[0].digest', 'repaired')]
+    assert isinstance(result['evaluation_construction_repairs'][0]['elapsed_seconds'], float) and isinstance(result['evaluation_construction_seconds'], float)
+    assert harness.f.roles.count('grader') == 0 or harness.f.roles.index('evaluator_author') < harness.f.roles.index('grader')
+    evaluation = Path(result['output']) / 'preparation/evaluation-0'
+    frozen = json.loads((evaluation / 'manifest.json').read_text())
+    assert all(b['digest'] == digest(evaluation / b['path']) != '0' * 64 for b in frozen['grader_bundles'].values())
 
 
 def test_second_defect_ends_with_the_typed_reason_after_exactly_one_repair(harness):

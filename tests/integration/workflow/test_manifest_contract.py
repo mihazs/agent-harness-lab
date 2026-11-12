@@ -26,6 +26,10 @@ NEW_MANIFEST = '''oracle=evaluation/'oracle'; oracle.mkdir(exist_ok=True)
    grader_bundles={t['id']:{'path':'oracle'} for t in tasks},max_trials=10,budget_seconds=60,no_nested_agents=True)
   mode=(project/'repair-mode').read_text() if (project/'repair-mode').exists() else ''
   seen=evaluation/'.seen'
+  if mode.startswith('digest'):
+   for t in tasks: manifest['grader_bundles'][t['id']]['digest']='0'*64  # the agent's own, wrong algorithm
+  if mode=='digest-all':
+   for ctl in controls: ctl['digest']='f'*64
   if mode=='twice' or mode=='field' and not seen.exists(): manifest.pop('grader_self_tests')
   with (evaluation/'prompts.txt').open('a') as log: log.write(prompt+'\\n=====\\n')
   seen.write_text('1')
@@ -62,12 +66,52 @@ def test_path_only_bundles_complete_the_native_run_with_controller_computed_dige
     assert results['inputs_unchanged'] and results['grader_bundle_digests'], results
 
 
+@pytest.mark.parametrize('mode, ignored', [('digest', 3), ('digest-all', 12)])
+def test_agent_computed_wrong_digests_are_stripped_in_seconds_and_never_reach_the_integrity_check(wf, mode, ignored):
+    (wf.project / 'repair-mode').write_text(mode)
+    args = wf.args()
+    result = improve(args)
+    assert result['status'] == 'inconclusive', result
+    assert result['authored_digest_ignored'] == ignored and 'evaluation_construction_repairs' not in result
+    assert isinstance(result['evaluation_construction_seconds'], float)
+    evaluation = run_dir(args) / 'preparation/evaluation-0'
+    frozen = json.loads((evaluation / 'manifest.json').read_text())
+    assert all(b['digest'] == digest(evaluation / b['path']) for b in frozen['grader_bundles'].values())
+    assert all(c['digest'] == digest(evaluation / c['fixture']) for c in frozen['grader_self_tests'])
+    prompts = (evaluation / 'prompts.txt').read_text()
+    assert prompts.count('=====') == 1  # no second construction pass was needed
+
+
+def test_authored_digest_is_a_typed_fixable_defect_when_checked_without_stripping():
+    for place in (lambda m: m['grader_bundles']['development'], lambda m: m['grader_self_tests'][0]):
+        manifest = minimal(False); place(manifest)['digest'] = 'f' * 64
+        with pytest.raises(contract.ContractError) as caught:
+            contract.check_authored(manifest, stage='evaluation_construction', controller_grader=False)
+        assert (caught.value.reason, caught.value.origin, caught.value.repairable) == ('authored_digest_not_accepted', contract.AGENT, True)
+        assert 'integrity mismatch' not in str(caught.value) and 'Omit' in str(caught.value)
+
+
+def test_authored_digest_stripping_touches_only_digest_fields_and_counts_them():
+    manifest = minimal(False); manifest['grader_bundles']['development']['digest'] = 'a'; manifest['grader_self_tests'][0]['digest'] = 'b'
+    expected = copy.deepcopy(minimal(False))
+    assert contract.strip_authored_digests(manifest) == 2 and manifest == expected
+    assert contract.strip_authored_digests(manifest) == 0
+
+
 def test_agent_supplied_control_digest_never_overrides_the_controller_value(wf):
     path, manifest = synthetic_manifest(wf.root)
     for control in manifest['grader_self_tests']: control['digest'] = 'f' * 64
     path.write_text(json.dumps(manifest))
     validated = validate_manifest(path, None, None, [], base_runner(), lambda: 60, set())
     assert all(c['digest'] == digest(path.parent / c['fixture']) for c in validated['grader_self_tests'])
+
+
+def test_declared_wrong_digest_on_the_bank_replay_validator_is_still_rejected(wf):
+    path, manifest = synthetic_manifest(wf.root, 'bank-case')
+    for declaration in manifest['grader_bundles'].values(): declaration['digest'] = '0' * 64
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='declared grader bundle integrity mismatch'):
+        validate_manifest(path, None, None, [], base_runner(), lambda: 60, set())
 
 
 def test_control_changed_between_author_output_and_validation_is_rejected(wf):
@@ -211,6 +255,12 @@ def test_reason_table_is_complete_typed_and_free_of_exception_text():
             assert part in text
         rendered = summary(dict(status='invalid_input', reason=reason, contract_violation=error.receipt()))
         assert 'Stage: evaluation_construction; file: manifest.json; field: tasks[0].id' in rendered
+    root = Path(contract.__file__).parents[2]
+    table = (root / 'docs/analysis.md').read_text()
+    guide = (root / 'docs/evaluation-manifest-contract.md').read_text()
+    for reason, (_, _, remediation) in contract.REASONS.items():
+        assert f'| `{reason}` | {remediation} |' in table and f'| `{reason}` |' in guide, reason
+        assert 'integrity mismatch' not in remediation  # the old bare sentence never reaches the user from construction
     source = Path(contract.__file__).read_text()
     assert 'str(exc)' not in source and 'repr(exc)' not in source
 
@@ -246,6 +296,19 @@ def test_construction_prompt_and_every_consumer_agree_on_the_authored_fields(wf)
     assert all(field in validated['grader_self_tests'][0] for field in contract.CONTROLLER_FIELDS['control'])
     assert all(field in validated for field in contract.CONTROLLER_FIELDS['manifest'])
     assert manifest  # the minimal manifest is built from AUTHOR_FIELDS alone
+
+
+@pytest.mark.parametrize('controller_grader', [True, False])
+def test_prompt_never_lists_a_controller_owned_field_as_writable(controller_grader):
+    text = contract.contract_text(controller_grader=controller_grader)
+    writable, owned = text.split('The controller owns')
+    owned_fields = [f for kind, fields in contract.CONTROLLER_FIELDS.items() for f in fields if kind != 'manifest']
+    for field in set(owned_fields) | set(contract.CONTROLLER_FIELDS['manifest']):
+        if field == 'grader' and not controller_grader: continue  # host-grader runs author the grader argv
+        assert field not in writable.replace('grader_', '').replace('_grader', ''), field
+    assert all(f in owned for f in ('control.digest', 'bundle.digest')) and 'Omit every digest' in owned
+    # Every digest field a validator strips or rejects is marked controller-owned in the same table.
+    assert {'digest'} <= set(contract.CONTROLLER_FIELDS['bundle']) & set(contract.CONTROLLER_FIELDS['control'])
 
 
 @pytest.mark.parametrize('raised, expected', [

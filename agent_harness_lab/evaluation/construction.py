@@ -3,6 +3,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 import shutil
+import time
 from .integrity import contained, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
 from .working_state import WorkingState, analysis_snapshot, check_deadline
@@ -149,6 +150,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
     if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    started=time.monotonic()
     state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
@@ -157,7 +159,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     except ContractError as error:
         if not error.repairable or not repair_allowed or repairs:raise
         # One bounded repair pass in the same workspace and budget; the typed reason is recorded in the receipt.
-        repairs.append(dict(error.receipt(),attempt=1,outcome='requested'))
+        repairs.append(dict(error.receipt(),attempt=1,outcome='requested',elapsed_seconds=round(time.monotonic()-started,1)))
         workspace=state.publish(workspace.with_name(workspace.name+'-repair'),deadline)  # seed the repair with the rejected output
         state,more = run_role(client,backend,workspace,inputs,'evaluator_author',
             instructions,prompt+'\n'+error.repair_instruction(),deadline)
