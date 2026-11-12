@@ -3851,8 +3851,8 @@ billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
 numbers, deep nesting, duplicate case names, commit-identity validation and CLI
 journals that hold hashes only. Still open in #53: artifact download or zip
-handling; TAP, SARIF, coverage and lint reports; and expired-artifact coverage
-warnings from a live read.
+handling; TAP, coverage and lint reports; and expired-artifact coverage warnings
+from a live read.
 
 ### Joining test results to Actions jobs
 
@@ -3886,6 +3886,84 @@ in two reports keeps one origin per report. Reruns stay correlated replicates
 a model caused it. Warnings from both sides, including the unread logs, artifacts and
 annotations, stay in the report, and `capture_completeness` is `partial`.
 `task test:sources:test-results` runs the synthetic controls.
+
+## Offline SARIF quality and security reports
+
+Select `local_file/quality-reports/v1` in the existing local source declaration,
+with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
+ "reports": [{"path": "reports/analysis.sarif", "format": "sarif"}],
+ "limits": {"max_findings": 5000}}
+```
+
+This is a separate provider from `test-results`, so static-analysis and security
+findings never share a status vocabulary, record type or outcome with test cases.
+The scope fingerprint must equal `digest(selection)`; the commit, paths and limits
+are part of it, and the commit, path and `limits` rules are those of the
+[test result reports](#offline-ci-test-result-reports). `QualityReportsExport`
+reads only the selected files, with no discovery, network, analyzer execution or
+URL fetch. A report URI, `$schema` or rule help link is hashed or ignored, never
+opened. A run carrying `externalPropertyFileReferences` is quarantined: the
+whole report is refused as `HostileReport` and nothing from it is imported.
+
+Only SARIF 2.1.0 is read. Each result of each run becomes one `quality_finding`
+development-artifact record and each report one `quality_report` record, both with
+no outcome metadata (source record schema 1), so a finding can never be a test
+success or failure, and `validate_outcome_source` already refuses outcomes from
+this provider. A finding keeps three fingerprints beside the report's: the tool
+(driver name and version), the rule (`ruleId` or `rule.id`) and the finding itself
+(tool, rule and the first location's URI and start line), plus an occurrence index
+for repeated identities (`duplicate_finding_identity`). Messages, code flows,
+fixes, snippets and URIs are not stored or printed; journals and previews hold
+hashes and counts.
+
+SARIF's own words stay separate and unmerged:
+
+| Field | Values |
+| --- | --- |
+| `level` | `error`, `warning`, `note`, `none`, or `unknown` when absent (`level_not_stated`), unrecognized (`unrecognized_level`) or contradicting a non-`fail` kind (`conflicting_result_kind`) |
+| `kind` | `fail` (the SARIF default), `pass`, `open`, `review`, `notApplicable`, `informational`; any other value is refused |
+| `suppression` | `declared` when `suppressions` is non-empty, else `none`; the suppression status is not interpreted (`suppression_status_not_interpreted`) |
+
+The level is not resolved through rule configuration, and a suppressed result is
+neither dropped nor counted as fixed. An empty or missing `results` list is not a
+clean bill: a report with no findings adds `no_findings_is_not_clean`; a run whose
+invocations report `executionSuccessful: false` adds
+`tool_execution_failure_reported`, and one that never states success adds
+`tool_execution_success_unstated`. Missing coverage, such as files the tool did
+not scan, is not knowable from the log.
+
+Findings are evidence about the declared commit only. Every one carries
+`commit_binding: caller_declared`, `commit_verified: false` and
+`outcome_scope: declared_commit_quality_evidence`; records keep causal status and
+independence `unknown`. A finding does not say a model caused it, and the absence
+of findings does not say a task was met. The preview `quality_reports_summary`
+reports level and kind counts, `suppressed`, warnings and `task_outcomes_verified`,
+`verification_authorized`, `execution_authorized`, `scripts_executed`,
+`publication_allowed` and `network_used`, all `false`, with profile
+`ci-quality-reports-v1`, which `public_export_allowed` rejects.
+
+Reports are decoded by the shared hardened JSON loader described for pytest JSON:
+duplicate keys, `NaN` and `Infinity`, nesting, container and scalar bounds are
+checked before records are made. `limits` may only lower these ceilings:
+
+| Limit | Ceiling |
+| --- | --- |
+| `max_reports` | 64 |
+| `max_report_bytes` | 16 MiB |
+| `max_findings` | 100,000 across all reports |
+| `max_json_depth` | 64 |
+| `max_json_containers` | 1,000,000 |
+| `max_json_values` | 2,500,000 |
+
+Not covered here: joining findings to Actions jobs, SARIF taxonomies, rule
+metadata and result fingerprints, and any live read of code-scanning alerts.
+`task test:sources:test-results` runs the synthetic controls: level and kind
+mapping, malformed and contradictory results, external references, hostile
+nesting and size bounds, commit-identity validation, changed-during-capture and
+CLI journals that hold hashes only.
 
 ## Offline MemPalace drawer result
 

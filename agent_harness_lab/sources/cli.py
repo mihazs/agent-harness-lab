@@ -9,6 +9,7 @@ from .snapshot import LocalExport
 from .okf import MissingOKFDependency, OKFExport
 from .store import SourceStore
 from .git import GitExport
+from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
 from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
 from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
@@ -65,7 +66,7 @@ def main(argv):
         'preview reads selected data without importing it; import writes a cache checkpoint; status reads cache metadata; '
         'recheck compares the selected source with its cache. Preview/import/recheck can contact a provider when the manifest selects an API source. '
         'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
-        'Local providers include ahl-metadata, ai-memory-okf, git, test-results, claude-jsonl, codex-rollout, '
+        'Local providers include ahl-metadata, ai-memory-okf, git, test-results, quality-reports (selected SARIF 2.1.0 logs), claude-jsonl, codex-rollout, '
         'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network), '
         'mem0-oss-export (one selected Mem0 OSS v2.2.1 get_all/history JSON export; no server, Platform or network), '
         'mem0-platform-export (one selected Mem0 Platform v3 get-all page sequence plus history JSON export; no API call or network), '
@@ -113,6 +114,8 @@ def main(argv):
                 connector = GitExport(args.manifest)
             elif source.provider == TEST_RESULTS:
                 connector = TestResultsExport(args.manifest)
+            elif source.provider == QUALITY_REPORTS:
+                connector = QualityReportsExport(args.manifest)
             elif source.provider == CLAUDE_MEM:
                 connector = ClaudeMemExport(args.manifest)
             elif source.provider == MEMPALACE_KG:
@@ -155,6 +158,7 @@ def main(argv):
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             registry.register(Capability('local_file', TEST_RESULTS, TEST_RESULTS_VERSION, ('development_artifact',)), connector)
+            registry.register(Capability('local_file', QUALITY_REPORTS, QUALITY_REPORTS_VERSION, ('development_artifact',)), connector)
             registry.register(Capability('local_file', CLAUDE_MEM, CLAUDE_MEM_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE_KG, MEMPALACE_KG_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE_SEARCH, MEMPALACE_SEARCH_VERSION, ('contextual_assertion',)), connector)
@@ -199,6 +203,8 @@ def main(argv):
                     result['git_summary'] = connector.summary
                 elif isinstance(connector, TestResultsExport):
                     result['test_results_summary'] = connector.summary
+                elif isinstance(connector, QualityReportsExport):
+                    result['quality_reports_summary'] = connector.summary
                 elif isinstance(connector, ClaudeMemExport):
                     result['claude_mem_summary'] = connector.summary
                 elif isinstance(connector, MemPalaceKnowledgeGraph):
