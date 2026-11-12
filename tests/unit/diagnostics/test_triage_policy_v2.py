@@ -397,7 +397,8 @@ def test_v5_keeps_v4_role_and_model_refusals():
 
 
 def _v6_policy(**changes):
-    return policy(model_sha256=sha('synthetic-model'), corpus_sha256=sha('synthetic-corpus'), min_calibration_roots=3, **changes)
+    scope = dict(model_sha256=sha('synthetic-model'), corpus_sha256=sha('synthetic-corpus'), min_calibration_roots=3)
+    return policy(**{**scope, **changes})
 
 
 def _v6_rows(items):
