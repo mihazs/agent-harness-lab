@@ -28,10 +28,11 @@ Both routes take the same options and return the same receipt shape and exit cod
   file modification time, not by the time of each event.
 - `--session ID` keeps only the exact session UUID: a Claude session (its main and subagent
   transcripts) or a Codex thread; it combines with `--since`. A session recorded
-  by a runtime version other than the pinned profile is still read descriptively,
-  is marked `pin_compatibility: unverified` (as is every default-discovery parse) and adds the
+  by a Claude Code release inside the fixture-verified range is read by the verified adapter
+  and counts as `pin_compatibility: declared_range`; a session outside it is still read
+  descriptively, is marked `unverified` and adds the
   `capture_version_differs_from_pin` caveat and `capture_reasons` entry to the
-  receipt (observed and pinned versions only). A session that matches nothing
+  receipt (observed and verified versions only). A session that matches nothing
   stops with `history_no_matching_sessions`.
 - `--source native` (the default) reads both runtimes; `--source codex` or
   `--source claude` narrows the same discovery to that runtime's sessions. When the
@@ -44,7 +45,7 @@ Both routes take the same options and return the same receipt shape and exit cod
 ## Read the result
 
 The receipt and the private `analysis.json` carry a `history` object with
-`sessions_captured`, `session_selected`, `pin_compatibility` counts, `capture_reasons`, `events`, `cases`, `scope`, `since` and an `unknown` list.
+`sessions_captured`, `session_selected`, `pin_compatibility` counts (`declared_range` and `unverified`), `capture_reasons`, `runtime_lag` (only when a recorded release is newer than the newest verified one: counts per version and the exact next step), `events`, `cases`, `scope`, `since` and an `unknown` list.
 Capture completeness and recurrence outside the captured sessions are always
 listed as unknown; a repeated pattern is reported only when it was observed in
 the captured sessions. The object holds counts only, no paths or message bodies.

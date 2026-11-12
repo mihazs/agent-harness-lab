@@ -27,14 +27,16 @@ def observed_version(value):
     return value if isinstance(value, str) and re.fullmatch(r'[0-9]{1,6}(\.[0-9]{1,6}){1,3}', value) else 'unrecognized'
 
 
-def capture_counts(parsed, reasons):
+def capture_counts(parsed, reasons, declared_range=0):
     """Selected = parsed + skipped; every skipped capture carries a typed reason (counts only).
 
-    Parsed captures match the pin exactly (no runtime range is declared); a differing release is never parsed.
+    Parsed captures match the pin exactly or sit in a fixture-verified declared range (declared_range of them);
+    a release outside both is never parsed.
     """
     skipped = sum(reasons.values())
     return dict(selected=parsed+skipped, parsed=parsed, skipped=skipped, skipped_reasons=dict(sorted(reasons.items())),
-        pin_compatibility=dict(exact=parsed, declared_range=0, unverified=reasons.get('capture_version_differs_from_pin', 0)))
+        pin_compatibility=dict(exact=parsed-declared_range, declared_range=declared_range,
+            unverified=reasons.get('capture_version_differs_from_pin', 0)))
 
 
 def invalid_constant(_): raise ValueError('nonfinite native JSON is unsupported')

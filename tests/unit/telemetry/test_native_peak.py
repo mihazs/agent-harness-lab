@@ -15,13 +15,14 @@ STAMP = '2026-01-01T00:00:00Z'
 SESSIONS = tuple(f'00000000-0000-4000-8000-00000000000{n}' for n in range(1, 5))
 # Never created: telemetry readers only compare it with declared cwd values, so digests are path-independent.
 FIXED_PROJECT = Path('/ahl-synthetic/project')
-# Computed by the implementation before rows were drained (commit d64c0e7) from fixture(..., CALLS).
+# Computed by the implementation before rows were drained (commit d64c0e7) from fixture(..., CALLS). The Claude entries were
+# refreshed when its summaries gained typed skipped-entry and version fields; its event records hash the same as before.
 CALLS = 300
 EXPECTED = {
     'codex_read': '0d68b2a1b4c1b012303da05a794b791970445857af8723d2baf05fc1207f0d85',
-    'claude_read': 'db2e68e46b8095370dcafbfab65c87d058684b31a63d6768ef19a7e93a9fdc4c',
+    'claude_read': '0053dffe38b7a1ed3b1ba8082c6a6b77af788681ecc0a1747dc6ca6cd73d2234',
     'codex_discovery': 'b0a1406ea7cdb2cee174d39a63a5826d0b45efe49a7935714179f8240a3b811a',
-    'claude_discovery': '45aa7b5925f2e09ae34b2f8fe62f49f1c56520ce50a27cca4e49a21153ba9a49',
+    'claude_discovery': 'ecdfacd67d3a23ccf17db3255350d0b1d6959457b5ee5004782bcdcf699e3b81',
 }
 
 

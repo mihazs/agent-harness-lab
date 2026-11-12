@@ -8,8 +8,12 @@ selected bank's schema and manifest digest. It never reads fixture or oracle
 bodies: `bank_contents` remains `not_checked`. An explicit bank audit or evaluation
 still requires full content integrity verification. Metadata-only validation
 cannot make a bank eligible for certification.
-It does not run an agent, inspect authentication/session files, execute hooks,
-connect to services or change the project. Human output names prerequisites and
+It does not run an agent, inspect authentication files, execute hooks,
+connect to services or change the project. The one session read is the
+`claude_runtime_lag` check (non-required, `warn` only): under every profile,
+including `offline`, it opens the project's Claude Code session transcripts in
+`CLAUDE_CONFIG_DIR` (default `~/.claude`) `projects`, at most 200 files, stops at the
+first attributable header row of each, and keeps dotted version strings only. Human output names prerequisites and
 safe remediations. Versioned JSON checks contain ID, status, profile requirement,
 evidence kind, bounded observed value, remediation and capability version.
 Statuses are `pass`, `warn`, `blocked`, `unknown` and `not_checked`. Exit 0 means

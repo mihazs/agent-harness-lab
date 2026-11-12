@@ -45,6 +45,11 @@ def main(argv):
     if argv and argv[0] == 'inventory':
         from .harness_inventory import main as inventory_main
         return inventory_main(argv[1:])
+    if argv and argv[0] == 'claude':
+        if argv[1:2] != ['pin-check']:
+            print('usage: ahl sources claude pin-check --events FILE [--emit-skeleton PATH]', file=sys.stderr); return 2
+        from agent_harness_lab.telemetry.claude_contract import main as pin_check
+        return pin_check(argv[2:])
     if argv and argv[0] == 'github':
         from .github_quota import main as quota_main
         return quota_main(argv[1:])
@@ -68,7 +73,8 @@ def main(argv):
         'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
         'For reviewed cache relationships, use ahl sources lineage --help; for a read-only harness surface '
-        'inventory of one checkout, use ahl sources inventory --help.')
+        'inventory of one checkout, use ahl sources inventory --help. To compare a Claude Code capture with the verified profile contract by field name only, '
+        'use ahl sources claude pin-check --help.')
     parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory'),
         help='Requested source operation (default: %(default)s); lineage and inventory have their own options and help')
     parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')

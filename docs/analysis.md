@@ -363,7 +363,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
-| `capture_version_differs_from_pin` | Selected captures were recorded by a runtime version other than the pinned profile and were not parsed; the pin is exact and declares no range. Rerun without --source-root for descriptive, unverified project-filtered discovery, or use an adapter pin verified for that version. |
+| `capture_version_differs_from_pin` | Selected captures were recorded by a runtime version outside the fixture-verified declared range and were not parsed with the verified adapter. Rerun without --source-root for descriptive, unverified project-filtered discovery, or verify that release: run ahl sources claude pin-check --events FILE on one capture, then add its contract fixture and extend the range. |
 | `certification_prerequisites_unverified` | Verify the certification prerequisites before drawing a conclusion. |
 | `codex_credentials_unavailable` | Authenticate the selected runtime before requesting model execution. |
 | `configuration_changed_before_execution` | Review the changed configuration before retrying. |

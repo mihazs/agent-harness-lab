@@ -16,9 +16,10 @@ from tests.unit.telemetry import test_native_peak as peak
 
 VERSION = 'claude-jsonl-2.1.316'
 PROFILE = 'claude-native-order-v1'
-# Computed by the implementation before declared source order existed (8350dce) from fixture.outputs.
-BASE = {'read': '131eba0a4973954193b352917bc2559ec6fe1297ab539f012c79bdbed7f889d8',
-        'discovery': 'ed247dbcc766853828689bc2319de45c356a52b23ef899e242eb4c6431d8ed10'}
+# Fingerprints of the event records only (summaries gained typed skipped-entry and version fields with the declared range).
+# Computed on the implementation that preceded the declared range; the records did not change.
+BASE = {'read': '45235eb2c2454e2bea011eeea4059e49c32ce705748fa5c0efe0d6a68780ae3a',
+        'discovery': 'ce4da3ff52db2d3fbd96590951343d1081c4abf354962666b7b2850c1dc0975e'}
 
 
 def strip(row): return {key: value for key, value in row.items() if key not in SOURCE_ORDER}
@@ -65,7 +66,7 @@ class TestClaudeSourceOrder:
         # peak.fingerprint omits only the declared source-order fields, so values, keys and record order stay pinned.
         outputs = fixture.outputs(tmp_path_factory.mktemp('base-outputs'), fixture.FIXED_PROJECT)
         assert all('source_order_profile' in row for row in outputs['read'][0])
-        assert {name: peak.fingerprint(value) for name, value in outputs.items()} == BASE
+        assert {name: peak.fingerprint(value[0]) for name, value in outputs.items()} == BASE
 
     def test_multi_block_records_and_response_facets_get_declared_within_line_subordinals(self):
         rows = self.read()

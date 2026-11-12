@@ -223,6 +223,12 @@ def _missing(data, mechanisms, agent, signals, artifact_bounds):
         rows.append(dict(id='tool_name_capture', what='Some events lack a tool name.',
                          command='ahl analyze . --format claude --source-version claude-jsonl-2.1.316 --source-root <claude-projects-dir>',
                          unlocks='per-tool mechanism summaries'))
+    lacking = (adapter_evidence(data.get('sources', [])) or {}).get('attributable_to_descriptive_adapter') or {}
+    if lacking.get('cases_without_declared_order') or lacking.get('tool_events_without_name'):
+        rows.append(dict(id='verified_adapter', what='%d case(s) lack a declared event order and %d tool event(s) lack a tool name because the descriptive, unverified adapter read them.'
+                         % (lacking['cases_without_declared_order'], lacking['tool_events_without_name']),
+                         command='ahl sources claude pin-check --events <capture.jsonl>',
+                         unlocks='ordered events with tool names from a verified adapter, so a repair is not blocked as evidence_insufficient'))
     if inputs.get('missing_observation_signature_cases'):
         rows.append(dict(id='call_signatures', what='Cases lack complete tool, input, result and state signatures.',
                          command='ahl analyze . --events <normalized-events.jsonl> --format normalized',
@@ -242,6 +248,23 @@ def _missing(data, mechanisms, agent, signals, artifact_bounds):
         rows.append(dict(id='targeted_probe', what='A recurring pattern exists without outcome evidence; a targeted run can test one repair.',
                          command=f'ahl improve . --agent {agent} --focus "recurring {focus} tool errors"', unlocks='a paired evaluation of one candidate'))
     return rows
+
+
+def adapter_evidence(sources):
+    """Which adapter produced each Claude or Codex capture, and the cases lacking order or tool names because it was descriptive."""
+    produced, lacking = {}, dict(cases=0, cases_without_declared_order=0, tool_events=0, tool_events_without_name=0)
+    for row in sources:
+        if row.get('format') not in ('codex', 'claude'): continue
+        adapter = row.get('adapter', 'unknown')
+        produced[adapter] = produced.get(adapter, 0) + 1
+        # Codex default discovery is always descriptive and is not a Claude release gap, so only Claude captures are attributed.
+        if adapter == 'descriptive_unverified' and row['format'] == 'claude':
+            for key in lacking: lacking[key] += row.get('adapter_evidence', {}).get(key, 0)
+    if not produced: return None
+    descriptive = any(r.get('format') == 'claude' and r.get('adapter') == 'descriptive_unverified' for r in sources)
+    return dict(captures_by_adapter=dict(sorted(produced.items())), attributable_to_descriptive_adapter=lacking if descriptive else None,
+        unlock='Use a verified adapter: the verified Claude range reads default discovery directly; for a release outside it, run '
+               '`ahl sources claude pin-check --events <capture.jsonl>` and add its contract fixture.' if descriptive else None)
 
 
 def _next_steps(brief, output):
@@ -275,6 +298,7 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
                                incomplete=bool(data.get('caveats')), caveats=len(data.get('caveats', [])),
                                verified_outcomes=len(data.get('evaluation_outcomes', [])), exclusions=exclusions),
                  methods=methods, mechanisms=mechanisms,
+                 adapters=adapter_evidence(data.get('sources', [])),
                  weak_outcome_signals=_signals(result['signals']),
                  missing_evidence=_missing(data, mechanisms, agent, result['signals'], artifact_bounds),
                  sources=dict(brief='analysis-brief.json', private_summaries='mechanism-summaries.json', raw='analysis.json'),
