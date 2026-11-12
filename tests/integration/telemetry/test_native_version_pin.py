@@ -65,11 +65,35 @@ class TestNativeVersionPin:
         explicit, default = self.explicit(), self.default()
         discovery = explicit['sources'][0]['native_coverage']['discovery']
         assert discovery['capture_counts']['selected'] == len(default['sources']) == 3
-        assert discovery['capture_counts']['parsed'] == sum(s['pin_compatibility'] == 'exact' for s in default['sources']) == 1
-        assert sum(s['pin_compatibility'] == 'unverified' for s in default['sources']) == discovery['version_mismatch_files'] == 2
+        assert discovery['capture_counts']['parsed'] == 1 and discovery['version_mismatch_files'] == 2
+        assert {s['pin_compatibility'] for s in default['sources']} == {'unverified'}  # descriptive parse, no pinned contract
         for session in (PINNED, PATCH):
             narrowed = self.explicit(session=session)['sources'][0]['native_coverage']['discovery']['capture_counts']['selected']
             assert narrowed == len(self.default(history_session=session)['sources']) == 1
+
+    def test_a_foreign_project_capture_in_a_selected_directory_is_foreign_whatever_its_version(self):
+        foreign = '00000000-0000-4000-8000-0000000000aa'
+        rows = deepcopy(self.f.rows)
+        for row in rows:
+            if 'sessionId' in row: row.update(sessionId=foreign, version='2.2.0', cwd=str(self.project.resolve())+'-other')
+        (self.projects/self.name/(foreign+'.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in rows))
+        discovery = self.explicit()['sources'][0]['native_coverage']['discovery']
+        assert discovery['capture_counts']['selected'] == 3 and discovery['foreign_files'] == 1
+        assert discovery['observed_versions'] == {'2.1.317': 1, '2.2.0': 1}
+        assert len(self.default()['sources']) == 3
+
+    def test_history_session_selects_exactly_one_uuid(self):
+        sub = self.projects/self.name/PINNED/'subagents'; sub.mkdir(parents=True)
+        (sub/'agent-x.jsonl').write_text('')
+        from agent_harness_lab.evidence import _in_session
+        top = self.projects/self.name/(PINNED+'.jsonl')
+        assert _in_session(top, 'claude', PINNED) and _in_session(sub/'agent-x.jsonl', 'claude', PINNED)
+        for bad in ('projects', 'subagents', self.name, PINNED[-12:], PATCH):
+            assert not _in_session(top, 'claude', bad) and not _in_session(sub/'agent-x.jsonl', 'claude', bad)
+        rollout = self.projects/('rollout-2026-01-01T00-00-00-'+PINNED+'.jsonl')
+        assert _in_session(rollout, 'codex', PINNED) and not _in_session(rollout, 'codex', PINNED[-12:]) and not _in_session(rollout, 'codex', PATCH)
+        for bad in ('projects', PINNED[-12:]):
+            with pytest.raises(ValueError): prepare(Namespace(history=True, since=None, history_source=None, events=None, source_root=None, session=bad))
 
     def test_history_session_reports_the_same_typed_reason_and_unmatched_sessions_select_nothing(self):
         assert self.default(history_session=PINNED)['capture_reasons'] == []

@@ -96,6 +96,7 @@ def scope(folder, name, project, expected, limits, versions=None):
             except (ValueError, RecursionError): return 'unknown', 'invalid_native_record', None
             if not isinstance(row, dict): return 'unknown', 'invalid_native_record', None
             if row.get('type') not in ENTRY_TYPES or 'cwd' not in row or 'sessionId' not in row: continue
+            if isinstance(row['cwd'], str) and row['cwd'] and Path(row['cwd']) != project: return 'rejected', 'foreign_project', None
             version = row.get('version')
             if version != RUNTIME_VERSION:
                 if not isinstance(version, str): return 'unknown', 'unsupported_native_version', None
@@ -103,7 +104,6 @@ def scope(folder, name, project, expected, limits, versions=None):
                 if versions is not None: versions[observed_version(version)] += 1
                 return 'unknown', 'capture_version_differs_from_pin', None
             if not isinstance(row['cwd'], str) or not row['cwd']: return 'unknown', 'native_scope_unavailable', None
-            if Path(row['cwd']) != project: return 'rejected', 'foreign_project', None
             try: Projection(project, None, folder.check).add(row, 0)
             except (ValueError, TypeError): return 'unknown', 'unsupported_native_envelope', None
             owner, sidechain, agent = expected

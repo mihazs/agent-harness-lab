@@ -85,9 +85,14 @@ def _owned(path, project, caveats, tick=None):
 
 
 def _in_session(path, fmt, session):
-    """Exact session file names of the documented layouts: Claude <uuid>.jsonl and <uuid>/subagents/*, Codex rollout-*-<id>.jsonl."""
-    if fmt == 'codex': return path.stem.endswith('-' + session)
-    return path.stem == session or session in path.parent.parts
+    """Exact session UUID of the documented layouts: Claude <uuid>.jsonl and <uuid>/subagents/*, Codex rollout-*-<uuid>.jsonl."""
+    from .telemetry.claude_discovery import SESSION
+    if not SESSION.match(session): return False
+    session = session.lower()
+    stem = path.stem.lower()
+    if fmt == 'codex': return stem.startswith('rollout-') and stem.endswith('-' + session) and SESSION.match(stem[-36:]) is not None
+    parts = [part.lower() for part in path.parent.parts]
+    return stem == session or any(a == session and b == 'subagents' for a, b in zip(parts, parts[1:]))
 
 
 def _capture_candidates(root):
@@ -327,10 +332,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 yield event
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
             if not pinned and fmt in ('codex', 'claude'):
-                # Compatibility of the recorded release with the pin; this unpinned parse stays descriptive either way.
+                # No pinned contract reads this parse, so it is never `exact`; a release other than the pin is also typed.
                 pin = CLAUDE_RUNTIME_VERSION if fmt == 'claude' else CODEX_RUNTIME_VERSION
-                source['pin_compatibility'] = 'exact' if versions == {pin} else 'unverified'
-                if history_session is not None and source['pin_compatibility'] == 'unverified':
+                source['pin_compatibility'] = 'unverified'
+                if history_session is not None and versions != {pin}:
                     from .telemetry.native import observed_version
                     seen = {observed_version(v): 1 for v in versions} or {'unrecognized': 1}
                     reasons.append(dict(reason='capture_version_differs_from_pin', captures=1, observed_versions=seen, pinned_version=pin))

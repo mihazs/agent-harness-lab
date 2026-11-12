@@ -13,8 +13,8 @@ def prepare(args):
         return
     if args.events is not None or args.source_root is not None:
         raise ValueError('--history selects the project session store; drop --events/--source-root, or drop --history')
-    if args.session is not None and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', args.session):
-        raise ValueError('--session must be an exact native Codex thread ID or Claude session UUID')
+    if args.session is not None and not re.fullmatch(r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', args.session):
+        raise ValueError('--session must be an exact native Codex thread or Claude session UUID')
     if args.since not in (None, 'first'):
         try:
             moment = datetime.fromisoformat(args.since)

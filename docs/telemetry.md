@@ -526,15 +526,15 @@ Each source records `pin_compatibility`:
 
 | Value | Meaning |
 | --- | --- |
-| `exact` | Every parsed capture recorded the pinned version and was read with the pinned adapter. |
+| `exact` | Every parsed capture recorded the pinned version and was read with the pinned adapter. Default discovery never reports it. |
 | `declared_range` | Reserved: the version lies in a range verified by contract fixtures. No profile declares one yet. |
-| `unverified` | No capture was parsed under the pin (explicit selection of only differing releases), or default discovery parsed the capture without the pinned contract. Findings stay descriptive observed patterns. |
+| `unverified` | No capture was parsed under the pin (explicit selection of only differing releases), or default discovery parsed the capture with the descriptive adapter, whatever version it recorded. Findings stay descriptive observed patterns. |
 
 Explicit `--source-root` selection and default project-filtered discovery select
 the same project captures: both identify a project by the recorded working
 directory, not by the sanitized directory name. They differ in one respect, and it
-is reported rather than silent: default discovery parses a differing release
-descriptively (`unverified`), while the pinned explicit path skips it. The
+is reported rather than silent: default discovery parses every capture
+descriptively (`unverified`, even at the pinned version), while the pinned explicit path skips a differing release. The
 `discovery.capture_counts` object lists `selected`, `parsed` and `skipped` captures
 and `skipped_reasons`; `selected = parsed + skipped`, so no capture is dropped
 without a reason.

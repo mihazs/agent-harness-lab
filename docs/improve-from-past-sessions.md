@@ -25,10 +25,10 @@ Both routes take the same options and return the same receipt shape and exit cod
   earliest available session is included. `--since DATE` keeps capture files
   modified on or after an ISO 8601 date (UTC when it has no offset). It filters by
   file modification time, not by the time of each event.
-- `--session ID` keeps only the exact Claude session UUID (its main and subagent
-  transcripts) or Codex thread ID; it combines with `--since`. A session recorded
+- `--session ID` keeps only the exact session UUID: a Claude session (its main and subagent
+  transcripts) or a Codex thread; it combines with `--since`. A session recorded
   by a runtime version other than the pinned profile is still read descriptively,
-  is marked `pin_compatibility: unverified` and adds the
+  is marked `pin_compatibility: unverified` (as is every default-discovery parse) and adds the
   `capture_version_differs_from_pin` caveat and `capture_reasons` entry to the
   receipt (observed and pinned versions only). A session that matches nothing
   stops with `history_no_matching_sessions`.
