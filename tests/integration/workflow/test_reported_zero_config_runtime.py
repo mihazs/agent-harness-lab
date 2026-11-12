@@ -231,3 +231,17 @@ def test_new_regression_tests_contain_no_real_project_data():
                  'tests/integration/diagnostics/test_reported_actionable_analysis.py'):
         text = (ROOT/name).read_text()
         assert not [pattern for pattern in forbidden if re.search(pattern, text)], name
+
+
+def test_cost_and_authorization_preview_precedes_charged_work_and_never_appears_when_blocked(world):
+    world.install('claude', 'codex')
+    code, receipt, run, err = world.run(['skills', 'invoke'])
+    assert receipt['status'] == 'blocked' and 'ahl: preview' not in err
+    assert 'cost_preview' not in json.loads((run/'invocation.json').read_text()) or json.loads((run/'invocation.json').read_text())['cost_preview'] is None
+    code, receipt, run, err = world.run(['skills', 'invoke'], '--agent', 'codex')
+    line = next(line for line in err.splitlines() if line.startswith('ahl: preview '))
+    assert 'runtime=codex' in line and 'max_seconds=10' in line and 'max_trials=' in line
+    assert 'model_cost="unknown' in line and 'authorizes the bounded default workflow' in line
+    recorded = json.loads((run/'invocation.json').read_text())['cost_preview']
+    assert (recorded['runtime'], recorded['max_seconds']) == ('codex', 10) and recorded['model_cost'].startswith('unknown')
+    assert err.index('ahl: preview') < err.index('ahl: outcome=')

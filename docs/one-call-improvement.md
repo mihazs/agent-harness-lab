@@ -123,6 +123,11 @@ project banks, invalid or unavailable banks, stale bank digests, ambiguous runti
 budgets stop before inference, each with its own `reason` and a matching one-step
 `remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
+Once preflight passes and before any model dispatch, the CLI writes one `ahl: preview` line to
+stderr with the runtime, harness scope, the time and trial ceilings, the authorization statement and
+`model_cost="unknown..."`: model usage is billed by the runtime provider, AHL does not measure tokens or
+money, and the ceilings bound time and trials, not spend. A blocked run prints no preview. Skill
+invocations also record the same `cost_preview` in `invocation.json`.
 On completion, improve writes its structured receipt to stdout and a concise
 outcome summary to stderr. The summary includes the reported changed-file count,
 artifact directory when available, a next step, and elapsed time. Once a
