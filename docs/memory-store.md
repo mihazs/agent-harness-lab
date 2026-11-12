@@ -1,6 +1,6 @@
 # Private memory store
 
-[Command overview](command-reference.md) · [Evidence reuse contract matrix](memory-reuse-contract-matrix.md) · [Why reuse is split by authority](memory-reuse-rationale.md)
+[Command overview](command-reference.md) · [Evidence reuse contract matrix](memory-reuse-contract-matrix.md) · [Why reuse is split by authority](memory-reuse-rationale.md) · [Stage reuse planner](stage-reuse-planner.md)
 
 `ahl memory` manages an opt-in, local evidence store. Immutable, hash-addressed
 objects are authoritative; a SQLite index is derived from them and can always be
