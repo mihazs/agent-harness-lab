@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.172.0
+
+### Minor Changes
+
+- 97f065e: Verify the installed artifact, not only the source tree (part of #685). Tests now build the release archive with `scripts/build_release.py`, install it with the bundled installer into a temporary prefix and run the reported zero-config, `--history`, size-capped brief, no-change disposition and state-home scenarios through the installed launcher with stub runtimes; `task release:verify` runs the same scenarios against the downloaded published archive. `ahl doctor` reports, offline, where the launcher and global skill links resolve and warns with the exact fix (`ahl update`) when their releases differ or the launcher is older than the minimum `ahl` version a skill declares; `ahl update --check` compares with the latest published release without downloading or changing anything. `task test:pins` (`scripts/check_pins.py`) requires each `fixed-in:` regression pin to fail on the unfixed parent commit, and `task test:runtime-contracts` adds opt-in, zero-model-call probes of the real `claude` and `codex` CLIs that are reported as skipped by default.
+
 ## 0.171.1
 
 ### Patch Changes
