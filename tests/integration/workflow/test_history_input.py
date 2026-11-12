@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness_lab import cli
+from agent_harness_lab import cli, entry_parity
 from agent_harness_lab.exit_guidance import REMEDIATION
 
 DAY = 86400
@@ -128,7 +128,8 @@ def test_receipts_match_across_entry_routes(store):
     for prefix in (('improve',), ('skills', 'invoke')):
         code, result, _ = store.improve('--history', '--source', 'ai-memory', prefix=prefix)
         result.pop('output'); results.append((code, result))
-    assert results[0] == results[1]
+    assert entry_parity.document_differences('workflow.json', results[0][1], results[1][1], '<cli>', '<skill>') == []  # timings may differ
+    assert results[0][0] == results[1][0]
 
 
 @pytest.mark.parametrize('args', [('--since', 'first'), ('--source', 'native'), ('--history', '--since', 'not-a-date'),

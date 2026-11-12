@@ -15,7 +15,6 @@ import time
 import uuid
 
 from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces
-from agent_harness_lab.budget_stages import now
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
@@ -27,6 +26,11 @@ from agent_harness_lab.monitoring import state as checkpoint_state
 
 MAX_FILES = 1000
 MAX_BYTES = 10 * 1024 * 1024
+
+
+def now():
+    """The budget clock (monotonic seconds); tests replace this seam, or time.monotonic, to drive stage overruns without sleeping."""
+    return time.monotonic()
 
 
 def state_root():
@@ -842,7 +846,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
-            compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            with stages.charge('trials'): compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
             check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
@@ -1202,7 +1206,7 @@ def _run_improvement(args, *, parent_started=None):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started
-    args._stages=budget_stages.Stages(args.timeout, started, getattr(args, 'construction_fraction', None))
+    args._stages=budget_stages.Stages(args.timeout, started, getattr(args, 'construction_fraction', None), now)
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
@@ -1303,8 +1307,8 @@ def construction_receipt(result, args):
     if stages is None:  # a result that ended before the run built its ledger still states the budget and where it stands
         timeout = getattr(args, 'timeout', None)
         if type(timeout) not in (int, float) or timeout <= 0: return
-        try: stages = budget_stages.Stages(timeout, getattr(args, '_budget_started', now()), getattr(args, 'construction_fraction', None))
-        except ValueError: stages = budget_stages.Stages(timeout, getattr(args, '_budget_started', now()))
+        try: stages = budget_stages.Stages(timeout, getattr(args, '_budget_started', now()), getattr(args, 'construction_fraction', None), now)
+        except ValueError: stages = budget_stages.Stages(timeout, getattr(args, '_budget_started', now()), clock=now)
     result['budget_stages'] = stages.receipt()
     if result.get('status') == 'budget_exhausted':
         # An exhausted run observed little; say what, name the stage that took the budget, and conclude nothing.

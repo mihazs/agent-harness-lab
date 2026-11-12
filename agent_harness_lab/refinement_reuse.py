@@ -45,7 +45,7 @@ def plan(source, manifest):
 
 def prompt_line(reuse):
     ids = ', '.join(sorted(task['id'] for task in reuse['tasks']))
-    return (f'Refinement: the controller reuses the frozen development and regression tasks ({ids}) with their graders and controls; '
+    return (f'Refinement overrides the task-count and split instructions above: the controller reuses the frozen development and regression tasks ({ids}) with their graders and controls; '
             f'do not recreate or edit them. Write manifest.json with only new tasks whose split is {FRESH}, with fresh fixtures, '
             'their own grader_bundles and grader_self_tests, and ids, file and directory names the reused tasks do not use '
             f'(reserved: {", ".join(sorted(reuse["frozen"]))}). The controller adds the reused tasks after you finish.\n')

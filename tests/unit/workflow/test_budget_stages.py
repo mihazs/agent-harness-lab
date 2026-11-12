@@ -13,10 +13,8 @@ class Clock:
 
 
 @pytest.fixture
-def clock(monkeypatch):
-    fake = Clock()
-    monkeypatch.setattr(stages, 'clock', fake)
-    return fake
+def clock():
+    return Clock()
 
 
 def trial(task, version, status, *, timeout=False, exit_code=0):
@@ -39,12 +37,12 @@ def test_allotments_always_sum_to_the_whole_budget_and_keep_default_proportions(
     for fraction in (None, 0.1, 0.25, 0.6, 0.9):
         ledger = stages.Stages(200, 0, fraction)
         assert sum(ledger.allotted(name) for name in stages.STAGES) == pytest.approx(200)
-    default = stages.Stages(100, 0)
+    default = stages.Stages(100, 0, clock=clock)
     assert [default.allotted(name) for name in stages.STAGES] == pytest.approx([10, 25, 40, 25])
 
 
 def test_spend_is_charged_to_stages_and_preparation_is_the_residual(clock):
-    ledger = stages.Stages(100, 0)
+    ledger = stages.Stages(100, 0, clock=clock)
     clock.value = 7
     with ledger.charge('construction'):
         clock.value = 19
@@ -58,11 +56,6 @@ def test_spend_is_charged_to_stages_and_preparation_is_the_residual(clock):
     receipt = ledger.receipt()
     assert receipt['remaining_seconds'] == 60 and receipt['stages']['refinement'] == dict(allotted_seconds=25.0, spent_seconds=10.0)
     assert json.dumps(receipt)  # seconds and options only
-
-
-def test_the_clock_seam_defaults_to_time_monotonic_read_at_call_time(monkeypatch):
-    monkeypatch.setattr(stages.time, 'monotonic', lambda: 123.0)
-    assert stages.now() == 123.0
 
 
 @pytest.mark.parametrize('facts, expected', [
@@ -130,7 +123,7 @@ def test_anything_else_is_not_uninformative(rows):
 
 
 def test_exhausted_names_the_stage_the_counts_and_the_controls_that_did_not_run(clock):
-    ledger = stages.Stages(100, 0)
+    ledger = stages.Stages(100, 0, clock=clock)
     ledger.add('construction', 40)
     clock.value = 90
     rows = [dict(trial('a', 'baseline', 'failed'), split='development'), dict(trial('a', 'candidate', 'budget_exhausted'), split='development'),
@@ -140,4 +133,4 @@ def test_exhausted_names_the_stage_the_counts_and_the_controls_that_did_not_run(
     assert block['observed'] == dict(trials_recorded=3, baseline_failed=1, baseline_passed=1, trials_unfinished=1)
     assert block['controls_not_run'] == ['adjacent_regression', 'transfer']
     clock.value = 0
-    assert stages.exhausted(stages.Stages(100, 0), [])['consumed_most_by'] == 'none'
+    assert stages.exhausted(stages.Stages(100, 0, clock=clock), [])['consumed_most_by'] == 'none'

@@ -43,6 +43,11 @@ def make_fixture():
         yield make
 
 
+def same_receipt(first,second):
+    """Equal exit code and receipt except the documented measured timings."""
+    return first[0] == second[0] and entry_parity.document_differences('workflow.json',first[1],second[1],'<cli>','<skill>') == []
+
+
 class TestSkillInvocation:
     def test_selected_layout_import_is_actual(self):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
@@ -80,7 +85,7 @@ class TestSkillInvocation:
             fixture=make_fixture()
             code,stdout,_=invoke([*prefix,str(fixture.project),'--timeout','10'])
             result=json.loads(stdout);result.pop('output');results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
         code,result=results[0]
         assert (code,result['reason']) == (3,'select_one_runtime_with_agent')
         assert result['preflight_plan']['choice']['values'] == ['codex','claude']
@@ -93,7 +98,7 @@ class TestSkillInvocation:
             result=json.loads(stdout);output=Path(result.pop('output'))
             assert (output/'invocation.json').exists() == (prefix[0]=='skills')
             results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
 
     def test_preflight_blocked_skill_run_records_invocation_context(self,make_fixture):
         fixture=make_fixture();missing=fixture.root/'missing-agent'

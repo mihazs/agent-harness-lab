@@ -18,13 +18,6 @@ _OTHER_WEIGHTS = dict(preparation=0.10, trials=0.40, refinement=0.25)
 RAISE_BUDGET = '--timeout SECONDS'
 RAISE_CONSTRUCTION = '--construction-fraction FRACTION'
 
-clock = None  # an injectable monotonic clock for tests; None reads time.monotonic at call time, so existing patches still apply
-
-
-def now():
-    return (clock or time.monotonic)()
-
-
 def fraction(text):
     """argparse type: the construction time box as a fraction strictly between 0 and 1 of the shared budget."""
     try:
@@ -39,19 +32,19 @@ def fraction(text):
 class Stages:
     """Allotments and spend per stage. Preparation is the residual: everything outside construction, trials and refinement."""
 
-    def __init__(self, total, started, construction=None):
+    def __init__(self, total, started, construction=None, clock=time.monotonic):
         try:
             construction = DEFAULT_CONSTRUCTION_FRACTION if construction is None else fraction(construction)
         except argparse.ArgumentTypeError as error:
             raise ValueError(str(error)) from None
         scale = (1 - construction) / sum(_OTHER_WEIGHTS.values())
-        self.total, self.started = total, started
+        self.total, self.started, self.clock = total, started, clock  # the caller owns the clock, so its test seam applies
         self.fractions = dict(construction=construction, **{name: weight * scale for name, weight in _OTHER_WEIGHTS.items()})
         self.spent = dict(construction=0.0, trials=0.0)
         self._refining = None  # when the refinement attempt began, if it did
 
     def remaining(self):
-        return self.total - (now() - self.started)
+        return self.total - (self.clock() - self.started)
 
     def allotted(self, stage):
         return self.total * self.fractions[stage]
@@ -63,19 +56,19 @@ class Stages:
 
     @contextmanager
     def charge(self, stage):
-        began = now()
+        began = self.clock()
         try:
             yield
         finally:
-            self.add(stage, now() - began)
+            self.add(stage, self.clock() - began)
 
     def begin_refinement(self):
         if self._refining is None:
-            self._refining = now()
+            self._refining = self.clock()
 
     def seconds(self):
-        refinement = 0.0 if self._refining is None else now() - self._refining
-        return dict(preparation=max(0.0, now() - self.started - sum(self.spent.values()) - refinement),
+        refinement = 0.0 if self._refining is None else self.clock() - self._refining
+        return dict(preparation=max(0.0, self.clock() - self.started - sum(self.spent.values()) - refinement),
                     refinement=refinement, **self.spent)
 
     def receipt(self):

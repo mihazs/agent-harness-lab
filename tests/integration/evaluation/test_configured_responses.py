@@ -1,5 +1,6 @@
 """Configured Responses selection and local-only readiness, with synthetic refs."""
 from argparse import Namespace
+import itertools
 import hashlib
 import json
 import os
@@ -251,7 +252,7 @@ class TestConfiguredResponses:
         self.configured();args=self.args(timeout=1);one_call.resolve(args,{'--timeout'})
         from agent_harness_lab.evaluation import cgroup
         with patch.object(cgroup,'delegated',return_value=self.cgroup), \
-                patch.object(workflow,'time',SimpleNamespace(monotonic=iter([0,2]).__next__)), \
+                patch.object(workflow,'time',SimpleNamespace(monotonic=itertools.chain([0,2],itertools.repeat(2)).__next__)), \
                 patch.object(workflow,'_improve',side_effect=AssertionError('expired preflight reached pipeline')):
             result=workflow._run_improvement(args)
         assert result['status'] == 'budget_exhausted'

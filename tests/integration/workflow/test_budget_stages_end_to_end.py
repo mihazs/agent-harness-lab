@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from agent_harness_lab import budget_stages
+from agent_harness_lab import budget_stages, workflow
 from agent_harness_lab.evaluation.integrity import digest
 from tests.integration.workflow.test_authored_digest_end_to_end import Stub
 
@@ -79,7 +79,7 @@ class Budgeted(Stub):
         self.calls, self.clock = root / 'calls.jsonl', root / 'clock'
         super().__init__(root, monkeypatch, runtime)
         real = time.monotonic
-        monkeypatch.setattr(budget_stages, 'clock', lambda: real() + (float(self.clock.read_text()) if self.clock.exists() else 0.0))
+        monkeypatch.setattr(workflow, 'now', lambda: real() + (float(self.clock.read_text()) if self.clock.exists() else 0.0))
 
     def script(self):
         text = STUB.replace('@PYTHON@', __import__('sys').executable).replace('@MODE@', str(self.mode))
@@ -126,7 +126,8 @@ def test_a_construction_overrun_ends_with_the_typed_timeout_and_a_stage_breakdow
 
 
 def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_second_box_and_the_trials(stub, capsys):
-    code, receipt, run, rows = stub.run(capsys, dict(construct_overrun_once=35))  # 85s remain: a 30s box plus the 48s trials allotment fit
+    # --timeout 600: box 150s, trials allotment 240s; 160s overrun leaves about 440s, enough for a box plus the trials.
+    code, receipt, run, rows = stub.run(capsys, dict(construct_overrun_once=160), '--timeout', '600')
     assert (code, receipt['status']) == (3, 'inconclusive'), receipt
     repair = receipt['evaluation_construction_repairs']
     assert [(r['reason'], r['outcome']) for r in repair] == [('evaluation_construction_timeout', 'repaired')]
@@ -134,10 +135,10 @@ def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_se
 
 
 def test_a_second_overrun_after_the_one_repair_ends_the_run_with_the_typed_reason(stub, capsys):
-    code, receipt, run, rows = stub.run(capsys, dict(construct_seconds=35))
+    code, receipt, run, rows = stub.run(capsys, dict(construct_seconds=160), '--timeout', '600')
     assert (code, receipt['status'], receipt['reason']) == (1, 'budget_exhausted', 'evaluation_construction_timeout'), receipt
     assert [r['outcome'] for r in receipt['evaluation_construction_repairs']] == ['requested'] and len(kinds(rows, 'construction')) == 2
-    assert not kinds(rows, 'trial') and assert_breakdown(receipt)['stages']['construction']['spent_seconds'] >= 70
+    assert not kinds(rows, 'trial') and assert_breakdown(receipt, 600)['stages']['construction']['spent_seconds'] >= 320
 
 
 def test_the_construction_prompt_states_the_time_box_and_the_remaining_seconds(stub, capsys):
