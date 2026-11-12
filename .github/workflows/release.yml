@@ -33,6 +33,8 @@ jobs:
         env:
           PYTEST_ADDOPTS: --maxfail=1
         run: task test
+      - name: Require every regression pin to fail on its unfixed parent
+        run: task test:pins
       - uses: changesets/action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}

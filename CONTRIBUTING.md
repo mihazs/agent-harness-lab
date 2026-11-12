@@ -122,7 +122,19 @@ and `EXPECTED_PACKAGE_ROOT` values for other installed environments. These tasks
 own their temporary fixtures and require no model accounts or inference packages.
 `task release:verify COMMIT=SHA` explicitly downloads this project's current public
 release and runs native checksum, archive-version and GitHub tag/target tests.
-These publication cases are skipped during ordinary offline tests.
+It then installs the downloaded archive with its bundled installer into an isolated
+temporary prefix and home and runs the reported-failure scenarios against the
+installed launcher (`tests/integration/packaging/test_installed_artifact.py`); any
+failing scenario fails the verification. The same scenarios run against an archive
+built from your checkout during `task test`. These publication cases are skipped
+during ordinary offline tests.
+
+A regression test written for a reported failure carries a `# fixed-in: COMMIT [-k EXPRESSION]`
+comment. `task test:pins` (also run by the release workflow, not the fast path) runs
+each such file against the parent of that commit in a temporary Git worktree and fails
+when the pin passes there. `task test:runtime-contracts` is an opt-in probe of the real
+`claude` and `codex` CLIs (`--version` and `--help` only, no model call); it is skipped
+by default and a missing runtime is reported as skipped.
 
 ## Architecture map
 

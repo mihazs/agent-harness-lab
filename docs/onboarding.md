@@ -17,6 +17,10 @@ requested readiness passed; 2 means invalid invocation/configuration; 3 means a
 required capability is unavailable or unverified. Optional missing runtimes do
 not block offline readiness. Doctor never echoes configuration or bank contents.
 
+The `installation` check (status `pass`, `warn` or `not_checked`, never required) reports
+whether the launcher and global skill links agree; see
+[checking that the installation is current](installation.md#check-that-the-installation-is-current).
+
 Cooperative and isolated profiles keep authentication and runtime versions
 unverified. Executable presence does not establish authentication.
 `--probe-runtime` permits only a bounded offline namespace probe using a trusted

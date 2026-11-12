@@ -5,6 +5,7 @@ analysis file far larger than it could read, and the run ended in a bare no_chan
 while the real cause was insufficient evidence, with no next step. Histories are generated in-test and scaled
 deterministically (no clock, no random source, no committed capture, no real model call).
 """
+# fixed-in: 228be467
 import json
 import re
 import shutil
