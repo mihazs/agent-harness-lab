@@ -1050,6 +1050,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 evaluation=str(options.output), application_eligible=False)
             if getattr(args,'_audit_hypothesis',None) is not None:
                 plan_document['audit_hypothesis']=args._audit_hypothesis
+            if instruction is not None:
+                plan_document['instruction_review']=instruction_validation.review(instruction,result.get('instruction_removal'),
+                    [op.path for op in common_plan.operations if 'skill' in op.facets or surfaces.HOOK_FACET in op.facets])
             write_json(output / 'change-plan.json', attach(plan_document,common_plan))
             result['plan'] = str(output / 'change-plan.json')
             result['plan_sha256'] = common_plan.sha256

@@ -508,3 +508,29 @@ def test_a_lone_surrogate_in_plan_text_is_an_invalid_plan_not_a_crash(ws, field)
     if field == 'required': plan['required'] = [dict(id='tests', text=bad)]
     document = ws.validate(plan)
     assert (document['status'], document['reasons']) == ('blocked', ['instruction_plan_invalid'])
+
+
+def test_the_operation_review_is_hash_only_and_keeps_outcomes_separate(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    (ws.candidate / '.claude/rules/ts.md').unlink()
+    declared = [operation('src/CLAUDE.md', 'update'), operation('.claude/rules/ts.md', 'remove')]
+    document = ws.validate(ws.plan(operations=declared))
+    assert document['status'] == 'valid'
+    review = iv.review(document, iv.removal_disposition(document, ws.trials()), composed_with=['.claude/skills/x/SKILL.md'])
+    rows = {row['path']: row for row in review['operations']}
+    assert (rows['src/CLAUDE.md']['decision'], rows['src/CLAUDE.md']['scope'], rows['src/CLAUDE.md']['evaluation_disposition']) == (
+        'update', 'src', 'recommended')
+    assert (rows['.claude/rules/ts.md']['decision'], rows['.claude/rules/ts.md']['evaluation_disposition']) == ('remove', 'recommended')
+    assert rows['src/CLAUDE.md']['justification']['mechanism_id'] == 'm-tests'
+    assert (review['recommended'], review['applied'], review['blocked']) == (sorted(rows), [], [])
+    assert review['composed'] == dict(with_paths=['.claude/skills/x/SKILL.md'], interaction_evaluation='required')
+    assert (review['certification'], review['adoption_authority'], review['effective']) == ('required', False, 'unknown')
+    assert 'Synthetic build' not in json.dumps(review) and review['sha256'] == iv.review(
+        document, iv.removal_disposition(document, ws.trials()), composed_with=['.claude/skills/x/SKILL.md'])['sha256']
+
+
+def test_a_blocked_validation_cannot_be_reviewed(ws):
+    ws.write(ws.candidate, 'docs/CLAUDE.md', 'Changed outside the governing scope.\n')
+    document = ws.validate()
+    assert document['status'] == 'blocked'
+    with pytest.raises(ValueError): iv.review(document)
