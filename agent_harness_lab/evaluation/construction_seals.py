@@ -144,7 +144,7 @@ def end_scope(scope):
     if data is not None and data['scope'] is scope:cancel(capture)
 
 
-def finish(capture,publishedSnapshot,*,destination=None):
+def finish(capture,publishedSnapshot,*,destination=None,drop_digests=False):
     from .controller_receipts import _read_fact
     if type(capture) is not StageCapture or current() is not capture:raise ValueError('actual construction capture required')
     data=_CAPTURES[capture]
@@ -175,7 +175,7 @@ def finish(capture,publishedSnapshot,*,destination=None):
         if data['role']=='evaluator_author':
             if destination is None:raise ValueError('author publication destination required')
             from .construction import normalize_author_snapshot
-            expected=normalize_author_snapshot(expected,destination,deadline=data['deadline']);transform='controller-author-normalization-v1'
+            expected=normalize_author_snapshot(expected,destination,deadline=data['deadline'],drop_digests=drop_digests);transform='controller-author-normalization-v1'
         if expected!=publishedSnapshot or destination is not None and WorkingState(destination,data['deadline']).snapshot!=expected:
             raise ValueError('construction publication differs from actual native output')
         for name,path in (('harness',data['baseline']),('harness',scope.baseline),('fixture',data['context'])):

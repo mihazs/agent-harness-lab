@@ -14,17 +14,24 @@ controller owns, the typed reasons for a violation, and the one repair pass.
 
 The controller computes every digest from the frozen author output it already owns. An
 author never writes a hash: the construction prompt says to omit `digest`, because a hash
-the author computes with its own algorithm can never be the frozen value. In a controlled
-run an authored `digest` is rejected as `authored_digest_not_accepted`, a fixable agent
-output defect that triggers the one repair pass. In a host-grader run the controller drops
-every authored bundle and control `digest` from `manifest.json` right after the author
-finishes and records only how many in the receipt as `authored_digest_ignored`; the
-dropped value is never compared with anything. Nothing authored replaces a computed digest.
-A control fixture or bundle changed after freezing fails the run before any trial.
+the author computes with its own algorithm can never be the frozen value. Every
+construction path (host-grader, sandboxed-grader and controlled, with or without an
+evaluation store) drops each authored bundle and control `digest` the moment the author
+finishes, before the output is checked, snapshotted, sealed or published, so every later
+reader sees a manifest without them. The receipt records only how many as
+`authored_digest_ignored`, and the dropped value is never compared with anything. Nothing
+authored replaces a computed digest. A control fixture or bundle changed after freezing
+fails the run: a host-run grader that writes into its own bundle or control directory is
+caught during the grader self-test as `grader_input_changed_after_freeze`, before any
+trial, and a change found later reports the same reason. The controller starts host-run
+graders with bytecode writing disabled, so a grader that imports a sibling module does not
+change its own bundle.
 Runs that grade with host-side graders (no sandbox) declare `grader` themselves, but
 declared bundles are frozen the same way. The optional `{path, digest}` declaration
-remains valid only where the controller or a recorded bank declares the digest (bank and
-replay validation); a mismatch there is still rejected as an integrity failure.
+remains valid only where a recorded bank declares the digest (bank and replay
+validation, which never drop a digest); a mismatch there is still rejected as an
+integrity failure. A direct shape check that does not drop digests reports an authored
+`digest` as `authored_digest_not_accepted`.
 
 ## Typed reasons
 
@@ -41,6 +48,7 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `evaluation_manifest_field_invalid` | agent output defect | yes |
 | `evaluation_manifest_controller_field_supplied` | agent output defect | yes |
 | `authored_digest_not_accepted` | agent output defect | yes |
+| `grader_input_changed_after_freeze` | agent output defect | no |
 | `evaluation_manifest_controls_incomplete` | agent output defect | yes |
 | `internal_contract_error` | AHL contract mismatch | no |
 
@@ -57,9 +65,10 @@ grading or other stage, so a contract defect costs seconds. For a repairable rea
 author runs once more, in the same workspace and inside the same budget, with the typed
 reason appended to its task. The attempt is recorded as `evaluation_construction_repairs`
 in `workflow.json` (reason, stage, file, field, origin, outcome `repaired` or
-`requested`). Each receipt entry and the run receipt also carry the elapsed seconds of the construction
-attempt (`elapsed_seconds`, `evaluation_construction_seconds`), so a rejected manifest shows
-what it cost. A second defect ends the run with its typed reason. Sealed closed-input
+`requested`). Each receipt entry carries the elapsed seconds of its construction attempt
+(`elapsed_seconds`). Every terminal run receipt, including blocked and invalid ones,
+carries `authored_digest_ignored` and `evaluation_construction_seconds` (0 when the
+construction stage never ran), so a rejected manifest shows what it cost. A second defect ends the run with its typed reason. Sealed closed-input
 stages and bank conversion allow no second pass.
 
 ## Recover from a rejected manifest

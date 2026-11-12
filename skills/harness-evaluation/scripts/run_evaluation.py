@@ -189,6 +189,8 @@ def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
 def native_environment(agent, inherit=False, environ=None):
     """Filter the cooperative runtime's host environment unless inheritance was requested."""
     source = os.environ if environ is None else environ
+    if agent == 'grader':  # a host-run grader must not write bytecode into the frozen bundle it imports from
+        return {**native_environment(None, inherit, environ), 'PYTHONDONTWRITEBYTECODE': '1'}
     if inherit:
         return dict(source)
     common = {'PATH', 'HOME', 'LANG', 'LANGUAGE', 'TERM', 'COLORTERM', 'TERMINFO', 'TMPDIR', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'LC_TIME', 'LC_COLLATE',
