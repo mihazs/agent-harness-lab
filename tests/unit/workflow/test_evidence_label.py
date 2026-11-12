@@ -63,6 +63,14 @@ class TestEvidenceStrength:
         stale = evidence_strength(**fixture(**WIN), final_attempt=False)
         assert stale['label'] == 'insufficient' and stale['adoption_support'] is False
 
+    def test_a_void_comparison_never_reports_a_passing_regression_control_as_valid(self):
+        for options in (dict(inputs_unchanged=False), dict(final_attempt=False), dict(grader_changed=True)):
+            label = evidence_strength(**{**fixture(**WIN), **options})
+            assert label['label'] == 'insufficient' and label['adoption_support'] is False
+            assert label['regression_statement'] == 'regressions not tested'
+            assert label['controls_run'] == [] and label['controls_not_run'] == ['adjacent_regression', 'transfer']
+            assert label['criteria']['regression_or_transfer_control_ran'] is False
+
     def test_grader_change_blocks_adoption_support_and_names_the_reason(self):
         label = evidence_strength(**fixture(**WIN), grader_changed=True)
         assert label['reasons'] == ['grader_changed_after_trials']

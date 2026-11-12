@@ -38,7 +38,9 @@ Written for every run that proposed a change. `label` is one of:
 
 `controls_run` and `controls_not_run` name those two controls. `regression_statement` is
 `no regression observed in the adjacent-regression control that ran`, `regression observed`, or
-`regressions not tested`; a transfer control alone never supports a no-regression statement.
+`regressions not tested`; a transfer control alone never supports a no-regression statement. When the
+comparison is void (changed grader or frozen inputs, or a non-final attempt) no control counts as run, so
+`controls_run` is empty and the statement is `regressions not tested`.
 `adoption_support` is true only for `behavioral_proof`. An outcome that is not an explicit pass or fail
 stays unknown and is never counted as either.
 The default single-run comparison has one failing development trial per arm, so it reports

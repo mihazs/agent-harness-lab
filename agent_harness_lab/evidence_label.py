@@ -46,7 +46,9 @@ def evidence_strength(manifest, trials, *, inputs_unchanged, grader_changed=Fals
     failures = sum(base == 'failed' for base, _ in development)
     exercised = bool(development) and all(base is not None for base, _ in development)
     ran = {CONTROLS[split]: all(None not in pair for pair in rows) for split in CONTROLS if (rows := pairs(split))}
-    run = sorted(name for name, ok in ran.items() if ok)
+    # A void comparison (changed grader/inputs, non-final attempt) validates no control, so none counts as run.
+    void = grader_changed or not inputs_unchanged or not final_attempt
+    run = [] if void else sorted(name for name, ok in ran.items() if ok)
     not_run = sorted(set(CONTROLS.values()) - set(run))
     everything = [(outcome.get(('baseline', task)), outcome.get(('candidate', task))) for task in splits]
     candidate_unsupported = bool(everything) and any(cand != 'passed' for _, cand in everything)
@@ -73,7 +75,7 @@ def evidence_strength(manifest, trials, *, inputs_unchanged, grader_changed=Fals
                               regression_or_transfer_control_ran=bool(run)),
                 controls_run=run, controls_not_run=not_run,
                 regression_statement=('regression observed' if regressed else
-                    'no regression observed in the adjacent-regression control that ran' if ran.get('adjacent_regression')
+                    'no regression observed in the adjacent-regression control that ran' if 'adjacent_regression' in run
                     else 'regressions not tested'),
                 adoption_support=label == 'behavioral_proof' and not grader_changed,
                 comparison_valid_for_adoption=not (grader_changed or not inputs_unchanged),
