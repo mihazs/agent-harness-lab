@@ -10,6 +10,14 @@ import pytest
 AHL_AMBIENT_VARIABLES = ('AHL_STATE_HOME', 'AHL_MEMORY_STORE', 'AHL_MANAGED_PREPARATION')
 
 
+@pytest.fixture(autouse=True, scope='session')
+def _session_without_ahl_ambient():
+    """Function-scoped fixtures run after module/class-scoped ones, so strip the variables before any of them builds an env."""
+    with pytest.MonkeyPatch.context() as patch:
+        for name in AHL_AMBIENT_VARIABLES: patch.delenv(name, raising=False)
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _isolated_state_home(tmp_path_factory, monkeypatch):
     """No test may create or write the real user state directory (limiter lock, quota file)."""

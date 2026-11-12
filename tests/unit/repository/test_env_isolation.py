@@ -16,7 +16,8 @@ PRODUCT = ('agent_harness_lab', 'skills', 'scripts', 'tools', 'install.py')
 NOT_AMBIENT = {'AHL_SANDBOX_ROLE'}
 AFFECTED = ('tests/integration/cli/test_static_audit_cli.py',
             'tests/integration/workflow/test_history_input.py',
-            'tests/unit/memory/test_store.py::test_cli_requires_an_explicit_location_and_valid_flags')
+            'tests/unit/memory/test_store.py::test_cli_requires_an_explicit_location_and_valid_flags',
+            'tests/integration/cli/test_cli_help_boundary.py')  # module-scoped fixture builds its subprocess env from os.environ
 
 
 def product_files():

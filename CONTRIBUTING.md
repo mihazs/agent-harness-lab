@@ -130,7 +130,7 @@ built from your checkout during `task test`. These publication cases are skipped
 during ordinary offline tests.
 
 The shared autouse fixture in `tests/conftest.py` gives every test its own `XDG_*` and `HOME`
-directories and removes the caller's `AHL_STATE_HOME`, `AHL_MEMORY_STORE` and
+directories and removes (for the whole session, so module-scoped fixtures are covered) the caller's `AHL_STATE_HOME`, `AHL_MEMORY_STORE` and
 `AHL_MANAGED_PREPARATION`, so an exported override neither changes a result nor receives a write.
 A test that needs one sets it itself. A guard test fails when product code reads another `AHL_*`
 variable that the fixture does not neutralize; add the name to `AHL_AMBIENT_VARIABLES`.
