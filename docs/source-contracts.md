@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -4249,15 +4249,54 @@ the export record, checked before mapping), `max_fields` 64 per row,
 4,000,000. `limits` may only lower them. `task test:sources:mem0` runs the
 synthetic controls.
 
-Still open in #49: a read-only OSS REST client and the hosted Platform v3
-profile with explicit origin, token source, pagination, retry and 401/403/404/429
-stops, Platform fixtures with their own schema version, `app_id` scoping, the
-hosted user-or-assistant attribution, categories and other Platform lifecycle
-fields, and verifying the envelope against a real OSS capture.
+Still open in #49: a read-only OSS REST client and a read-only hosted Platform
+client with explicit origin, token source, retry and 401/403/404/429 stops, and
+verifying both envelopes against real captures. The offline Platform v3 profile
+is [documented below](#offline-mem0-platform-v3-exports).
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
+
+## Offline Mem0 Platform v3 exports
+
+`local_file/mem0-platform-export/v1` is a separate source from the OSS export
+above, with its own provider, profile (`mem0-platform-export-v1`), identity
+namespace and claim type (`Mem0PlatformClaim`), so a Platform memory and an OSS
+memory never share a native ID. The descriptor is the OSS one with
+`api_version: "v3"` in place of `mem0_version`, and `limits` also accepts
+`max_pages` (ceiling 1,000). The reader opens one file and never calls the hosted
+API, so no origin, token or retry exists yet.
+
+```json
+{"exported_at": "2031-06-01T00:00:00Z", "api_version": "v3", "filters": {"user_id": "u1"},
+ "show_expired": true, "pages": [/* each POST /v3/memories/ response, in order */],
+ "history": {"<memory id>": [/* GET /v1/memories/{id}/history/ rows */]}}
+```
+
+The shapes follow the public [OpenAPI document](https://github.com/mem0ai/mem0/blob/f1791daa86d469249c9b002f62644d58a1eb96a0/docs/openapi.json)
+and [Platform API reference](https://github.com/mem0ai/mem0/blob/f1791daa86d469249c9b002f62644d58a1eb96a0/skills/mem0/references/api-reference.md)
+at commit `f1791daa86d469249c9b002f62644d58a1eb96a0`. The profile reports
+`upstream_shape: source_inferred` and `compatibility: unverified`; no real
+export was read.
+
+| Difference from OSS | Platform v3 handling |
+| --- | --- |
+| Listing is a paginated envelope `count`/`next`/`previous`/`results` | `pages` is a non-empty list of envelopes, bounded by `max_pages`; an unknown envelope key is refused. A last page with a `next` link, or a missing link before the last page, gives `listing_truncated`; a `count` that differs from the rows read gives `listing_count_mismatch`. A repeated page cannot double a memory (`duplicate_memory_id`). |
+| Scopes include `app_id`; the run is `session_id` in get-all and history | `filters` accept `user_id`, `agent_id`, `app_id` and `run_id`; `run_id` matches `session_id`. |
+| Extracted facts are attributed to the user or the assistant, so a user AND agent listing can miss facts | `filters` may be a flat object (AND) or `{"OR": [flat, ...]}`, one flat object per listing used. Two scopes ANDed give `and_filter_may_omit_speaker_attributed_facts`. Operators and wildcards are refused, and a value is compared literally. |
+| History rows carry their own scope fields | A row naming a different declared scope is dropped (`history_row_outside_filter_scope`) in addition to the listing-based exclusion of other scopes and unlisted history. |
+| `replaced_by` names the superseding memory | Status `replaced`, not currently asserted, kept in evidence with a fingerprint of the replacement. |
+| No `is_deleted`, `hash`, `actor_id` or `role` | A `DELETE` event is still a tombstone; the OSS flag check does not apply. |
+
+Categories and `app_id` are fingerprinted, never stored. `lifecycle_state`,
+`structured_attributes`, `synthesized`, `input`, embeddings and `score` are
+accepted fields but not interpreted: a score is only `score_reported`. All
+other claim, expiry, tombstone, no-outcome and publication rules, summary
+fields, bounds and warnings are the OSS ones, and the summary reports
+`platform_v3: offline_export`. `task test:sources:mem0` runs the synthetic
+controls for both sources.
+
 ## Offline Hindsight bank archives
 
 `local_file/hindsight-knowledge-pages/v1` reads only `manifest.json` and
