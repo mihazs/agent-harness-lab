@@ -149,7 +149,8 @@ def strip_authored_digests(manifest):
 def check_file(path, *, stage, strip_digests=False, **options):
     """Read and shape-check an authored manifest file; unreadable or non-object content is a typed defect.
 
-    With strip_digests the authored digests are removed from the file first; returns (manifest, count stripped).
+    With strip_digests the authored digests are removed from the file first; returns (manifest, count stripped),
+    and a ContractError carries the count as digests_stripped.
     """
     import json
     try:
@@ -158,7 +159,11 @@ def check_file(path, *, stage, strip_digests=False, **options):
         raise ContractError('evaluation_manifest_unreadable', stage) from exc
     stripped = strip_authored_digests(manifest) if strip_digests else 0
     if stripped: path.write_text(json.dumps(manifest))
-    return check_authored(manifest, stage=stage, **options), stripped
+    try:
+        return check_authored(manifest, stage=stage, **options), stripped
+    except ContractError as error:
+        error.digests_stripped = stripped  # the file already lost them: the caller must still record the count
+        raise
 
 
 def typed(exc, stage='improve'):

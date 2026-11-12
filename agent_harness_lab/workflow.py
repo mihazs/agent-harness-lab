@@ -649,6 +649,7 @@ def _improve(args):
     proposed = None
     grader_changed = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
+    args._authored_digest_ignored = 0
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
@@ -892,7 +893,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
             made = args._evaluation_repairs = []
             suffix = ''
-            args._construction_seconds, args._authored_digest_ignored = 0.0, 0
+            args._construction_seconds = 0.0
             while True:
                 attempt_started = time.monotonic()
                 construction = runner.execute(command, evaluation, remaining(), evaluation_prompt + suffix, env=environment)
@@ -910,6 +911,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     args._authored_digest_ignored += ignored
                     break
                 except manifest_contract.ContractError as error:
+                    args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
                     if not error.repairable or made or remaining() <= 0: raise
                     made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = '\n' + error.repair_instruction()

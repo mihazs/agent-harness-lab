@@ -30,7 +30,7 @@ NEW_MANIFEST = '''oracle=evaluation/'oracle'; oracle.mkdir(exist_ok=True)
    for t in tasks: manifest['grader_bundles'][t['id']]['digest']='0'*64  # the agent's own, wrong algorithm
   if mode=='digest-all':
    for ctl in controls: ctl['digest']='f'*64
-  if mode=='twice' or mode=='field' and not seen.exists(): manifest.pop('grader_self_tests')
+  if mode=='twice' or mode in ('field','digest-field') and not seen.exists(): manifest.pop('grader_self_tests')
   with (evaluation/'prompts.txt').open('a') as log: log.write(prompt+'\\n=====\\n')
   seen.write_text('1')
   (evaluation/'manifest.json').write_text(json.dumps(manifest))'''
@@ -80,6 +80,17 @@ def test_agent_computed_wrong_digests_are_stripped_in_seconds_and_never_reach_th
     assert all(c['digest'] == digest(evaluation / c['fixture']) for c in frozen['grader_self_tests'])
     prompts = (evaluation / 'prompts.txt').read_text()
     assert prompts.count('=====') == 1  # no second construction pass was needed
+
+
+def test_stripped_digests_are_recorded_when_a_second_defect_forces_a_repair_pass(wf):
+    (wf.project / 'repair-mode').write_text('digest-field')
+    args = wf.args()
+    result = improve(args)
+    assert result['status'] == 'inconclusive', result
+    assert [r['reason'] for r in result['evaluation_construction_repairs']] == ['evaluation_manifest_field_missing'], result
+    assert result['authored_digest_ignored'] == 6  # 3 stripped on the failed pass and 3 on the repair pass
+    frozen = json.loads((run_dir(args) / 'preparation/evaluation-0/manifest.json').read_text())
+    assert all('digest' in b for b in frozen['grader_bundles'].values())
 
 
 def test_authored_digest_is_a_typed_fixable_defect_when_checked_without_stripping():
