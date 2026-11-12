@@ -121,8 +121,8 @@ def test_a_construction_overrun_ends_with_the_typed_timeout_and_a_stage_breakdow
     assert len(kinds(rows, 'construction')) == 1 and not kinds(rows, 'trial') and not (run / 'evaluation-0').exists()
     assert receipt['budget_exhaustion']['consumed_most_by'] == 'construction' and receipt['budget_exhaustion']['conclusion'] == 'not_established'
     exhausted = receipt['budget_exhaustion']
-    assert (exhausted['evidence_label'], exhausted['observed']['trials_recorded']) == ('insufficient', 0)
-    assert exhausted['controls_not_run'] == ['adjacent_regression', 'transfer'] and receipt['evidence_strength']['label'] == 'insufficient'
+    assert (exhausted['evidence_label'], exhausted['observed']) == ('insufficient', 'unknown')  # the evaluation never reported its trials
+    assert exhausted['controls_not_run'] == 'unknown' and receipt['evidence_strength']['label'] == 'insufficient'
     assert 'evaluation_construction_seconds' in receipt
 
 

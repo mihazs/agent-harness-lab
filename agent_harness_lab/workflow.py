@@ -1188,11 +1188,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 
 
 def _trial_trace(output, trial):
-    """The bounded native trace of one trial for tool-error counting, or None when it cannot be read."""
+    """The whole native trace of one trial for tool-error counting, or None when it is absent, unreadable or over the bound.
+
+    Offline and controlled trials write ``stdout.txt``, which holds no native error records, so they have no trace here.
+    """
     try:
-        return (output / trial['version'] / trial['task'] / 'trace.jsonl').read_bytes()[:1 << 20].decode(errors='replace')
+        with (output / trial['version'] / trial['task'] / 'trace.jsonl').open('rb') as handle:
+            data = handle.read(budget_stages.TRACE_LIMIT + 1)
     except (OSError, KeyError, TypeError):
         return None
+    return data.decode(errors='replace') if len(data) <= budget_stages.TRACE_LIMIT else None
 
 
 def _run_improvement(args, *, parent_started=None):
@@ -1312,7 +1317,7 @@ def construction_receipt(result, args):
     result['budget_stages'] = stages.receipt()
     if result.get('status') == 'budget_exhausted':
         # An exhausted run observed little; say what, name the stage that took the budget, and conclude nothing.
-        result['budget_exhaustion'] = budget_stages.exhausted(stages, getattr(args, '_observed', None) or [])
+        result['budget_exhaustion'] = budget_stages.exhausted(stages, getattr(args, '_observed', None))  # unset: the evaluation never reported, so unknown
 
 
 def improve(args):

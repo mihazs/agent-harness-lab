@@ -62,7 +62,7 @@ After the first trials, if no trial of either arm passed and both arms ended eve
 task with the same outcome, the run stops with the status `inconclusive` and the
 reason `evaluation_uninformative`. No second construction or refinement follows. The
 block `evaluation_uninformative` classifies each trial from execution facts only
-(timeouts, exit codes, trial states and tool-error records in the native trace),
+(timeouts, exit codes, trial states and tool-error records in the native `trace.jsonl`),
 never from grader output text:
 
 | Class | Fact |
@@ -71,7 +71,15 @@ never from grader output text:
 | `runtime_failure` | The agent process failed to start, exited non-zero or its trace is incomplete |
 | `grader_failure` | The grader invocation errored or timed out |
 | `tool_failure` | The run completed and graded failed, but its trace records tool errors |
-| `agent_failed` | The run completed, no tool error is recorded, and the grader failed it |
+| `agent_failed` | The run completed, its native trace was read in full with no tool-error record, and the grader failed it |
+| `unclassified` | The run completed and the grader failed it, but no native trace was read in full, so tool errors are neither seen nor ruled out |
+
+Only a native `trace.jsonl` of at most 16 MiB is read. Offline and controlled
+(Responses) trials write `stdout.txt` without native error records, and a trace that is
+missing, unreadable or larger than the bound is not read at all, since a partial read
+could miss later errors. Such trials are `unclassified`, never `agent_failed`, and
+their `next_step` does not say whether a narrower `--focus` or a larger `--timeout`
+would help. The stop itself still applies: no trial passed and both arms ended alike.
 
 The block carries the class counts, the number of trials and tasks and one exact
 `next_step`. Trials that never ran, ran out of budget or were rejected as invalid
@@ -104,8 +112,8 @@ A `budget_exhausted` receipt also carries `budget_exhaustion`:
 | --- | --- |
 | `evidence_label` | `insufficient`: nothing was concluded |
 | `consumed_most_by` | The stage with the most spent seconds, or `none` |
-| `observed` | Trials recorded, baseline failed and passed counts, trials unfinished |
-| `controls_not_run` | The adjacent regression and transfer controls that did not run |
+| `observed` | Trials recorded, baseline failed and passed counts, trials unfinished; `unknown` when the evaluation never reported its trials (it raised, or ran through the fixed-experiment path) |
+| `controls_not_run` | The adjacent regression and transfer controls that did not run; `unknown` under the same condition |
 | `conclusion` | Always `not_established` |
 
 ## Recover from a budget stop

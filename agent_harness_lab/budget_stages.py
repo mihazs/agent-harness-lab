@@ -17,6 +17,7 @@ DEFAULT_CONSTRUCTION_FRACTION = 0.25
 _OTHER_WEIGHTS = dict(preparation=0.10, trials=0.40, refinement=0.25)
 RAISE_BUDGET = '--timeout SECONDS'
 RAISE_CONSTRUCTION = '--construction-fraction FRACTION'
+TRACE_LIMIT = 1 << 24  # a native trace over this many bytes is not read at all: a partial read cannot rule tool errors out
 
 def fraction(text):
     """argparse type: the construction time box as a fraction strictly between 0 and 1 of the shared budget."""
@@ -81,7 +82,7 @@ class Stages:
 
 
 def tool_errors(trace):
-    """Count tool or runtime error records in a native JSON Lines trace; None when no trace is readable."""
+    """Count tool or runtime error records in a whole native JSON Lines trace; None when no trace was read in full."""
     if trace is None:
         return None
     count = 0
@@ -102,7 +103,11 @@ def tool_errors(trace):
 
 
 def failure_class(trial, errors=None):
-    """One non-passing trial's class from execution facts only (timeouts, exit codes, tool errors); never grader text."""
+    """One non-passing trial's class from execution facts only (timeouts, exit codes, tool errors); never grader text.
+
+    ``errors`` is None when the trace was not read in full: tool errors are then neither seen nor ruled out, so the class is
+    ``unclassified``. ``agent_failed`` needs a fully read trace with zero error records.
+    """
     run, status = trial.get('execution') or {}, trial.get('status')
     if run.get('timeout') is True:
         return 'timeout'
@@ -110,11 +115,13 @@ def failure_class(trial, errors=None):
         return 'grader_failure'
     if status in ('execution_error', 'incomplete', 'invalid_trace') or run.get('exit_code') not in (0, None):
         return 'runtime_failure'
+    if errors is None:
+        return 'unclassified'
     return 'tool_failure' if errors else 'agent_failed'
 
 
 NEXT_STEP = dict(
-    agent_failed='Every task failed in both arms although each run completed, so the tasks cannot separate baseline from candidate. '
+    agent_failed='Every task failed in both arms although each run completed and its trace recorded no tool error, so the tasks cannot separate baseline from candidate. '
                  'Rerun ahl improve with a narrower --focus so construction targets one observed failure; a larger --timeout alone will not change this.',
     timeout='Every trial hit the per-trial timeout. Rerun so construction makes smaller tasks that fit it; the per-trial timeout is the lower of 180 seconds '
             'and an equal share of the remaining budget per planned trial, so raise --timeout only when the budget is the limit.',
@@ -122,8 +129,11 @@ NEXT_STEP = dict(
                     'sandbox, then rerun.',
     tool_failure='Every trial completed but its tool calls errored in both arms. Check the tool permissions and the environment the tasks need, then rerun.',
     grader_failure='Every grader invocation failed in both arms. Review the frozen grader bundles and the grader runtime, then rerun.',
-    mixed='Every trial in both arms ended without a pass for more than one cause. Read the class counts in evaluation_uninformative, fix the '
-          'most frequent one (runtime, timeout, tools or grader), then rerun.')
+    unclassified='Every task failed in both arms, but no trial trace was read in full, so tool errors were neither seen nor ruled out and the cause is not '
+                 'established. Read the trial traces and stderr under the evaluation output, then rerun; this run does not show whether a narrower '
+                 '--focus or a larger --timeout would help.',
+    mixed='Every trial in both arms ended without a pass for more than one class. Read the class counts in evaluation_uninformative, fix the '
+          'most frequent known one (runtime, timeout, tools or grader; unclassified trials had no fully read trace, so their cause is unknown), then rerun.')
 
 
 def uninformative(trials, trace=lambda trial: None):
@@ -146,15 +156,22 @@ def uninformative(trials, trace=lambda trial: None):
                 class_counts=counts, next_step=NEXT_STEP[kind])
 
 
-def exhausted(stages, trials):
-    """Honest budget_exhausted facts: where the budget went and what was or was not observed, never a conclusion."""
+def exhausted(stages, trials=None):
+    """Honest budget_exhausted facts: where the budget went and what was or was not observed, never a conclusion.
+
+    ``trials`` is None when the evaluation never reported its trials (it raised, or ran through another path): what was
+    observed and which controls did not run are then ``unknown``, not zero.
+    """
     spent = stages.seconds()
-    baseline = [trial.get('status') for trial in trials if trial.get('version') == 'baseline']
-    ran = sorted(name for split, name in CONTROLS.items()
-                 if (rows := [trial for trial in trials if trial.get('split') == split])
-                 and {trial.get('version') for trial in rows} == {'baseline', 'candidate'}
-                 and all(trial.get('status') in ('passed', 'failed') for trial in rows))
+    observed = controls = 'unknown'
+    if trials is not None:
+        baseline = [trial.get('status') for trial in trials if trial.get('version') == 'baseline']
+        ran = sorted(name for split, name in CONTROLS.items()
+                     if (rows := [trial for trial in trials if trial.get('split') == split])
+                     and {trial.get('version') for trial in rows} == {'baseline', 'candidate'}
+                     and all(trial.get('status') in ('passed', 'failed') for trial in rows))
+        observed = dict(trials_recorded=len(trials), baseline_failed=baseline.count('failed'), baseline_passed=baseline.count('passed'),
+                        trials_unfinished=sum(trial.get('status') not in ('passed', 'failed') for trial in trials))
+        controls = sorted(set(CONTROLS.values()) - set(ran))
     return dict(evidence_label=LABELS[-1], consumed_most_by=max(spent, key=spent.get) if any(spent.values()) else 'none',
-                observed=dict(trials_recorded=len(trials), baseline_failed=baseline.count('failed'), baseline_passed=baseline.count('passed'),
-                              trials_unfinished=sum(trial.get('status') not in ('passed', 'failed') for trial in trials)),
-                controls_not_run=sorted(set(CONTROLS.values()) - set(ran)), conclusion='not_established')
+                observed=observed, controls_not_run=controls, conclusion='not_established')

@@ -371,6 +371,10 @@ class TestEntryReceiptParity:
             return dict(evaluation_construction_seconds=spent, budget_stages=dict(remaining_seconds=remaining, raise_budget_option=option,
                 stages=dict(construction=dict(allotted_seconds=30.0, spent_seconds=spent), trials=dict(allotted_seconds=48.0, spent_seconds=spent))))
         assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(2.5, 88.0), '/a', '/b') == []
+        exhausted = lambda stage: dict(budget_exhaustion=dict(consumed_most_by=stage, conclusion='not_established'))
+        assert entry_parity.document_differences('workflow.json', exhausted('trials'), exhausted('preparation'), '/a', '/b') == []
+        assert entry_parity.document_differences('recovery.json', dict(receipt=dict(receipt(1.0, 90.0), **exhausted('trials'))),  # the record embeds the receipt
+                                                 dict(receipt=dict(receipt(2.5, 88.0), **exhausted('preparation'))), '/a', '/b') == []
         assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(1.0, 90.0, '--budget'), '/a', '/b') == [
             'budget_stages.raise_budget_option']
 
