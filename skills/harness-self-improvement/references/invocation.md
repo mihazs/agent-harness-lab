@@ -78,6 +78,33 @@ private artifacts and report the concrete remaining requirement. Recovery must
 use the controller's supported contract and cannot reset consumed budget or
 invent application by editing the target manually.
 
+## Report integrity
+
+The receipt holds the facts a final report may state. Hazards it closes, and the rule for each:
+
+- **Seeded run.** `provenance.agent_supplied_hypothesis` lists the digest (never the text) of every
+  `--focus` or `--from-audit` hint. Because the proposer saw it, `provenance.candidate.independent_corroboration`
+  is `false` for every candidate of that run. Never describe a match as an independent finding; say
+  the candidate was proposed from a hint you or the user supplied.
+- **Evidence strength.** `evidence_strength.label` is `behavioral_proof`,
+  `source_correction_without_behavioral_proof` or `insufficient`. `behavioral_proof` needs the baseline to
+  reach valid verdicts on the targeted tasks, at least `minimum_baseline_failures` baseline failures, a
+  paired repair under the frozen inputs, and one adjacent-regression or transfer control. Quote the label
+  and its `reasons`; do not upgrade it. Without a regression control say "regressions not tested" and list
+  `controls_not_run`; "no regressions" is reportable only when `regression_statement` says a control ran.
+- **Frozen grader.** `grader_changed_after_trials` (reason or `evidence_strength.reasons`) voids the
+  comparison for adoption. Fresh trials under the new grader are a new comparison; do not regrade both arms.
+- **Numbers.** Every elapsed time, count, rate and denominator is written `N [receipt: dotted.path]`,
+  copied from a receipt field with its denominator, or `unknown`. A "prior sessions" count excludes the
+  current session. Check a draft with `python3 -m agent_harness_lab.report_lint REPORT.md workflow.json`.
+- **Continuation.** After a terminal result, "continue" authorizes re-running the same controller
+  with more evidence (for example `--history`, another `--focus`), not manual trial rigs. A model trial run
+  outside the controller is reported as `outside_budget_unverified` and counts against the user's
+  authorization for model calls.
+- **Pre-edit check.** Before staging or applying an edit to a harness file, check read-only for open pull
+  requests (`gh pr list --state open --search PATH`) and uncommitted changes touching it. The controller's
+  `pre_edit_check` covers local Git status only; report `open_pull_requests: not_checked` unless you checked.
+
 ## CLI-managed preparation
 
 When a parent supplies context.json or a candidate/evaluation stage contract,

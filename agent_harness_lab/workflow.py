@@ -17,6 +17,7 @@ import uuid
 from agent_harness_lab import config, surfaces
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
+from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -632,12 +633,14 @@ def _improve(args):
     refinement_feedback = []
     single_run = None
     final_attempt = None
+    proposed = None
+    grader_changed = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
             result.pop(key,None)
-        instruction = None
+        instruction = proposed = None
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
@@ -744,6 +747,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         check_scope(args, proposed, original)
         check_configuration(args)
         if proposed == original:
+            proposed = None
             result.update(status='no_change',reason='candidate_identical_to_baseline')
             break
         if instruction is not None:
@@ -889,6 +893,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
         manifest_raw = manifest_path.read_bytes()
         manifest = json.loads(manifest_raw)
+        grader_before = grader_fingerprint(manifest_path)
         required_trials = 2 * len(manifest["tasks"])
         if required_trials > trials_left:
             result.update(status="budget_exhausted", reason="shared_trial_budget_exhausted")
@@ -929,6 +934,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         trials = evaluated['trials']
         if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
+            break
+        if grader_fingerprint(manifest_path) != grader_before:
+            # The comparison is void for adoption; fresh trials under the new grader are a new comparison.
+            grader_changed = True
+            result.pop('instruction_removal',None)
+            result.update(status='blocked',reason='grader_changed_after_trials')
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
         if manifest_path.read_bytes() != manifest_raw:
@@ -1031,7 +1042,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
-    if getattr(args,'_audit_hypothesis',None) is not None:
+    audited = getattr(args,'_audit_hypothesis',None) is not None
+    result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
+    if proposed is not None:
+        changed = sorted(name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name))
+        result['pre_edit_check'] = pre_edit_check(args.project, changed)
+        result['evidence_strength'] = evidence_strength(**(dict(manifest=None, trials=None, inputs_unchanged=True) if single_run is None
+            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged')}),
+            grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
+    if audited:
         result['audit_hypothesis']=args._audit_hypothesis
     if access is not None:
         result['construction_access']=access.report()

@@ -175,6 +175,18 @@ Rollback only this task's edits. Before restoration compare current hashes again
 what this task wrote; preserve intervening user changes rather than overwriting an
 entire file. Keep sanitized evaluation artifacts outside active skill discovery.
 
+## Report from the receipt
+
+Quote the controller's fields verbatim; they carry no model judgment. See "Report integrity" in
+[invocation routing](references/invocation.md).
+
+- A hint or `--focus` is an `agent_supplied_hypothesis`: with `independent_corroboration: false`
+  a matching candidate is never an independent finding.
+- Quote `evidence_strength.label`. Say "regressions not tested" and list `controls_not_run`
+  unless a regression control ran. `grader_changed_after_trials` voids the comparison.
+- Copy each number as `N [receipt: field.path]` or write `unknown`; a model trial outside
+  the controller is `outside_budget_unverified`. Report `pre_edit_check` as recorded, `not_checked` when absent.
+
 ## Objective diagnosis gate
 
 Use the operational criteria in the evaluation skill's trace-diagnosis reference.

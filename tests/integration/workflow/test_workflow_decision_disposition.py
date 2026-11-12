@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.integration.workflow import test_workflow as workflow_fixture
-from agent_harness_lab.cli import main
+from agent_harness_lab.cli import evaluator, main
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion import policy
 
@@ -94,6 +94,66 @@ class TestDefaultDecisionDisposition:
         # Every surface the single-run candidate cannot adopt is deferred; the list comes from surfaces.matrix().
         assert plan['harness_change_plan']['deferred_surfaces'] == ['behavioral_application_pending_independent_certification', 'skill_lifecycle',
                           'hooks', 'workflows', 'agents', 'plugins', 'mcp', 'output_styles', 'settings']
+
+    def test_focus_seeded_run_records_a_digest_and_denies_independent_corroboration(self):
+        self.original = 'bad'
+        hint = 'synthetic-focus-hint-never-in-receipt'
+        code, result = self.run_cli(['--focus', hint])
+        provenance = result['provenance']
+        assert provenance['agent_supplied_hypothesis'] == [dict(source='focus', sha256=hashlib.sha256(hint.encode()).hexdigest())]
+        assert provenance['candidate']['independent_corroboration'] is False
+        assert hint not in json.dumps(result)
+
+    def test_unseeded_run_records_no_hypothesis(self):
+        self.original = 'bad'
+        _, result = self.run_cli()
+        assert result['provenance']['agent_supplied_hypothesis'] == [] and 'candidate' not in result['provenance']
+
+    def test_improved_candidate_is_labeled_from_receipt_fields_only(self):
+        self.original = 'bad'
+        _, result = self.run_cli()
+        label = result['evidence_strength']
+        # One development task and one trial per arm: a single failing baseline trial is below the minimum.
+        assert label['label'] == 'source_correction_without_behavioral_proof'
+        assert label['reasons'] == ['baseline_failures_below_minimum']
+        assert label['criteria']['baseline_failures'] == 1
+        assert label['controls_not_run'] == []
+        assert label['controls_run'] == ['adjacent_regression', 'transfer']
+        assert label['regression_statement'] == 'no regression observed in the adjacent-regression control that ran'
+        assert result['pre_edit_check']['uncommitted_changes'] == 'not_checked'
+        assert result['pre_edit_check']['open_pull_requests'] == 'not_checked'
+
+    def test_failed_candidate_is_insufficient(self):
+        self.original = 'bad'
+        (self.project / 'mode').write_text('worse')
+        _, result = self.run_cli()
+        assert result['evidence_strength']['label'] == 'insufficient'
+        assert result['evidence_strength']['adoption_support'] is False
+
+    def test_run_without_a_proposed_change_has_no_label_or_pre_edit_check(self):
+        self.original = 'good'
+        (self.project / 'AGENTS.md').write_text('good')
+        (self.project / 'mode').write_text('no_change')
+        _, result = self.run_cli()
+        assert 'evidence_strength' not in result and 'pre_edit_check' not in result
+
+    def test_grader_edit_after_trials_blocks_adoption_support(self):
+        self.original = 'bad'
+        runner = evaluator()
+        real = runner.evaluate
+        def evaluate(options):
+            code = real(options)
+            grader = Path(options.manifest).parent / 'grade.py'
+            grader.write_text(grader.read_text() + '\n# edited after trials\n')
+            return code
+        runner.evaluate = evaluate
+        with patch('agent_harness_lab.cli.evaluator', return_value=runner):
+            code, result = self.run_cli()
+        assert (code, result['status'], result['reason']) == (3, 'blocked', 'grader_changed_after_trials')
+        assert 'plan' not in result and 'recommendation' not in result
+        label = result['evidence_strength']
+        assert label['label'] == 'insufficient' and label['reasons'][0] == 'grader_changed_after_trials'
+        assert label['adoption_support'] is False and label['comparison_valid_for_adoption'] is False
 
     def test_no_change_reports_observed_absence_not_failure(self):
         self.original = 'good'
