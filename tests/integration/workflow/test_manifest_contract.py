@@ -266,7 +266,7 @@ def test_reason_table_is_complete_typed_and_free_of_exception_text():
             assert part in text
         rendered = summary(dict(status='invalid_input', reason=reason, contract_violation=error.receipt()))
         assert 'Stage: evaluation_construction; file: manifest.json; field: tasks[0].id' in rendered
-    root = Path(contract.__file__).parents[2]
+    root = Path(__file__).resolve().parents[3]
     table = (root / 'docs/analysis.md').read_text()
     guide = (root / 'docs/evaluation-manifest-contract.md').read_text()
     for reason, (_, _, remediation) in contract.REASONS.items():
