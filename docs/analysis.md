@@ -82,7 +82,10 @@ exact prerequisite each missing method lacks, weak-outcome signals, and a
 (user turn after a tool error, consecutive user turns, interrupts, same-call
 retries, edit-then-revert) are `observed_pattern` with competing explanations. A
 signal whose input is not captured is `unknown`, and a zero count is
-`not_observed_capture_unverified`; neither is a clean result. Restated instructions
+`not_observed_capture_unverified`; neither is a clean result. Same-call retries compare the
+`input_fingerprint` of consecutive calls to the same tool within a case. Pinned native Claude and Codex
+captures carry it (see [input fingerprints](telemetry.md#input-fingerprints)); edit-then-revert needs a
+state revision on mutating events that native captures do not record, so it stays `unknown` there. Restated instructions
 count a user message whose `message_fingerprint` equals an earlier one in the same case.
 The field is a salted, normalized word-set hash that never stores text, and it exists
 only on pinned native captures of messages with at least four words (see

@@ -1,6 +1,6 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
 from pathlib import Path
-from .schema import event, message_fingerprint
+from .schema import event, input_fingerprint, message_fingerprint
 from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded  # noqa: F401 - re-exported for existing importers
 from ..sources.schema import digest
 
@@ -11,6 +11,8 @@ UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
 LOADING_SIGNAL = 'no_native_loading_signal'
 KNOWN_TOOLS = ('exec_command', 'write_stdin', 'apply_patch', 'shell', 'shell_command',
     'update_plan', 'view_image', 'request_user_input')
+# Where each pinned call item carries its input; the input is hashed, never stored.
+INPUT_FIELDS = dict(function_call='arguments', custom_tool_call='input', local_shell_call='action')
 ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_aborted='cancelled',
     context_compacted='compaction', user_message='user_message', agent_message='agent_message',
     agent_reasoning='reasoning', agent_reasoning_raw_content='reasoning')
@@ -92,6 +94,8 @@ class Projection:
                     namespace = payload.get('namespace')
                     if namespace is not None: text(namespace)
                     record['tool_name'] = name if name in KNOWN_TOOLS and namespace in (None, 'functions') else 'tool:'+digest((namespace, name))
+                    arguments = payload.get(INPUT_FIELDS[item])
+                    if arguments is not None and (fingerprint := input_fingerprint(arguments, record['case_id'])) is not None: record['input_fingerprint'] = fingerprint
             elif item in ('message', 'reasoning'):
                 record['activity'] = item
             else: self.unsupported += 1; record['missing_reason'] = 'unsupported_native_item'

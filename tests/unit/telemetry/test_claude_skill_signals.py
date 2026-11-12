@@ -62,7 +62,8 @@ class TestClaudeSkillSignals:
         with_skill, summary, _ = self.capture(self.skill_rows())
         without, _, _ = self.capture(self.strip(self.skill_rows()))
         assert [(e['case_id'], e['event_id'], e.get('call_id')) for e in with_skill] == [(e['case_id'], e['event_id'], e.get('call_id')) for e in without]
-        assert [{k: v for k, v in e.items() if k not in SKILL_FIELDS} for e in with_skill] == list(without)
+        # The input fingerprint hashes the whole input, which this test empties; it is pinned in test_native_input_fingerprints.
+        assert [{k: v for k, v in e.items() if k not in SKILL_FIELDS + ('input_fingerprint',)} for e in with_skill] == [{k: v for k, v in e.items() if k != 'input_fingerprint'} for e in without]
         for event in with_skill:
             assert verified_outcome(event) is None; assert event['outcome'] == 'unknown'
             if 'skill_signal' in event:
