@@ -96,6 +96,9 @@ def main(argv=None):
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
+    if argv and argv[0] == 'memory':
+        from agent_harness_lab.memory.cli import main as memory_main
+        return memory_main(argv[1:])
     if argv and argv[0] == 'campaign':
         from agent_harness_lab.campaigns.cli import main as campaign_main
         return campaign_main(argv[1:])
@@ -179,6 +182,7 @@ def main(argv=None):
         'audit':'Inspect static harness conventions without execution, network or a model',
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
+        'memory':'Create and maintain an opt-in private evidence store with a rebuildable index; offline',
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
