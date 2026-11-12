@@ -4021,9 +4021,9 @@ No real export has been read; the tests use invented fixtures only.
 | `export-memories.ts` JSON file, selected explicitly | supported, read-only |
 | Observations, summaries, prompts, sessions in that file | separate claim types |
 | Search `query` and per-row `rank`/`score` | separate `search_hit` claims |
-| `tool_uses` rows, advisor calls, pending queue | not in the export; not read |
+| `tool_uses` rows, advisor calls, pending queue | not in the export; not read (the `get_tool_uses` MCP tool is only checked for presence and shape) |
 | Worker HTTP API (`/api/search`, `/api/sdk-sessions/batch`) | not contacted |
-| MCP `search`, `timeline`, `get_observations` | not called |
+| MCP `search`, `timeline`, `get_observations`, `get_tool_uses` | not called; a saved `tools/list` result can be [checked offline](#saved-mcp-tool-listing-check-claude-mem) |
 | SQLite `~/.claude-mem/claude-mem.db` (WAL) | not opened |
 | Chroma vector projection | not read; never authoritative |
 | Other Claude-Mem releases | refused |
@@ -4136,8 +4136,8 @@ synthetic controls: each claim type, summary/observation separation, search-hit
 targets, unknown and mismatched versions, duplicate IDs, unknown fields, missing
 and conflicting timestamps, malformed JSON, bounds, path containment, capture
 changes, repeat import, edits and CLI output with no body, ID or path. Still open
-in #48: a capability-checked read of a configured worker or MCP server (tool
-schema and version, bounded `search`/`timeline`, batched `get_observations`), an
+in #48: reading a configured worker or MCP server (bounded `search`/`timeline`,
+batched `get_observations`; only the tool-schema check exists, see below), an
 authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
 rows, verifying the shape against a real export, and further releases.
 
@@ -4178,6 +4178,65 @@ either side's content is true. The import summary still reports
 `native_session_correlation: not_attempted`. Synthetic fixtures establish this
 contract: `tests/integration/sources/test_source_claude_mem_correlation.py`, run by
 `task test:sources:claude-mem`.
+
+### Saved MCP tool listing check (Claude-Mem)
+
+`ahl sources claude-mem tool-check --tools FILE` compares one saved MCP `tools/list`
+result with the four read tools the pinned release advertises. It is the
+capability check that a future configured read would have to pass first. It
+reads FILE only: it starts no worker or MCP server, connects to nothing, calls no
+tool and reads no Claude-Mem data. FILE must be one regular, single-link JSON file
+of at most 1 MiB (a symlink is refused), strictly decoded under the bounds of the
+export decoder. It holds either the `tools/list` result (or its JSON-RPC
+response), or `{"tools_list": ..., "initialize": ...}` to add the `initialize`
+result whose `serverInfo` declares the server name and version. Only one listing
+page is read; a `nextCursor` leaves the listing incomplete.
+
+The expected schemas are the `inputSchema` objects of `search`, `timeline`,
+`get_observations` and `get_tool_uses` in
+[`src/servers/mcp-server.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/servers/mcp-server.ts)
+at the pinned commit, with description prose removed on both sides. Each is
+compared by canonical digest, so a renamed, added, removed or retyped property,
+or a changed `required` list, is a difference. The same file advertises
+`readOnlyHint: true` for all four.
+
+| Tool | Role | Required for `compatible` |
+| --- | --- | --- |
+| `search` | step 1, index with IDs | yes |
+| `timeline` | step 2, context around an anchor | yes |
+| `get_observations` | step 3, selected details | yes |
+| `get_tool_uses` | optional raw tool input and output follow-up | no |
+
+| Verdict (exit code) | Meaning |
+| --- | --- |
+| `compatible` (0) | Each of the three workflow tools appears once, matches the pin and carries `readOnlyHint: true`, and any declared server is `claude-mem` at the selected release |
+| `incompatible` (3) | A workflow tool differs, is duplicated or lacks the hint, the declared name or version differs, or a complete listing lacks a workflow tool (an older tool set) |
+| `inconclusive` (3) | A workflow tool is missing from a listing that has a `nextCursor`, so another page might hold it |
+| invalid input (2) | Not JSON, hostile or oversized JSON, a symlink, or a document with no `tools` list; the error names only its class |
+
+The report lists per-tool status (`matches_pin`, `differs`, `duplicate`, `absent`),
+the missing pinned property names and a count of added properties, never an
+unrecognized name or any description. Other tools are only counted
+(`tools_advertised`, `unrecognized_tools`) and listed by name when they are
+among the names the pinned server source defines (`mcp-server.ts` and `mcp-tool-visibility.ts`) but lack the read-only hint
+(`recognized_without_read_only_hint`). Warnings include
+`server_version_unstated` (no `initialize` result, so the release is
+`caller_declared`), `server_runtime_advertised` (any server-runtime-only tool
+such as `observation_add` is listed, where IDs are strings and `get_tool_uses`
+is unavailable), `get_tool_uses_absent`, `listing_incomplete`, and
+`read_only_hint_is_a_server_claim`. A saved listing is the producer's claim: a
+hand-written or edited file passes the same checks, so `compatible` never
+authorizes a read, and the report pins `network_used`, `worker_contacted`,
+`tools_called` and `memory_read_authorized` to false.
+
+What this does not cover. At the pin the worker's MCP results are bounded text
+for a model, not structured JSON (`mcp-text-format.ts`: `search` returns an
+index, details are shortened with a marker), so reading them needs a parser
+verified against real output; none is provided. `task test:sources:claude-mem`
+covers the check with synthetic listings only: a matching listing, an older tool
+set, a partial page, changed and added properties, a missing, duplicated or
+unhinted tool, a mismatched version, a server-runtime listing, malformed,
+hostile and linked files, and no process or connection.
 
 ## Offline Mem0 OSS memory and history exports
 

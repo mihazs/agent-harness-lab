@@ -10,6 +10,7 @@ ahl config --help
 ahl sources --help
 ahl sources lineage --help
 ahl sources inventory --help
+ahl sources claude-mem tool-check --help
 ahl bank-review --help
 ahl bank-review qualify --help
 ```

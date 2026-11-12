@@ -15,6 +15,7 @@
 | `ahl compare --experiment FILE --output DIR` | Render a private baseline/candidate experiment record as a static offline HTML review page ([details](side-by-side-reports.md#static-viewer-ahl-compare)) |
 | `ahl memory init\|status\|verify\|reindex\|gc --store DIR` | Create and maintain an opt-in private evidence store; offline, see [private memory store](memory-store.md) |
 | `ahl sources claude pin-check --events FILE` | Compare one Claude Code capture with the verified profile contract by field name only; read-only, see [verify a new Claude Code release](verify-claude-release.md) |
+| `ahl sources claude-mem tool-check --tools FILE` | Compare one saved Claude-Mem MCP `tools/list` result with the pinned v15.9.0 read tools by input-schema structure; offline, no worker contact, see [Claude-Mem tool listing check](source-contracts.md#saved-mcp-tool-listing-check-claude-mem) |
 | `ahl doctor [project] --profile offline --json` | Check readiness without running an agent; checks and boundaries are in [offline readiness](onboarding.md). Its non-required `claude_runtime_lag` warning reads dotted version strings from at most 200 Claude session transcript headers, under every profile |
 | `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
