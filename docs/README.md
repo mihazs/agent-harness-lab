@@ -10,7 +10,7 @@ reader purpose.
 
 ## Complete a task
 
-- [Install](installation.md) and [check readiness or initialize a project](onboarding.md).
+- [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
 - [Repair a supported skill header](repair-skill-header.md) or [inspect a private source journal](inspect-source-context.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
@@ -21,7 +21,7 @@ reader purpose.
 
 ## Look up behavior and contracts
 
-- [Command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md).
+- [Global instruction region markers and typed reasons](global-instructions-reference.md), [command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md).
 - [Campaign specification and planned records](campaign-specification.md).
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
@@ -36,7 +36,7 @@ reader purpose.
 
 ## Understand the context
 
-- [Newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
+- [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 

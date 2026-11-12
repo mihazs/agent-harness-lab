@@ -52,3 +52,10 @@ def test_public_tag_and_release_target_match_the_verified_commit(release):
     assert published['target_commitish'] == os.environ['AHL_EXPECTED_COMMIT']
     assert reference['object']['sha'] == os.environ['AHL_EXPECTED_COMMIT']
     assert {a['name'] for a in published['assets']} == release.names
+
+
+def test_the_archive_ships_a_compact_instruction_block_for_the_installer(release):
+    with tarfile.open(release.root/f'agent-harness-lab-{release.version}.tar.gz') as archive:
+        block = archive.extractfile(f'agent-harness-lab-{release.version}/global-instructions.md').read()
+    assert 0 < len(block) <= 1024 and block.count(b'{version}') == 1
+    assert b'agent-harness-lab:' not in block and b'harness-self-improvement' in block and b'ahl improve' in block

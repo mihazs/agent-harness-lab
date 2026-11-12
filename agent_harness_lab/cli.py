@@ -98,6 +98,9 @@ def main(argv=None):
     if argv and argv[0] == 'config':
         from .user_config import main as config_main
         return config_main(argv[1:])
+    if argv[:1] == ['rollback'] and len(argv) == 2 and argv[1].startswith('install-'):
+        from agent_harness_lab.updater import rollback
+        return rollback(argv[1])
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
@@ -165,8 +168,8 @@ def main(argv=None):
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
     sub = parser.add_subparsers(dest='command', required=True,help='Select an operation; COMMAND --help describes its inputs and side effects')
-    sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match.')
-    sub.add_parser('update', help='Update a release installation and its existing skill links',description='Download and verify a release for an existing archive installation; preserve its owned launcher and skill links.')
+    sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match, or an installation backup (ahl rollback install-NAME).')
+    sub.add_parser('update', help='Update a release installation, its skill links and the managed region of the global instruction files',description='Download and verify a release for an existing archive installation; preserve its owned launcher and skill links, and refresh the marked region of the global CLAUDE.md and AGENTS.md (--no-instructions opts out).')
     routed_help={
         'mine':'Mine normalized JSONL traces into descriptive patterns; no outcome or independence certification',
         'diagnose':'Normalize explicit trace files and report supported failure-pattern candidates',

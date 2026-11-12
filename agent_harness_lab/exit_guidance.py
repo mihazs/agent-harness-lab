@@ -70,6 +70,13 @@ REMEDIATION = {
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
+    'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
+    'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',
+    'instruction_target_unsafe': 'Make the instruction file a regular file you own and under 8 MiB, then run: ahl update',
+    'instruction_write_failed': 'Fix the filesystem error reported for the instruction file, then run: ahl update',
+    'instruction_template_invalid': 'This release ships an unusable instruction template, so the instruction file was left unchanged; install a newer release with: ahl update',
+    'instruction_template_missing': 'This release ships no instruction template, so the instruction file was left unchanged; install a newer release with: ahl update',
+    'region_edited_by_user_replaced': 'Text edited inside the managed region of the instruction file was replaced and the edited text is in the backup; keep your own text outside the markers',
 }
 
 STATUS_ACTION = {

@@ -34,7 +34,9 @@ curl -fsSL https://github.com/mihazs/agent-harness-lab/releases/latest/download/
 Installs `ahl` and both bundled skills for Codex and Claude Code, without Git,
 pip or Node.js. This executes the official release installer; see
 [installation details](docs/installation.md) for inspection, pinned versions,
-updates and custom locations. Nothing starts in the background.
+updates and custom locations. `ahl update` also refreshes one marked region of your
+global `CLAUDE.md` and `AGENTS.md` (never any other byte; opt out with
+`--no-instructions`). Nothing starts in the background.
 If `ahl` is not on PATH, use `~/.local/bin/ahl --help` or add that directory to PATH.
 
 ## Use on your project

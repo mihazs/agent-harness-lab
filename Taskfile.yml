@@ -249,6 +249,7 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/integration/packaging/test_release_install.py -v'
       - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/unit/packaging/test_updater.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/integration/packaging/test_instruction_install.py {{.ROOT_DIR | shellQuote}}/tests/unit/packaging/test_instruction_region.py -v'
   test:diagnostics:corpus:
     desc: Run the private diagnostic annotation, protected-split and benchmark-profile contracts with synthetic cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

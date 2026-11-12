@@ -1,8 +1,9 @@
-"""Offline report of where the launcher and global skill links resolve, and whether they agree."""
+"""Offline report of where the launcher, global skill links and managed instruction regions resolve, and whether they agree."""
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 
 SKILLS = ('harness-evaluation', 'harness-self-improvement')
@@ -33,12 +34,13 @@ def inspect(running_version, assets, home=None):
     launcher_path = Path(launcher).resolve() if launcher else None
     launcher_version = release_of(launcher_path) if launcher_path else release
     directories = [home / name for name in SKILL_DIRS]
+    state = {}
     if release:
         try:
             state = json.loads((assets.parent.parent / 'installation.json').read_text())
             directories += [Path(p) for p in state.get('skill_dirs', []) if isinstance(p, str) and os.path.isabs(p)]
         except (OSError, ValueError, AttributeError):
-            pass
+            state = {}
     links, seen = [], set()
     for folder in directories:
         for name in SKILLS:
@@ -61,6 +63,25 @@ def inspect(running_version, assets, home=None):
         if cli and link['minimum_cli'] and key(cli) < key(link['minimum_cli']):
             warnings.append(dict(code='cli_below_skill_minimum', fix=FIX,
                 message=f"launcher {cli} is older than the {link['minimum_cli']} that {link['path']} requires"))
+    instructions = instruction_regions(assets, release, state) if release else []
+    for row in instructions:
+        if row['state'] in ('stale', 'absent'):
+            row['fix'] = FIX
+            warnings.append(dict(code=f"instruction_region_{row['state']}", fix=FIX,
+                message=f"the managed instruction region in {row['path']} is {row['state']}"))
+        elif row['state'] == 'refused':
+            warnings.append(dict(code=row['reason'], fix=row['fix'], message=f"{row['path']} is refused: {row['reason']}"))
     return dict(version=running_version, release_installation=release is not None, launcher=launcher,
                 launcher_resolves_to=str(launcher_path) if launcher_path else None, launcher_release=launcher_version,
-                skill_links=links, warnings=warnings, network_used=False)
+                skill_links=links, instructions=instructions, warnings=warnings, network_used=False)
+
+
+def instruction_regions(assets, release, state):
+    """One row per global instruction file: current, stale, absent, skipped or refused. Reads the files only; the bundled
+    installer owns the marker rules, so this reports exactly what an update would do. [] when it is unavailable."""
+    try:
+        installer = runpy.run_path(str(Path(assets) / 'install.py'))
+        enabled, agent = installer['instruction_settings'](state if isinstance(state, dict) else {})
+        return installer['instruction_report'](installer['instruction_targets'](agent), assets, release, enabled)
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError):
+        return []

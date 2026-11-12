@@ -45,6 +45,7 @@ def rel(tmp_path):
     for name, content in [('ahl', '#!/usr/bin/env python3\nprint("synthetic CLI")\n'),
                           ('LICENSE', 'synthetic'), ('README.md', 'synthetic'),
                           ('install.py', (ROOT/'install.py').read_text()),
+                          ('global-instructions.md', (ROOT/'global-instructions.md').read_text()),
                           ('package.json', '{"version":"0.1.0"}'),
                           ('pyproject.toml', '[project]\nversion = "0.1.0"\n')]:
         (source / name).write_text(content)
