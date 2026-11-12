@@ -211,3 +211,21 @@ def test_scoped_review_still_judges_the_listed_entry_point(project):
     stage = scoped_stage(project, [f'{ALPHA}/SKILL.md'])
     stage.write(f'{ALPHA}/SKILL.md', 'no frontmatter\n')
     assert scoped_review(stage).findings[0].reasons == ('missing_frontmatter',)
+
+
+@pytest.mark.parametrize('path,blocked', [
+    ('pkg/.claude/skills/alpha', True), ('.agents/skills/alpha', False), ('pkg/.claude/skills/beta', False)])
+def test_new_bundle_shadowing_an_existing_name_is_blocked(project, path, blocked):
+    stage = Stage(project)
+    stage.write(f'{path}/SKILL.md', ENTRY.format(name=path.rsplit('/', 1)[1]).replace('Read [the guide](references/guide.md).', ''))
+    assert reasons(stage.review())[path] == ('create', ('shadowed_name',) if blocked else ())
+
+
+def test_shadowing_is_judged_against_the_candidate_and_skips_updates(project):
+    stage = Stage(project)
+    stage.write('pkg/.claude/skills/alpha/SKILL.md', ENTRY.format(name='alpha'))
+    stage.write('pkg/.claude/skills/alpha/references/guide.md', 'guide\n')
+    stage.write(f'{ALPHA}/references/more.md', 'more\n')
+    assert reasons(stage.review())[ALPHA] == ('update', ('orphan_asset',))
+    stage.remove(f'{ALPHA}/SKILL.md'); stage.remove(f'{ALPHA}/references/guide.md'); stage.remove(f'{ALPHA}/references/more.md')
+    assert reasons(stage.review())['pkg/.claude/skills/alpha'] == ('create', ())

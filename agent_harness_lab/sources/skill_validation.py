@@ -14,13 +14,14 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
   inline links and used single-line full/collapsed reference definitions outside code are read, percent-decoded
   and normalized; a directory target needs a file
   below it; URLs, anchors and absolute paths are not bundle references.
+- not shadow, or be shadowed by, a bundle of the same name in the same kind of skills folder (.claude/skills,
+  .agents/skills or a bare skills) at the same, an enclosing or a nested directory (shadowed_name); only newly created bundles are compared, and a different kind of folder is not a collision.
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
   the text as a whole name; ambiguous basenames require a bundle-relative path.
 
 Findings carry fixed labels and bundle paths only, never file text. With configured harness_paths the
 snapshot holds only the listed files, so the membership checks (missing_entry_point, dangling_reference,
-orphan_asset and the create/remove action) are skipped. Same-name collisions across roots and
-references from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
+orphan_asset and the create/remove action) are skipped. References from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
 """
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -149,6 +150,21 @@ def _reasons(bundle, files, added, complete=True):
     return sorted(set(reasons))
 
 
+def _shadowed(bundle, others):
+    """True when another bundle with this name sits in the same kind of skills folder at the same, an enclosing or a nested directory."""
+    def place(path):
+        folder = PurePosixPath(path).parent
+        kind = folder.parts[-2:] if folder.parent.name in {'.claude', '.agents'} else folder.parts[-1:]
+        return kind, folder.parents[len(kind) - 1] if len(kind) > 1 else folder.parent
+    kind, base = place(bundle)
+    for other in others:
+        other_kind, other_base = place(other)
+        if (other != bundle and PurePosixPath(other).name == PurePosixPath(bundle).name and other_kind == kind
+                and (base == other_base or base in other_base.parents or other_base in base.parents)):
+            return True
+    return False
+
+
 def review_tree(baseline, candidate, original, proposed, scoped=False):
     """Findings for every bundle with a changed file; original and proposed are the snapshot and candidate states.
 
@@ -157,6 +173,7 @@ def review_tree(baseline, candidate, original, proposed, scoped=False):
     changed = sorted(name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name))
     bundles = sorted({bundle for bundle in map(bundle_of, changed) if bundle})
     rows = []
+    existing = set() if scoped else {bundle for bundle in map(bundle_of, proposed) if bundle}
     for bundle in bundles:
         prefix = bundle + '/'
         before = {name for name in original if name.startswith(prefix)}
@@ -168,5 +185,7 @@ def review_tree(baseline, candidate, original, proposed, scoped=False):
             files[name[len(prefix):]] = raw
         action = 'scoped' if scoped else 'create' if not before else 'remove' if not files else 'update'
         added = [name[len(prefix):] for name in proposed if name.startswith(prefix) and name not in original]
-        rows.append(Finding(bundle, action, () if action == 'remove' or not files else tuple(_reasons(bundle, files, added, not scoped))))
+        reasons = [] if action == 'remove' or not files else _reasons(bundle, files, added, not scoped)
+        if action == 'create' and _shadowed(bundle, existing): reasons = sorted({*reasons, 'shadowed_name'})
+        rows.append(Finding(bundle, action, tuple(reasons)))
     return Review(tuple(rows))
