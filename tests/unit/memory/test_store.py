@@ -345,6 +345,16 @@ def test_killed_write_after_the_manifest_is_recovered_by_reindex_not_resurrected
     assert store.read(sha(b'doomed')) == b'doomed' and store.verify()['ok']
 
 
+def test_retry_with_different_records_after_a_killed_publish_does_not_break_reindex(store):
+    killed_publish(store, 'after_manifest')
+    store.publish('p1', 'report', b'doomed', records=evaluation_records(b'doomed', outcome='fail'))
+    report = store.reindex()
+    assert report['rebuilt'] is True and report['manifests'] == 1 and report['issue_count'] == 1
+    assert 'already describes artifact' in report['issues'][0]
+    assert [a['digest'] for a in store.artifacts('p1')['artifacts']] == [sha(b'doomed')]
+    assert store.read(sha(b'doomed')) == b'doomed'
+
+
 def test_killed_manifest_rename_leaves_a_temp_file_not_a_record(store):
     def hook(name):
         if name.startswith('before_rename:') and name != 'before_rename:' + sha(b'doomed'):

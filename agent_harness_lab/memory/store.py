@@ -442,8 +442,8 @@ class MemoryStore:
     def _usable(objects, sizes, issues):
         """Manifests whose artifact is missing, corrupt or the wrong size cannot become records: report as blocked.
         Then keep a record only when every dependency is itself kept (same project)."""
-        usable = {}
-        for digest, manifest in objects.items():
+        usable, claimed = {}, {}
+        for digest, manifest in sorted(objects.items()):
             if manifest is False and not any(digest[:12] in text for text in issues):
                 issues.append(f'object {digest[:12]} is a malformed manifest')
             if not manifest:
@@ -451,7 +451,11 @@ class MemoryStore:
             blob = manifest['object']
             if objects.get(blob, False) is not None or sizes[blob] != manifest['size']:
                 issues.append(f'manifest {digest[:12]} blocked: artifact {blob[:12]} is missing, unverifiable or the wrong size')
+            elif (manifest['project_id'], blob) in claimed:  # a crashed publish retried with other records or dependencies
+                issues.append(f'manifest {digest[:12]} blocked: manifest {claimed[manifest["project_id"], blob][:12]} '
+                              f'already describes artifact {blob[:12]} in this project')
             else:
+                claimed[manifest['project_id'], blob] = digest
                 usable[digest] = manifest
         changed = True
         while changed:
