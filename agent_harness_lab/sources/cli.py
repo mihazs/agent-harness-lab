@@ -55,6 +55,11 @@ def main(argv):
             print('usage: ahl sources claude-mem tool-check --tools FILE', file=sys.stderr); return 2
         from .claude_mem_tools import main as tool_check
         return tool_check(argv[2:])
+    if argv and argv[0] == 'mempalace':
+        if argv[1:2] != ['capabilities']:
+            print('usage: ahl sources mempalace capabilities [--tools-list FILE]', file=sys.stderr); return 2
+        from .mempalace_capabilities import main as capabilities_main
+        return capabilities_main(argv[2:])
     if argv and argv[0] == 'github':
         from .github_quota import main as quota_main
         return quota_main(argv[1:])
@@ -80,7 +85,8 @@ def main(argv):
         'For reviewed cache relationships, use ahl sources lineage --help; for a read-only harness surface '
         'inventory of one checkout, use ahl sources inventory --help. To compare a Claude Code capture with the verified profile contract by field name only, '
         'use ahl sources claude pin-check --help. To check a saved Claude-Mem MCP tool listing against the pinned release without contacting a worker, '
-        'use ahl sources claude-mem tool-check --help.')
+        'use ahl sources claude-mem tool-check --help. For the offline MemPalace capability report and a names-only check of a saved '
+        'tools/list result, use ahl sources mempalace capabilities --help.')
     parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory'),
         help='Requested source operation (default: %(default)s); lineage and inventory have their own options and help')
     parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')
