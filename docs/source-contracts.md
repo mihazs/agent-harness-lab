@@ -4935,6 +4935,7 @@ refused.
 | Evidence type | `derivation` separates a `session_qa_entry`, `agent_trace_step`, `distilled_lesson`, `retrieved_item` (chunk, summary, code, rule, skill kinds), `generated_answer` (completion kinds), `tool_result` and `system_marker`; an unrecognized kind is `unclassified`. |
 | Score | The number is kept with `score_semantics`: `unspecified` (retriever-defined) or `vector_distance_lower_is_better` for skills. It is relevance, never correctness. |
 | Origin | A session entry's `used_graph_element_ids.node_ids` become node hashes equal to the claims of a graph export of the same instance, dataset and dataset ID; an entry without any is `session_entry_without_graph_refs`. Edge IDs cannot be joined and are not kept. |
+| Retrieval provenance | A `graph` or `code` entry's `metadata.data_id` (the ingested Data, which is the Document node) and `metadata.chunk_id` become node hashes under the same rule. A `code` entry whose `raw.type` is one of the 14 code-graph node types at the pin (`CodeSymbol`, `CodeModule`, `ApiEndpoint` and the rest, from `code_retriever.py`) also hashes `raw.id` as its code-symbol reference and keeps that type as `code_node_type`; its name, file and line stay only in the body fingerprint. `graph_refs_status` is `named` or `none`; a retrieved item with none is `result_without_provenance_refs`, and a code fact with an unpinned type is `code_fact_type_unrecognized`. A non-string or empty ID, or non-object `metadata` or `raw`, refuses the file. `metadata.evidence` is not read, because its artifact IDs are untyped at the pin. A link is a candidate join to a graph export claim, never proof that the claim is correct. |
 
 Every claim keeps `independent_case`, `factually_verified` and
 `task_outcome_verified` false, so a generated answer is never a graded harness
@@ -4944,7 +4945,7 @@ Bodies, questions, answers and text are fingerprinted only. `max_rows`,
 always `partial` because top-k truncation cannot be seen.
 
 Still open in #52: verifying either shape against a real export or result list;
-`cogx` archives; code-symbol reference mapping; an opt-in, explicitly authorized
+`cogx` archives; evidence-reference mapping; an opt-in, explicitly authorized
 live `recall` connector with verified read-only API semantics and bounded
 cancellation of result streams; further releases and backends.
 

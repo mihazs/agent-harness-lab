@@ -51,7 +51,15 @@ QA = dict(source='session', time='2031-05-01T10:00:00+00:00', qa_id='qa-1', ques
           context='invented context', answer='invented answer', used_graph_element_ids=dict(node_ids=[ALICE], edge_ids=['edge-1']))
 HIT = dict(source='graph', kind='chunk', search_type='CHUNKS', text='invented chunk '+SECRET, score=0.42, dataset_id=DATASET_A)
 ANSWER = dict(HIT, kind='graph_completion', search_type='GRAPH_COMPLETION', text='invented generated answer', score=None)
+SYMBOL = 'node-symbol-1'
+CODE = dict(source='code', kind='code', search_type='CODE', text='invented symbol '+SECRET, dataset_id=DATASET_A,
+            raw=dict(id=SYMBOL, kind='symbol', type='CodeSymbol', name='invented_fn', file='/invented/path/'+SECRET, line=3))
+CITED = dict(HIT, metadata=dict(data_id=DOC, chunk_id=CHUNK, chunk_index=0, document_name='invented.txt'))
 SKILL = dict(source='skills', text='invented: skill', skill=dict(name='invented'), score=0.2)
+
+
+def graph_hash(claims, detail):
+    return next(h for h, c in claims.items() if c.detail == detail)
 
 
 def recall(*entries):
@@ -350,6 +358,40 @@ class TestCogneeSource:
         b = {c.native_id_sha256 for c in self.read_recall(recall(dict(HIT, dataset_id=DATASET_B)), dataset_id=DATASET_B).records
              if c.record_type == 'cognee_recall_graph'}
         assert a and not a & b
+
+    def test_retrieved_chunks_and_code_facts_link_to_graph_nodes_without_keeping_names(self):
+        self.read(snapshot(nodes=NODES+[node(SYMBOL, 'CodeSymbol', name='invented_fn')]))
+        graph = {c.native_id_sha256: c for c in self.connector.claims}
+        by_detail = {c.detail: c.native_id_sha256 for c in graph.values()}
+        self.read_recall(recall(CITED, CODE))
+        cited, code = self.connector.claims
+        # Data and chunk IDs hash to the document and chunk claims of a graph export of the same dataset.
+        assert set(cited.graph_node_refs) == {by_detail['TextDocument'], by_detail['DocumentChunk']} and cited.code_node_type is None
+        assert (code.graph_node_refs, code.code_node_type, code.derivation) == ((graph_hash(graph, 'other'),), 'CodeSymbol', 'retrieved_item')
+        assert {c.graph_refs_status for c in self.connector.claims} == {'named'}
+        assert 'result_without_provenance_refs' not in self.connector.summary['warnings']
+        # Names, paths and lines stay inside the body fingerprint; no claim field holds them.
+        assert SECRET not in json.dumps([c.to_dict() for c in self.connector.claims]) and 'invented_fn' not in repr(self.connector.claims)
+        # The same IDs under another dataset ID are other nodes.
+        self.read_recall(recall(dict(CITED, dataset_id=DATASET_B), dict(CODE, dataset_id=DATASET_B)), dataset_id=DATASET_B)
+        assert not set(cited.graph_node_refs + code.graph_node_refs) & {r for c in self.connector.claims for r in c.graph_node_refs}
+
+    def test_results_without_typed_provenance_do_not_guess_a_link(self):
+        self.read_recall(recall(HIT, dict(ANSWER, metadata=dict(chunk_id=CHUNK))))
+        assert [(c.graph_refs_status, c.derivation) for c in self.connector.claims] == [('none', 'retrieved_item'), ('named', 'generated_answer')]
+        assert [w for w in self.connector.summary['warnings'] if w.startswith('result_without')] == ['result_without_provenance_refs']
+        # A code fact whose type is not a pinned code-graph type contributes no reference and no type.
+        self.read_recall(recall(dict(CODE, raw=dict(CODE['raw'], type='Mystery'))))
+        claim, = self.connector.claims
+        assert (claim.graph_node_refs, claim.code_node_type, claim.graph_refs_status) == ((), None, 'none')
+        assert 'code_fact_type_unrecognized' in self.connector.summary['warnings']
+        for bad in (dict(HIT, metadata=dict(chunk_id=1)), dict(HIT, metadata=dict(data_id='')), dict(HIT, metadata=['x']),
+                    dict(CODE, raw=dict(CODE['raw'], id=7)), dict(HIT, raw='x')):
+            with pytest.raises(ValueError): self.read_recall(recall(bad))
+        cognee.RecallClaim(**dict(claim.to_dict(), code_node_type='CodeSymbol'))
+        for change in (dict(code_node_type='Mystery'), dict(claim_type='recall_graph', code_node_type='CodeSymbol')):
+            with pytest.raises(ValueError): cognee.RecallClaim(**dict(claim.to_dict(), **change))
+        with pytest.raises(ValueError): cognee.RecallClaim(**dict(claim.to_dict(), graph_refs_status='named'))
 
     def test_recall_results_fail_closed_and_stay_bounded(self):
         for bad in ({}, ['text'], recall(dict(QA, used_graph_element_ids=dict(node_ids=[1])))):
