@@ -1,5 +1,4 @@
 """Procedure compliance graded from observable requirements; synthetic events and checks only."""
-# fixed-in: a462147f -k nameless_tool_call
 import pytest
 
 from agent_harness_lab.evaluation.skills import COMPLIANCE_SCHEMA, procedure_compliance
