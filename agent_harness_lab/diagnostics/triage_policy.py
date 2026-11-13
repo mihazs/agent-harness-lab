@@ -15,6 +15,7 @@ REPORT_PROFILE = 'diagnostic-triage-evaluation-v2'
 REPORT_PROFILE_V3 = 'diagnostic-triage-evaluation-v3'
 REPORT_PROFILE_V4 = 'diagnostic-triage-evaluation-v4'
 REPORT_PROFILE_V5 = 'diagnostic-triage-evaluation-v5'
+REPORT_PROFILE_V6 = 'diagnostic-triage-evaluation-v6'
 BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8)  # fixed descriptive grid, never a tuned or accepted value
 MIN_BIN_ROOTS = 10  # below this a reliability bin is reported as sparse, not as evidence
 SEVERITIES = ('severe', 'normal', 'none')
@@ -23,6 +24,7 @@ ROLE_ROOTS = ('fit_roots_sha256', 'calibration_roots_sha256', 'threshold_tuning_
 POLICY_FIELDS = frozenset(('schema_version', 'profile', 'classes', 'costs', 'review_capacity_roots', 'abstention',
                            'min_coverage', 'max_severe_misses', 'threshold_provenance', 'model_sha256',
                            'calibrator_sha256', *ROLE_ROOTS))
+SCOPE_FIELDS = frozenset(('corpus_sha256', 'min_calibration_roots'))  # accepted only by report v6; every other caller refuses them
 CLASS_FIELDS = frozenset(('severity', 'threshold', 'min_precision', 'min_recall'))
 ABSTAINED = 'abstained'
 CONFLICT = 'conflicting_root_decisions'
@@ -53,9 +55,9 @@ def _sha(value):
     return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
 
 
-def check_policy(policy, *, require_disjoint_roles=False):
+def check_policy(policy, *, require_disjoint_roles=False, require_scope=False):
     """Validate a frozen v2 policy; return its class order and forbidden evaluation roots."""
-    if not isinstance(policy, dict) or set(policy) != POLICY_FIELDS:
+    if not isinstance(policy, dict) or set(policy) != (POLICY_FIELDS | SCOPE_FIELDS if require_scope else POLICY_FIELDS):
         raise ValueError('invalid triage policy v2 schema')
     if type(policy['schema_version']) is not int or policy['schema_version'] != 2 or policy['profile'] != POLICY_PROFILE:
         raise ValueError('invalid triage policy v2 schema')
@@ -86,6 +88,8 @@ def check_policy(policy, *, require_disjoint_roles=False):
     for key in ('model_sha256', 'calibrator_sha256'):
         if policy[key] is not None and not _sha(policy[key]):
             raise ValueError('model and calibrator identities must be SHA-256 or null')
+    if require_scope and not (_sha(policy['corpus_sha256']) and _count(policy['min_calibration_roots'])):
+        raise ValueError('corpus revision must be SHA-256 and the calibration-root minimum a nonnegative integer')
     forbidden = {}
     for key in ROLE_ROOTS:
         values = policy[key]
@@ -111,7 +115,7 @@ def _row_decision(scores, names, classes, margin):
     return ranked[0], None
 
 
-def _aggregate(observations, policy, names, forbidden, bind_model=False, sums=None):
+def _aggregate(observations, policy, names, forbidden, bind_model=False, sums=None, bind_corpus=False):
     """Single pass over rows; per-root state is the only retained data."""
     classes, margin = policy['classes'], policy['abstention']['min_margin']
     severe = [name for name in names if classes[name]['severity'] == 'severe']
@@ -131,6 +135,8 @@ def _aggregate(observations, policy, names, forbidden, bind_model=False, sums=No
             raise ValueError('invalid triage class score')
         if bind_model and row.get('model_sha256') != policy['model_sha256']:
             raise ValueError('observation model revision is outside the policy scope')
+        if bind_corpus and row.get('corpus_sha256') != policy['corpus_sha256']:
+            raise ValueError('observation corpus revision is outside the policy scope')
         digest = root_sha256(root)
         if digest in forbidden:
             raise ValueError(f'evaluated root appears in policy {forbidden[digest]}; validation roots must be untouched')
@@ -159,14 +165,15 @@ def evaluate(policy, observations, *, report_version=2):
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
-    if type(report_version) is not int or report_version not in (2, 3, 4, 5):
+    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6):
         raise ValueError('unsupported triage report version')
-    names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4)
+    names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4, require_scope=report_version >= 6)
     classes, costs = policy['classes'], policy['costs']
     if report_version >= 4 and policy['model_sha256'] is None:
-        raise ValueError('v4 and v5 require a policy bound to a model revision')
-    sums = {} if report_version == 5 else None
-    roots = _aggregate(observations, policy, names, forbidden, bind_model=report_version >= 4, sums=sums)
+        raise ValueError('v4 and later require a policy bound to a model revision')
+    sums = {} if report_version >= 5 else None
+    roots = _aggregate(observations, policy, names, forbidden, bind_model=report_version >= 4, sums=sums,
+                       bind_corpus=report_version >= 6)
     abstained = []
     # Replace per-root aggregation state in place with the root decision.
     for digest, (label, outcomes, risk) in roots.items():
@@ -250,6 +257,10 @@ def evaluate(policy, observations, *, report_version=2):
         missing.append('coverage_undefined')
     elif coverage < policy['min_coverage']:
         failed.append('coverage_below_minimum')
+    # A declared calibrator fitted on too few declared roots cannot support the frozen decisions.
+    if report_version >= 6 and policy['calibrator_sha256'] is not None \
+            and len(policy['calibration_roots_sha256']) < policy['min_calibration_roots']:
+        failed.append('calibration_roots_below_minimum')
     if len(severe_roots) > policy['max_severe_misses']:
         failed.append('severe_misses_above_maximum')
     overflow = max(0, len(abstained)-policy['review_capacity_roots'])
@@ -263,7 +274,7 @@ def evaluate(policy, observations, *, report_version=2):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')
-    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5}[report_version], role='validate',
+    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6}[report_version], role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',
@@ -281,7 +292,9 @@ def evaluate(policy, observations, *, report_version=2):
         certification='not_issued', automatic_promotion=False, publication_allowed=False)
     if report_version >= 4:
         result['role_separation']='declared_hash_lists_disjoint_only'
-    if report_version == 5:
+    if report_version >= 6:
+        result['corpus_sha256'] = policy['corpus_sha256']
+    if report_version >= 5:
         result['score_diagnostics'] = _score_diagnostics(sums, roots, names)
         if result['score_diagnostics']['reliability']['sparse_bins']:
             result['reasons'].insert(len(failed)+len(missing), 'reliability_bins_sparse')

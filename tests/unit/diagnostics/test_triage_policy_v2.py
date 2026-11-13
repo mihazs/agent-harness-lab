@@ -394,3 +394,88 @@ def test_v5_keeps_v4_role_and_model_refusals():
     with pytest.raises(ValueError, match='role roots overlap'):
         triage.evaluate(_v5_policy(fit_roots_sha256=[shared], calibration_roots_sha256=[shared]),
                         _v5_rows([row('a', NONE, NONE)]), report_version=5)
+
+
+def _v6_policy(**changes):
+    scope = dict(model_sha256=sha('synthetic-model'), corpus_sha256=sha('synthetic-corpus'), min_calibration_roots=3)
+    return policy(**{**scope, **changes})
+
+
+def _v6_rows(items):
+    return [dict(r, model_sha256=sha('synthetic-model'), corpus_sha256=sha('synthetic-corpus')) for r in items]
+
+
+def test_v6_adds_data_revision_scope_without_changing_v5_decisions_or_diagnostics():
+    rows = _v6_rows([row('a', NONE, NONE), row('b', SEVERE, NONE), row('c', None, None)])
+    v5 = triage.evaluate({k: v for k, v in _v6_policy().items() if k not in triage.SCOPE_FIELDS}, rows, report_version=5)
+    v6 = triage.evaluate(_v6_policy(), rows, report_version=6)
+    assert v6['profile'] == 'diagnostic-triage-evaluation-v6' and v6['corpus_sha256'] == sha('synthetic-corpus')
+    ignored = ('profile', 'schema_version', 'policy_sha256', 'corpus_sha256')
+    assert {k: v for k, v in v6.items() if k not in ignored} == {k: v for k, v in v5.items() if k not in ignored}
+    assert v6['certification'] == 'not_issued' and v6['status'] == 'rejected'
+    assert not v6['automatic_promotion'] and not v6['publication_allowed'] and not public_export_allowed([v6])
+    assert v6['root_independence'] == 'unverified' and v6['label_authority'] == 'unverified'
+
+
+def test_scope_fields_belong_to_v6_only():
+    rows = _v6_rows([row('a', NONE, NONE)])
+    unscoped = {k: v for k, v in _v6_policy().items() if k not in triage.SCOPE_FIELDS}
+    with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+        triage.evaluate(unscoped, rows, report_version=6)
+    for version in (2, 3, 4, 5):
+        with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+            triage.evaluate(_v6_policy(), rows, report_version=version)
+    with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+        triage.check_policy(_v6_policy())
+
+
+@pytest.mark.parametrize('changes', [dict(corpus_sha256=None), dict(corpus_sha256='x'*64), dict(corpus_sha256='A'*64),
+                                     dict(min_calibration_roots=-1), dict(min_calibration_roots=True),
+                                     dict(min_calibration_roots=1.5), dict(min_calibration_roots=None)])
+def test_v6_refuses_an_invalid_corpus_hash_or_calibration_minimum(changes):
+    with pytest.raises(ValueError, match='corpus revision must be SHA-256'):
+        triage.evaluate(_v6_policy(**changes), _v6_rows([row('a', NONE, NONE)]), report_version=6)
+
+
+def test_v6_refuses_rows_from_another_or_unstated_corpus_revision():
+    rows = _v6_rows([row('a', NONE, NONE)])
+    for bad in (dict(rows[0], corpus_sha256=sha('synthetic-other-corpus')), {k: v for k, v in rows[0].items() if k != 'corpus_sha256'}):
+        with pytest.raises(ValueError, match='corpus revision is outside the policy scope'):
+            triage.evaluate(_v6_policy(), [bad], report_version=6)
+    with pytest.raises(ValueError, match='outside the policy scope'):
+        triage.evaluate(_v6_policy(), [dict(rows[0], model_sha256=sha('synthetic-other-model'))], report_version=6)
+    with pytest.raises(ValueError, match='bound to a model revision'):
+        triage.evaluate(_v6_policy(model_sha256=None), rows, report_version=6)
+
+
+def test_v6_rejects_a_declared_calibrator_fitted_on_too_few_declared_roots():
+    rows = _v6_rows([row('a', NONE, NONE)])
+    fitted = sha('synthetic-calibrator')
+    tiny = triage.evaluate(_v6_policy(calibrator_sha256=fitted, calibration_roots_sha256=[sha('c1'), sha('c2')]), rows, report_version=6)
+    enough = triage.evaluate(_v6_policy(calibrator_sha256=fitted, calibration_roots_sha256=[sha('c1'), sha('c2'), sha('c3')]), rows, report_version=6)
+    assert tiny['status'] == 'rejected' and 'calibration_roots_below_minimum' in tiny['reasons']
+    assert enough['status'] == 'insufficient_evidence' and 'calibration_roots_below_minimum' not in enough['reasons']
+    # The same declared lists cannot fail a policy that declares no calibrator, or one that preregistered no minimum.
+    assert 'calibration_roots_below_minimum' not in triage.evaluate(_v6_policy(), rows, report_version=6)['reasons']
+    none = triage.evaluate(_v6_policy(calibrator_sha256=fitted, min_calibration_roots=0), rows, report_version=6)
+    assert 'calibration_roots_below_minimum' not in none['reasons']
+    # Earlier profiles never apply the check, so their reports stay comparable.
+    legacy = {k: v for k, v in _v6_policy(calibrator_sha256=fitted).items() if k not in triage.SCOPE_FIELDS}
+    assert 'calibration_roots_below_minimum' not in triage.evaluate(legacy, rows, report_version=5)['reasons']
+
+
+def test_validation_labels_change_the_report_but_never_the_frozen_policy_artifacts():
+    frozen = _v6_policy(fit_roots_sha256=[sha('f')], calibration_roots_sha256=[sha('c')], threshold_tuning_roots_sha256=[sha('t')])
+    before = deepcopy(frozen)
+    agreeing = _v6_rows([row('a', NONE, NONE), row('b', SEVERE, SEVERE)])
+    relabeled = _v6_rows([row('a', SEVERE, NONE), row('b', NONE, SEVERE)])
+    first = triage.evaluate(frozen, agreeing, report_version=6)
+    second = triage.evaluate(frozen, relabeled, report_version=6)
+    assert frozen == before
+    assert first['classes'] != second['classes'] and first['confusion'] != second['confusion']
+    for key in ('policy_sha256', 'model_sha256', 'calibrator_sha256', 'corpus_sha256', 'decisions', 'decision_threshold_source', 'threshold_selection'):
+        assert first[key] == second[key]
+    # Roots declared as tuning data cannot reach the final labels: the evaluation refuses them.
+    tuning = _v6_policy(threshold_tuning_roots_sha256=[sha('tuning-root')])
+    with pytest.raises(ValueError, match='threshold_tuning_roots_sha256'):
+        triage.evaluate(tuning, _v6_rows([row('tuning-root', NONE, NONE)]), report_version=6)
