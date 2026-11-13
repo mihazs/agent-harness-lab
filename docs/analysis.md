@@ -359,8 +359,8 @@ caveat. Every other case is `no_change_evidence_insufficient`: the receipt then 
 `next_steps` list (strongest observed patterns, each missing-evidence item, then `ahl audit .`), each with
 the command to run. Neither reason claims the harness is correct beyond the examined behaviors.
 
-A receipt that ends without a candidate while `analysis.findings` is above zero (`no_outcome_evidence`, or a
-`no_change` after preparation) carries `findings_not_candidates`: `reason: findings_not_actionable`, the
+A receipt that ends `no_outcome_evidence`, or `no_change` after preparation (the proposer wrote `no_change`, or a
+candidate identical to the baseline, `candidate_identical_to_baseline`), while `analysis.findings` is above zero, carries `findings_not_candidates`: `reason: findings_not_actionable`, the
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
 never an independence or severity claim. `no_outcome_evidence` is returned before any preparation call when no

@@ -820,6 +820,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposed == original:
             proposed = None
             result.update(status='no_change',reason='candidate_identical_to_baseline')
+            first_use.attach(result, data, args, prepared=True)
             break
         if instruction is not None:
             write_json(output/f'instruction-validation-{attempt}.json', instruction)

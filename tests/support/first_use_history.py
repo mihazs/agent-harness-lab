@@ -14,7 +14,8 @@ sys.stdin.read()
 pathlib.Path(%r).open('a').write('call\\n')
 if pathlib.Path('context.json').exists():
     context = json.loads(pathlib.Path('context.json').read_text())
-    pathlib.Path(context['evaluation'], 'proposal.json').write_text(json.dumps(dict(status='no_change', reason='synthetic')))
+    status = pathlib.Path(%r).read_text() if pathlib.Path(%r).exists() else 'no_change'  # a candidate is written without editing it
+    pathlib.Path(context['evaluation'], 'proposal.json').write_text(json.dumps(dict(status=status, reason='synthetic')))
 print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
 '''
 
@@ -26,9 +27,9 @@ class Home:
         self.root, self.project = root, root/'project'
         self.project.mkdir()
         (self.project/'AGENTS.md').write_text('synthetic instructions\n')
-        self.calls = root/'model-calls'
+        self.calls, self.proposal = root/'model-calls', root/'proposal-status'
         self.runtime = root/'agent'
-        self.runtime.write_text(RUNTIME % str(self.calls))
+        self.runtime.write_text(RUNTIME % (str(self.calls), str(self.proposal), str(self.proposal)))
         self.runtime.chmod(0o755)
         for name, folder in (('CODEX_HOME', 'codex'), ('CLAUDE_CONFIG_DIR', 'claude'), ('AHL_STATE_HOME', 'state')):
             monkeypatch.setenv(name, str(root/folder))
@@ -36,6 +37,10 @@ class Home:
         monkeypatch.setenv('HOME', str(root/'home'))
         for marker in ('CLAUDECODE', 'CODEX_THREAD_ID', 'CODEX_CI', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED'):
             monkeypatch.delenv(marker, raising=False)
+
+    def proposes_an_unedited_candidate(self):
+        """The fake preparation agent declares a candidate but leaves the candidate identical to the baseline."""
+        self.proposal.write_text('candidate')
 
     @property
     def model_calls(self):

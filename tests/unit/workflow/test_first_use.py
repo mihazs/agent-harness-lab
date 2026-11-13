@@ -29,18 +29,25 @@ def test_blocked_needs_findings_without_outcome_or_hypothesis_source(findings, o
     assert first_use.blocked(data(findings, outcomes), argparse.Namespace(**args)) is expected
 
 
-def test_causes_count_findings_and_name_an_unverified_capture_only_when_one_exists():
+def test_causes_name_each_cause_and_an_unverified_capture_when_one_exists():
     seen = first_use.explain(data(2, sources=[dict(pin_compatibility='unverified')]), argparse.Namespace(), prepared=True)
     assert seen['causes'] == dict(no_outcome_evidence=2, no_hypothesis_source=2, capture_unverified=2, proposer_returned_no_change=2)
+
+
+def test_causes_stay_empty_when_every_cause_is_absent():
     quiet = first_use.explain(data(2, [GRADED], [dict(pin_compatibility='declared_range')]), argparse.Namespace(focus='h'), prepared=False)
     assert quiet['causes'] == {} and quiet['candidates'] == 0
 
 
-def test_the_spend_label_needs_a_preparation_call_and_no_evaluated_trial():
-    for prepared, evaluated, labelled in ((True, False, True), (True, True, False), (False, False, False)):
-        result = {}
-        first_use.spend_label(result, argparse.Namespace(), prepared=prepared, evaluated=evaluated)
-        assert ('spend_label' in result) is labelled
-    assert result == {}
+@pytest.mark.parametrize('prepared, evaluated, labelled', [(True, False, True), (True, True, False), (False, False, False)],
+                         ids=['spent_nothing_evaluated', 'spent_and_evaluated', 'no_preparation_call'])
+def test_the_spend_label_needs_a_preparation_call_and_no_evaluated_trial(prepared, evaluated, labelled):
+    result = {}
+    first_use.spend_label(result, argparse.Namespace(), prepared=prepared, evaluated=evaluated)
+    assert ('spend_label' in result) is labelled
+
+
+def test_the_spend_label_keeps_the_provider_spend_unverified():
+    result = {}
     first_use.spend_label(result, argparse.Namespace(), prepared=True, evaluated=False)
     assert result['spent_without_evaluation']['provider_reported_spend'] == 'unverified'
