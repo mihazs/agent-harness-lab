@@ -3997,9 +3997,11 @@ Only the one saved page is read. A `nextCursor` sets `listing_complete` to
 stays `compatible`, but `unknown_tool_count` and `advertised_write_tools` then
 count only that page.
 
-`advertised_write_tools` lists pinned write tools the listing exposes. The pinned
-server hides them in its read-only mode, so their presence suggests it was not
-in that mode; AHL still calls none. A matching
+`advertised_write_tools` lists pinned write tools the listing exposes that the
+pinned server hides in its read-only mode, so their presence suggests it was not
+in that mode; AHL still calls none. `mempalace_reconnect` is state-changing and
+refused, but upstream deliberately keeps it listed in read-only mode, so it is
+never counted there. A matching
 listing identifies neither the server nor its version, says nothing about result
 shapes, and is not evidence that any saved result was produced by that server.
 Invalid input exits 2 with a reason class only. Real-server evidence remains

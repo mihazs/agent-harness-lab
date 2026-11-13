@@ -26,6 +26,8 @@ MUTATING = frozenset('''mempalace_kg_add mempalace_kg_invalidate mempalace_kg_su
     mempalace_delete_by_source mempalace_mine mempalace_sync mempalace_update_drawer mempalace_diary_write
     mempalace_event_append mempalace_event_ack mempalace_artifact_put mempalace_patch_submit'''.split())
 STATE_CHANGING = frozenset(('mempalace_hook_settings', 'mempalace_memories_filed_away', 'mempalace_reconnect'))
+# Upstream comments `mempalace_reconnect` as deliberately not refused in read-only mode, so read-only `tools/list` still shows it.
+LISTED_IN_READ_ONLY = frozenset(('mempalace_reconnect',))
 READ = frozenset('''mempalace_status mempalace_list_wings mempalace_list_rooms mempalace_get_taxonomy mempalace_get_aaak_spec
     mempalace_kg_query mempalace_kg_timeline mempalace_kg_stats mempalace_traverse mempalace_find_tunnels
     mempalace_graph_stats mempalace_mesh_peers mempalace_list_tunnels mempalace_list_hallways mempalace_follow_tunnels
@@ -78,7 +80,7 @@ def compare(listing):
     verdict = ('incompatible' if differs or (absent and complete) else 'inconclusive' if absent
         else 'compatible_with_unknown_tools' if unknown else 'compatible')
     return dict(verdict=verdict, listing_complete=complete, profile_tools=rows, unknown_tool_count=unknown,
-        advertised_write_tools=sorted(name for name in advertised if name in MUTATING | STATE_CHANGING),
+        advertised_write_tools=sorted(name for name in advertised if name in (MUTATING | STATE_CHANGING) - LISTED_IN_READ_ONLY),
         warnings=WARNINGS if complete else sorted(WARNINGS+['listing_incomplete']))
 
 

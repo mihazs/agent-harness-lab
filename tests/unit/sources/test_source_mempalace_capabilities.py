@@ -75,6 +75,15 @@ def test_unknown_and_write_tools_are_counted_by_name_only(tmp_path):
     assert SECRET not in out and 'mempalace_new_tool' not in out
 
 
+def test_reconnect_is_refused_but_not_read_only_mode_evidence(tmp_path):
+    # Upstream read-only mode still lists `mempalace_reconnect`, so its presence must not read as a non-read-only server.
+    def extend(tools): tools.append(dict(name='mempalace_reconnect', inputSchema={}))
+    code, out, _ = run('--tools-list', listing(tmp_path, extend))
+    result = json.loads(out)
+    assert 'mempalace_reconnect' in result['tools']['refused_state_changing']
+    assert code == 0 and result['tools_list']['advertised_write_tools'] == [] and result['tools_list']['unknown_tool_count'] == 0
+
+
 @pytest.mark.parametrize('case', ['absent', 'renamed_property', 'extra_property', 'required_changed', 'no_schema'])
 def test_a_tool_that_differs_from_the_pin_is_incompatible(tmp_path, case):
     def change(tools):
