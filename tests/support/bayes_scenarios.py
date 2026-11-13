@@ -16,11 +16,12 @@ PAIRS = 24  # task-by-repetition pairs averaged inside one root
 SHAPES = {'clear_win': (30, .4, .7, .05), 'clear_loss': (30, .6, .05, .7), 'tie': (60, .5, .05, .05)}
 
 
-def plan(roots_per_family, *, families=FAMILIES, min_roots=8, draws=10000, bayes=None, **options):
+def plan(roots_per_family, *, families=FAMILIES, min_roots=8, draws=10000, bayes=None, repeats=2, **options):
+    """A frozen plan with one task per root; ``bayes=False`` declares no Bayesian parameters at all."""
     tasks = tuple((f'{f}-t{i}', f'{f}-r{i}', f) for f in families for i in range(roots_per_family))
-    declared = {'schema_version': 1, 'profile': PROFILE, 'posterior_draws': draws, **(bayes or {})}
+    declared = None if bayes is False else {'schema_version': 1, 'profile': PROFILE, 'posterior_draws': draws, **(bayes or {})}
     options = {'precision_half_width': .15, 'effect_margin': .1, 'family_margin': .05, **options}
-    return ExperimentSpec('synthetic-bayes', tasks, 2, 7, 10 ** 6, min_roots, options.pop('effect_margin'),
+    return ExperimentSpec('synthetic-bayes', tasks, repeats, 7, 10 ** 6, min_roots, options.pop('effect_margin'),
                           options.pop('family_margin'), .05, tuple((f, 1 / len(families)) for f in families),
                           'b' * 64, 'c' * 64, 'g' * 64, 'r' * 64, bayes_decision=declared, **options)
 

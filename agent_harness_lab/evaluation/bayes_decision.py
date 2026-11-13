@@ -101,7 +101,7 @@ def _checked_roots(spec, roots):
     return rows
 
 
-def _families(spec, rows, groups):
+def independent_units(spec, rows, groups):
     """Independent units per frozen family; roots of one similarity component merge into one unit by their mean."""
     members = {}
     for row in sorted(rows, key=lambda r: r.root):
@@ -193,7 +193,7 @@ def decide(spec, roots, *, critical=False, validity=None, groups=None, resource_
     _check_options(critical, validity, groups, resource_decision, cross_check)
     plan_sha256 = spec.digest
     rows = _checked_roots(spec, roots)
-    families = _families(spec, rows, groups)
+    families = independent_units(spec, rows, groups)
     units, draws, cut = sum(len(f.lows) for f in families), params['posterior_draws'], params['p_cut']
     unknown_arms, pinned, floor = sum(r.unknown_arms for r in rows), spec.resource_contract_sha256, max(spec.min_roots, ROOT_FLOOR)
     se = math.sqrt(cut * (1 - cut) / draws)
