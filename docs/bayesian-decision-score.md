@@ -1,10 +1,12 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design. Nothing described here is implemented yet: there is no
-`bayes_decision` spec field, no posterior code and no new output block. It explains
-what a numeric, non-LLM decision score should be, why it takes this shape, and which
-choices the operator must confirm. The reference section at the end fixes names and
-fields so the implementation issues can be written against it.
+This page is a design. Only its first slice exists: the optional frozen
+`bayes_decision` spec field, with validation and a JSON schema (issue a, see the
+[Spec field](#spec-field) reference). There is no posterior code and no new output
+block yet. It explains what a numeric, non-LLM decision score should be, why it takes
+this shape, and which choices the operator must confirm. The reference section at the
+end fixes names and fields so the remaining implementation issues can be written
+against it.
 
 The existing decision path is unchanged by this design. The weighted-root Hoeffding
 analysis in `evaluation/statistics.py` stays the only path that can reach
@@ -384,7 +386,7 @@ supplied analysis already contains it.
 
 | Issue | Content | Depends on |
 |-------|---------|------------|
-| a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged | none |
+| a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged (implemented) | none |
 | b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` | a |
 | c | exact and Monte Carlo sign-permutation cross-check | b |
 | d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` | b, c |
@@ -449,6 +451,32 @@ fixed before the numbers are tuned:
 
 Validation also requires `precision_half_width` to be set, the plan to be fixed-final
 and not cohort-pinned, and unknown keys to be rejected.
+
+Implemented in `evaluation/bayes_spec.py`; the schema of the frozen (resolved) form is
+[`schemas/bayes-decision-spec.schema.json`](schemas/bayes-decision-spec.schema.json).
+
+- **Optional and opt-in.** A plan without `bayes_decision` serializes, hashes and
+  schedules exactly as before. An empty object is not an opt-in: `schema_version`
+  and `profile` are always required.
+- **Defaults resolve at construction.** An omitted `rope_epsilon`, `prior`, `p_cut`,
+  `regression_margin`, `posterior_draws`, `allow_bound_resolved_verdict` or
+  `cross_check_alpha` is filled with the default from the table above when the spec
+  is constructed, and the filled values are what `to_dict` and `ExperimentSpec.digest`
+  carry. Later changes to `effect_margin` or `family_margin` are therefore separate
+  edits that change the digest anyway; they never silently move a frozen Bayesian
+  parameter. `rope_epsilon` has no default when `effect_margin` is 0, and
+  `cross_check_alpha` has none when `1 - p_cut` rounds to 0; both must then be given.
+- **One spelling per value.** Integer fields (`schema_version`, `posterior_draws`,
+  `prior.anchor`) reject `20000.0` and `True`. `NaN`, infinities, strings and booleans
+  are rejected for every numeric field.
+- **Errors are typed.** A rejected declaration raises `BayesDecisionError`, a
+  `ValueError` whose `field` names the key, for example `bayes_decision.p_cut`, or
+  `sequential`, `precision_half_width` or `cohort_manifest_sha256` for a plan-level
+  conflict. `ahl experiment` reports it as an evaluation contract error (exit 2).
+- **Frozen.** Any change to any parameter changes the plan digest and every trial id,
+  so records of one plan do not fit a plan with an edited declaration. The caller's
+  object is copied at construction, and validation re-checks the stored object, so an
+  in-place edit is caught either by validation or by the digest check.
 
 ### Output block
 
