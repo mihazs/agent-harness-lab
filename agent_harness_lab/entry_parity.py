@@ -31,15 +31,18 @@ ENTRY_ONLY_ARTIFACTS = {'invocation.json': 'skill'}
 _RUN_TIMING = ('invocation.deadline', 'invocation.remaining_seconds')
 # Measured wall time of evaluation construction: the receipt total and each repair's elapsed time.
 _CONSTRUCTION_TIMING = ('evaluation_construction_seconds', 'evaluation_construction_repairs.*.elapsed_seconds')
+# Measured stage durations and the stage that took most of them; embedded in recovery.json too.
+_BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spent_seconds',
+                  'budget_exhaustion.consumed_most_by')
 ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
-                      'decision.bindings.manifest_sha256', *_CONSTRUCTION_TIMING,
+                      'decision.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
                       # An application mints a new deployment ID; its rollback command embeds it.
                       'deployment', 'rollback'),
     # The recovery record embeds the receipt it will return.
-    'recovery.json': tuple(f'receipt.{field}' for field in _CONSTRUCTION_TIMING),
+    'recovery.json': tuple(f'receipt.{field}' for field in (*_CONSTRUCTION_TIMING, *_BUDGET_TIMING)),
     'change-plan.json': ('plan_sha256', 'harness_change_plan.affected_controls_sha256',
                          'harness_change_plan.references.evidence'),
     # Measured trial durations, and the digest of a manifest that carries the

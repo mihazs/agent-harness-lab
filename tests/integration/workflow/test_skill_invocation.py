@@ -43,6 +43,11 @@ def make_fixture():
         yield make
 
 
+def same_receipt(first,second):
+    """Equal exit code and receipt except the documented measured timings."""
+    return first[0] == second[0] and entry_parity.document_differences('workflow.json',first[1],second[1],'<cli>','<skill>') == []
+
+
 class TestSkillInvocation:
     def test_selected_layout_import_is_actual(self):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
@@ -80,7 +85,7 @@ class TestSkillInvocation:
             fixture=make_fixture()
             code,stdout,_=invoke([*prefix,str(fixture.project),'--timeout','10'])
             result=json.loads(stdout);result.pop('output');results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
         code,result=results[0]
         assert (code,result['reason']) == (3,'select_one_runtime_with_agent')
         assert result['preflight_plan']['choice']['values'] == ['codex','claude']
@@ -93,7 +98,7 @@ class TestSkillInvocation:
             result=json.loads(stdout);output=Path(result.pop('output'))
             assert (output/'invocation.json').exists() == (prefix[0]=='skills')
             results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
 
     def test_preflight_blocked_skill_run_records_invocation_context(self,make_fixture):
         fixture=make_fixture();missing=fixture.root/'missing-agent'
@@ -360,6 +365,18 @@ class TestEntryReceiptParity:
         missing=json.loads(json.dumps(second));del missing['plan_sha256']
         assert entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2') == ['plan_sha256']
         assert entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b') == ['origin']
+
+    def test_stage_timings_may_differ_between_routes_but_stage_names_and_options_may_not(self):
+        def receipt(spent, remaining, option='--timeout SECONDS'):
+            return dict(evaluation_construction_seconds=spent, budget_stages=dict(remaining_seconds=remaining, raise_budget_option=option,
+                stages=dict(construction=dict(allotted_seconds=30.0, spent_seconds=spent), trials=dict(allotted_seconds=48.0, spent_seconds=spent))))
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(2.5, 88.0), '/a', '/b') == []
+        exhausted = lambda stage: dict(budget_exhaustion=dict(consumed_most_by=stage, conclusion='not_established'))
+        assert entry_parity.document_differences('workflow.json', exhausted('trials'), exhausted('preparation'), '/a', '/b') == []
+        assert entry_parity.document_differences('recovery.json', dict(receipt=dict(receipt(1.0, 90.0), **exhausted('trials'))),  # the record embeds the receipt
+                                                 dict(receipt=dict(receipt(2.5, 88.0), **exhausted('preparation'))), '/a', '/b') == []
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(1.0, 90.0, '--budget'), '/a', '/b') == [
+            'budget_stages.raise_budget_option']
 
     def test_environment_parity_still_detects_authentication_changes(self):
         original = dict(trials=[dict(environment=dict(names=['CODEX_API_KEY'], sha256='exact-a',

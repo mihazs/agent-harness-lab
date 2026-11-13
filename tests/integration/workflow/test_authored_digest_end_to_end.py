@@ -64,7 +64,7 @@ class Stub:
         (self.project / 'AGENTS.md').write_text('bad\n')
         self.mode = root / 'stub-mode'
         script = self.bin / runtime
-        script.write_text(STUB.format(python=sys.executable, mode=str(self.mode)))
+        script.write_text(self.script())
         script.chmod(script.stat().st_mode | stat.S_IXUSR)
         (self.bin / 'python3').symlink_to(sys.executable)
         self.events = root / 'events.jsonl'
@@ -74,6 +74,9 @@ class Stub:
                                 XDG_STATE_HOME=str(root / 'xdg'), AHL_STATE_HOME=str(root / 'state'),
                                 CODEX_HOME=str(root / 'codex'), CLAUDE_CONFIG_DIR=str(root / 'claude')).items():
             monkeypatch.setenv(name, value)
+
+    def script(self):
+        return STUB.format(python=sys.executable, mode=str(self.mode))
 
     def improve(self, capsys, mode, *extra, events=True):
         """Run the real CLI entry; return (exit code, the private workflow receipt, the run directory)."""

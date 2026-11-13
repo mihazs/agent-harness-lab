@@ -50,6 +50,8 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `authored_digest_not_accepted` | agent output defect | yes |
 | `grader_input_changed_after_freeze` | agent output defect | no |
 | `evaluation_manifest_controls_incomplete` | agent output defect | yes |
+| `evaluation_construction_timeout` | agent output defect | one more pass, only if the remaining budget covers it |
+| `evaluation_task_infeasible` | agent output defect | no |
 | `internal_contract_error` | AHL contract mismatch | no |
 
 An unexpected `KeyError`, `TypeError`, `AttributeError` or `IndexError` inside a stage is
@@ -57,6 +59,11 @@ caught at the stage boundary and reported as `internal_contract_error` with the 
 name; no result text is an exception message. Semantic rejections after the shape check
 (a self-test that does not fail a broken control, overlapping fixtures) remain
 `invalid_input` and are not repaired.
+
+`evaluation_construction_timeout` and `evaluation_task_infeasible` come from the stage
+budgets: a construction pass that overruns its time box, and a task whose `complete`
+control cannot be graded within the per-trial timeout. Their rules, and the refinement
+that keeps the frozen tasks, are in [stage budgets and early stops](budget-stages.md).
 
 ## Shape check and repair
 
