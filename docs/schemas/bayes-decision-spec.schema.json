@@ -20,7 +20,7 @@
         "anchor": {"type": "integer", "const": 0}
       }
     },
-    "p_cut": {"description": "Posterior probability a verdict needs. Default .95.", "type": "number", "exclusiveMinimum": 0.5, "exclusiveMaximum": 1},
+    "p_cut": {"description": "Posterior probability a verdict needs. Default .99 (raised from .95 by the calibration).", "type": "number", "exclusiveMinimum": 0.5, "exclusiveMaximum": 1},
     "regression_margin": {"description": "Per-family regression margin. Default: the frozen family_margin.", "type": "number", "minimum": 0, "exclusiveMaximum": 1},
     "posterior_draws": {"description": "Monte Carlo draws. Default 20000.", "type": "integer", "minimum": 1000, "maximum": 200000},
     "allow_bound_resolved_verdict": {"description": "Default false.", "type": "boolean"},

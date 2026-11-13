@@ -67,6 +67,12 @@ def test_acceptance_uses_the_wilson_upper_bound_of_the_better_rate():
     assert calibration.accepted(report(7)) and not calibration.accepted(report(8))
 
 
+def test_default_p_cut_is_the_value_calibrated_on_the_tuning_seeds():
+    # .95 failed the acceptance rule on the tuning seeds; the one pre-registered raise is .99 (docs/bayesian-decision-score.md).
+    declared = calibration.cell_spec(40, 1).bayes_decision
+    assert (declared['p_cut'], declared['cross_check_alpha']) == (.99, .01)
+
+
 def stub_cells(monkeypatch, upper_bounds=()):
     """Replace the simulation of every cell by a canned report; return the (split, index) pairs that ran."""
     ran = []
