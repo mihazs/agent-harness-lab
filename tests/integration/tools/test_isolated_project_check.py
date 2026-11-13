@@ -60,6 +60,9 @@ def test_harness_edits_stay_in_the_worktree_and_the_checkout_is_unchanged(repo):
 def test_a_dirty_real_checkout_is_neither_copied_nor_touched(repo):
     (repo / 'AGENTS.md').write_text('# uncommitted edit\n')
     (repo / 'untracked.txt').write_text('keep me\n')
+    (repo / '.gitignore').write_text('build/\n')
+    (repo / 'build').mkdir()
+    (repo / 'build/out.bin').write_text('cached\n')
     absent = "import pathlib, sys; sys.exit(5 if pathlib.Path('untracked.txt').exists() or 'uncommitted' in pathlib.Path('AGENTS.md').read_text() else 0)"
 
     receipt = check.run(repo, py(absent))
@@ -78,6 +81,48 @@ def test_a_write_into_the_real_checkout_is_reported_as_drift(repo):
 
     assert receipt['verdict'] == 'drift'
     assert 'status' in receipt['drift']
+
+
+def write_real(relative, text):
+    """Python source that rewrites a file of the real checkout, as a misbehaving tool would."""
+    return py(f"import os, pathlib; pathlib.Path(os.environ['REAL_CHECKOUT'], {relative!r}).write_text({text!r})")
+
+
+@pytest.mark.parametrize('relative, text, key', [
+    pytest.param('AGENTS.md', '# other edit\n', 'tracked', id='dirty-tracked-file-rewritten'),
+    pytest.param('untracked.txt', 'KEEP ME\n', 'untracked', id='untracked-file-rewritten-same-size'),
+    pytest.param('build/out.bin', 'CACHED\n', 'ignored', id='ignored-file-rewritten-same-size'),
+    pytest.param('build/new.bin', 'x', 'ignored', id='ignored-file-added'),
+])
+def test_content_changes_in_an_already_dirty_checkout_are_reported_as_drift(repo, relative, text, key):
+    """Mutation: names and status codes stay the same when a modified, untracked or ignored file is rewritten in place."""
+    (repo / 'AGENTS.md').write_text('# uncommitted edit\n')
+    (repo / 'untracked.txt').write_text('keep me\n')
+    (repo / '.gitignore').write_text('build/\n')
+    (repo / 'build').mkdir()
+    (repo / 'build/out.bin').write_text('cached\n')
+    os.utime(repo / 'build/out.bin', (1_000_000_000, 1_000_000_000))  # an old mtime, so a same-size rewrite cannot share it
+
+    receipt = check.run(repo, write_real(relative, text))
+
+    assert receipt['verdict'] == 'drift' and key in receipt['drift']
+
+
+def test_a_git_config_write_through_a_linked_worktree_is_reported_as_drift(repo, tmp_path):
+    """Mutation: in a linked worktree `.git` is a file, so the shared config must be found through the common directory."""
+    linked = tmp_path / 'linked'
+    git(repo, 'worktree', 'add', '-q', '--detach', str(linked))
+    write_config = py("import os, subprocess; subprocess.run(['git', '-C', os.environ['REAL_CHECKOUT'], 'config', 'ahl.probe', 'x'], check=True)")
+
+    receipt = check.run(linked, write_config)
+
+    assert receipt['verdict'] == 'drift' and 'config' in receipt['drift']
+
+
+def test_a_dirty_file_that_is_not_valid_utf8_does_not_break_the_fingerprint(repo):
+    (repo / 'AGENTS.md').write_bytes(b'caf\xe9\n')
+
+    assert check.run(repo, py('pass'))['verdict'] == 'unchanged'
 
 
 def test_drift_makes_the_command_line_tool_exit_one(repo):

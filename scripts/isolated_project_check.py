@@ -21,27 +21,58 @@ import subprocess
 import sys
 import tempfile
 
-VERSION = 1
+VERSION = 2
 NO_HOOKS = ('-c', 'core.hooksPath=/dev/null')
 BUS_VARIABLES = ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')
 
 
 def _git(repo, *args, check=True):
-    done = subprocess.run(['git', *NO_HOOKS, *args], cwd=repo, capture_output=True, text=True)
+    done = subprocess.run(['git', *NO_HOOKS, *args], cwd=repo, capture_output=True, text=True, errors='surrogateescape')
     if check and done.returncode:
         raise RuntimeError(f'git {" ".join(args)} failed: {done.stderr.strip() or done.stdout.strip()}')
     return done.stdout
 
 
 def _digest(text):
-    return hashlib.sha256(text.encode()).hexdigest()[:16]
+    return hashlib.sha256(text.encode(errors='surrogateescape')).hexdigest()[:16]
+
+
+def _tree_digest(repo, names, content):
+    """Hash each listed path: its bytes when `content` (untracked files), else its size and mtime (ignored files, which can be huge)."""
+    total = hashlib.sha256()
+    for name in sorted(names):
+        total.update(name.encode(errors='surrogateescape') + b'\0')
+        try:
+            path = repo / name
+            info = path.lstat()
+            total.update(f'{info.st_mode} '.encode())
+            if not content:
+                total.update(f'{info.st_size} {info.st_mtime_ns}'.encode())
+            elif path.is_symlink():
+                total.update(b'link ' + os.readlink(path).encode(errors='surrogateescape'))
+            elif path.is_file():
+                with path.open('rb') as handle:
+                    while chunk := handle.read(1 << 20):
+                        total.update(chunk)
+            else:  # a nested checkout listed as a directory: only its presence is tracked
+                total.update(b'dir')
+        except OSError:
+            total.update(b'missing')
+    return total.hexdigest()[:16]
 
 
 def fingerprint(repo):
-    """What a command could change in a checkout, as hashes and counts; no file content."""
+    """What a command could change in a checkout, as hashes and counts; no file content.
+
+    Covers HEAD, refs, stashes, linked worktrees, the status and index listings, the content of tracked changes and of
+    untracked files, the size and mtime of ignored files, and the shared git config. It does not cover other files under
+    `.git` (hooks, `info/exclude`, objects) or anything outside the repository.
+    """
     repo = Path(repo)
-    config = repo / '.git' / 'config'
+    config = repo / _git(repo, 'rev-parse', '--git-common-dir').strip() / 'config'  # the common dir, since `.git` is a file in a linked worktree
     worktrees = [line for line in _git(repo, 'worktree', 'list', '--porcelain').splitlines() if line.startswith('worktree ')]
+    untracked = _git(repo, 'ls-files', '-z', '--others', '--exclude-standard').split('\0')
+    ignored = _git(repo, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard').split('\0')
     return {
         'head': _git(repo, 'rev-parse', 'HEAD').strip(),
         'refs': _digest(_git(repo, 'for-each-ref', '--format=%(refname) %(objectname)')),
@@ -49,7 +80,10 @@ def fingerprint(repo):
         'worktrees': len(worktrees),
         'status': _digest(_git(repo, 'status', '--porcelain=v1', '-uall')),
         'index': _digest(_git(repo, 'ls-files', '-s')),
-        'config': _digest(config.read_text()) if config.is_file() else None,
+        'tracked': _digest(_git(repo, 'diff', 'HEAD', '--binary', '--no-ext-diff', '--no-textconv')),
+        'untracked': _tree_digest(repo, filter(None, untracked), content=True),
+        'ignored': _tree_digest(repo, filter(None, ignored), content=False),
+        'config': hashlib.sha256(config.read_bytes()).hexdigest()[:16] if config.is_file() else None,
     }
 
 
