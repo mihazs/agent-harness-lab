@@ -29,16 +29,18 @@ PIN_CHECK = 'ahl sources claude pin-check --events <newest-capture.jsonl>'
 
 
 def runtime_lag(sources):
-    """Once, when captures were recorded by a Claude Code release newer than the newest fixture-verified one; counts only."""
-    from .telemetry.claude_native import NEWEST_VERIFIED, release
-    newer = {}
+    """Once, when captures were recorded by a Claude Code release the fixtures do not verify and that is not older than the first one; counts only."""
+    from .telemetry.claude_native import NEWEST_VERIFIED, VERIFIED, release
+    oldest, lagging = release(min(VERIFIED, key=release)), {}
     for row in sources:
         if row.get('format') == 'claude':
             for version in row.get('recorded_versions', ()):
-                if release(version) is not None and release(version) > release(NEWEST_VERIFIED): newer[version] = newer.get(version, 0) + 1
-    if not newer: return None
-    return dict(status='recorded_runtime_newer_than_newest_verified', newest_verified=NEWEST_VERIFIED,
-        newest_recorded=max(newer, key=release), captures_by_version=dict(sorted(newer.items(), key=lambda item: release(item[0]))),
+                if release(version) is not None and release(version) > oldest and version not in VERIFIED: lagging[version] = lagging.get(version, 0) + 1
+    if not lagging: return None
+    newest = max(lagging, key=release)
+    return dict(status='recorded_runtime_newer_than_newest_verified' if release(newest) > release(NEWEST_VERIFIED) else 'recorded_runtime_outside_verified_set',
+        newest_verified=NEWEST_VERIFIED, newest_recorded=newest,
+        captures_by_version=dict(sorted(lagging.items(), key=lambda item: release(item[0]))),
         next_step='Run `%s` to compare its structure with the verified contract; when it reports compatible, add that release\'s contract fixture '
             'and extend VERIFIED_RANGES. Until then these captures are read by the descriptive, unverified adapter.' % PIN_CHECK)
 

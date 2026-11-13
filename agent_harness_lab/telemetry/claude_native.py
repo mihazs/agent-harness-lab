@@ -14,7 +14,8 @@ VERSION = 'claude-jsonl-2.1.316'
 RUNTIME_VERSION = '2.1.316'  # the first verified release; source-journal profiles stay exact at this version
 # Declared compatibility range: every release in it needs a contract fixture (tests/fixtures/claude_contract/<version>.jsonl);
 # a test refuses a version without one. Add a release by adding its fixture, then widening or merging the entries.
-VERIFIED_RANGES = (('2.1.316', '2.1.318'),)
+# 2.1.319 to 2.1.321 have no fixture, so they stay outside the set between the two entries.
+VERIFIED_RANGES = (('2.1.316', '2.1.318'), ('2.1.322', '2.1.322'))
 
 
 def release(version):

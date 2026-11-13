@@ -568,12 +568,25 @@ verified release) accepts a **declared range**: each release in `VERIFIED_RANGES
 (`agent_harness_lab/telemetry/claude_native.py`) must have a synthetic contract
 fixture in `tests/fixtures/claude_contract/<version>.jsonl`, and a test fails when
 the accepted versions and the fixtures differ. A range stays within one minor line.
-Today the declared range is `2.1.316` to `2.1.318`, with one fixture per release. A
-release outside it is not accepted until its fixture exists. The `2.1.317` fixture
-also holds identity, pull-request link, permission-mode and agent-name records;
-the adapter reads none of them, so they are counted per type as
-`unknown_entry_type` and never parsed. Add a release with
+Today the declared set is `2.1.316` to `2.1.318` and `2.1.322`, with one fixture per
+release. `2.1.319` to `2.1.321` have no fixture and stay unverified, as does any
+release outside the set, until its fixture exists. Add a release with
 [the maintainer guide](verify-claude-release.md).
+
+The `2.1.317` and `2.1.322` fixtures hold record kinds the adapter does not read.
+Each kind in the fixtures has one class:
+
+| Class | Record kinds | Treatment |
+| --- | --- | --- |
+| `handled` | `user`, `assistant`, `attachment`, `system` | Read into events; `progress` is also handled. |
+| `ignored` (`declared_non_event_entry`) | `file-history-snapshot`, `queue-operation`, `last-prompt`, `ai-title`, `mode`, `atis-latch`, `api-request`, `api-request-shape`, `api-request-blob`, `tools-used`, `file-history-delta`, `cost-state` | Skipped and counted per type; carry no conversation event. |
+| `unknown-by-design` (`unknown_entry_type`) | `agent-name`, `fork-context-ref`, `permission-mode`, `pr-link`, `session-owner` | Skipped and counted per type; never parsed, so they cannot become a success, failure or independence label. |
+
+`ahl sources claude pin-check` reports `compatible_with_unknown_types` for the
+`2.1.317` and `2.1.322` fixtures because of the last row. A content block the
+adapter cannot represent, such as `image` (`unknown` in the pin-check report),
+becomes one `unsupported_native_block` coverage event with no outcome, tool name or
+call identifier.
 
 A capture whose first attributable envelope records a release outside the accepted
 set is not parsed with the verified adapter. Its file receipt carries the typed

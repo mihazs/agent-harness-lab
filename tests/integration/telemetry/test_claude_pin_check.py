@@ -38,14 +38,32 @@ def capture(tmp_path, rows, name='capture.jsonl'):
     path = tmp_path/name; path.write_text(''.join(json.dumps(row)+'\n' for row in rows)); return str(path)
 
 
-# 2.1.317 captures also carry kinds the adapter does not read (identity, link, mode and name records); they are counted, never parsed.
-@pytest.mark.parametrize('version, verdict', (('2.1.316', 'compatible'), ('2.1.317', 'compatible_with_unknown_types'), ('2.1.318', 'compatible')))
+# 2.1.317 and later captures also carry kinds the adapter does not read (identity, link, mode, name and lineage records); they are counted, never parsed.
+@pytest.mark.parametrize('version, verdict', (('2.1.316', 'compatible'), ('2.1.317', 'compatible_with_unknown_types'), ('2.1.318', 'compatible'),
+    ('2.1.322', 'compatible_with_unknown_types')))
 def test_the_verified_fixtures_are_compatible_with_their_own_contract(version, verdict):
     code, out, _ = run('--events', str(FIXTURES/f'{version}.jsonl'))
     report = json.loads(out)
     assert code == 0 and report['verdict'] == verdict and report['versions_outside_verified'] == []
     assert report['recorded_versions'] == {version: sum('version' in json.loads(line) for line in (FIXTURES/f'{version}.jsonl').read_text().splitlines())}
     assert report['values_read_into_output'] is False and report['message_text_stored'] is False
+
+
+def test_the_current_release_fixture_lists_its_unknown_types_and_the_image_block_as_unknown():
+    report = json.loads(run('--events', str(FIXTURES/'2.1.322.jsonl'))[1])
+    unknown = {label for label, value in report['entry_types'].items() if value['status'] == 'unknown'}
+    assert unknown == {'agent-name', 'fork-context-ref', 'permission-mode', 'pr-link', 'session-owner'}
+    assert all(report['entry_types'][label]['reason'] == 'unknown_entry_type' for label in unknown)
+    assert report['content_blocks']['image'] == dict(count=1, status='unknown') and report['newest_verified'] == '2.1.322'
+    assert report['missing_required_keys'] == {} and report['block_missing_required_keys'] == {}
+
+
+@pytest.mark.parametrize('version', ('2.1.319', '2.1.320', '2.1.321', '2.1.323'))
+def test_a_release_with_no_fixture_is_named_as_outside_the_verified_versions_even_when_the_structure_matches(tmp_path, version):
+    rows = [dict(row, version=version) if 'version' in row else row for row in planted('2.1.322')]
+    report = json.loads(run('--events', capture(tmp_path, rows))[1])
+    assert report['verdict'] == 'compatible_with_unknown_types' and report['versions_outside_verified'] == [version]
+    assert 'VERIFIED_RANGES' in report['next_step']
 
 
 def test_an_unknown_entry_type_reports_compatible_with_unknown_types_by_name_only(tmp_path):
