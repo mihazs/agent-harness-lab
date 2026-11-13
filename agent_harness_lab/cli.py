@@ -143,6 +143,9 @@ def main(argv=None):
     if argv and argv[0] == 'grader-correction':
         from agent_harness_lab.evaluation.grader_correction import main as correction_main
         return correction_main(argv[1:])
+    if argv and argv[0] == 'apply':
+        from agent_harness_lab.plan_review import main as apply_main
+        return apply_main(argv[1:])
     if argv and argv[0] == 'compare':
         from agent_harness_lab.evaluation.compare import main as compare_main
         return compare_main(argv[1:])
@@ -201,6 +204,7 @@ def main(argv=None):
         'research-simulate':'Run reproducible synthetic research scenarios without a model service',
         'incident-search':'Search an explicitly approved private incident corpus with a local lexical index',
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
+        'apply':'Review one run\'s saved change plan; write the project only for an exactly authorized plan the policy permits',
         'annotation-plan':'Report additional annotation needs from a frozen per-class precision/recall interval plan',
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',

@@ -89,6 +89,10 @@ cooperative, not sandboxed):
   reads or writes user-level files; only an explicit `--scope global` or
   `--scope project+global` with `--agent codex|claude` includes your user-level
   skill directory ([scope how-to](docs/improve-scope.md)).
+- `ahl apply RUN --project .` is a separate command. It prints a review packet for the
+  change plan saved in an improvement run and writes nothing; with the exact
+  `--authorize-plan` hash it applies only that same bounded skill-header repair, through the
+  same rollback journal, and never a behavioral candidate.
 - `ahl watch .` reruns the same recommendation-only staging and evaluation when
   evidence or execution configuration changes, or after a classified transient
   failure. It writes run artifacts and a private checkpoint, has no

@@ -496,8 +496,9 @@ def adopt(project, baseline, candidate, original, proposed, scoped=False):
     return [operation['path'] for operation in receipt['operations']]
 
 
-def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False):
-    """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change."""
+def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False, provenance=None):
+    """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change.
+    provenance replaces the journal source and adds fields (the reviewed plan's identity)."""
     from agent_harness_lab.application_receipt import application_receipt
     from agent_harness_lab.promotion.journal import Journal, file_record
     with project_lock(project):
@@ -522,7 +523,7 @@ def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=
         if not before:
             return dict(status='no_change', operations=[], activation='unknown', behavioral_effect='not_established')
         journal = Journal(project, state_root() / 'promotions' / identity(project))
-        transaction = journal.prepare(before, after, dict(source='directly_authorized_adopt_api'))
+        transaction = journal.prepare(before, after, {'source': 'directly_authorized_adopt_api', **(provenance or {})})
         return application_receipt(journal, journal._execute(transaction['deployment']))
 
 

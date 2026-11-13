@@ -830,10 +830,54 @@ active; otherwise `applied_unverified`. `activation` stays `unknown` and `behavi
 refused because the project no longer matches the baseline, so nothing is written or journaled twice.
 The receipt holds no file content.
 
+## Review and apply a saved plan
+
+`ahl apply RUN [--project DIR] [--authorize-plan SHA256]` reads `change-plan.json`, `baseline/` and
+`candidate*/` from one run directory. It loads no model and makes no network call. Without
+`--authorize-plan` it only prints a review packet and exits 0 (`awaiting_review`, `no_change`) or 3.
+
+The packet lists each operation (path, action, surface, hashes, modes, added and removed line counts) and
+a `binding` of six checks, each `matched` or `changed`: the project path, the configuration digest, the
+application policy source, the whole project harness inventory against the plan's `before` membership, the
+baseline tree against `before` and the candidate tree against `after`. Any `changed` check makes the status
+`stale`. The runtime, analysis, evidence and authorization references are listed in
+`binding_not_rechecked`: they identify producer inputs this command cannot recompute. The `evaluation` block
+is copied from the run's own `workflow.json` and labelled `saved_report_declared_unverified`; its prerequisite
+statuses are shown to the reviewer and never read as authority, because that file can be edited.
+
+Statuses and exit codes:
+
+| Status | Meaning | Exit |
+| --- | --- | --- |
+| `no_change` | the plan has no operations | 0 |
+| `awaiting_review` | bound, permitted and not yet authorized; `authorize_with` repeats the command | 0 |
+| `applied_verified` | the journal committed and every installed path and mode was re-read as expected | 0 |
+| `applied_unverified` | committed, but a re-read differs; roll back or inspect | 3 |
+| `blocked` | bound, but `blockers` names why the policy does not permit it | 3 |
+| `stale` | a bound input changed since the plan | 3 |
+
+Invalid input, an unreadable or forged plan, or `--authorize-plan` naming another plan exits 2 before any write;
+a guarded transaction that needs recovery exits 1 with its receipt.
+
+The policy permits one thing: a plan whose every operation is recomputed from the staged baseline bytes as the
+bounded skill-header repair above (BOM removal before a minimal header, mode preserved). Blockers are
+`behavioral_application_requires_live_certification` (a `behavioral_candidate` plan; no authorization,
+approval or saved prerequisite status changes this, and the favorable `ahl improve` branch is unchanged),
+`repair_not_reproduced_by_independent_check` (a plan labelled as a repair whose bytes are not that repair),
+`configuration_requires_recommendation_only` (a project `ahl.json` exists), `unresolved_operation`, and
+`project_frozen_read_only`. A permitted, authorized plan is applied by `adopt_with_receipt()` under the project
+lock, so its candidate, skill-bundle and agent-definition checks and its journal record apply unchanged; the
+record's metadata names `reviewed_plan_apply` and the plan hash. A second run with the same arguments is `stale`
+and writes no second journal entry. The target-state receipt is the one described above and asserts neither
+activation nor behavior.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
-behavioral controller. Effective instruction hierarchy (#79, whose scoped rewrite
+behavioral controller. `ahl apply` reviews every saved plan but applies only the
+independently reproduced skill-header repair; interruption-between-stage tests
+across planning, evaluation, review and application, Codex hook application and
+real-runtime evidence remain. Effective instruction hierarchy (#79, whose scoped rewrite
 validation and operation-level review are described above; actual loading evidence and
 the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
