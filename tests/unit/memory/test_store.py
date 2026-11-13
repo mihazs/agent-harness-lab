@@ -636,3 +636,21 @@ def test_cli_store_under_a_frozen_project_is_refused(tmp_path, capsys):
     (tmp_path / '.ahl-read-only').write_text('')
     code, _, err = run(capsys, 'init', '--store', str(tmp_path / 'store'))
     assert code == 2 and 'read-only' in err
+
+
+def test_retry_with_different_dependencies_after_a_killed_publish_does_not_break_reindex(store):
+    store.publish('p1', 'report', b'base')
+    killed_publish(store, 'after_manifest')
+    store.publish('p1', 'report', b'doomed', dependencies=[sha(b'base')], records=evaluation_records(b'doomed'))
+    report = store.reindex()
+    assert report['rebuilt'] is True and report['manifests'] == 2 and report['issue_count'] == 1
+    assert 'already describes artifact' in report['issues'][0]
+    assert sorted(a['digest'] for a in store.artifacts('p1')['artifacts']) == sorted([sha(b'base'), sha(b'doomed')])
+
+
+def test_retry_with_identical_records_after_a_killed_publish_leaves_one_manifest(store):
+    killed_publish(store, 'after_manifest')
+    store.publish('p1', 'report', b'doomed', records=evaluation_records(b'doomed'))
+    report = store.reindex()
+    assert report['manifests'] == 1 and report['issue_count'] == 0
+
