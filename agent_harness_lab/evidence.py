@@ -248,9 +248,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     break
                 selected.append((path, fmt))
         if differs: reasons.append(dict(reason='source_project_path_differs', captures=len(selected)))
-        elif not selected:
+        elif not selected and not caveats and since_ns is None and history_session is None and history_runtime is None:
             from .telemetry.claude_cwd import common_dir
-            # Unknown stays unknown: a project whose repository files cannot be read is not called a worktree.
+            # Unknown stays unknown: a filter or scan limit may have hidden the path's own captures, and a project whose repository files cannot be read is not called a worktree.
             if common_dir(project)[1]:
                 reasons.append(dict(reason='history_not_found_for_worktree', captures=0))
                 _warn(caveats, 'history_not_found_for_worktree: no capture was recorded under this path, which is a linked worktree of a repository; sessions recorded for '

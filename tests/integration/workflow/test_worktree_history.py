@@ -180,3 +180,31 @@ def test_improve_without_history_of_a_linked_worktree_keeps_the_reason_in_the_re
     code, result, err = store.improve(store.worktree)
     assert result['capture_reasons'] == [dict(reason=NOT_FOUND, captures=0)]
     assert REMEDIATION[NOT_FOUND] in err
+
+
+FILTERS = [
+    pytest.param(('--since', '2099-01-01'), 'history_no_matching_sessions', id='since'),
+    pytest.param(('--source', 'claude'), 'history_runtime_has_no_captures', id='source'),
+    pytest.param(('--session', '00000000-0000-4000-8000-000000000000'), 'history_no_matching_sessions', id='session'),
+]
+
+
+@pytest.mark.parametrize('own_session', [True, False], ids=['own-session', 'no-own-session'])
+@pytest.mark.parametrize(('filters', 'reason'), FILTERS)
+def test_improve_history_keeps_the_filter_reason_when_a_discovery_filter_made_a_worktree_history_empty(store, filters, reason, own_session):
+    # The cause of an empty selection is unknown once a filter ran, so it is never a worktree claim.
+    if own_session: store.session(cwd=store.worktree)
+    code, result, _ = store.improve(store.worktree, '--history', *filters)
+    assert (code, result['status'], result['reason']) == (3, 'blocked', reason)
+    assert result['remediation'] == REMEDIATION[reason]
+    assert NOT_FOUND not in json.dumps(result)
+
+
+def test_analyze_gives_no_worktree_reason_when_the_scan_limit_hid_the_worktrees_own_session(store, monkeypatch):
+    from agent_harness_lab import evidence
+    discover = evidence._capture_candidates  # walk order is filesystem-defined; pin it so only the first file is scanned
+    monkeypatch.setattr(evidence, '_capture_candidates', lambda root: iter(sorted(discover(root), key=lambda candidate: candidate[1])))
+    store.session('a-other'); store.session('z-own', cwd=store.worktree)
+    code, result, err = store.analyze(store.worktree, '--max-capture-scan', '1')
+    assert code == 0 and result['analysis']['events'] == 0
+    assert result.get('capture_reasons', []) == [] and NOT_FOUND not in err
