@@ -1,4 +1,6 @@
 """Matched-budget strategy comparison through the shared search contracts, using fake proposers."""
+import json
+
 import pytest
 
 from agent_harness_lab.optimization.search import CandidateRecord
@@ -111,6 +113,57 @@ def test_repeating_a_comparison_resumes_without_repeating_charged_work(tmp_path)
     assert len(calls) == executed
     assert [r['charges'] for r in again['strategies']] == [r['charges'] for r in first['strategies']]
     assert all(r['resumed_without_execution'] for r in again['strategies'])
+
+
+def test_resuming_under_a_smaller_ceiling_is_refused_not_reported_as_matched(tmp_path):
+    first = compare(tmp_path, ceiling=12, reserve=1)
+    assert max(r['charges']['spent'] for r in first['strategies']) > 4  # the saved spend exceeds the later ceiling
+    with pytest.raises(ValueError, match='saved search state'):
+        compare(tmp_path, ceiling=4, reserve=1)
+
+
+@pytest.mark.parametrize('options', [
+    pytest.param(dict(ceiling=4, reserve=1), id='smaller-ceiling'),
+    pytest.param(dict(ceiling=12, reserve=5), id='larger-reserve-over-non-final-spend'),
+    pytest.param(dict(ceiling=8, reserve=0), id='total-spend-over-ceiling'),
+])
+def test_resume_refuses_saved_spend_that_exceeds_the_requested_budget(options, tmp_path):
+    compare(tmp_path, ceiling=12, reserve=1)
+    with pytest.raises(ValueError, match='ceiling'):
+        compare(tmp_path, **options)
+
+
+@pytest.mark.parametrize('options', [
+    pytest.param(dict(ceiling=9, reserve=1), id='exactly-the-saved-spend'),
+    pytest.param(dict(ceiling=20, reserve=3), id='larger-budget'),
+])
+def test_resume_accepts_saved_spend_within_the_requested_budget(options, tmp_path):
+    compare(tmp_path, ceiling=12, reserve=1)
+    again = compare(tmp_path, **options)
+    assert all(r['resumed_without_execution'] for r in again['strategies'])
+    assert all(r['charges']['spent'] <= again['matched']['ceiling'] for r in again['strategies'])
+
+
+def test_refused_resume_executes_no_further_work(tmp_path):
+    calls = []
+    def evaluate(c):
+        calls.append(c.candidate_id)
+        return quality(c)
+    compare(tmp_path, evaluate=evaluate, ceiling=12)
+    executed = len(calls)
+    with pytest.raises(ValueError):
+        compare(tmp_path, evaluate=evaluate, ceiling=4)
+    assert len(calls) == executed
+
+
+def test_resume_refuses_saved_state_with_no_recorded_budget(tmp_path):
+    compare(tmp_path)
+    state = next(tmp_path.glob('no-op-*.json'))
+    saved = json.loads(state.read_text())
+    del saved['budget_events']
+    state.write_text(json.dumps(saved))
+    with pytest.raises(ValueError, match='no recorded budget'):
+        compare(tmp_path)
 
 
 @pytest.mark.parametrize('options', [

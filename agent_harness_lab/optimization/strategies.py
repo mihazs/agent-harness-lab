@@ -108,6 +108,15 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
 
     result = search(path, baseline, propose, evaluate, certify, budget, allowed_files, enabled=True,
                     variants=config['variants'])
+    if result.get('resumed_without_execution'):  # A saved state ignores the new budget, so check its spend against it.
+        events = result.get('budget_events')
+        if not isinstance(events, list):
+            raise ValueError('saved search state has no recorded budget')
+        spent = sum(event['amount'] for event in events)
+        non_final = sum(event['amount'] for event in events if not event['final'])
+        if spent > budget.ceiling or non_final > budget.ceiling - budget.reserve:
+            raise ValueError(f'saved search state spent {spent} ({non_final} before the final reserve), '
+                             f'more than the requested ceiling {budget.ceiling} and reserve {budget.reserve} allow')
     return dict(result, strategy=dict(id=spec.strategy_id, version=version, config=config, identity=identity,
                                       state_path=str(path)))
 

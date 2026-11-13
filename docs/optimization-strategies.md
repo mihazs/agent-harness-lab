@@ -36,7 +36,10 @@ run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify,
   strategy's slot count. The state path gets a suffix derived from strategy ID,
   version and configuration, so a changed strategy or configuration is a new run and
   never reuses or resets earlier charges. Repeating a run resumes without
-  re-executing charged work.
+  re-executing charged work. The saved state does not record the budget it ran
+  under, so a resumed run checks its saved charges against the budget you pass: it
+  raises `ValueError` when they exceed the ceiling, or exceed the ceiling less the
+  reserve before the final-reserve charge, or when the state records no charges.
 - The result adds `strategy` (ID, version, configuration, identity, state path).
   Results from this route carry `evidence_source: "unverified_callback"`: the
   callback `safe` and metric values are not controller-verified evidence, and
@@ -55,6 +58,11 @@ a fresh `Budget(ceiling, reserve)` per strategy. The default is the three built-
 Bad strategy pairs, versions, configuration, budgets or non-development evidence are
 refused before any state file exists. Each strategy keeps its own state file in
 `directory`, so repeating the call resumes without re-executing charged work.
+Repeat it with the same `ceiling` and `reserve`: a repeat whose budget the saved
+charges exceed raises `ValueError` instead of reporting that budget as matched, and
+nothing further runs. A larger budget resumes the saved result without re-running
+it, so the report shows the larger budget over charges made under the smaller one.
+To compare under a different budget, use a new `directory`.
 
 The report has one row per strategy and never only the winner:
 
