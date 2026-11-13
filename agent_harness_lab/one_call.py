@@ -2,6 +2,7 @@
 
 Behavioral promotion remains owned by the controlled evaluation policy.
 """
+import contextlib
 import hashlib
 import json
 import os
@@ -19,14 +20,14 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
     """Descriptive parent context; these fields never issue execution authority."""
     settings=getattr(args,'project_settings',None) or {}
     application=settings.get('application',{})
-    return dict(schema_version=1,profile='ahl-skill-invocation-context-v1',scope='project',
+    return dict(schema_version=1,profile='ahl-skill-invocation-context-v1',scope=getattr(args,'scope','project'),
         origin=getattr(args,'_invocation_origin','cli'),parent_run_id=Path(output).name,
         project=str(args.project),runtime=args.agent,configuration_sha256=getattr(args,'configuration_sha256',None),
         policy=application.get('policy'),review_store=application.get('review_store'),authorization_id=application.get('authorization_id'),
         bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',config.DEFAULT_TRIALS),
         remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
         remaining_trials=getattr(args,'trial_limit',config.DEFAULT_TRIALS) if remaining_trials is None else remaining_trials,
-        execution_authority=False,publication_allowed=False,runtime_selection=getattr(args,'_runtime_selection',None))
+        execution_authority=False,publication_allowed=False,runtime_selection=getattr(args,'_runtime_selection',None),cost_preview=getattr(args,'_cost_preview',None))
 
 
 def resolve(args, explicit):
@@ -135,6 +136,22 @@ def preflight_plan(args, reason):
     return plan
 
 
+def cost_preview(args):
+    """Ceilings and authorization shown once preflight passes, before any model dispatch. Cost is never estimated."""
+    settings = getattr(args, 'project_settings', None)
+    return dict(runtime=args.agent, harness_scope=settings['harness_paths'] if settings else 'project default',
+        max_seconds=args.timeout, max_trials=args.trial_limit, authorization=AUTHORIZATION,
+        model_cost='unknown: model usage is billed by the runtime provider and AHL does not measure tokens or money; '
+                   'the ceilings above bound time and trials, not spend')
+
+
+def announce_cost(args):
+    """Record the preview for the run context and show it via the CLI hook when one is attached."""
+    args._cost_preview = preview = cost_preview(args)
+    show = getattr(args, '_preview', None)
+    if show: show(preview)
+
+
 def pinned_bank(args):
     settings = getattr(args, 'project_settings', None)
     return config.bank_path(args.project, settings) if settings and settings['bank']['path'] != 'starter' else None
@@ -210,24 +227,70 @@ def deferred_surfaces(hook_contracts):
     return [*DEFERRED_WORK,*surfaces.deferred(('commands_skills','hooks') if passed else ('commands_skills',))]
 
 
+def layer_lock(args, layer):
+    """improve() already holds the project's lock; a user-level layer takes its own unless it is that same directory."""
+    from .workflow import project_lock
+    return contextlib.nullcontext() if layer.label == 'project' or layer.root == args.project else project_lock(layer.root)
+
+
 def contracts(args):
-    """One-call deterministic contract path; invoked only by explicit CLI option."""
-    from .workflow import (output_dir, snapshot, candidate_states, file_state,
-                           state_root, identity, skill_roots, write_json)
-    from .promotion.journal import Journal, file_record
+    """One-call deterministic contract path; invoked only by explicit CLI option. --scope selects the layers: the
+    project by default, or the user-level skill directory (alone or first) when explicitly requested."""
+    from . import scope
+    from .workflow import output_dir, write_json
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
     started = getattr(args, '_construction_started', None)
     if started is None: started = time.monotonic()
     args._budget_started = started
+    selection = scope.layers(args)
     output = output_dir(args, deadline=started + args.timeout)
-    baseline, candidate = output/'baseline', output/'candidate'
-    original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
+    if len(selection) == 1:
+        layer = selection[0]
+        with layer_lock(args, layer):
+            args._scope_current, args._scope_results, args._scope_roots = layer.label, [], {layer.label: layer.root}
+            return _layer_contracts(args, layer, output, output, started, lambda result: scope.combine(args, [(layer.label, result)], base=result, roots=args._scope_roots))
+    results, args._scope_results, args._scope_roots = [], [], {layer.label: layer.root for layer in selection}
+    for layer in selection:
+        args._scope_current = layer.label
+        if results and results[-1][1]['status'] not in ('applied', 'no_change'):
+            results.append((layer.label, scope.not_attempted(results[-1][1]['status'])))
+            continue
+        folder = output / layer.label
+        folder.mkdir()
+        with layer_lock(args, layer):
+            try:
+                results.append((layer.label, _layer_contracts(args, layer, output, folder, started)))
+            except (ValueError, TypeError, KeyError) as exc:
+                if not any(done['changed_files'] for _, done in results):
+                    raise
+                # An earlier layer is already committed: report it beside this failure instead of hiding it behind an error.
+                results.append((layer.label, dict(status='invalid_input', changed_files=[], error=str(exc), reason=getattr(exc, 'reason', None))))
+        args._scope_results = list(results)
+    base = dict(output=str(output), profile='one-call-improvement-v1', publication_allowed=False, behavioral_certification=False,
+                deferred=results[0][1]['deferred'], precedence=scope.precedence(scope.runtime_of(args), selection))
+    result = scope.combine(args, results, base=base, roots=args._scope_roots)
+    try:
+        write_json(output / 'workflow.json', result)
+    except (OSError, KeyboardInterrupt):
+        result['workflow_completion'] = 'unrecorded'  # every layer already recorded its own receipt and journal
+    return result
+
+
+def _layer_contracts(args, layer, output, folder, started, finish=None):
+    """One layer of the deterministic contract path, rooted at the layer's own directory."""
+    from .workflow import (snapshot, candidate_states, file_state,
+                           state_root, identity, skill_roots, write_json)
+    from .promotion.journal import Journal, file_record
+    root = layer.root
+    baseline, candidate = folder/'baseline', folder/'candidate'
+    original = snapshot(root, baseline, allowed_paths=layer.allowed)
     candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
     operations = []
-    settings = getattr(args, 'project_settings', None)
-    headers = {str((root/'SKILL.md').relative_to(baseline)) for root in skill_roots(baseline)}
+    # A project ahl.json constrains the project harness only; it never widens or narrows the user-level layer.
+    settings = getattr(args, 'project_settings', None) if layer.label == 'project' else None
+    headers = {str((skill/'SKILL.md').relative_to(baseline)) for skill in skill_roots(baseline)}
     for name in original:
         path = candidate/name
         if name not in headers:
@@ -247,25 +310,25 @@ def contracts(args):
     from .harness_change_plan import produce,attach
     from .hooks_contract import contracts_for
     changed=[name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name)]
-    hook_contracts=contracts_for(args.project,{name:file_record(baseline/name) if name in original else None for name in changed},
+    hook_contracts=contracts_for(root,{name:file_record(baseline/name) if name in original else None for name in changed},
         {name:file_record(candidate/name) if name in proposed else None for name in changed})
     deferred=deferred_surfaces(hook_contracts)
     common_plan=produce(args,original,proposed,analysis=dict(kind='deterministic_contract_inventory'),evidence=operations,
         diagnosis=dict(contract='minimal-agent-skill-header-without-bom-v1'),
         falsifiers=['outside_strict_header_contract','candidate_not_exact_bom_removal'],
-        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts)
+        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts,project=root,user_level=layer.label!='project')
     plan = dict(schema_version=1, kind='deterministic_contract', operations=operations,
                 profile='one-call-improvement-v1', publication_allowed=False,
-                configuration_sha256=getattr(args, 'configuration_sha256', None),
+                configuration_sha256=getattr(args, 'configuration_sha256', None) if layer.label == 'project' else None,
                 behavioral_certification=False, runtime_activation='unknown', deferred=deferred)
     attach(plan,common_plan)
-    write_json(output/'change-plan.json', plan)
-    result = dict(status='no_change', output=str(output), changed_files=[], plan=str(output/'change-plan.json'),
+    write_json(folder/'change-plan.json', plan)
+    result = dict(status='no_change', output=str(output), changed_files=[], plan=str(folder/'change-plan.json'),
                   profile=plan['profile'], publication_allowed=False,
                   behavioral_certification=False, deferred=plan['deferred'],plan_sha256=common_plan.sha256)
     if operations:
         from .evidence_label import pre_edit_check
-        result['pre_edit_check'] = pre_edit_check(args.project, [o['path'] for o in operations])
+        result['pre_edit_check'] = pre_edit_check(root, [o['path'] for o in operations])
         if common_plan.unresolved_operations:
             result.update(status='blocked',reason='unresolved_operation_requires_hook_contract')
         elif hook_contracts:
@@ -278,7 +341,7 @@ def contracts(args):
         else:
             if not unchanged(args) or candidate_states(candidate, original) != proposed:
                 raise ValueError('configuration or candidate changed before application')
-            if any(file_state(args.project/name) != state for name, state in original.items()):
+            if any(file_state(root/name) != state for name, state in original.items()):
                 raise ValueError('target changed before application')
             # Recompute the exact allowed transformation from the frozen baseline;
             # a model claim, serialized plan or passing smoke test grants no authority.
@@ -289,16 +352,16 @@ def contracts(args):
             from .workflow import harness_files
             journal=None
             def target_states():
-                states={str(path.relative_to(args.project)):file_state(path)
-                        for path in harness_files(args.project,allowed_paths(args))}
+                states={str(path.relative_to(root)):file_state(path)
+                        for path in harness_files(root,layer.allowed)}
                 pending=getattr(journal,'_pending_snapshot',None)
                 if pending is not None:
-                    name=str(pending[0].relative_to(args.project))
+                    name=str(pending[0].relative_to(root))
                     if file_state(pending[0])!=(pending[1],pending[2]):raise ValueError('journal staging snapshot changed')
                     states.pop(name,None)
                 return states
             common_plan.validate_inventories(target_states(),proposed)
-            journal = Journal(args.project, state_root()/'promotions'/identity(args.project))
+            journal = Journal(root, state_root()/'promotions'/identity(root))
             record = journal.prepare({o['path']: file_record(baseline/o['path']) for o in operations},
                 {o['path']: file_record(candidate/o['path']) for o in operations},
                 dict(source='deterministic_contract_v1', behavioral_certification=False,plan_sha256=common_plan.sha256))
@@ -316,9 +379,13 @@ def contracts(args):
             receipt = journal._execute(record['deployment'],pre_write=permitted)
             result.update(status='applied', changed_files=sorted(o['path'] for o in operations),
                           deployment=receipt['deployment'], journal=str(journal.folder),
-                          rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(args.project))}')
+                          rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(root))}')
+    if operations and result['status'] != 'applied':
+        result['recommended_files'] = sorted(o['path'] for o in operations)
+    def record_result():
+        write_json(folder/'workflow.json', finish(result) if finish else result)
     try:
-        write_json(output/'workflow.json', result)
+        record_result()
     except BaseException as exc:
         if result['status'] != 'applied':
             raise
@@ -327,7 +394,7 @@ def contracts(args):
         observed = False
         try:
             observed = (journal.active == receipt['deployment'] and journal.load(receipt['deployment']) == receipt
-                        and all(file_state(args.project/name) == state for name, state in proposed.items()))
+                        and all(file_state(root/name) == state for name, state in proposed.items()))
         except (OSError, ValueError, KeyError, TypeError, KeyboardInterrupt):
             pass
         result.update(status='applied' if observed else 'requires_intervention', commit_observation='committed',
@@ -336,10 +403,10 @@ def contracts(args):
         if not observed:
             result['remaining_change_ownership'] = 'unverified'
         try:
-            write_json(output/'workflow.json', result)
+            record_result()
         except (OSError, KeyboardInterrupt):
             result['workflow_completion'] = 'unrecorded'
-    return result
+    return finish(result) if finish else result
 
 
 def rollback_main(argv):
@@ -347,7 +414,7 @@ def rollback_main(argv):
     from .workflow import state_root, identity
     from .promotion.journal import Journal
     parser = argparse.ArgumentParser(prog='ahl rollback', description='Restore an owned deployment if no intervening edits conflict',
-        epilog='Use the deployment ID from a successful repair receipt: ahl rollback DEPLOYMENT --project /project. Reads the private project Journal, verifies current owned bytes/modes and restores the saved state; foreign edits are preserved as conflicts. Prints a JSON receipt. Exit 0 on rollback; invalid ownership/input or conflicts exit 2. No model calls.')
+        epilog='Use the deployment ID from a successful repair receipt: ahl rollback DEPLOYMENT --project /project. Reads the private project Journal, verifies current owned bytes/modes and restores the saved state; foreign edits are preserved as conflicts. Prints a JSON receipt. Exit 0 on rollback; invalid ownership/input or conflicts exit 2. No model calls. An argument named install-NAME restores an installation backup instead (launcher, skill links, instruction files); see ahl update --help.')
     parser.add_argument('deployment',help='Exact 32-hex deployment ID returned by the owned application Journal; not a run ID or arbitrary file path')
     parser.add_argument('--project', type=Path, default=Path.cwd(),help='Existing project directory belonging to that deployment (default: current directory); selects its private Journal')
     args = parser.parse_args(argv)

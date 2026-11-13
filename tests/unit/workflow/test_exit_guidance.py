@@ -73,3 +73,12 @@ def test_empty_observed_blocked_and_unknown_summaries():
     assert summary({'status': 'analyzed', 'analysis': {'evidence_state': 'unknown'}}).startswith('Inconclusive.')
     assert summary({'status': 'analyzed', 'analysis': {'evidence_state': 'unknown'}}).endswith('Review the private receipt before retrying.')
     assert set(STATUS_ACTION) >= {'no_change', 'blocked', 'inconclusive'}
+
+
+def test_an_uninformative_stop_appends_its_class_specific_next_step_and_a_stage_stop_names_its_field():
+    from agent_harness_lab.budget_stages import NEXT_STEP
+    receipt = dict(status='inconclusive', reason='evaluation_uninformative', evaluation_uninformative=dict(next_step=NEXT_STEP['runtime_failure']))
+    assert summary(receipt).endswith(REMEDIATION['evaluation_uninformative'] + ' Next step: ' + NEXT_STEP['runtime_failure'])
+    timeout = dict(status='budget_exhausted', reason='evaluation_construction_timeout',
+                   contract_violation=dict(stage='evaluation_construction', file='manifest.json', field=None, origin='agent_output_defect'))
+    assert summary(timeout).endswith('Stage: evaluation_construction; file: manifest.json; field: none; origin: agent_output_defect.')

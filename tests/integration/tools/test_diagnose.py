@@ -1,3 +1,4 @@
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -108,3 +109,70 @@ class TestDiagnosis:
         sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
         rows = [event('a', 1, **sig), dict(case_id='a', event_id='2', activity='metadata'), event('a', 3, **sig)]
         assert d.analyze(rows, observation_max_age=1)['findings'] == []
+
+
+def random_value(rng, depth=0):
+    if depth > 3 or rng.random() < 0.25:
+        return rng.choice([None, True, False, 0, -3, 10**20, 1.5, -0.0, 1e22, float('inf'), '', 'a\nb', 'é\u2028😀"\\', rng.random()])
+    if rng.random() < 0.6:
+        return [random_value(rng, depth + 1) for _ in range(rng.choice([0, 0, 1, 2, 5]))]
+    return {rng.choice(['a', 'b', 'é', 'k']) + str(number): random_value(rng, depth + 1) for number in range(rng.choice([0, 1, 3]))}
+
+
+class TestFindingsWriting:
+    """findings.json is streamed to disk without changing a byte of it or leaving a truncated file behind."""
+
+    def test_pieces_concatenate_to_exactly_what_dumps_produced(self):
+        import random
+        rng = random.Random(7)
+        for _ in range(500):
+            shape = {f'key{number}': random_value(rng) for number in range(rng.choice([0, 1, 2, 3]))}
+            for value in (shape, random_value(rng)):
+                assert ''.join(d.findings_pieces(value)) == json.dumps(value, indent=2)
+
+    @pytest.mark.parametrize('value', [{}, [], 'text', None, {'a': []}, {'a': {}}, {'a': [[]]}, {'a': [{}]}, {'a': [1]},
+                                       {1: [2]}, {'a': None, 'b': [1, {'c': [2, 3]}]}])
+    def test_edge_shapes_match_dumps(self, value):
+        assert ''.join(d.findings_pieces(value)) == json.dumps(value, indent=2)
+
+    def test_cli_file_is_byte_identical_to_the_previous_dumps_output(self, tmp_path):
+        events = tmp_path / 'events.jsonl'
+        rows = [event('a', number, tool_name='read_file', input_fingerprint='i', result_fingerprint='r', state_revision='s')
+                for number in range(1, 7)]
+        events.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        output = tmp_path / 'out'
+        proc = subprocess.run([sys.executable, str(Path(__file__).parents[3] / 'tools/diagnose.py'),
+            '--events', str(events), '--output', str(output)], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr
+        expected = d.analyze(d.normalize((json.loads(line) for line in events.read_text().splitlines()), 'normalized', None))
+        expected['input_sha256'] = hashlib.sha256(events.read_bytes()).hexdigest()
+        assert (output / 'findings.json').read_text() == json.dumps(expected, indent=2) + '\n'
+
+    def test_a_failed_write_removes_the_partial_file_and_reports_the_error(self, tmp_path, monkeypatch, capsys):
+        events = tmp_path / 'events.jsonl'
+        events.write_text(json.dumps(event('a', 1)) + '\n')
+
+        def broken(result):
+            yield '{"partial"'
+            raise TypeError('cannot serialize')
+        monkeypatch.setattr(d, 'findings_pieces', broken)
+        monkeypatch.setattr(sys, 'argv', ['diagnose', '--events', str(events), '--output', str(tmp_path / 'out')])
+        with pytest.raises(SystemExit) as stop:
+            d.main()
+        assert stop.value.code == 2
+        assert 'diagnosis error: cannot serialize' in capsys.readouterr().err
+        assert not (tmp_path / 'out' / 'findings.json').exists()
+
+    def test_the_whole_text_is_never_held_in_memory(self, tmp_path):
+        import tracemalloc
+        evidence = [dict(case_id=f'c{number}', event_id=str(number)) for number in range(4)]
+        result = dict(findings=[dict(kind='k', evidence=evidence) for _ in range(30000)])
+        target = tmp_path / 'findings.json'
+        tracemalloc.start()
+        try:
+            d.write_findings(target, result)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert target.stat().st_size > 8_000_000
+        assert peak < target.stat().st_size // 20

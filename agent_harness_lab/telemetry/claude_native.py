@@ -5,7 +5,7 @@ import re
 from pathlib import Path, PurePosixPath
 from .claude_cwd import Places
 from .native import guarded, jsonl, number, text, timestamp
-from .schema import SOURCE_ORDER, event, message_fingerprint
+from .schema import BODY_DERIVED, SOURCE_ORDER, event, input_fingerprint, message_fingerprint
 from ..sources.config_inventory import telemetry_server_sha256
 from ..sources.schema import digest
 from ..surfaces import skill_prefixes
@@ -14,7 +14,7 @@ VERSION = 'claude-jsonl-2.1.316'
 RUNTIME_VERSION = '2.1.316'  # the first verified release; source-journal profiles stay exact at this version
 # Declared compatibility range: every release in it needs a contract fixture (tests/fixtures/claude_contract/<version>.jsonl);
 # a test refuses a version without one. Add a release by adding its fixture, then widening or merging the entries.
-VERIFIED_RANGES = (('2.1.316', '2.1.316'), ('2.1.318', '2.1.318'))
+VERIFIED_RANGES = (('2.1.316', '2.1.318'),)
 
 
 def release(version):
@@ -225,6 +225,7 @@ class Projection:
                     name = text(block.get('name')); metadata = dict(tool_name=name if name in KNOWN_TOOLS else 'tool:'+digest(name))
                     metadata.update(skill_signal(self.project, name, block.get('input')) or {})
                     metadata.update(invocation_signal(name, block.get('input')) or {})
+                    if 'input' in block and (fingerprint := input_fingerprint(block['input'], case)) is not None: metadata['input_fingerprint'] = fingerprint
                     if block.get('id') is not None: metadata['call_id'] = self.scoped(self.session, writer, text(block['id']))
                     else: metadata['missing_reason'] = 'native_call_id_unavailable'
                     emit('tool_call', index, **metadata)
@@ -243,7 +244,7 @@ class Projection:
             emit('context', **loading)
         else:
             self.unsupported += 1; emit('capture_coverage', missing_reason='unsupported_native_entry')
-        signature = digest(dict(events=[{k: v for k, v in e.items() if k not in UNORDERED} for e in observations], usage=usage, stop=stop))
+        signature = digest(dict(events=[{k: v for k, v in e.items() if k not in UNORDERED | BODY_DERIVED} for e in observations], usage=usage, stop=stop))  # duplicates stay body-insensitive
         if previous is not None:
             if previous[0] != signature: raise ValueError('conflicting native Claude UUID metadata')
             self.duplicates += 1; return

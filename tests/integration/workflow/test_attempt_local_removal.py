@@ -29,6 +29,8 @@ def test_budget_exhaustion_does_not_inherit_prior_instruction_disposition(wf):
     assert 'instruction_removal' not in result and 'instruction_validation' not in result
     saved = json.loads((Path(result['output'])/'workflow.json').read_text())
     assert 'instruction_removal' not in saved and 'instruction_validation' not in saved
+    assert saved['budget_exhaustion']['conclusion'] == 'not_established' and set(saved['budget_stages']['stages']) == {
+        'preparation', 'construction', 'trials', 'refinement'}
 
 
 def test_blocked_refinement_does_not_inherit_prior_removal_disposition(wf):

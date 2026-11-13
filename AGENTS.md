@@ -31,6 +31,9 @@ Run both README test suites and CLI smoke checks relevant to a change. Report
 failed, skipped and inconclusive checks separately. Never publish private traces,
 evaluation workspaces, model caches, credentials or project-specific history.
 
+Every bug found or fixed ships with an automated regression test that fails before the fix and
+follows the native pytest layout; see "Every bug gets a regression test" in CONTRIBUTING.md.
+
 ## Publication privacy
 
 Never commit or publish information about projects analyzed by this tool or

@@ -175,6 +175,8 @@ def main(argv):
                     print(f"launcher: {state['launcher'] or 'not on PATH'} -> {state['launcher_resolves_to'] or 'unresolved'} (release {state['launcher_release'] or 'unknown'})")
                     for link in state['skill_links']:
                         print(f"skill {link['path']} -> {link['resolves_to']} (release {link['release'] or 'unknown'})")
+                    for row in state['instructions']:
+                        print(f"instructions {row['path']}: {row['state']}" + (f" ({row['reason']})" if row['reason'] else ''))
                 for warning in result['installation']['warnings']:
                     print(f"WARNING {warning['code']}: {warning['message']}. Fix: {warning['fix']}")
                 context = result.get('source_context')

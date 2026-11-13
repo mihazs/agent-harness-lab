@@ -123,6 +123,11 @@ project banks, invalid or unavailable banks, stale bank digests, ambiguous runti
 budgets stop before inference, each with its own `reason` and a matching one-step
 `remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
+Once preflight passes and before any model dispatch, the CLI writes one `ahl: preview` line to
+stderr with the runtime, harness scope, the time and trial ceilings, the authorization statement and
+`model_cost="unknown..."`: model usage is billed by the runtime provider, AHL does not measure tokens or
+money, and the ceilings bound time and trials, not spend. A blocked run prints no preview. Skill
+invocations also record the same `cost_preview` in `invocation.json`.
 On completion, improve writes its structured receipt to stdout and a concise
 outcome summary to stderr. The summary includes the reported changed-file count,
 artifact directory when available, a next step, and elapsed time. Once a
@@ -743,6 +748,60 @@ as an unguarded write. These checks do not provide continuous atomic policy
 enforcement against unrelated host writers that ignore the project lock.
 An interruption after the commit record, active pointer and exact target snapshots
 are all verified is reported as the actual committed result.
+
+## Harness scope receipt
+
+`--scope project|global|project+global` (default `project`) selects the harness layers
+of `ahl improve` and `ahl skills invoke`; [the how-to](improve-scope.md) shows the
+workflow. This section is the contract.
+
+**Selection.** Only the command line selects a scope. A project `ahl.json` that
+carries a `scope` key is rejected as invalid input before any run state exists, so an
+untrusted checkout cannot escalate to the user-level layer. `global` and `project+global`
+need an explicit `--agent codex|claude`; `auto`, `responses`, a configured runtime, a
+remembered runtime and host markers never choose a user-level location. The location is
+the runtime's user skill directory: `$CLAUDE_CONFIG_DIR/skills` (else `~/.claude/skills`)
+for `claude` and `~/.agents/skills` for `codex`.
+
+**Evaluation order.** Layers run in the runtime's documented load order, user before
+project (`precedence.documented_load_order`, `layer_order` and `out_of_scope` come
+from the same table the static audit reports: managed and local layers are never
+addressed). The documented order concerns instruction files. For skills that share a
+name across layers the effective one is not established, so `precedence.same_name_skills`
+is `effective_layer_unknown`, `shared_skill_names` lists them, and each file is repaired
+only in the layer that holds it.
+
+**Budget and stops.** One run id, one output directory, one controller clock and one
+`--timeout` cover every layer. A layer that ends `blocked`, `inconclusive`,
+`budget_exhausted` or in a failure stops the run; the layers after it are rows with
+`status: not_attempted` and `reason: earlier_layer_<status>`. An error after an earlier
+layer committed is reported beside that layer, never instead of it.
+
+**Receipt.** Every scope returns the same keys:
+
+| Key | Meaning |
+| --- | --- |
+| `scope` | The selected scope. |
+| `layers` | One row per selected layer in evaluation order: `layer` (`global` or `project`), `evaluated`, `status`, `changed_files` (relative to the layer's `root`), `recommended_files` (planned but not applied), `reason`, `root` and, when present, `plan`, `plan_sha256`, `deployment`, `journal`, `rollback` and `error`. |
+| `layers_evaluated`, `layers_changed` | Layer names that were examined, and that changed at least one file. |
+| `changed_files`, `recommended_files` | All layers combined; user-level entries carry a `global:` prefix, project entries stay unprefixed. |
+| `blocked` | Layers that are `blocked` or `not_attempted`, each with its `reason`. |
+| `status`, `reason` | The worst layer status (a failure, then `budget_exhausted`, `blocked`, `inconclusive`, `applied`, `no_change`) and its reason. Exit codes follow `status` exactly as for the project. |
+
+With one layer the legacy top-level keys (`plan`, `plan_sha256`, `deployment`,
+`journal`, `rollback`) stay at the top level as well; `project+global` carries them per
+layer and adds `precedence`. The model-driven project path returns the same keys with one
+`project` row. Each layer has its own change plan, guarded journal and rollback; a
+user-level plan binds the user-level directory as its project and the scope into its
+authorization digest, so its identity differs from a project plan's. It carries no
+`configuration` reference and none of the project's settings, because the project's
+`ahl.json` never governed it.
+
+**Not yet available.** Model-driven evaluation of a user-level layer (it returns
+`blocked` with `global_scope_model_evaluation_unavailable`), user-level instruction,
+settings and hook layers, choosing the responsible layer for a conflict between layers,
+user-level configuration of a default scope, and a deprecation notice on
+`ahl skills invoke` are not implemented.
 
 ## Change matrix coverage
 

@@ -144,8 +144,9 @@ class HarnessChangePlan:
         if inventory(before)!=self.before or inventory(after)!=self.after:raise ValueError('frozen plan inventory changed')
 
 
-def produce(args,before,after,*,analysis,evidence,diagnosis,falsifiers,controls,deferred,contracts=()):
-    """Bind actual producer revisions; these references confer no authority."""
+def produce(args,before,after,*,analysis,evidence,diagnosis,falsifiers,controls,deferred,contracts=(),project=None,user_level=False):
+    """Bind actual producer revisions; these references confer no authority. project is the layer root (default: the project);
+    a user-level plan carries neither the project's configuration hash nor its settings, which never governed it."""
     from .promotion import policy
     runtime={name:str(getattr(args,name,None)) for name in ('agent','codex','claude','inference_settings','image_sha256','disk_bytes','permission_audit')}
     runtime['configuration_references']=getattr(args,'_response_references',None)
@@ -153,10 +154,12 @@ def produce(args,before,after,*,analysis,evidence,diagnosis,falsifiers,controls,
     if inference is not None:
         from .evaluation.responses import read_settings
         runtime['inference_settings_sha256']=read_settings(inference)[1]
-    references=dict(project=digest(str(args.project)),configuration=getattr(args,'configuration_sha256',None),
+    scope=getattr(args,'scope','project')
+    references=dict(project=digest(str(args.project if project is None else project)),configuration=None if user_level else getattr(args,'configuration_sha256',None),
         analysis=digest(analysis),evidence=digest(evidence),runtime=digest(runtime),
         policy=hashlib.sha256(Path(policy.__file__).read_bytes()).hexdigest(),
-        authorization=digest(dict(scope=getattr(args,'project_settings',None),repair_contracts=getattr(args,'repair_contracts',False))))
+        authorization=digest(dict(scope=None if user_level else getattr(args,'project_settings',None),repair_contracts=getattr(args,'repair_contracts',False),
+            **({} if scope=='project' else dict(harness_scope=scope)))))
     return HarnessChangePlan.create(before,after,references=references,diagnosis=diagnosis,falsifiers=falsifiers,
         dependencies=['current_configuration','frozen_inventories','existing_application_policy'],controls=controls,deferred=deferred,
         contracts=contracts)

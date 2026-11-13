@@ -41,7 +41,7 @@ EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude'
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
     'improve': (*COMMON, '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
-                '--repair-contracts', '--remember-runtime'),
+                '--resume', '--construction-fraction', '--repair-contracts', '--scope', '--remember-runtime'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',

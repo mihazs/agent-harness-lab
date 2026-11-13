@@ -13,6 +13,7 @@ REMEDIATION = {
     'cwd_worktrees_unavailable': 'The project repository\'s registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository\'s .git directory and rerun; until then treat registered_worktree_of_project as a lower bound.',
     'history_no_matching_sessions': 'No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
     'history_runtime_has_no_captures': 'No captured events of the requested runtime matched this project, --since and --session; rerun with --source native to include both runtimes, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
+    'global_scope_model_evaluation_unavailable': 'Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project.',
     'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
     'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
     'configured_bank_invalid_or_unavailable': 'Select an accessible valid project bank or use the starter bank; review its configuration before retrying.',
@@ -38,6 +39,8 @@ REMEDIATION = {
     'no_change_harness_supported': 'Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion.',
     'no_change_evidence_insufficient': 'The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
+    'evaluation_uninformative': 'Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun.',
+    'refinement_budget_unavailable': 'The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun.',
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
     'missing_or_duplicate_trials': 'Review the trial records and restore complete, unique trial coverage.',
@@ -70,6 +73,13 @@ REMEDIATION = {
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
+    'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
+    'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',
+    'instruction_target_unsafe': 'Make the instruction file a regular file you own and under 8 MiB, then run: ahl update',
+    'instruction_write_failed': 'Fix the filesystem error reported for the instruction file, then run: ahl update',
+    'instruction_template_invalid': 'This release ships an unusable instruction template, so the instruction file was left unchanged; install a newer release with: ahl update',
+    'instruction_template_missing': 'This release ships no instruction template, so the instruction file was left unchanged; install a newer release with: ahl update',
+    'region_edited_by_user_replaced': 'Text edited inside the managed region of the instruction file was replaced and the edited text is in the backup; keep your own text outside the markers',
 }
 
 STATUS_ACTION = {
@@ -114,6 +124,9 @@ def guidance(result):
     steps = result.get('next_steps')
     if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
         action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"
+    uninformative = result.get('evaluation_uninformative')
+    if reason == 'evaluation_uninformative' and isinstance(uninformative, dict):
+        action += f" Next step: {uninformative.get('next_step')}"
     violation = result.get('contract_violation')
     if reason in CONTRACT_REASONS and isinstance(violation, dict):
         action += f" Stage: {violation.get('stage')}; file: {violation.get('file')}; field: {violation.get('field') or 'none'}; origin: {violation.get('origin')}."

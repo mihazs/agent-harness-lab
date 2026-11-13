@@ -56,5 +56,5 @@ def write(path, values): path.write_text(''.join(json.dumps(value)+'\n' for valu
 
 
 def projection_sha256(events):
-    # cwd_class was added later and is pinned in test_claude_cwd_drift; every other field stays pinned here.
-    return hashlib.sha256(json.dumps([{k: v for k, v in e.items() if k != 'cwd_class'} for e in events], sort_keys=True).encode()).hexdigest()
+    # cwd_class and input_fingerprint were added later and are pinned in test_claude_cwd_drift and test_native_input_fingerprints; every other field stays pinned here.
+    return hashlib.sha256(json.dumps([{k: v for k, v in e.items() if k not in ('cwd_class', 'input_fingerprint')} for e in events], sort_keys=True).encode()).hexdigest()

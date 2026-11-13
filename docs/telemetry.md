@@ -334,8 +334,8 @@ prompts are never copied.
 its payload. These shapes are unverified and supported only by synthetic fixtures.
 A rule file is expected as a `nested_memory` attachment with its own path. Every
 other attachment type, a relative path or a `content.path` that differs from
-`path` stays `unsupported_native_entry`. Claude Code 2.1.317 captures are not
-supported, because no documented attachment shape is pinned for that version.
+`path` stays `unsupported_native_entry`. Attachment payload shapes remain
+assumptions backed only by synthetic fixtures, whatever the Claude Code version.
 
 **Not established.** An attachment shows that the runtime named a file in its
 context, not that the model followed it. An agent or MCP request is a model
@@ -568,8 +568,11 @@ verified release) accepts a **declared range**: each release in `VERIFIED_RANGES
 (`agent_harness_lab/telemetry/claude_native.py`) must have a synthetic contract
 fixture in `tests/fixtures/claude_contract/<version>.jsonl`, and a test fails when
 the accepted versions and the fixtures differ. A range stays within one minor line.
-Today the verified releases are those fixtures; a release between or beyond them is
-not accepted until its fixture exists. Add one with
+Today the declared range is `2.1.316` to `2.1.318`, with one fixture per release. A
+release outside it is not accepted until its fixture exists. The `2.1.317` fixture
+also holds identity, pull-request link, permission-mode and agent-name records;
+the adapter reads none of them, so they are counted per type as
+`unknown_entry_type` and never parsed. Add a release with
 [the maintainer guide](verify-claude-release.md).
 
 A capture whose first attributable envelope records a release outside the accepted
@@ -643,3 +646,28 @@ it by hashing the guess with that case ID. The mitigations are the four-word min
 most guessable confirmations), the 64-bit truncation, and that the field lives only in the private
 run ledger: the brief, mechanism summaries and role views never contain it. Treat the ledger as
 private; do not publish it.
+
+## Input fingerprints
+
+A pinned native Claude `tool_use` block and a pinned Codex `function_call`, `custom_tool_call` or
+`local_shell_call` item carries `input_fingerprint`: the first 16 hex characters of SHA-256 over the case ID,
+a NUL byte and the canonical JSON of the call's input (sorted keys, no spacing; a string input that parses as
+JSON is canonicalized first, any other string is hashed as written). The input is never stored. The field is
+absent when the call has no input or the input cannot be serialized, which leaves the same-call-retry signal
+`unknown` for that capture.
+
+**Comparison.** It compares only within one case and only between calls to the same tool. Identical
+inputs always match, including a deliberate poll of an unchanged resource, so a match is an observed pattern
+with listed competing explanations, not proof of waste. Inputs that differ in any value, or that mean the same
+thing in different words, never match, so zero is not a clean result. The 64-bit cut has the collision
+behavior described for [message fingerprints](#message-fingerprints).
+
+**Privacy.** The case salt makes equal inputs in different cases unlinkable, but anyone holding the private
+ledger who can guess an input can confirm it by hashing the guess with the case ID. Short or common inputs
+(a bare command with no arguments) are the easiest to confirm; the field lives only in the private run ledger
+and never reaches the brief, mechanism summaries or role views.
+
+**Metadata fingerprint.** Native input fingerprints derive from private call bodies, so they stay out of the
+body-insensitive metadata fingerprint that detects changed telemetry, and a duplicate native line whose input
+differs is still the same idempotent duplicate. This is separate from the `input_fingerprint` a caller-supplied normalized
+ledger declares, which is hashed with the rest of that ledger.

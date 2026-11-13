@@ -95,6 +95,12 @@ native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
 
+A test that bounds memory with `tracemalloc` should measure in a fresh interpreter through
+`tests/support/fresh_peak.py` rather than inside the pytest process: `tracemalloc` counts
+every thread, so another test's child process (three 128 KiB I/O buffers on Python 3.14) or
+a first-use cache can decide the result in one layout and not another. Keep the documented
+bound as it is and add a deliberate regression the bound must catch.
+
 `task setup:test` installs pinned pytest/xdist into the selected virtual environment.
 Taskfile test tasks run `python -m pytest`. Filter variables such as `KERNEL_TEST_FILTER`
 take one pytest `-k` expression, and pattern variables such as `REPEATED_TEST_PATTERN`
@@ -141,6 +147,36 @@ each such file against the parent of that commit in a temporary Git worktree and
 when the pin passes there. `task test:runtime-contracts` is an opt-in probe of the real
 `claude` and `codex` CLIs (`--version` and `--help` only, no model call); it is skipped
 by default and a missing runtime is reported as skipped.
+
+### Every bug gets a regression test
+
+Every bug found or fixed, whether a user reported it, a review found it or a flaky CI run exposed
+it, ships with an automated regression test in the same change. A bug fix without one is a
+review blocker.
+
+1. **Reproduce first.** Write the test before the fix and show it fails on the old code; quote
+   the failing assertion in the pull request.
+2. **Place it by the native pytest layout.** `tests/unit/<area>/test_<module>.py` for pure logic,
+   `tests/integration/<area>/` for command, workflow and process boundaries, shared helpers in
+   `tests/support/`. The area mirrors the code under test (see the layout rule above).
+3. **Write a good test.** One behavior per test, arrange-act-assert, a name that states the
+   behavior and the condition, `pytest.mark.parametrize` with ids for classes of input, the
+   built-in `tmp_path`, `monkeypatch` and `capsys` fixtures and no new dependency, and nothing
+   non-deterministic (no sleeps, real clock, network, unseeded randomness or real home
+   directory). Assert observable behavior (output, exit status, files), not internals.
+4. **Cover the bug class.** Add the boundary variants of the same defect (empty, missing,
+   unknown, oversized). Unknown capture or lineage never becomes a success, failure or
+   independence label.
+5. **Pin it, only to a commit that is on `main`.** `task test:pins` runs on every push to
+   `main` and fails the release when a pin names a commit it cannot resolve. This repository
+   squash-merges, so a commit on a feature branch disappears: never pin to one. A bug that was
+   introduced and fixed inside the same pull request never existed on `main`; its test is an
+   ordinary regression test with no pin. For a bug already on `main`, add the
+   `# fixed-in: COMMIT` comment once the fix commit is on `main` (a follow-up commit or pull
+   request), so `task test:pins` proves the test fails on the parent. Where a deterministic
+   fail-before is impossible (timing, memory), keep the bound unchanged and add a deliberate
+   mutation that the bound must catch.
+6. **Never weaken to pass.** A fix does not delete an assertion or loosen a bound.
 
 ## Architecture map
 

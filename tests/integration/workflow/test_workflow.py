@@ -45,10 +45,10 @@ if p('context.json').exists():
  else:
   assert 'candidate' not in c
   if (project/'mode').exists() and (project/'mode').read_text()=='drift': (project/'app/AGENTS.md').write_text('drifted\n')
-  grader=evaluation/'grade.py'
-  grader.write_text("from pathlib import Path; import sys; w=Path(sys.argv[1]); assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
+  grader=evaluation/'grade.py'; reuse=c.get('reuse')  # a refinement builds only fresh held-out tasks and keeps the frozen grader
+  if not reuse: grader.write_text("from pathlib import Path; import sys; w=Path(sys.argv[1]); assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
   tasks=[]; controls=[]
-  for split in ('development','regression','heldout'):
+  for split in (('heldout',) if reuse else ('development','regression','heldout')):
    folder=evaluation/split; folder.mkdir(); (folder/'original').write_text('preserve')
    (folder/'phase').write_text(str(c['attempt'])+split)
    tasks.append(dict(id=split,split=split,fixture=split,prompt='Produce the synthetic artifact',grader=[sys.executable,str(grader),'{workspace}']))

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
 from tests.integration.workflow import test_workflow as fixtures
+from tests.support import clock
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 
@@ -39,6 +41,11 @@ def make_fixture():
             fixture=fixtures.WorkflowTests(stack.callback)
             return fixture
         yield make
+
+
+def same_receipt(first,second):
+    """Equal exit code and receipt except the documented measured timings."""
+    return first[0] == second[0] and entry_parity.document_differences('workflow.json',first[1],second[1],'<cli>','<skill>') == []
 
 
 class TestSkillInvocation:
@@ -78,7 +85,7 @@ class TestSkillInvocation:
             fixture=make_fixture()
             code,stdout,_=invoke([*prefix,str(fixture.project),'--timeout','10'])
             result=json.loads(stdout);result.pop('output');results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
         code,result=results[0]
         assert (code,result['reason']) == (3,'select_one_runtime_with_agent')
         assert result['preflight_plan']['choice']['values'] == ['codex','claude']
@@ -91,7 +98,7 @@ class TestSkillInvocation:
             result=json.loads(stdout);output=Path(result.pop('output'))
             assert (output/'invocation.json').exists() == (prefix[0]=='skills')
             results.append((code,result))
-        assert results[0] == results[1]
+        assert same_receipt(*results)
 
     def test_preflight_blocked_skill_run_records_invocation_context(self,make_fixture):
         fixture=make_fixture();missing=fixture.root/'missing-agent'
@@ -261,12 +268,14 @@ class TestSkillInvocation:
 
 class TestEntryReceiptParity:
     """`ahl improve` and `ahl skills invoke` on one project, frozen inputs and fake runtime."""
-    def route(self,fixture,prefix,options,initial):
+    def route(self,fixture,prefix,options,initial,timing=clock.frozen):
         # Same project path and state root for both routes; restore the target
-        # bytes so each route starts from identical frozen inputs.
+        # bytes so each route starts from identical frozen inputs. A frozen budget
+        # clock makes measured durations equal by construction; the allow-list in
+        # entry_parity stays the contract (see the jittered-clock test below).
         (fixture.project/'AGENTS.md').write_bytes(initial)
-        agent=str(fixture.root/'missing-agent') if options.get('runtime')=='missing' else str(fixture.agent)
-        code,stdout,stderr=invoke([*prefix,str(fixture.project),'--agent','codex','--codex',agent,'--timeout','30'])
+        agent=str(fixture.root/'missing-agent') if options.get('runtime')=='missing' else str(options.get('agent',fixture.agent))
+        with timing():code,stdout,stderr=invoke([*prefix,str(fixture.project),'--agent','codex','--codex',agent,'--timeout','30'])
         receipt=json.loads(stdout);run=Path(receipt['output'])
         assert json.loads((run/'workflow.json').read_text()) == receipt
         assert (fixture.project/'AGENTS.md').read_bytes() == initial
@@ -301,6 +310,38 @@ class TestEntryReceiptParity:
                 assert key in cli_receipt
             self.assert_bound_digests(cli_receipt,cli_run);self.assert_bound_digests(skill_receipt,skill_run)
 
+    def test_measured_durations_never_break_parity_under_a_jittered_clock(self,make_fixture):
+        """#758: each route times its own work, so the rounded tenths of a second differ run to run; 50 paired runs must agree."""
+        fixture=make_fixture();initial=(fixture.project/'AGENTS.md').read_bytes()
+        # The proposer works, then the evaluation-construction pass fails at once: the receipt carries a measured
+        # construction time but no trial is run, so a pair costs a fraction of a second.
+        agent=fixture.root/'construction-fails';agent.write_text(f"#!{sys.executable}\nimport json,os,pathlib,sys\n"
+            f"c=pathlib.Path('context.json')\nif c.exists() and 'candidate' not in json.loads(c.read_text()):sys.exit(3)\n"
+            f"os.execv({str(fixture.agent)!r},[{str(fixture.agent)!r},*sys.argv[1:]])\n");agent.chmod(0o755)
+        options=dict(agent=agent);measured=set()
+        for seed in range(50):
+            _,cli_receipt,_,cli_run=self.route(fixture,['improve'],options,initial,lambda:clock.jittered(2*seed))
+            _,skill_receipt,_,skill_run=self.route(fixture,['skills','invoke'],options,initial,lambda:clock.jittered(2*seed+1))
+            assert cli_receipt['status'] == skill_receipt['status'] == 'execution_error',seed
+            measured.add((cli_receipt['evaluation_construction_seconds'],skill_receipt['evaluation_construction_seconds']))
+            assert entry_parity.document_differences(entry_parity.RECEIPT,cli_receipt,skill_receipt,cli_run,skill_run) == [],seed
+            assert entry_parity.run_differences(cli_run,skill_run) == {},seed
+        assert any(first != second for first,second in measured)  # the jitter produced unequal measured values: the loop is not vacuous
+
+    def test_a_bytecode_cache_appearing_between_the_routes_does_not_break_parity(self,make_fixture,tmp_path):
+        """#758: a pytest worker importing a skill script can write __pycache__ into the shared source tree between the two routes."""
+        source=tmp_path/'assets';shutil.copytree(cli.assets()/'skills',source/'skills')
+        manifest=cli.assets()/'package.json'  # only the checkout layout has it; the wheel layout does not
+        if manifest.exists():shutil.copy(manifest,source)
+        fixture=make_fixture();(fixture.project/'mode').write_text('no_change');initial=(fixture.project/'AGENTS.md').read_bytes()
+        with patch.object(cli,'assets',return_value=source):
+            shutil.rmtree(source/'skills/harness-evaluation/scripts/__pycache__',ignore_errors=True)
+            _,_,_,cli_run=self.route(fixture,['improve'],{},initial)
+            cache=source/'skills/harness-evaluation/scripts/__pycache__';cache.mkdir(exist_ok=True)
+            (cache/'run_evaluation.cpython-314.pyc').write_bytes(b'synthetic bytecode')
+            _,_,_,skill_run=self.route(fixture,['skills','invoke'],{},initial)
+        assert entry_parity.run_differences(cli_run,skill_run) == {}
+
     def assert_bound_digests(self,receipt,run):
         # Allowed digest differences must bind this run's compared artifacts.
         bindings=receipt['decision']['bindings']
@@ -324,6 +365,18 @@ class TestEntryReceiptParity:
         missing=json.loads(json.dumps(second));del missing['plan_sha256']
         assert entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2') == ['plan_sha256']
         assert entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b') == ['origin']
+
+    def test_stage_timings_may_differ_between_routes_but_stage_names_and_options_may_not(self):
+        def receipt(spent, remaining, option='--timeout SECONDS'):
+            return dict(evaluation_construction_seconds=spent, budget_stages=dict(remaining_seconds=remaining, raise_budget_option=option,
+                stages=dict(construction=dict(allotted_seconds=30.0, spent_seconds=spent), trials=dict(allotted_seconds=48.0, spent_seconds=spent))))
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(2.5, 88.0), '/a', '/b') == []
+        exhausted = lambda stage: dict(budget_exhaustion=dict(consumed_most_by=stage, conclusion='not_established'))
+        assert entry_parity.document_differences('workflow.json', exhausted('trials'), exhausted('preparation'), '/a', '/b') == []
+        assert entry_parity.document_differences('recovery.json', dict(receipt=dict(receipt(1.0, 90.0), **exhausted('trials'))),  # the record embeds the receipt
+                                                 dict(receipt=dict(receipt(2.5, 88.0), **exhausted('preparation'))), '/a', '/b') == []
+        assert entry_parity.document_differences('workflow.json', receipt(1.0, 90.0), receipt(1.0, 90.0, '--budget'), '/a', '/b') == [
+            'budget_stages.raise_budget_option']
 
     def test_environment_parity_still_detects_authentication_changes(self):
         original = dict(trials=[dict(environment=dict(names=['CODEX_API_KEY'], sha256='exact-a',

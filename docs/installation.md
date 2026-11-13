@@ -48,6 +48,43 @@ Already downloaded the assets? Use the release's `install.py` with
 `--archive agent-harness-lab-VERSION.tar.gz --checksums SHA256SUMS`.
 `--root` and `--bin-dir` select alternative application/launcher locations.
 
+## Keep your global instructions in step
+
+The installer and `ahl update` also refresh one marked region of your global agent
+instruction files, in the same step that repoints the skill links, so an agent
+started anywhere sees the current short guidance without you editing a file. The
+files are `CLAUDE.md` in `$CLAUDE_CONFIG_DIR` (default `~/.claude`) for Claude, and
+`AGENTS.md` in `$CODEX_HOME` (default `~/.codex`) for Codex, following `--agent`; the
+shared `~/.agents/AGENTS.md` is included only if it already exists. A directory that
+does not exist is skipped and never created. Only the text between
+`<!-- agent-harness-lab:start ... -->` and `<!-- agent-harness-lab:end -->` is ever
+changed; every other byte of your file stays identical. See the
+[reference](global-instructions-reference.md) for the markers and
+[why it works this way](global-instructions-rationale.md).
+
+1. Run `ahl update`. It prints `Instructions updated: PATH` (or `created`) for each
+   file it wrote and where the previous bytes are saved, and nothing for a file that
+   was already current. The first update from a release older than this feature
+   installs it with the old installer; run `ahl update` once more to write the region.
+2. Check the state offline with `ahl doctor`: each target is `current`, `stale`,
+   `absent`, `skipped` or `refused`, with the exact fix for a refused file.
+3. To stop managing the files, run `ahl update --no-instructions` (or pass
+   `--no-instructions` to `install.py`). The choice is recorded and later updates
+   respect it; `ahl update --instructions` turns it back on. An existing region is
+   left as it is; delete the lines between the markers, markers included, to remove it.
+4. If the update exits 3, it finished and the launcher and skill links are complete,
+   but a file was refused or not written. Stderr names the file, the typed reason and
+   the exact fix, for example malformed markers or a symlink into a file you do not own.
+   Apply the fix and run `ahl update` again.
+5. To undo an update, run the `ahl rollback install-NAME` command that the update printed.
+   It puts back the previous instruction files, launcher, skill links and receipt, but
+   only if none of them changed since; otherwise it changes nothing and names the files
+   that differ.
+
+If you edit the text inside the markers, the next update replaces it and prints
+`region_edited_by_user_replaced`; your edited text stays in the backup. Keep your own
+instructions outside the markers.
+
 ## Check that the installation is current
 
 A fix that is released but not installed has no effect on you. `ahl doctor` reports,
@@ -75,7 +112,8 @@ installer support merely from Python availability; symlink and shell behavior ma
 The installer checks archive SHA-256 against the release's checksum file. This
 checks integrity relative to that file, not independent publisher authentication.
 Updates reuse the same checksum checks, ownership protections and link rollback.
-A failed receipt write also rolls back link changes. Previous release directories
+A failed receipt write also rolls back link changes; a problem with an instruction file
+never does, because those are handled after the links are committed. Previous release directories
 remain available; updates do not start evaluation or a background process.
 Concurrent installs or updates to the same root are refused while its transaction
 is active; retry after the other command finishes.

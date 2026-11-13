@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from tools.diagnose import analyze, normalize
-from agent_harness_lab.telemetry.schema import FIELDS, SOURCE_ORDER, event as telemetry_event
+from agent_harness_lab.telemetry.schema import BODY_DERIVED, FIELDS, SOURCE_ORDER, event as telemetry_event
 
 EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
@@ -355,7 +355,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 tool_error = event.get('execution_status') == 'error'
                 # The pinned Claude adapter derives source order from capture_order, the hashed block index and the
                 # file read, so it stays out of that fingerprint. Caller-supplied ledgers declare it, so it is hashed.
-                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if native and (native_order or events is None) and 'source_order_profile' in event else event
+                # Body-derived fingerprints of native captures stay out of the body-insensitive metadata fingerprint.
+                left_out = (SOURCE_ORDER if native and (native_order or events is None) and 'source_order_profile' in event else ()) + (tuple(BODY_DERIVED) if native else ())
+                hashed = {k: v for k, v in event.items() if k not in left_out} if left_out else event
                 fingerprint.update(json.dumps(dict(event=hashed, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1

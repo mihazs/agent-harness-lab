@@ -54,8 +54,12 @@ only allowed differences:
 - digests that bind run artifacts holding timing or context values:
   `plan_sha256`, `decision.bindings.results_sha256` and `manifest_sha256`,
   and the change plan's `affected_controls_sha256` and `evidence` reference;
-- measured durations and remaining budget in private run artifacts, and the
-  `origin` and `parent_run_id` invocation context given to preparation children;
+- measured durations and remaining budget, in the receipt (`evaluation_construction_seconds`
+  and each repair's `elapsed_seconds`, also inside `recovery.json`) and in private run
+  artifacts, and the `origin` and `parent_run_id` invocation context given to
+  preparation children. Each route times its own work, so these values differ by
+  design; every field derived from a clock must be listed in `entry_parity.py`
+  (a guard test derives them from the code), and no other field may differ;
 - `invocation.json`, written only by the skill route as soon as its run directory
   exists, including a run that the configuration preflight blocks.
 
@@ -74,11 +78,27 @@ writes a project file for it). Relay `remediation` verbatim. A request the comma
 cannot satisfy, such as a historical-session evidence input, must be reported as
 unsupported, not silently dropped.
 
+User-level skills are in scope only when the user explicitly asks for them. Then add
+`--repair-contracts --scope global --agent codex|claude` (or `--scope project+global`);
+the default scope never touches them and a project file cannot select them. Without
+`--repair-contracts` the command returns `blocked` (model evaluation of the user-level
+layer is not available). Report each layer's row from the receipt, relay its `rollback`
+command, and never call a blocked, exhausted or failed layer a success.
+
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its
 private artifacts and report the concrete remaining requirement. Recovery must
 use the controller's supported contract and cannot reset consumed budget or
 invent application by editing the target manually.
+
+After an interruption, do not restart through another adapter or manual trials.
+If the private output uses the default run directory, run `ahl skills invoke . --resume RUN_ID` with its final directory name. Recovery can finalize a completed
+no-change proposal whose receipt was not yet published; it checks the project,
+configuration and harness snapshot and never repeats a model call. Other stages,
+including an ambiguous in-flight action, require intervention and are not replayed.
+Keep the original private artifacts. Recovery does not reset the consumed budget
+or authorize a target edit. Custom output directories cannot be resumed. A hard
+crash may leave a lock; verify its recorded PID before removing a stale lock.
 
 ## Report integrity
 
@@ -138,7 +158,9 @@ an authenticated CLI application result. Use executable evidence for applied
 changes and name unavailable runtime/evidence prerequisites. Do not bootstrap a
 new runner or silently install tools to simulate adapter availability.
 
-Automated global scope is unsupported. An explicitly authorized manual global
-task retains its exact named scope, snapshots, evaluation and rollback boundaries.
+Automated global scope is limited to the deterministic skill-header repair
+(`--repair-contracts --scope global|project+global --agent`); any other global task
+is manual. An explicitly authorized manual global task retains its exact named
+scope, snapshots, evaluation and rollback boundaries.
 Project invocation does not authorize global discovery links, global instructions
 or another project's changes.

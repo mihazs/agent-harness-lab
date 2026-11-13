@@ -2,7 +2,9 @@
 import contextlib
 import io
 import json
+import re
 import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -12,6 +14,7 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.sources import claude_mem, hardened, test_results
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.test_results import HostileReport, TestResultsExport as ResultsExport
+from tests.support.fresh_peak import fresh_peak
 
 SHA = '3c'*20
 JUNIT = b'''<?xml version="1.0" encoding="UTF-8"?>
@@ -35,6 +38,77 @@ PYTEST = dict(created=1.0, duration=2.0, exitcode=1, root='/synthetic', environm
         dict(nodeid='tests/test_a.py::test_skip', outcome='skipped'),
         dict(nodeid='tests/test_a.py::test_xfail', outcome='xfailed'),
         dict(nodeid='tests/test_a.py::test_odd', outcome='mystery')])
+
+
+# Every tracemalloc bound below is measured by fresh_peak in a fresh interpreter: these workloads run in that child, build
+# their input untraced and return the one call to measure. A mutant installs a deliberate regression there, so a test can
+# show that its bound still catches it.
+def mutate(mutant):
+    if mutant == 'greedy':  # the string loop as a greedy repeat keeps one backtrack frame per escape (about 60x)
+        hardened.JSON_STRUCTURE = re.compile(hardened.JSON_STRUCTURE.pattern.replace(b'*+', b'*'), re.S)
+    elif mutant == 'materialized':  # the screen keeps every match alive instead of one at a time
+        finditer = hardened.JSON_STRUCTURE.finditer
+        hardened.JSON_STRUCTURE = SimpleNamespace(finditer=lambda raw: iter(list(finditer(raw))))
+    elif mutant == 'unscreened':  # the pre-decode screen removed
+        hardened.screen_json = lambda raw, bounds, name='JSON': (0, 0)
+    elif mutant == 'retained':  # finished elements are kept alive while parsing
+        class Retaining(test_results.ElementTree.XMLPullParser):
+            kept = []
+            def read_events(self, *args):
+                for event in super().read_events(*args): self.kept.append(event); yield event
+        test_results.ElementTree.XMLPullParser = Retaining
+    else: assert mutant is None
+
+
+def refused_or_loaded(load, raw, bounds):
+    def run():
+        try: load(raw, bounds, 'probe')
+        except HostileReport: return len(raw), True
+        return len(raw), False
+    return run
+
+
+def escaped_string(escape, closing, mutant):
+    mutate(mutant)
+    # One string is one value, so no count stops it; a greedy loop kept a backtrack frame per escape (about 60x).
+    raw = b'{"tests": [], "x": "'+escape.encode()*1000000+closing.encode()
+    return refused_or_loaded(hardened.screen_json, raw, dict(max_json_depth=8, max_json_containers=8, max_json_values=8))
+
+
+def scalar_array(item, count, bound, mutant):
+    mutate(mutant)
+    raw = b'['+b','.join([item.encode()]*count)+b']'
+    return refused_or_loaded(hardened.load_json, raw, dict(max_json_depth=8, max_json_containers=8, max_json_values=bound))
+
+
+def budgets_array(bound, containers, mutant):
+    mutate(mutant)
+    raw = b'{"tests": ['+b','.join(['"\u0100"'.encode()]*bound+[b'[]']*(containers-2))+b']}'
+    return refused_or_loaded(hardened.load_json, raw, dict(max_json_depth=8, max_json_containers=containers, max_json_values=bound))
+
+
+def unique_keys(bound, mutant):
+    mutate(mutant)
+    raw = b'{"tests": [], "x": {'+b','.join(b'"%x": 0' % i for i in range(bound-1))+b'}}'
+    return refused_or_loaded(hardened.load_json, raw, dict(max_json_depth=8, max_json_containers=8, max_json_values=bound))
+
+
+def junit_properties(mutant):
+    mutate(mutant)
+    raw = b'<testsuite name="s">'+b'<properties/>'*300000+b'<testcase name="t"/>'*10+b'</testsuite>'
+    return lambda: sum(1 for _ in test_results.parse_junit(raw, test_results.limits(None), set()))
+
+
+def against(*mutants):
+    """Run a bound test as shipped, then once per named regression, each of which its memory bound must catch."""
+    return pytest.mark.parametrize('mutant', [pytest.param(None, id='shipped'), *(pytest.param(name, id=name+'-mutant') for name in mutants)])
+
+
+@contextlib.contextmanager
+def caught_if(mutant):
+    if mutant is None: yield
+    else:
+        with pytest.raises(AssertionError, match='is not below'): yield
 
 
 class TestResultSource:
@@ -303,84 +377,63 @@ class TestResultSource:
                 hardened.load_json(b'{"tests": ["'+b'\\"'*40000, bounds, 'probe')
             assert time.perf_counter()-started < 2
 
-    @pytest.mark.parametrize('closing', [pytest.param(b'"}', id='closed'), pytest.param(b'', id='unterminated')])
-    @pytest.mark.parametrize('escape', [pytest.param(b'\\\\', id='backslash'), pytest.param(b'\\"', id='quote'), pytest.param(b'\\n', id='newline')])
-    def test_long_escaped_string_is_screened_in_constant_memory(self, escape, closing):
-        import tracemalloc
-        bounds = dict(max_json_depth=8, max_json_containers=8, max_json_values=8)
-        # One string is one value, so no count stops it; a greedy loop kept a backtrack frame per escape (about 60x).
-        raw = b'{"tests": [], "x": "'+escape*1000000+closing
-        tracemalloc.start()
-        try:
-            try: hardened.screen_json(raw, bounds)
-            except ValueError: assert not closing
-            else: assert closing
-            used = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
-        assert used < len(raw)//100
-
-    @staticmethod
-    def peak(raw, bounds):
-        import tracemalloc
-        tracemalloc.start()
-        try:
-            try: hardened.load_json(raw, bounds, 'probe')
-            except HostileReport: refused = True
-            else: refused = False
-            return refused, tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
+    @against('greedy')
+    @pytest.mark.parametrize('closing', [pytest.param('"}', id='closed'), pytest.param('', id='unterminated')])
+    @pytest.mark.parametrize('escape', [pytest.param('\\\\', id='backslash'), pytest.param('\\"', id='quote'), pytest.param('\\n', id='newline')])
+    def test_long_escaped_string_is_screened_in_constant_memory(self, escape, closing, mutant):
+        with caught_if(mutant):
+            measured = fresh_peak(escaped_string, escape, closing, mutant)
+            size, refused = measured.value
+            measured.below(size//100)
+            assert refused == (not closing)
 
     # Measured: "ab" 11.2x, a non-Latin-1 character 15.2x (about 76 B a value, the worst per input byte), an astral
     # character 12.6x (about 88 B, the worst per value) and 1.5 9.0x. The documented bounds are 16x and 90 B a value.
-    @pytest.mark.parametrize('item', [pytest.param(b'"ab"', id='ascii'), pytest.param('"\u0100"'.encode(), id='non-latin-1'),
-                                      pytest.param('"\U0001F600"'.encode(), id='astral'), pytest.param(b'1.5', id='float')])
-    def test_scalar_heavy_json_peak_stays_a_bounded_multiple_of_input(self, item):
+    @against('materialized', 'unscreened')
+    @pytest.mark.parametrize('item', [pytest.param('"ab"', id='ascii'), pytest.param('"\u0100"', id='non-latin-1'),
+                                      pytest.param('"\U0001F600"', id='astral'), pytest.param('1.5', id='float')])
+    def test_scalar_heavy_json_peak_stays_a_bounded_multiple_of_input(self, item, mutant):
         bound = 100000
-        scalars = dict(max_json_depth=8, max_json_containers=8, max_json_values=bound)
-        raw = b'['+b','.join([item]*bound)+b']'
-        refused, used = self.peak(raw, scalars)
-        assert not refused
-        assert used < 16*len(raw)
-        assert used < 90*bound
-        # Twice the bound is refused by the screen, which holds one match at a time.
-        raw = b'['+b','.join([item]*2*bound)+b']'
-        refused, used = self.peak(raw, scalars)
-        assert refused
-        assert used < len(raw)//100
+        with caught_if(mutant):
+            measured = fresh_peak(scalar_array, item, bound, bound, mutant)
+            size, refused = measured.value
+            measured.below(16*size)
+            measured.below(90*bound)
+            assert not refused
+            # Twice the bound is refused by the screen, which holds one match at a time.
+            measured = fresh_peak(scalar_array, item, 2*bound, bound, mutant)
+            size, refused = measured.value
+            measured.below(size//100)
+            assert refused
 
-    def test_value_and_container_budgets_fill_in_one_document(self):
+    @against('materialized')
+    def test_value_and_container_budgets_fill_in_one_document(self, mutant):
         bound, containers = 100000, 40000
         # Both budgets fill in one document, so the documented peak is their sum: about 90 B a value, 150 B a container.
-        raw = b'{"tests": ['+b','.join(['"\u0100"'.encode()]*bound+[b'[]']*(containers-2))+b']}'
-        refused, used = self.peak(raw, dict(max_json_depth=8, max_json_containers=containers, max_json_values=bound))
-        assert not refused
-        assert used < 90*bound+150*containers
+        with caught_if(mutant):
+            measured = fresh_peak(budgets_array, bound, containers, mutant)
+            measured.below(90*bound+150*containers)
+            assert not measured.value[1]
 
-    def test_unique_keys_are_bounded_only_by_the_byte_ceiling(self):
+    @against('materialized')
+    def test_unique_keys_are_bounded_only_by_the_byte_ceiling(self, mutant):
         bound = 100000
-        scalars = dict(max_json_depth=8, max_json_containers=8, max_json_values=bound)
         # Residual: keys are not counted, so an object of unique keys passes the value bound with each key and value
         # costing well over 90 B; only the byte ceiling bounds it, at about 20 to 24 times the input.
-        raw = b'{"tests": [], "x": {'+b','.join(b'"%x": 0' % i for i in range(bound-1))+b'}}'
-        refused, used = self.peak(raw, scalars)
-        assert not refused
-        assert used > 150*bound
-        assert used < 25*len(raw)
+        with caught_if(mutant):
+            measured = fresh_peak(unique_keys, bound, mutant)
+            size, refused = measured.value
+            assert not refused
+            assert measured.peak > 150*bound
+            measured.below(25*size)
 
-    def test_finished_elements_are_released_while_parsing(self):
-        import tracemalloc
-        raw = b'<testsuite name="s">'+b'<properties/>'*300000+b'<testcase name="t"/>'*10+b'</testsuite>'
-        tracemalloc.start()
-        try:
-            cases = sum(1 for _ in test_results.parse_junit(raw, test_results.limits(None), set()))
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
+    @against('retained')
+    def test_finished_elements_are_released_while_parsing(self, mutant):
         # Retaining the 300k finished elements peaked near 60 MiB; released elements stay a few MiB.
-        assert cases == 10
-        assert peak < 16*1024*1024
+        with caught_if(mutant):
+            measured = fresh_peak(junit_properties, mutant)
+            measured.below(16*1024*1024)
+            assert measured.value == 10
 
     @pytest.mark.parametrize('bound', [pytest.param(dict(max_cases=0), id='zero'), pytest.param(dict(max_cases=10**9), id='above-ceiling'),
         pytest.param(dict(unknown=1), id='unknown-limit'), pytest.param(dict(max_depth=True), id='boolean'), pytest.param([], id='not-a-mapping')])

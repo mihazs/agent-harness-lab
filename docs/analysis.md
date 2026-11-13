@@ -82,7 +82,10 @@ exact prerequisite each missing method lacks, weak-outcome signals, and a
 (user turn after a tool error, consecutive user turns, interrupts, same-call
 retries, edit-then-revert) are `observed_pattern` with competing explanations. A
 signal whose input is not captured is `unknown`, and a zero count is
-`not_observed_capture_unverified`; neither is a clean result. Restated instructions
+`not_observed_capture_unverified`; neither is a clean result. Same-call retries compare the
+`input_fingerprint` of consecutive calls to the same tool within a case. Pinned native Claude and Codex
+captures carry it (see [input fingerprints](telemetry.md#input-fingerprints)); edit-then-revert needs a
+state revision on mutating events that native captures do not record, so it stays `unknown` there. Restated instructions
 count a user message whose `message_fingerprint` equals an earlier one in the same case.
 The field is a salted, normalized word-set hash that never stores text, and it exists
 only on pinned native captures of messages with at least four words (see
@@ -206,8 +209,8 @@ outcome, success/failure or independence label, and recurrence and matching
 outputs keep their descriptive authority. One file holds one writer and therefore
 one reported root, so recurrence over pinned Claude captures still needs three
 roots, for example a normalized file combining exported ledgers of separate
-sessions. Claude records carry no input/result/state signatures, so state-aware
-matching stays unselected for them.
+sessions. Pinned native Claude records carry an input fingerprint but no result or
+state signatures, so duplicate-observation matching stays unselected for them.
 
 For the pinned Claude adapter the new fields stay outside event IDs, journal
 record identities and revisions, the collection fingerprint and duplicate-UUID
@@ -383,8 +386,19 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `configured_responses_requires_controlled_improvement` | Select the controlled Responses improvement workflow. |
 | `configured_runtime_differs_from_requested_runtime` | The requested runtime or executable differs from ahl.json; drop the override or update runtime in ahl.json. |
 | `configured_shared_trial_budget_infeasible` | Increase the shared trial limit for the requested comparison. |
+| `evaluation_construction_timeout` | The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun. |
+| `evaluation_task_infeasible` | The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun. |
+| `evaluation_uninformative` | Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun. |
+| `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
+| `instruction_markers_malformed` | Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update |
+| `instruction_symlink_refused` | Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update |
+| `instruction_target_unsafe` | Make the instruction file a regular file you own and under 8 MiB, then run: ahl update |
+| `instruction_template_invalid` | This release ships an unusable instruction template, so the instruction file was left unchanged; install a newer release with: ahl update |
+| `instruction_template_missing` | This release ships no instruction template, so the instruction file was left unchanged; install a newer release with: ahl update |
+| `instruction_write_failed` | Fix the filesystem error reported for the instruction file, then run: ahl update |
+| `region_edited_by_user_replaced` | Text edited inside the managed region of the instruction file was replaced and the edited text is in the backup; keep your own text outside the markers |
 | `fixed_comparison_inference_budget_infeasible` | Increase the declared inference budget for the comparison. |
 | `fresh_comparison_incomplete` | Review the incomplete comparison and its missing trial coverage. |
 | `frozen_inputs_changed` | Review the changed frozen inputs before starting a fresh evaluation. |
@@ -427,6 +441,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
+| `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |

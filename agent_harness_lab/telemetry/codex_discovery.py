@@ -6,11 +6,16 @@ from pathlib import Path
 from .codex_rollout import VERSION, PINNED_VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
 from .native import WalkLimit, bounded_walk, capture_counts, lines, observed_version, optional_limit
 from ..evaluation.integrity import unique_object
+from .schema import BODY_DERIVED
 from ..sources.schema import digest
 
 MAX_WALK_DEPTH = 128  # directory levels below the selected root
 MAX_WALK_ENTRIES = 250000  # default visited filesystem entries of any kind under the selected root
 MAX_WALK_ENTRIES_CAP = 5000000  # largest explicit max_walk_entries override
+
+
+def body_free(row):
+    return {k: v for k, v in row.items() if k not in BODY_DERIVED}
 
 
 def walk_entries(value):
@@ -93,7 +98,7 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
             # Suppressed usage still makes an ordinal claim that other files must agree with.
             for key, claim in claims.items():
                 folder.check()
-                if key in admitted and admitted[key] != claim:
+                if key in admitted and body_free(admitted[key]) != body_free(claim):
                     raise ValueError('conflicting native ordinal metadata across captures')
                 admitted[key] = claim
                 if revisions is not None:
@@ -105,7 +110,7 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
                 if case in roots and roots[case] != row['root_case_id']: raise ValueError('conflicting native session roots')
                 roots[case] = row['root_case_id']
                 if ident in groups[case]:
-                    if groups[case][ident] != row: raise ValueError('conflicting native event metadata across captures')
+                    if body_free(groups[case][ident]) != body_free(row): raise ValueError('conflicting native event metadata across captures')
                     duplicates += 1; continue
                 groups[case][ident] = row
                 response = row.get('native_response_fingerprint')

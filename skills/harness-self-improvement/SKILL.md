@@ -33,9 +33,11 @@ Choose the mode before following the manual steps below. Read
   past sessions as evidence, pass `--history [--since DATE|first]`; relay a
   `history_*` block's `remediation` verbatim and never assert recurrence it
   does not report.
-- Automated global improvement is unsupported. An explicit global request or
-  named global location retains the manual scope and authorization rules below;
-  do not route it through the project adapter.
+- Automated global improvement is limited to the deterministic skill-header
+  repair: only on an explicit user request, add `--repair-contracts --scope
+  global|project+global --agent codex|claude` (see the invocation reference).
+  Any other global request or named global location retains the manual scope
+  and authorization rules below; do not route it through the project adapter.
 - If the CLI is unavailable before any attempt, use the assisted manual fallback
   in the reference and state its verification limits.
 

@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.193.0
+
+### Minor Changes
+
+- 54886c3: Add `task test:isolated` (scripts/isolated_project_check.py): run a command in a temporary detached worktree of a real repository and prove the repository did not change, with a reproducible receipt.
+
+## 0.192.0
+
+### Minor Changes
+
+- fbb8cca: Add `ahl improve --scope project|global|project+global` (also through `ahl skills invoke`). The default `project` scope never reads or writes user-level files and refuses a project directory that is, or sits inside, a user-level location. `--scope global` and `project+global` need an explicit `--agent codex|claude`, name the runtime's user skill directory (`$CLAUDE_CONFIG_DIR/skills` or `~/.claude/skills`, `~/.agents/skills`), and with `--repair-contracts` apply the existing deterministic skill-header repair there through the guarded journal, backup and rollback, one layer after the other under one budget. A project `ahl.json` carrying a `scope` key is rejected as invalid input. Every scope now returns `scope`, `layers`, `layers_evaluated`, `layers_changed`, `changed_files`, `recommended_files` and `blocked`, attributes each file to its layer, reports blocked, exhausted or failed layers as such and, for `project+global`, the runtime's documented load order. Model-driven evaluation of a user-level layer returns `blocked` with `global_scope_model_evaluation_unavailable` and changes nothing.
+  
+  A user-level change plan no longer carries the project's configuration hash or settings, which never governed it.
+
+## 0.191.1
+
+### Patch Changes
+
+- 943ddb0: Close the gap in the declared Claude Code compatibility range: add the `2.1.317` synthetic contract fixture (field names of a real 2.1.317 capture, invented values only) and widen `VERIFIED_RANGES` to the contiguous `2.1.316` to `2.1.318`. Sessions recorded by 2.1.317 are now read by the verified adapter and counted as `pin_compatibility: declared_range`, instead of falling back to the descriptive, unverified adapter with `capture_version_differs_from_pin`. The identity, pull-request link, permission-mode and agent-name records that 2.1.317 captures carry are counted per type as `unknown_entry_type`, never parsed. Releases outside the range stay unverified.
+
+## 0.191.0
+
+### Minor Changes
+
+- f98da41: Finish the weak-outcome input slice of #666: pinned native Claude and Codex captures now add a content-free, case-salted `input_fingerprint` to tool calls (the Claude `tool_use` input, and the Codex `function_call` arguments, `custom_tool_call` input or `local_shell_call` action), so the `same_call_retries` weak-outcome signal and the `same_call_retry` next-action count become computable on real native histories instead of staying `unknown`. The input is hashed and never stored; the fingerprint compares only within one case and one tool, stays out of the body-insensitive metadata fingerprint and the duplicate-line check, and is absent when a call has no usable input. Edit-then-revert still needs state revisions that native captures do not record and stays `unknown` there (tracked in #766). See the comparison and privacy notes in `docs/telemetry.md`.
+
+## 0.190.2
+
+### Patch Changes
+
+- 602b1f7: Document the rule that every bug found or fixed ships with an automated regression test that fails before the fix, placed by the native pytest layout and pinned with `fixed-in`.
+
+## 0.190.1
+
+### Patch Changes
+
+- f1af182: Cut the peak memory of `ahl diagnose` by about half or more (46% at 20,000 events, 62% at 240,000 on synthetic traces) by streaming `findings.json` to disk instead of building the whole text first. The file is byte-identical, and a failed write no longer leaves a truncated file.
+
+## 0.190.0
+
+### Minor Changes
+
+- 48b7579: Add `task bench`, a reproducible per-command startup, throughput and memory benchmark on seeded synthetic traces with opt-in regression budgets (`task bench:check`).
+
+## 0.189.1
+
+### Patch Changes
+
+- 4fd3582: Start every command about 8 ms faster by resolving the package version, and importing importlib.metadata, only when --version is requested.
+
+## 0.189.0
+
+### Minor Changes
+
+- 44abf09: Fix #739 (construction layer): `ahl improve` now splits its shared budget into preparation, construction, trials and refinement stages. Evaluation construction gets a time box (default 25% of `--timeout`, set with the new `--construction-fraction`) that the construction prompt states together with the seconds remaining; a pass that overruns it ends `budget_exhausted` with the typed reason `evaluation_construction_timeout`, and gets one more pass only when the remaining budget covers another box plus the trials allotment. The controller grades each task's `complete` control through the same grader invocation before any trial is charged and rejects a task that cannot finish inside the per-trial timeout (now an equal share of the remaining budget per planned trial, at most 180 seconds) with `evaluation_task_infeasible`. When no trial of either arm passes and both arms end every task alike, the run stops `inconclusive` with `evaluation_uninformative`, classified from execution facts only (timeouts, exit codes, tool-error records), with one exact next step and no second construction; a trial whose native trace was not read in full is `unclassified`, never `agent_failed`. A cooperative refinement reuses the frozen development and regression tasks, graders and controls (every copied byte checked against its frozen digest) and constructs only fresh held-out inputs; it starts only when the remaining budget covers its allotment (`refinement_budget_unavailable`). Every terminal receipt, including blocked, invalid and exhausted ones, carries `budget_stages` (seconds per stage, remaining budget and the options that raise it), and an exhausted run adds `budget_exhaustion` (evidence label, the stage that took the budget, what was and was not observed, `unknown` when the evaluation never reported its trials, no conclusion). Frozen graders, freeze-before-trial and the fresh held-out rule are unchanged. Controlled (Responses) construction does not yet get the time box or the refinement reuse.
+
+## 0.188.2
+
+### Patch Changes
+
+- a650d83: Measure the traced-memory bounds of the JUnit and pytest JSON report tests in a fresh single-thread interpreter, so another thread's allocations (three default I/O buffers of a spawned child, 393,216 B, were the excess of two CI failures) and first-use caches no longer decide them; no bound changed, and each now has a deliberate-regression check. No runtime behavior changes. Closes #763.
+
+## 0.188.1
+
+### Patch Changes
+
+- daa3026: Fix the CLI/skill receipt parity check that failed at random: the measured `evaluation_construction_seconds` (and each construction repair's `elapsed_seconds`, also stored in `recovery.json` and `evaluation-construction-N.json`) now joins the documented measured durations that may differ between `ahl improve` and `ahl skills invoke`, and a guard test derives every clock-derived receipt field from the code so a new timing field cannot reintroduce the flake. Parity still fails for every other difference. The private evaluation toolkit copy now skips `__pycache__` bytecode, which a concurrent process could add to the source tree between two runs and make their run directories differ. No receipt, status or exit code changes.
+
+## 0.188.0
+
+### Minor Changes
+
+- 319780d: The installer and `ahl update` now keep one marked region (`<!-- agent-harness-lab:start ... -->` to `<!-- agent-harness-lab:end -->`) of the global instruction files in step with the release: `CLAUDE.md` in `CLAUDE_CONFIG_DIR` (default `~/.claude`), `AGENTS.md` in `CODEX_HOME` (default `~/.codex`) and an existing `~/.agents/AGENTS.md`, following `--agent`. The text is a compact project-agnostic template shipped in the verified archive; every byte outside the markers stays identical, a changed file is backed up first and written atomically with its mode and line endings, symlinks are followed only to files you own that are not world-writable, malformed markers are refused, and a hand-edited region is replaced with the typed note `region_edited_by_user_replaced`. `--no-instructions` is remembered in `installation.json` and `--instructions` re-enables it; a refused or failed file leaves the launcher and skill links complete and exits 3 with the exact fix. `ahl doctor` reports each target as current, stale, absent, skipped or refused, and `ahl rollback install-NAME` restores the previous files, launcher, links and receipt. Closes #744.
+
+### Patch Changes
+
+- 405c219: Allow an interrupted improvement to finalize a completed no-change proposal without repeating model actions.
+
+## 0.187.0
+
+### Minor Changes
+
+- 598d76a: Show the runtime, scope, time and trial ceilings, authorization statement and an explicitly unknown model cost before any charged improvement work.
+
 ## 0.186.0
 
 ### Minor Changes

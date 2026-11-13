@@ -5,11 +5,14 @@ downloaded archive. Everything is synthetic: a temporary HOME and state director
 executables on an exclusive PATH, no network and no model call.
 """
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
+import tarfile
 
 from tests.integration.diagnostics.test_reported_actionable_analysis import history
 from tests.integration.workflow.test_workflow import FAKE
@@ -19,22 +22,48 @@ EXIT_ZERO = '#!/bin/sh\nexit 0\n'
 EXIT_ONE = '#!/bin/sh\nexit 1\n'
 
 
-def install(installer, archive, checksums, root):
-    """Run the bundled installer offline into `root`/{data,bin} with a temporary HOME; return the Installed layout."""
+HAND_WRITTEN = b'# hand-written rules\nkeep this line\n<!-- other-tool:start -->\nanother tool\n<!-- other-tool:end -->\n'
+REGION = re.compile(rb'<!-- agent-harness-lab:start.*?<!-- agent-harness-lab:end -->\n?', re.S)
+
+
+def install(installer, archive, checksums, root, update=False):
+    """Run the bundled installer offline into `root`/{data,bin} with a temporary HOME; return the Installed layout.
+
+    The first run finds a Claude directory with a hand-written file and an empty Codex directory, as a user's machine would."""
     home = root / 'install-home'
-    home.mkdir(parents=True)
+    if not update:
+        (home / '.claude').mkdir(parents=True)
+        (home / '.codex').mkdir()
+        (home / '.claude/CLAUDE.md').write_bytes(HAND_WRITTEN)
     env = {'PATH': str(Path(sys.executable).parent), 'HOME': str(home)}
-    subprocess.run([sys.executable, '-I', str(installer), '--archive', str(archive), '--checksums', str(checksums),
-                    '--root', str(root / 'data'), '--bin-dir', str(root / 'bin')],
-                   env=env, check=True, capture_output=True, text=True, timeout=120)
-    return Installed(root=root, home=home, archive=Path(archive))
+    done = subprocess.run([sys.executable, '-I', str(installer), '--archive', str(archive), '--checksums', str(checksums),
+                           '--root', str(root / 'data'), '--bin-dir', str(root / 'bin')],
+                          env=env, check=True, capture_output=True, text=True, timeout=120)
+    return Installed(root=root, home=home, archive=Path(archive), checksums=Path(checksums), output=done.stdout)
+
+
+def reversioned(archive, version, folder):
+    """A copy of `archive` that claims `version`, with its own SHA256SUMS; it stands in for the next release."""
+    folder.mkdir(parents=True)
+    target = folder / f'agent-harness-lab-{version}.tar.gz'
+    with tarfile.open(archive) as source, tarfile.open(target, 'w:gz') as output:
+        for member in source.getmembers():
+            data = source.extractfile(member).read()
+            member.name = f'agent-harness-lab-{version}/' + member.name.split('/', 1)[1]
+            if member.name.endswith('/package.json') and member.name.count('/') == 1:
+                data = json.dumps({**json.loads(data), 'version': version}).encode()
+            member.size, member.pax_headers = len(data), {}  # a long member name also lives in its pax header
+            output.addfile(member, io.BytesIO(data))
+    checksums = folder / 'SHA256SUMS'
+    checksums.write_text(f'{hashlib.sha256(target.read_bytes()).hexdigest()}  {target.name}\n')
+    return target, checksums
 
 
 class Installed:
     """An archive installed in a temporary prefix: launcher, release directory and the global skill links."""
 
-    def __init__(self, root, home, archive):
-        self.root, self.home, self.archive = root, home, archive
+    def __init__(self, root, home, archive, checksums, output=''):
+        self.root, self.home, self.archive, self.checksums, self.output = root, home, archive, checksums, output
         self.launcher = root / 'bin/ahl'
         self.release = self.launcher.resolve().parent
         self.version = self.release.name
@@ -186,6 +215,20 @@ def scenario_doctor_finds_a_consistent_installation(installed, sb):
     assert all(link['minimum_cli'] is None or link['minimum_cli'] <= installed.version for link in state['skill_links'])  # same-width X.Y.Z
     assert next(c['status'] for c in report['checks'] if c['check_id'] == 'installation') == 'pass'
     assert next(c['status'] for c in report['checks'] if c['check_id'] == 'authentication') == 'unknown'
+    sb.assert_isolated()
+
+
+def scenario_global_instruction_regions_are_written_once_and_doctor_reports_them(installed, sb):
+    claude, codex = installed.home / '.claude/CLAUDE.md', installed.home / '.codex/AGENTS.md'
+    after = claude.read_bytes()
+    assert REGION.sub(b'', after) == HAND_WRITTEN and f'version={installed.version} sha256='.encode() in after
+    assert after.startswith(HAND_WRITTEN) and REGION.sub(b'', codex.read_bytes()) == b'' and codex.stat().st_mode & 0o777 == 0o600
+    assert (installed.release / 'global-instructions.md').stat().st_size <= 1024
+    assert 'Instructions updated' in installed.output and 'Instructions created' in installed.output
+    where = dict(HOME=str(installed.home), CLAUDE_CONFIG_DIR=str(installed.home / '.claude'), CODEX_HOME=str(installed.home / '.codex'))
+    code, report, _ = sb.ahl('doctor', sb.project, '--json', **where)
+    rows = {row['agent']: row['state'] for row in report['installation']['instructions']}
+    assert code == 0 and rows == {'claude': 'current', 'codex': 'current'} and report['installation']['warnings'] == []
     sb.assert_isolated()
 
 

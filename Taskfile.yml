@@ -249,6 +249,7 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/integration/packaging/test_release_install.py -v'
       - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/unit/packaging/test_updater.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/integration/packaging/test_instruction_install.py {{.ROOT_DIR | shellQuote}}/tests/unit/packaging/test_instruction_region.py -v'
   test:diagnostics:corpus:
     desc: Run the private diagnostic annotation, protected-split and benchmark-profile contracts with synthetic cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -1132,6 +1133,12 @@ tasks:
     desc: Require each regression pin (fixed-in marker) to fail on the unfixed parent commit; needs full Git history
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_pins.py'
+  test:isolated:
+    desc: Run a command in a temporary worktree of REPO and fail when REPO changed (opt-in, not part of task test); see docs/isolated-project-check.md
+    requires:
+      vars: [REPO]
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{.REPO | shellQuote}} {{.CLI_ARGS}}'
   test:runtime-contracts:
     desc: Opt-in probes of the real claude and codex CLIs (flags and exit codes, zero model calls); skipped runtimes are listed
     env:
@@ -1151,3 +1158,12 @@ tasks:
     cmds:
       - 'gh release download {{printf "v%s" .PACKAGE_VERSION | shellQuote}} --dir {{printf "dist/published/v%s" .PACKAGE_VERSION | shellQuote}} --clobber'
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/packaging/test_published_release.py tests/integration/packaging/test_installed_artifact.py -v'
+  # Performance measurement (issue #752). Opt-in: never part of `task test`.
+  bench:
+    desc: Measure CLI startup and diagnose time and memory on synthetic traces; writes artifacts/perf-bench/report.json (extra flags after --)
+    cmds:
+      - '{{.PYTHON | shellQuote}} tools/perf_bench.py {{.CLI_ARGS}}'
+  bench:check:
+    desc: Run the same measurements and exit 1 when a result exceeds tools/perf_budgets.json (extra flags after --)
+    cmds:
+      - '{{.PYTHON | shellQuote}} tools/perf_bench.py --check tools/perf_budgets.json {{.CLI_ARGS}}'

@@ -1,6 +1,5 @@
 """One entrypoint for local analysis and recommendation-only candidate evaluation."""
 import argparse
-import importlib.metadata
 import importlib.util
 import json
 import os
@@ -8,6 +7,8 @@ from pathlib import Path
 import runpy
 import sys
 import time
+
+from . import budget_stages
 
 
 def _progress_reporter(stream=None, clock=None):
@@ -26,6 +27,14 @@ def _progress_reporter(stream=None, clock=None):
         print(f'ahl: {stage} {details} elapsed={now-started:.1f}s', file=stream, flush=True)
         last_stage, last_time = stage, now
     return emit
+
+
+def _show_preview(preview):
+    scope = preview['harness_scope']
+    scope = scope if isinstance(scope, str) else ','.join(scope)
+    print(f"ahl: preview runtime={preview['runtime']} scope={json.dumps(scope)} max_seconds={preview['max_seconds']} "
+          f"max_trials={preview['max_trials']} model_cost={json.dumps(preview['model_cost'])} "
+          f"authorization={json.dumps(preview['authorization'])}", file=sys.stderr, flush=True)
 
 
 def _improve_summary(result, elapsed, budget=None):
@@ -54,10 +63,21 @@ def version():
     package = assets() / 'package.json'
     if package.exists():
         return json.loads(package.read_text())['version']
+    import importlib.metadata  # only an installed package without package.json needs it; a top-level import cost startup time on every command
     try:
         return importlib.metadata.version('agent-harness-lab')
     except importlib.metadata.PackageNotFoundError:
         return '0.1.0'
+
+
+class _VersionAction(argparse.Action):
+    """Like action='version', but resolves the version only when --version is given."""
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings, dest, nargs=0, default=default, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(version())
+        parser.exit()
 
 
 def evaluator():
@@ -90,6 +110,9 @@ def main(argv=None):
     if argv and argv[0] == 'config':
         from .user_config import main as config_main
         return config_main(argv[1:])
+    if argv[:1] == ['rollback'] and len(argv) == 2 and argv[1].startswith('install-'):
+        from agent_harness_lab.updater import rollback
+        return rollback(argv[1])
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
@@ -155,10 +178,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
-    parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
+    parser.add_argument('--version', action=_VersionAction, help='Print the installed AHL version and exit without running a command')
     sub = parser.add_subparsers(dest='command', required=True,help='Select an operation; COMMAND --help describes its inputs and side effects')
-    sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match.')
-    sub.add_parser('update', help='Update a release installation and its existing skill links',description='Download and verify a release for an existing archive installation; preserve its owned launcher and skill links.')
+    sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match, or an installation backup (ahl rollback install-NAME).')
+    sub.add_parser('update', help='Update a release installation, its skill links and the managed region of the global instruction files',description='Download and verify a release for an existing archive installation; preserve its owned launcher and skill links, and refresh the marked region of the global CLAUDE.md and AGENTS.md (--no-instructions opts out).')
     routed_help={
         'mine':'Mine normalized JSONL traces into descriptive patterns; no outcome or independence certification',
         'diagnose':'Normalize explicit trace files and report supported failure-pattern candidates',
@@ -264,7 +287,10 @@ def main(argv=None):
             command.add_argument('--evaluation-store',type=Path,help='Explicit private HistoryStore for automatic controlled construction/feedback exposure; never certification')
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
+            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
+            command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
+            command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
@@ -282,6 +308,7 @@ def main(argv=None):
         if option in options: explicit.add(option)
         elif len(matches) == 1: explicit.add(matches[0])
     args._progress = _progress_reporter()
+    args._preview = _show_preview
     started = None
     def summarize(result):
         now = time.monotonic()
@@ -310,6 +337,16 @@ def main(argv=None):
             resolve(args, explicit)
             return watch(args)
         else:
+            if args.resume is not None:
+                explicit = {arg.split('=',1)[0] for arg in argv if arg.startswith('--')}
+                if explicit != {'--resume'}:
+                    raise ValueError('--resume cannot be combined with execution options')
+                from .recovery import resume
+                result = resume(args)
+                args._progress(result['status'])
+                print(json.dumps(result, indent=2))
+                from .monitoring.state import exit_code
+                return exit_code(result['status'])
             from .one_call import resolve
             if args.command == 'improve':
                 from .history import prepare

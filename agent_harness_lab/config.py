@@ -49,6 +49,8 @@ def defaults():
 
 
 def validate(value):
+    if isinstance(value, dict) and {'scope', 'global', 'global_root', 'harness_scope'} & set(value):
+        raise ValueError('a project configuration cannot select a harness scope; only the --scope option on the command line can include the user-level harness')
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
     if not isinstance(value, dict) or set(value) - {'plugin_checkouts'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
