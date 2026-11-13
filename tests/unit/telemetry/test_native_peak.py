@@ -17,12 +17,13 @@ SESSIONS = tuple(f'00000000-0000-4000-8000-00000000000{n}' for n in range(1, 5))
 FIXED_PROJECT = Path('/ahl-synthetic/project')
 # Computed by the implementation before rows were drained (commit d64c0e7) from fixture(..., CALLS). The Claude entries were
 # refreshed when its summaries gained typed skipped-entry and version fields; its event records hash the same as before.
+# The discovery digest was refreshed when 2.1.317 joined the declared range: the only change is that release in verified_versions.
 CALLS = 300
 EXPECTED = {
     'codex_read': '0d68b2a1b4c1b012303da05a794b791970445857af8723d2baf05fc1207f0d85',
     'claude_read': '0053dffe38b7a1ed3b1ba8082c6a6b77af788681ecc0a1747dc6ca6cd73d2234',
     'codex_discovery': 'b0a1406ea7cdb2cee174d39a63a5826d0b45efe49a7935714179f8240a3b811a',
-    'claude_discovery': 'ecdfacd67d3a23ccf17db3255350d0b1d6959457b5ee5004782bcdcf699e3b81',
+    'claude_discovery': '01ead6c828bb8add6020bff7cc8d6776aff5018937ef0c8c000c7c2aed7c9bdf',
 }
 
 

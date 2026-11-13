@@ -334,8 +334,8 @@ prompts are never copied.
 its payload. These shapes are unverified and supported only by synthetic fixtures.
 A rule file is expected as a `nested_memory` attachment with its own path. Every
 other attachment type, a relative path or a `content.path` that differs from
-`path` stays `unsupported_native_entry`. Claude Code 2.1.317 captures are not
-supported, because no documented attachment shape is pinned for that version.
+`path` stays `unsupported_native_entry`. Attachment payload shapes remain
+assumptions backed only by synthetic fixtures, whatever the Claude Code version.
 
 **Not established.** An attachment shows that the runtime named a file in its
 context, not that the model followed it. An agent or MCP request is a model
@@ -568,8 +568,11 @@ verified release) accepts a **declared range**: each release in `VERIFIED_RANGES
 (`agent_harness_lab/telemetry/claude_native.py`) must have a synthetic contract
 fixture in `tests/fixtures/claude_contract/<version>.jsonl`, and a test fails when
 the accepted versions and the fixtures differ. A range stays within one minor line.
-Today the verified releases are those fixtures; a release between or beyond them is
-not accepted until its fixture exists. Add one with
+Today the declared range is `2.1.316` to `2.1.318`, with one fixture per release. A
+release outside it is not accepted until its fixture exists. The `2.1.317` fixture
+also holds identity, pull-request link, permission-mode and agent-name records;
+the adapter reads none of them, so they are counted per type as
+`unknown_entry_type` and never parsed. Add a release with
 [the maintainer guide](verify-claude-release.md).
 
 A capture whose first attributable envelope records a release outside the accepted
