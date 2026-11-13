@@ -22,8 +22,12 @@ def hypothesis_sources(args):
 
 
 def blocked(data, args):
-    """True when findings exist but nothing could relate them to an outcome and no hypothesis source exists."""
-    return bool(data['analysis']['findings']) and not verified_outcomes(data) and not hypothesis_sources(args)
+    """True for a history run whose findings nothing could relate to an outcome and that has no hypothesis source.
+
+    Only a history run reads evaluation results (explicit events, a source root and the closed profile never do), so only
+    there can added evidence lift the block; every other run keeps its path."""
+    return (bool(getattr(args, 'history', False)) and bool(data['analysis']['findings'])
+            and not verified_outcomes(data) and not hypothesis_sources(args))
 
 
 def explain(data, args, *, prepared):

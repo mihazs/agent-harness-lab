@@ -586,7 +586,8 @@ def _improve(args):
         return result
     from . import first_use
     if first_use.blocked(data, args):
-        # Findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
+        # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
+        # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
         result = dict(status='blocked', reason=first_use.NO_OUTCOME, output=str(output), changed_files=[], analysis=data['execution'],
                       next_steps=getattr(args, '_analysis_next_steps', []), automatic_promotion=False, publication_allowed=False)
         if 'history' in data: result['history'] = data['history']

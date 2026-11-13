@@ -304,8 +304,7 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 ''')
     agent.chmod(0o700)
     code, receipt, err = pipeline.invoke('improve', pipeline.rows(), ['--agent', 'codex', '--codex', str(agent), '--timeout', '30',
-        '--incident-corpus', str(pipeline.incident_corpus()), '--incident-query', 'timeout',
-        '--focus', 'synthetic hypothesis'])  # findings without outcomes need a hypothesis source (#803)
+        '--incident-corpus', str(pipeline.incident_corpus()), '--incident-query', 'timeout'])
     assert code == 0
     assert receipt['status'] == 'no_change'
     assert receipt['changed_files'] == []

@@ -363,9 +363,11 @@ A receipt that ends `no_outcome_evidence`, or `no_change` after preparation (the
 candidate identical to the baseline, `candidate_identical_to_baseline`), while `analysis.findings` is above zero, carries `findings_not_candidates`: `reason: findings_not_actionable`, the
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
-never an independence or severity claim. `no_outcome_evidence` is returned before any preparation call when no
+never an independence or severity claim. `ahl improve --history` returns `no_outcome_evidence` before any preparation call when no
 verified executable-grader outcome exists and no hypothesis source (`--from-audit` or `--focus`) was supplied;
-`next_steps` then lists the evidence that would unlock a candidate. A run whose preparation called the model and
+`next_steps` then lists the evidence that would unlock a candidate. Runs with explicit `--events` or `--source-root`
+input (and the closed input profile) never read evaluation results, so no added outcome could unlock them: they are
+not blocked and still reach preparation. A run whose preparation called the model and
 evaluated no trial carries `spend_label: spent_without_evaluation` (also in the `ahl: outcome=` line as `label=`)
 and a `spent_without_evaluation` object with `preparation_seconds` and `provider_reported_spend: unverified`.
 

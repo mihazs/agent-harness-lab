@@ -75,3 +75,11 @@ class Home:
         path = self.project/'artifacts/earlier/results.json'
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(dict(inputs_unchanged=True, trials=[dict(task='t', version='baseline', status='failed')])))
+
+    def graded_evaluation(self):
+        """A recorded evaluation with a valid executable-grader result: the verified outcome the blocked receipt asks for."""
+        path = self.project/'artifacts/earlier/results.json'
+        path.parent.mkdir(parents=True)
+        grader = dict(exit_code=0, timeout=False, valid=True, grader_id='synthetic', grader_version='1', outcome=True)
+        trial = dict(task='t', version='baseline', status='passed', grader=grader, execution=dict(exit_code=0, timeout=False))
+        path.write_text(json.dumps(dict(inputs_unchanged=True, trials=[trial])))

@@ -53,6 +53,8 @@ def test_recurring_failures_without_outcomes_end_typed_and_spend_nothing(home):
     assert_candidate_or_typed_reason(receipt)
     assert (receipt['status'], receipt['reason']) == ('blocked', 'no_outcome_evidence')
     assert 'no_outcome_evidence' in receipt['findings_not_candidates']['causes']
+    steps = receipt['next_steps']  # the evidence that would unlock a candidate, ranked, each with the command to run
+    assert steps and [row['rank'] for row in steps] == list(range(1, len(steps) + 1)) and all(row['command'] for row in steps)
     assert home.model_calls == 0 and 'spend_label' not in receipt
     assert receipt['changed_files'] == [] and receipt['automatic_promotion'] is False
 
@@ -94,6 +96,30 @@ def test_history_without_findings_that_spent_preparation_is_labelled_and_never_c
     assert receipt['reason'] == 'no_change_evidence_insufficient' and receipt['reason'] != 'no_change_harness_supported'
     assert receipt['spend_label'] == 'spent_without_evaluation' and 'label=spent_without_evaluation' in err
     assert_candidate_or_typed_reason(receipt)
+
+
+@pytest.mark.parametrize('selection', [['--events', 'EVENTS', '--format', 'codex'],
+                                       ['--source-root', 'ROOT', '--format', 'codex', '--source-version', 'codex-rollout-0.166.0']],
+                         ids=['explicit_events', 'source_root'])
+def test_explicit_capture_input_with_failures_and_no_outcomes_still_reaches_the_proposer(home, selection):
+    """Explicit inputs never read evaluation results, so no outcome-evidence remediation could unlock a block there."""
+    for name in ('a', 'b', 'c'): home.codex(name)
+    paths = dict(EVENTS=str(home.root/'codex/sessions/a.jsonl'), ROOT=str(home.root/'codex/sessions'))
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        cli.main(['improve', str(home.project), '--agent', 'codex', '--codex', str(home.runtime), '--timeout', '30',
+                  *[paths.get(item, item) for item in selection]])
+    receipt = json.loads(out.getvalue())
+    assert receipt['analysis']['findings'] > 0
+    assert receipt.get('reason') != 'no_outcome_evidence' and home.model_calls == 1, receipt
+
+
+def test_a_verified_graded_outcome_lifts_the_gate_so_the_remediation_can_work(home):
+    for name in ('a', 'b', 'c'): home.codex(name)
+    home.graded_evaluation()
+    code, receipt, _ = improve(home)
+    assert receipt['analysis']['findings'] > 0 and receipt.get('reason') != 'no_outcome_evidence'
+    assert home.model_calls == 1
 
 
 def test_failures_beside_only_unknown_outcomes_end_typed_and_never_count_the_unknown_as_evidence(home):

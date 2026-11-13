@@ -132,7 +132,6 @@ def test_stub_proposer_given_only_the_brief_cites_the_mechanism_and_is_not_point
     pipeline.capture(history(3))
     args = workflow.args()
     args.events = str(pipeline.root/'synthetic.jsonl')
-    args.focus = 'synthetic hypothesis'  # findings without outcomes reach the proposer only with a hypothesis source (#803)
     result = improve(args)
     assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
     output = Path(result['output'])

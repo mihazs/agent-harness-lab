@@ -22,11 +22,19 @@ def test_only_a_graded_outcome_counts_as_verified(outcomes, expected):
 
 
 @pytest.mark.parametrize('findings, outcomes, args, expected', [
-    (0, [], dict(), False), (3, [], dict(), True), (3, [GRADED], dict(), False),
-    (3, [], dict(focus='h'), False), (3, [], dict(_audit_hypothesis=dict()), False)],
+    (0, [], dict(history=True), False), (3, [], dict(history=True), True), (3, [GRADED], dict(history=True), False),
+    (3, [], dict(history=True, focus='h'), False), (3, [], dict(history=True, _audit_hypothesis=dict()), False)],
     ids=['no_findings', 'field_case', 'graded', 'focus', 'audit'])
 def test_blocked_needs_findings_without_outcome_or_hypothesis_source(findings, outcomes, args, expected):
     assert first_use.blocked(data(findings, outcomes), argparse.Namespace(**args)) is expected
+
+
+@pytest.mark.parametrize('args', [dict(), dict(history=False), dict(events='e.jsonl', history=False),
+                                  dict(source_root='r', history=False)],
+                         ids=['unset', 'history_off', 'explicit_events', 'source_root'])
+def test_a_run_that_is_not_a_history_run_is_never_blocked_for_missing_outcomes(args):
+    """Explicit events, a source root and the closed profile never collect evaluation results, so no remediation could unlock them."""
+    assert first_use.blocked(data(3), argparse.Namespace(**args)) is False
 
 
 def test_causes_name_each_cause_and_an_unverified_capture_when_one_exists():

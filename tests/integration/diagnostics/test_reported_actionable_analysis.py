@@ -100,7 +100,6 @@ def test_proposer_is_given_the_brief_not_the_raw_analysis_and_can_cite_the_mecha
     pipeline.capture(history(SMALL))
     args = workflow.args()
     args.events = str(pipeline.root/'synthetic.jsonl')
-    args.focus = 'synthetic hypothesis'  # findings without outcomes reach the proposer only with a hypothesis source (#803)
     result = improve(args)
     output = Path(result['output'])
     prompt = (output/'preparation/prompt.txt').read_text()
@@ -114,7 +113,6 @@ def test_no_evidence_history_is_reported_as_insufficient_with_ranked_commands_ne
     pipeline.capture(history(SMALL))
     args = workflow.args()
     args.events = str(pipeline.root/'synthetic.jsonl')
-    args.focus = 'synthetic hypothesis'  # findings without outcomes reach the proposer only with a hypothesis source (#803)
     result = improve(args)
     assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
     steps = result['next_steps']
