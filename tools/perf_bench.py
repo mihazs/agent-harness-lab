@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import platform
 import random
+import re
+import resource
 import statistics
 import subprocess
 import sys
@@ -17,10 +19,10 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-STARTUP_COMMANDS = ((), ('diagnose',), ('mine',), ('analyze',), ('doctor',), ('sources',), ('regression-review',), ('experiment-history',))
 SIZES = (20_000, 80_000, 240_000)
 SEED = 1
 TOOLS = ('read_file', 'search', 'list_dir', 'run_tests', 'edit_file')
+RSS_UNIT = 1 if sys.platform == 'darwin' else 1024  # ru_maxrss is bytes on macOS and kilobytes elsewhere
 POOL = 6  # distinct fingerprints per tool; a small pool makes repeated identical reads occur
 
 
@@ -58,7 +60,7 @@ def write_events(path, count, seed=SEED):
     with Path(path).open('w') as stream:
         for row in synthetic_events(count, seed):
             stream.write(json.dumps(row, sort_keys=True, separators=(',', ':')) + '\n')
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    return digest(path)
 
 
 def run(argv):
@@ -68,7 +70,7 @@ def run(argv):
     _, status, usage = os.wait4(child.pid, 0)
     elapsed = time.perf_counter() - started
     child.returncode = os.waitstatus_to_exitcode(status)  # wait4 reaped it; keep Popen from warning about a live child
-    return elapsed, usage.ru_maxrss * (1 if sys.platform == 'darwin' else 1024), child.returncode
+    return elapsed, usage.ru_maxrss * RSS_UNIT, child.returncode
 
 
 def spread(values, scale=1.0, digits=1):
@@ -77,10 +79,15 @@ def spread(values, scale=1.0, digits=1):
                 max=round(ordered[-1] * scale, digits), runs=len(ordered))
 
 
+def cli_commands():
+    """Every top-level command name, read from `ahl --help` so a new command is measured without editing this file."""
+    usage = subprocess.run([sys.executable, '-m', 'agent_harness_lab', '--help'], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    return re.search(r'\{([\w,-]+)\}', usage).group(1).split(',')
+
+
 def startup(runs):
-    commands = {'(bare interpreter)': [sys.executable, '-c', 'pass']}
-    commands.update({' '.join(command) or '(no subcommand)': [sys.executable, '-m', 'agent_harness_lab', *command, '--help']
-                     for command in STARTUP_COMMANDS})
+    commands = {'(bare interpreter)': [sys.executable, '-c', 'pass'], '(no subcommand)': [sys.executable, '-m', 'agent_harness_lab', '--help']}
+    commands.update({name: [sys.executable, '-m', 'agent_harness_lab', name, '--help'] for name in cli_commands()})
     result = {}
     for name, argv in commands.items():
         run(argv)  # untimed: compiles bytecode and warms the file cache
@@ -95,7 +102,8 @@ def startup(runs):
 
 
 def digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    with Path(path).open('rb') as stream:  # streamed: findings.json is hundreds of MB and would raise the driver's own peak
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
 def diagnose(sizes, repeats, seed=SEED):
@@ -104,7 +112,7 @@ def diagnose(sizes, repeats, seed=SEED):
         for count in sizes:
             events = Path(scratch) / f'events-{count}.jsonl'
             input_sha256 = write_events(events, count, seed)
-            seconds, memory, outputs = [], [], set()
+            seconds, memory, outputs = [], [], []
             for repeat in range(repeats):
                 out = Path(scratch) / f'out-{count}-{repeat}'
                 elapsed, peak, status = run([sys.executable, '-m', 'agent_harness_lab', 'diagnose', '--events', str(events), '--output', str(out)])
@@ -112,13 +120,13 @@ def diagnose(sizes, repeats, seed=SEED):
                     raise RuntimeError(f'diagnose exited with status {status} at {count} events')
                 seconds.append(elapsed)
                 memory.append(peak)
-                outputs.add((digest(out / 'findings.json'), digest(out / 'report.md')))
+                outputs.append((digest(out / 'findings.json'), digest(out / 'report.md')))
             size = events.stat().st_size
             result[str(count)] = dict(
                 events=count, input_bytes=size, input_sha256=input_sha256, seconds=spread(seconds, 1, 3),
                 peak_rss_mb=spread(memory, 1 / 1e6), input_mb_per_second=round(size / 1e6 / statistics.median(seconds), 2),
-                outputs_identical_across_runs=len(outputs) == 1,
-                findings_sha256=sorted(outputs)[0][0], report_sha256=sorted(outputs)[0][1])
+                outputs_identical_across_runs=len(set(outputs)) == 1 if repeats > 1 else None,  # None: nothing was compared
+                findings_sha256=outputs[0][0], report_sha256=outputs[0][1])
     return result
 
 
@@ -140,6 +148,9 @@ def check(report, budgets):
     problems = []
     control = report['startup']['(bare interpreter)']['median']
     for name, limit in budgets.get('startup_ratio_max', {}).items():
+        if name not in report['startup']:
+            problems.append(f'startup {name} was not measured')
+            continue
         ratio = report['startup'][name]['median'] / control
         if ratio > limit:
             problems.append(f'startup {name}: {ratio:.1f}x the bare interpreter exceeds {limit}x')
@@ -151,7 +162,9 @@ def check(report, budgets):
         for key, label in (('seconds', 'seconds'), ('peak_rss_mb', 'MB')):
             if measured[key]['median'] > limits[key + '_max']:
                 problems.append(f'diagnose {count} events: median {key} {measured[key]["median"]} exceeds {limits[key + "_max"]} {label}')
-        if not measured['outputs_identical_across_runs']:
+        if measured['outputs_identical_across_runs'] is None:
+            problems.append(f'diagnose {count} events: output stability was not measured (needs --repeats 2 or more)')
+        elif not measured['outputs_identical_across_runs']:
             problems.append(f'diagnose {count} events: outputs differ between runs')
     return problems
 
@@ -161,14 +174,14 @@ def render(report):
     lines += [f'  {name:<22} {item["median"]:>7} {item["min"]:>7} {item["max"]:>7}' for name, item in report['startup'].items()]
     lines.append('diagnose: events, seconds (median), peak RSS MB (median), input MB/s, identical outputs')
     lines += [f'  {item["events"]:>8} {item["seconds"]["median"]:>8} {item["peak_rss_mb"]["median"]:>8} {item["input_mb_per_second"]:>8} '
-              f'{item["outputs_identical_across_runs"]}' for item in report['diagnose'].values()]
+              f'{"not compared" if item["outputs_identical_across_runs"] is None else item["outputs_identical_across_runs"]}' for item in report['diagnose'].values()]
     return '\n'.join(lines)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--runs', type=int, default=15, help='Timed runs per startup command (default: %(default)s)')
-    parser.add_argument('--repeats', type=int, default=3, help='Runs per diagnose size (default: %(default)s)')
+    parser.add_argument('--repeats', type=int, default=3, help='Runs per diagnose size; output stability is compared only with 2 or more (default: %(default)s)')
     parser.add_argument('--sizes', default=','.join(map(str, SIZES)), help='Comma-separated event counts (default: %(default)s)')
     parser.add_argument('--output', type=Path, default=ROOT / 'artifacts/perf-bench/report.json', help='JSON report path (default: %(default)s)')
     parser.add_argument('--check', type=Path, help='Budgets JSON; exit 1 when a result exceeds one')
@@ -178,6 +191,8 @@ def main(argv=None):
         parser.error('--runs, --repeats and --sizes must be positive')
     report = dict(environment=environment(), startup=startup(args.runs), diagnose=diagnose(sizes, args.repeats))
     report['environment']['load_average_after'] = [round(value, 2) for value in os.getloadavg()]
+    # wait4 peaks start at the parent's size on Linux, so this bounds the floor under every reported child peak.
+    report['environment']['driver_peak_rss_mb'] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * RSS_UNIT / 1e6, 1)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
     print(render(report))

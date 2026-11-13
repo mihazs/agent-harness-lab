@@ -1,5 +1,6 @@
 """The benchmark runs end to end on a tiny corpus, writes its report and enforces budgets with its exit status."""
 import json
+from pathlib import Path
 
 from tools import perf_bench
 
@@ -10,7 +11,8 @@ def test_report_covers_startup_and_diagnose_with_identical_outputs(tmp_path, cap
     output = tmp_path / 'report.json'
     assert perf_bench.main([*TINY, '--output', str(output)]) == 0
     report = json.loads(output.read_text())
-    assert {'(bare interpreter)', '(no subcommand)', 'diagnose'} <= set(report['startup'])
+    assert set(report['startup']) == {'(bare interpreter)', '(no subcommand)', *perf_bench.cli_commands()}
+    assert 'improve' in report['startup'] and 'bank-review' in report['startup']
     run = report['diagnose']['300']
     assert run['events'] == 300 and run['outputs_identical_across_runs'] and run['seconds']['runs'] == 2
     assert run['peak_rss_mb']['median'] > 0
@@ -23,3 +25,8 @@ def test_an_exceeded_budget_fails_the_command(tmp_path, capsys):
     budgets.write_text(json.dumps(dict(diagnose={'300': dict(seconds_max=0.000001, peak_rss_mb_max=1000)})))
     assert perf_bench.main([*TINY, '--output', str(tmp_path / 'report.json'), '--check', str(budgets)]) == 1
     assert 'BUDGET EXCEEDED' in capsys.readouterr().err
+
+
+def test_committed_startup_budgets_cover_every_command_the_cli_lists():
+    budgets = json.loads((Path(__file__).resolve().parents[3] / 'tools/perf_budgets.json').read_text())
+    assert set(budgets['startup_ratio_max']) == {'(no subcommand)', *perf_bench.cli_commands()}
