@@ -167,9 +167,15 @@ review blocker.
 4. **Cover the bug class.** Add the boundary variants of the same defect (empty, missing,
    unknown, oversized). Unknown capture or lineage never becomes a success, failure or
    independence label.
-5. **Pin it.** Once the fix commit exists, add the `# fixed-in:` comment so `task test:pins`
-   proves the test fails on the parent. Where a deterministic fail-before is impossible (timing,
-   memory), keep the bound unchanged and add a deliberate mutation that the bound must catch.
+5. **Pin it, only to a commit that is on `main`.** `task test:pins` runs on every push to
+   `main` and fails the release when a pin names a commit it cannot resolve. This repository
+   squash-merges, so a commit on a feature branch disappears: never pin to one. A bug that was
+   introduced and fixed inside the same pull request never existed on `main`; its test is an
+   ordinary regression test with no pin. For a bug already on `main`, add the
+   `# fixed-in: COMMIT` comment once the fix commit is on `main` (a follow-up commit or pull
+   request), so `task test:pins` proves the test fails on the parent. Where a deterministic
+   fail-before is impossible (timing, memory), keep the bound unchanged and add a deliberate
+   mutation that the bound must catch.
 6. **Never weaken to pass.** A fix does not delete an assertion or loosen a bound.
 
 ## Architecture map
