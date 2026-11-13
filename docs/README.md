@@ -39,7 +39,7 @@ reader purpose.
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
-- [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): a design for a numeric, non-LLM better, equivalent, worse or insufficient-evidence score beside the unchanged Hoeffding path. Its frozen `bayes_decision` spec field and schema are implemented; the score is not.
+- [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): a design for a numeric, non-LLM better, equivalent, worse or insufficient-evidence score beside the unchanged Hoeffding path. Its frozen `bayes_decision` spec field and schema and its exact sign-permutation cross-check are implemented; the score is not.
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 
 ## Historical and maintainer material
