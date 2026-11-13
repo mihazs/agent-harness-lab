@@ -42,9 +42,42 @@ run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify,
   callback `safe` and metric values are not controller-verified evidence, and
   development points are selection heuristics, not proof of benefit.
 
+## Comparing strategies under one budget
+
+```python
+compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve,
+                   allowed_files, evidence, strategies=DEFAULT_COMPARISON, seed=0)
+```
+
+Runs each listed `(strategy_id, version)` through `run_strategy` with the same
+baseline, proposer, evaluator, development evidence, authorized files and seed, and
+a fresh `Budget(ceiling, reserve)` per strategy. The default is the three built-ins.
+Bad strategy pairs, versions, configuration, budgets or non-development evidence are
+refused before any state file exists. Each strategy keeps its own state file in
+`directory`, so repeating the call resumes without re-executing charged work.
+
+The report has one row per strategy and never only the winner:
+
+- `charges`: the shared `ceiling` and `reserve`, actual `spent` and `by_kind`. A
+  strategy with fewer slots may spend less; a smaller ceiling stops larger pools with
+  `budget_exhausted`. Charges are search stage units. `measured_usage` is `None`
+  because tokens and currency are not measured on this route; unknown stays unknown.
+- `attempts`: every evaluated candidate, baseline included, with digest, `safe` and
+  metrics. Candidates with missing metrics are listed and cannot be selected.
+- `rejections`: every retained invalid, duplicate or mutated proposal.
+- `disposition`: the search status (`no_change` on ties, `budget_exhausted`,
+  `blocked`) or `finalist_deferred_to_protected_evaluation`, with `selected`.
+
+No comparison calls certification: the finalist stub only records the choice, and the
+final-reserve charge marks that slot. `finalists` lists the deferred choices across
+strategies. Several finalists need predeclared evaluator access and multiplicity
+handling before any protected evaluation, so do not reuse one untouched set for each.
+`advantage_claim` is always `False`: development points are selection heuristics. A
+claim beyond extra inference needs a separately specified equal-budget retry
+comparator, which this report does not provide.
+
 ## Not covered yet
 
-This slice provides the registry and fake-strategy integration only. A supported
-model-backed reflective proposer, measured token or cost accounting, the guarded
-controller route and the matched-budget strategy comparison are separate work.
-Successive halving and recombination remain opt-in experiments.
+A supported model-backed reflective proposer, measured token or cost accounting and
+the guarded controller route for strategies remain separate work. Successive halving,
+recombination and optional DSPy adapters remain opt-in experiments.
