@@ -29,6 +29,8 @@ FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', *SOURCE_ORD
 PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model_hypothesis', 'unknown'}
 
 
+# Derived from private tool-call bodies: kept out of duplicate checks and the body-insensitive metadata fingerprint of native captures.
+BODY_DERIVED = frozenset(('input_fingerprint',))
 FINGERPRINT = re.compile(r'[0-9a-f]{16}\Z')
 MIN_FINGERPRINT_WORDS = 4
 
@@ -43,6 +45,24 @@ def message_fingerprint(text, case_id):
     if len(words) < MIN_FINGERPRINT_WORDS:
         return None
     return hashlib.sha256((case_id + '\0' + ' '.join(words)).encode()).hexdigest()[:16]
+
+
+def input_fingerprint(value, case_id):
+    """Content-free fingerprint of one tool call's input, comparable only within one case; None when the input is unusable.
+
+    A string that parses as JSON is canonicalized first, so key order and spacing do not matter. Same salt and
+    64-bit cut as message_fingerprint; see docs/telemetry.md.
+    """
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (ValueError, RecursionError):
+            pass
+    try:
+        body = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return hashlib.sha256((case_id + '\0' + body).encode()).hexdigest()[:16]
 
 
 def event(value):

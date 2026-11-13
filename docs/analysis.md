@@ -82,7 +82,10 @@ exact prerequisite each missing method lacks, weak-outcome signals, and a
 (user turn after a tool error, consecutive user turns, interrupts, same-call
 retries, edit-then-revert) are `observed_pattern` with competing explanations. A
 signal whose input is not captured is `unknown`, and a zero count is
-`not_observed_capture_unverified`; neither is a clean result. Restated instructions
+`not_observed_capture_unverified`; neither is a clean result. Same-call retries compare the
+`input_fingerprint` of consecutive calls to the same tool within a case. Pinned native Claude and Codex
+captures carry it (see [input fingerprints](telemetry.md#input-fingerprints)); edit-then-revert needs a
+state revision on mutating events that native captures do not record, so it stays `unknown` there. Restated instructions
 count a user message whose `message_fingerprint` equals an earlier one in the same case.
 The field is a salted, normalized word-set hash that never stores text, and it exists
 only on pinned native captures of messages with at least four words (see
@@ -206,8 +209,8 @@ outcome, success/failure or independence label, and recurrence and matching
 outputs keep their descriptive authority. One file holds one writer and therefore
 one reported root, so recurrence over pinned Claude captures still needs three
 roots, for example a normalized file combining exported ledgers of separate
-sessions. Claude records carry no input/result/state signatures, so state-aware
-matching stays unselected for them.
+sessions. Pinned native Claude records carry an input fingerprint but no result or
+state signatures, so duplicate-observation matching stays unselected for them.
 
 For the pinned Claude adapter the new fields stay outside event IDs, journal
 record identities and revisions, the collection fingerprint and duplicate-UUID
