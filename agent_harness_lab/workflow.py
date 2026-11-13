@@ -150,7 +150,8 @@ def evidence(args, output, source_context=None, *, progress=None):
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None),
-            history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None, **source_identity)
+            history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None,
+            history_from=getattr(args, 'history_from', None), **source_identity)
         events.seek(0)
         store = {}
         # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
@@ -576,6 +577,8 @@ def _improve(args):
         # Nothing was captured for this request; stop before any candidate preparation or model spend.
         from .one_call import REMEDIATION
         reason = 'history_runtime_has_no_captures' if args.history_source in ('codex', 'claude') else 'history_no_matching_sessions'
+        # A linked worktree's own path has no sessions: name that cause instead of a generic empty history.
+        if any(r['reason'] == 'history_not_found_for_worktree' for r in data.get('capture_reasons', ())): reason = 'history_not_found_for_worktree'
         result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                       remediation=REMEDIATION[reason], history=data['history'], automatic_promotion=False)
         construction_receipt(result, args)
@@ -675,6 +678,7 @@ def _improve(args):
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
                   analysis=data['execution'])
     if 'history' in data: result['history'] = data['history']
+    elif data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     protected = {}
     refinement_feedback = []
     single_run = None

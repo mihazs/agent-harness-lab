@@ -11,6 +11,8 @@ REMEDIATION = {
     'history_source_ai_memory_unsupported': 'ahl improve reads native Codex and Claude sessions only and opens no network connection; rerun with --source native, codex or claude, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis.',
     'capture_version_differs_from_pin': 'Selected captures were recorded by a runtime version outside the fixture-verified declared range and were not parsed with the verified adapter. Rerun without --source-root for descriptive, unverified project-filtered discovery, or verify that release: run ahl sources claude pin-check --events FILE on one capture, then add its contract fixture and extend the range.',
     'cwd_worktrees_unavailable': 'The project repository\'s registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository\'s .git directory and rerun; until then treat registered_worktree_of_project as a lower bound.',
+    'history_not_found_for_worktree': 'No session was recorded under this path, which is a linked worktree of a repository, so history recorded for the repository\'s main checkout was not read; this does not show there is nothing to learn. Rerun with --history-from MAIN_CHECKOUT to read that checkout\'s sessions read-only, or run from the main checkout.',
+    'source_project_path_differs': 'Sessions recorded for another checkout of this repository (--history-from) were read instead of this path\'s; read any finding as that checkout\'s history, and an empty result as no captures there.',
     'history_no_matching_sessions': 'No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
     'history_runtime_has_no_captures': 'No captured events of the requested runtime matched this project, --since and --session; rerun with --source native to include both runtimes, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
     'global_scope_model_evaluation_unavailable': 'Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project.',
@@ -121,6 +123,8 @@ def guidance(result):
         action = 'Review the private receipt before retrying.'
     else:
         action = REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+    if status != 'analyzed' and reason != 'history_not_found_for_worktree' and any(r.get('reason') == 'history_not_found_for_worktree' for r in result.get('capture_reasons') or ()):
+        action += ' ' + REMEDIATION['history_not_found_for_worktree']
     steps = result.get('next_steps')
     if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
         action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"
