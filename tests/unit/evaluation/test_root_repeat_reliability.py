@@ -10,6 +10,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import reliability
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.statistics import TrialRecord, analyze as fixed_analysis
+from tests.unit.evaluation import test_preservation_analysis as preservation
 
 
 def analyze(spec, rows):
@@ -102,6 +103,16 @@ def test_unknown_or_invalid_trials_get_no_profile_and_are_never_imputed():
     assert 'repeat_reliability' not in analyze(spec, records(spec, lift, provenance='model_judge'))
     critical = analyze(spec, [replace(complete[0], critical_regression=True)] + complete[1:])
     assert (critical['status'], 'repeat_reliability' in critical) == ('rejected', False)
+
+
+def test_blocked_and_cohort_pinned_analyses_get_no_profile():
+    spec = plan(10, 3)
+    mismatched = analyze(spec, records(spec, lift, grader_hash='0' * 64))
+    assert (mismatched['status'], 'repeat_reliability' in mismatched) == ('blocked', False)
+    pinned, frozen = preservation.freeze(preservation.plan(60, 2), members=[f't{i:04d}' for i in range(30)])
+    result = fixed_analysis(pinned, preservation.records(pinned, preservation.successful_preservation),
+                            cohort_binding=frozen, include_reliability=True)
+    assert 'repeat_reliability' not in result and result['status'] in ('supported', 'inconclusive', 'rejected')
 
 
 def test_too_few_independent_roots_still_reports_descriptive_consistency_without_support():
