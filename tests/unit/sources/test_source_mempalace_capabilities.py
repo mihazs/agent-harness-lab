@@ -91,6 +91,30 @@ def test_a_tool_that_differs_from_the_pin_is_incompatible(tmp_path, case):
     assert SECRET not in out
 
 
+def with_cursor(tmp_path, mutate):
+    data = json.loads(Path(listing(tmp_path, mutate)).read_text()); data['nextCursor'] = 'x'
+    path = tmp_path/'paged.json'; path.write_text(json.dumps(data)); return str(path)
+
+
+def test_an_incomplete_listing_never_makes_an_absent_tool_a_definite_result(tmp_path):
+    code, out, _ = run('--tools-list', with_cursor(tmp_path, lambda tools: tools.__delitem__(slice(2, None))))
+    result = json.loads(out)['tools_list']
+    assert code == 3 and result['verdict'] == 'inconclusive' and result['listing_complete'] is False
+    assert 'listing_incomplete' in result['warnings'] and 'absent' in {row['status'] for row in result['profile_tools']}
+    # A present tool that differs stays definite even when the listing is incomplete.
+    def differ(tools): tools[0]['inputSchema']['properties']['extra'] = {}; del tools[-1]
+    code, out, _ = run('--tools-list', with_cursor(tmp_path, differ))
+    assert code == 3 and json.loads(out)['tools_list']['verdict'] == 'incompatible'
+
+
+def test_a_complete_looking_page_with_a_cursor_is_flagged_incomplete(tmp_path):
+    code, out, _ = run('--tools-list', with_cursor(tmp_path, lambda tools: None))
+    result = json.loads(out)['tools_list']
+    assert code == 0 and result['verdict'] == 'compatible' and result['listing_complete'] is False
+    assert 'listing_incomplete' in result['warnings']
+    assert 'listing_incomplete' not in json.loads(run('--tools-list', listing(tmp_path))[1])['tools_list']['warnings']
+
+
 @pytest.mark.parametrize('case', ['not_json', 'not_a_listing', 'duplicate_name', 'duplicate_key', 'symlink', 'missing', 'oversized',
     'required_object', 'required_list', 'required_number'])
 def test_invalid_listing_is_refused_without_echoing_it(tmp_path, case):

@@ -3989,7 +3989,13 @@ names are compared, and the result prints no description or unknown tool name:
 | --- | --- | --- |
 | `compatible` | All four profile tools are present with the pinned property and required names | 0 |
 | `compatible_with_unknown_tools` | As above, plus tools the pin does not list. They are counted, never named or parsed | 0 |
-| `incompatible` | A profile tool is absent or its property or required names differ. Do not rely on the profile for that server | 3 |
+| `inconclusive` | A profile tool is absent from a listing that has a `nextCursor`, so another page might hold it, and no present profile tool differs | 3 |
+| `incompatible` | A profile tool differs in property or required names, or is absent from a listing without a `nextCursor`. Do not rely on the profile for that server | 3 |
+
+Only the one saved page is read. A `nextCursor` sets `listing_complete` to
+`false` and adds the `listing_incomplete` warning; a matching incomplete listing
+stays `compatible`, but `unknown_tool_count` and `advertised_write_tools` then
+count only that page.
 
 `advertised_write_tools` lists pinned write tools the listing exposes. The pinned
 server hides them in its read-only mode, so their presence suggests it was not

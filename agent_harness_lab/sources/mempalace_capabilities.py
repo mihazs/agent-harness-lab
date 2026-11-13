@@ -72,19 +72,24 @@ def compare(listing):
             unexpected_property_count=len(unexpected), required_matches_pin=set(needed) == set(required)))
     known = SUPPORTED | READ | MUTATING | STATE_CHANGING
     unknown = sum(name not in known for name in advertised)
-    verdict = ('incompatible' if any(row['status'] != 'matches_pin' for row in rows)
+    complete = listing.get('nextCursor') is None  # only one page is read; a cursor means another page may hold more tools
+    differs = any(row['status'] == 'schema_differs' for row in rows)
+    absent = any(row['status'] == 'absent' for row in rows)
+    verdict = ('incompatible' if differs or (absent and complete) else 'inconclusive' if absent
         else 'compatible_with_unknown_tools' if unknown else 'compatible')
-    return dict(verdict=verdict, profile_tools=rows, unknown_tool_count=unknown,
-        advertised_write_tools=sorted(name for name in advertised if name in MUTATING | STATE_CHANGING), warnings=WARNINGS)
+    return dict(verdict=verdict, listing_complete=complete, profile_tools=rows, unknown_tool_count=unknown,
+        advertised_write_tools=sorted(name for name in advertised if name in MUTATING | STATE_CHANGING),
+        warnings=WARNINGS if complete else sorted(WARNINGS+['listing_incomplete']))
 
 
 def main(argv):
     parser = argparse.ArgumentParser(prog='ahl sources mempalace capabilities',
         description='Print the offline MemPalace capability report: which pinned read tools have an import profile, which are '
         'unsupported, and which write tools AHL refuses. Optionally compare one caller-supplied MCP tools/list JSON file with '
-        'the pinned input schemas by name only (verdict compatible, compatible_with_unknown_tools or incompatible). Read-only: '
+        'the pinned input schemas by name only (verdict compatible, compatible_with_unknown_tools, inconclusive or incompatible). Read-only: '
         'it never starts or contacts MemPalace, opens a palace, calls a tool, uses the network or runs a model. '
-        'Exit 0: report printed and any listing compatible; 3: listing incompatible; 2: invalid input.')
+        'Only one page is read: a nextCursor adds a listing_incomplete warning and makes an absent tool inconclusive. '
+        'Exit 0: report printed and any listing compatible; 3: listing incompatible or inconclusive; 2: invalid input.')
     parser.add_argument('--tools-list', metavar='FILE', help='One existing regular JSON file holding a saved MCP tools/list result; '
         'a symlink is refused and no tool description or unknown tool name is printed')
     args = parser.parse_args(argv)
@@ -98,4 +103,4 @@ def main(argv):
         print(json.dumps(dict(profile=PROFILE, status='invalid_input', reason=type(error).__name__)), file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 3 if result.get('tools_list', {}).get('verdict') == 'incompatible' else 0
+    return 3 if result.get('tools_list', {}).get('verdict') in ('incompatible', 'inconclusive') else 0
