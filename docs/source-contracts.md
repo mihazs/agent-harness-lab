@@ -4016,6 +4016,52 @@ not a task outcome. No query, mutation, embedding or network operation is
 performed. Live retrieval, backend selection and remote endpoints remain
 unsupported and are never inferred from database files.
 
+### MemPalace capability report
+
+`ahl sources mempalace capabilities` prints the four profiles above, the pinned
+upstream tool each one mirrors, and which other pinned tools AHL refuses. It
+starts no worker, opens no palace, calls no tool, uses no network and runs no
+model; `network_used` and `model_used` are `false`, and `source_read` is `false`
+unless `--tools-list` reads its one named file. The
+classification comes from the public v3.7.0 `mcp_server.py` (`TOOLS` and its
+`_MUTATING_TOOLS` set) and is a pinned table, not a probe of a running server.
+
+| Report field | Meaning |
+| --- | --- |
+| `profiles` | Each import profile with its tool, claim type and scope (`wing`, or `entity` for the knowledge graph, which is not wing-scoped). `profile_runs_tool` is always `false`: the profile reads a saved result. `live_tool_embeds_query` marks a tool whose live call embeds the query |
+| `tools.live_query_embedding` | `mempalace_search` and `mempalace_check_duplicate`: the pinned handlers embed the query text (`mempalace_search` through `search_memories`, the other directly), so a live call would need its own resource opt-in. Saved results trigger no embedding |
+| `tools.supported_offline` | The four tools whose saved results have a profile |
+| `tools.unsupported_read` | Other tools the pin does not refuse in read-only mode, such as `mempalace_status` or `mempalace_diary_read`. They have no profile, and nothing is inferred from them |
+| `tools.refused_mutating`, `tools.refused_state_changing` | Tools that write, mine, sync, invalidate or supersede, plus the three that change server state. AHL never calls them |
+| `live_import` | `unsupported`. Paged reads expose `offset` and `limit` but no snapshot token, opening a palace can create files, and a server holds a writer lease. Backend files are never read |
+
+To compare a saved MCP `tools/list` result with the pinned input schemas, add
+`--tools-list FILE`. The file is one regular, single-link JSON file within the
+profile byte and structure bounds; a symlink or duplicate key is refused. Only
+names are compared, and the result prints no description or unknown tool name:
+
+| Verdict | Meaning | Exit code |
+| --- | --- | --- |
+| `compatible` | All four profile tools are present with the pinned property and required names | 0 |
+| `compatible_with_unknown_tools` | As above, plus tools the pin does not list. They are counted, never named or parsed | 0 |
+| `inconclusive` | A profile tool is absent from a listing that has a `nextCursor`, so another page might hold it, and no present profile tool differs | 3 |
+| `incompatible` | A profile tool differs in property or required names, or is absent from a listing without a `nextCursor`. Do not rely on the profile for that server | 3 |
+
+Only the one saved page is read. A `nextCursor` sets `listing_complete` to
+`false` and adds the `listing_incomplete` warning; a matching incomplete listing
+stays `compatible`, but `unknown_tool_count` and `advertised_write_tools` then
+count only that page.
+
+`advertised_write_tools` lists pinned write tools the listing exposes that the
+pinned server hides in its read-only mode, so their presence suggests it was not
+in that mode; AHL still calls none. `mempalace_reconnect` is state-changing and
+refused, but upstream deliberately keeps it listed in read-only mode, so it is
+never counted there. A matching
+listing identifies neither the server nor its version, says nothing about result
+shapes, and is not evidence that any saved result was produced by that server.
+Invalid input exits 2 with a reason class only. Real-server evidence remains
+absent until a maintainer supplies an authorized listing and results.
+
 ## Offline Claude-Mem exports
 
 Select `local_file/claude-mem-export/v1` in the existing local source declaration,
