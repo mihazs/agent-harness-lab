@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.194.0
+
+### Minor Changes
+
+- 7babe06: Extend the declared Claude Code compatibility set to the current release: add the `2.1.322` synthetic contract fixture (key names of real 2.1.322 captures read with `ahl sources claude pin-check`, invented values only) and declare `VERIFIED_RANGES` as `2.1.316` to `2.1.318` plus `2.1.322`. Sessions recorded by 2.1.322 are now read by the verified adapter and counted as `pin_compatibility: declared_range`. The `agent-name`, `fork-context-ref`, `permission-mode`, `pr-link` and `session-owner` records stay `unknown_entry_type` and the `image` content block stays one `unsupported_native_block` coverage event: counted, never parsed and never a success, failure or independence label. The reference now classifies every record kind in the fixtures as handled, ignored or unknown by design. `2.1.319` to `2.1.321` have no fixture and stay `capture_version_differs_from_pin`; `ahl doctor` and `history.runtime_lag` now also surface a recorded release that sits in such a gap (`recorded_runtime_outside_verified_set`) instead of only releases newer than the newest verified one.
+
 ## 0.193.0
 
 ### Minor Changes
