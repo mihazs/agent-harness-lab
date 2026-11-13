@@ -588,9 +588,9 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_ref_movement.py -v'
   test:sources:test-results:
-    desc: Run offline JUnit XML and pytest JSON result controls and the Actions job join with synthetic hostile reports
+    desc: Run offline JUnit XML and pytest JSON result controls, the Actions job join and SARIF quality report controls with synthetic hostile reports
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py tests/unit/sources/test_source_quality_reports.py -v'
   test:sources:claude-mem:
     desc: Run offline Claude-Mem v15.9.0 export, native-session correlation and saved MCP tool-listing controls with synthetic invented inputs
     cmds:
