@@ -157,6 +157,17 @@ def test_the_receipt_names_files_but_holds_no_file_content(repo):
     assert 'notes.txt' in receipt['changed_files'] and 'secret-body-text' not in text  # the command spells it in two parts
 
 
+def test_log_dir_keeps_the_command_output_while_the_receipt_keeps_hashes_only(repo, tmp_path):
+    logs = tmp_path / 'logs'
+    command = py("import sys; print('out-' + 'line'); print('err-' + 'line', file=sys.stderr); sys.exit(2)")
+
+    receipt = check.run(repo, command, log_dir=logs)
+
+    assert (logs / 'stdout.txt').read_text() == 'out-line\n' and (logs / 'stderr.txt').read_text() == 'err-line\n'
+    assert receipt['command_status'] == 2 and 'out-line' not in json.dumps(receipt)
+    assert not (tmp_path / 'project' / 'stdout.txt').exists(), 'logs never land in the checkout'
+
+
 def test_two_runs_with_the_same_inputs_give_the_same_receipt(repo):
     command = py("import pathlib; pathlib.Path('AGENTS.md').write_text('# Same\\n')")
 

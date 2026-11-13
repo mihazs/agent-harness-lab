@@ -72,7 +72,7 @@ def changed_in(worktree):
     return sorted(line[3:] for line in status.splitlines())
 
 
-def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None, inherit_home=False, pass_env=(), which=shutil.which):
+def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None, inherit_home=False, pass_env=(), log_dir=None, which=shutil.which):
     """Execute COMMAND in a temporary worktree of REPO at REF; return the receipt (a dict)."""
     repo = Path(repo).resolve()
     if not (repo / '.git').exists():
@@ -101,6 +101,10 @@ def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None
                 done = subprocess.run(argv, cwd=worktree, env=env, capture_output=True, text=True, timeout=timeout)
                 receipt.update(command_status=done.returncode, command_timed_out=False,
                                stdout_sha256=_digest(done.stdout), stderr_sha256=_digest(done.stderr))
+                if log_dir:  # opt-in and private: the receipt itself keeps hashes only
+                    Path(log_dir).mkdir(parents=True, exist_ok=True)
+                    (Path(log_dir) / 'stdout.txt').write_text(done.stdout)
+                    (Path(log_dir) / 'stderr.txt').write_text(done.stderr)
             except subprocess.TimeoutExpired:
                 receipt.update(command_status=None, command_timed_out=True)
             receipt['changed_files'] = changed_in(worktree)
@@ -122,6 +126,7 @@ def main(argv=None):
     parser.add_argument('--memory-cap-gib', type=int, help='Run the command in a systemd user scope with this memory limit')
     parser.add_argument('--inherit-home', action='store_true', help='Pass the real HOME (needed for a runtime login); default: a private empty home')
     parser.add_argument('--pass-env', action='append', default=[], metavar='NAME', help='Pass this host variable through (repeatable)')
+    parser.add_argument('--log-dir', type=Path, help='Also write the command stdout.txt and stderr.txt here (private; the receipt keeps hashes only)')
     parser.add_argument('--receipt', type=Path, help='Write the JSON receipt here (default: print it). It records the command line verbatim: never put a secret on it')
     argv = list(sys.argv[1:] if argv is None else argv)
     split = argv.index('--') if '--' in argv else len(argv)  # REMAINDER would swallow options placed before `--`
@@ -129,7 +134,7 @@ def main(argv=None):
     if not command:
         parser.error('a command is required after --')
     try:
-        receipt = run(args.repo, command, args.ref, args.patch, args.timeout, args.memory_cap_gib, args.inherit_home, args.pass_env)
+        receipt = run(args.repo, command, args.ref, args.patch, args.timeout, args.memory_cap_gib, args.inherit_home, args.pass_env, args.log_dir)
     except RuntimeError as error:
         print(f'isolated check could not start: {error}', file=sys.stderr)
         return 2
