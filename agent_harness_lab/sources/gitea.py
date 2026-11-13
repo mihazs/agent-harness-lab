@@ -32,7 +32,7 @@ class GiteaSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5): raise ValueError('unsupported Gitea selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6): raise ValueError('unsupported Gitea selection version')
         instance_root(self.base_url, API_PREFIX)
         for name in (self.owner, self.repo):
             if not isinstance(name, str) or NAME.fullmatch(name) is None: raise ValueError('invalid Gitea owner or repository name')
@@ -46,9 +46,9 @@ class GiteaSelection(Contract):
         # Issues and pulls share one per-repository index, so a number is never both.
         if (set(self.issues) & set(self.pulls) or ('issues' in self.capture) != bool(self.issues)
                 or ('pulls' in self.capture) != bool(self.pulls) or 'reviews' in self.capture and not self.pulls
-                or 'review_comments' in self.capture and (self.schema_version not in (3, 4, 5) or 'reviews' not in self.capture)
-                or 'commits' in self.capture and (self.schema_version not in (4, 5) or not self.pulls)
-                or 'files' in self.capture and (self.schema_version != 5 or not self.pulls)
+                or 'review_comments' in self.capture and (self.schema_version not in (3, 4, 5, 6) or 'reviews' not in self.capture)
+                or 'commits' in self.capture and (self.schema_version not in (4, 5, 6) or not self.pulls)
+                or 'files' in self.capture and (self.schema_version not in (5, 6) or not self.pulls)
                 or not (self.issues or self.pulls)):
             raise ValueError('Gitea capture kinds must match the explicitly selected numbers')
 
@@ -76,6 +76,14 @@ class GiteaSelection(Contract):
 
     @property
     def project_sha256(self): return self.repository_sha256(self.full_name)
+
+    def native_sha256(self, value):
+        """Instance-scoped fingerprint of a server-reported object ID."""
+        return digest((self.instance_sha256, integer(value, minimum=1)))
+
+    def record_sha256(self, kind, repository_id_sha256, native, parent=None):
+        """Native identity of a schema 2+ record; the offline commit join recomputes it from caller-declared IDs."""
+        return digest(('gitea-v2', kind, self.project_sha256, repository_id_sha256, parent, native))
 
     @property
     def source_version(self): return f'v{self.schema_version}'
@@ -113,8 +121,7 @@ class GiteaAPI:
         return ledger.listing(collection, dict(limit=PAGE_SIZE), PAGE_SIZE, total_header='x-total-count', following=following,
             project=project)
 
-    def _native(self, value):
-        return digest((self.selection.instance_sha256, integer(value, minimum=1)))
+    def _native(self, value): return self.selection.native_sha256(value)
 
     def _actor(self, value):
         if value is None: return None
@@ -322,7 +329,7 @@ class GiteaAPI:
             if kind == 'gitea_instance': return digest((kind, selection.instance_sha256))
             object_id = node['id_sha256'] if kind in ('gitea_issue', 'gitea_pull') else native
             parent = node['parent_sha256'] if kind in ('gitea_comment', 'gitea_review', 'gitea_review_comment') else None
-            return digest(('gitea-v2', kind, selection.project_sha256, repository['id_sha256'], parent, object_id))
+            return selection.record_sha256(kind, repository['id_sha256'], object_id, parent)
 
         def emit(kind, native, node, original=None): return ledger.emit(key(kind, native, node), kind, node, original)
 
@@ -431,7 +438,10 @@ class GiteaAPI:
             nodes=[ledger.nodes[k] for k in sorted(ledger.nodes)], relations=sorted(relations), coverage=coverage,
             capture_completeness='partial', checkpoint_ready=ready, task_outcomes_verified=False, warnings=warnings)
         self.summary = summary
-        return ledger.snapshot(summary, selection.source_version, f'gitea-rest-{selection.source_version}')
+        snapshot = ledger.snapshot(summary, selection.source_version, f'gitea-rest-{selection.source_version}')
+        if selection.schema_version < 6: return snapshot
+        # Schema 6 only: a graph of server-reported PR commit membership lets a local Git journal be joined offline.
+        return ledger.with_commit_graph(snapshot, 'reported_commit_in_pull', 'gitea.native', 'gitea-claims-v1')
 
 
 class GiteaConfigured(ConfiguredAPI):

@@ -1,9 +1,11 @@
 """Shared ledger for selected-resource forge captures; native claims never become task grades."""
+from dataclasses import replace
 from datetime import datetime, timezone
 import re
 from urllib.parse import urlencode
-from .execution import CoverageManifest, ExecutionMetadata, ScanBound
+from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .github import integer
+from .graph import EvidenceGraph, JoinReceipt
 from .schema import EvidenceRecord, digest
 from .snapshot import Snapshot
 from .transport import MAX_UNPAGED_ROWS, Unavailable, capture_state, guarded_get
@@ -110,6 +112,16 @@ class CaptureLedger:
 
     @property
     def unsupported(self): return any(entry['state'] == 'unsupported_endpoint' for entry in self.coverage)
+
+    def with_commit_graph(self, snapshot, relation, namespace, resolver):
+        """Attach a graph of candidate commit_on joins, one per server-reported commit-membership relation."""
+        refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in self.records.items()}
+        joins = tuple(JoinReceipt(refs[child], refs[parent], 'commit_on', namespace, resolver, (refs[child], refs[parent]),
+            basis='native_fields') for kind, child, parent in sorted(self.relations) if kind == relation)
+        source = self.source
+        graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(refs.values()), joins)
+        graph.validate(source, self.records.values())
+        return replace(snapshot, graph=graph)
 
     def snapshot(self, summary, version, profile):
         """A partial snapshot whose manifest shows blocked, truncated and budget-limited coverage."""

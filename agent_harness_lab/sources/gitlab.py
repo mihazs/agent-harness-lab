@@ -1,10 +1,8 @@
 """Explicit read-only GitLab REST v4 captures; merges, closures and approvals are never task grades."""
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import re
-from .execution import RecordRef
 from .forge import CaptureLedger, count_header
 from .github import commit_hash, integer, moment, text_hash
-from .graph import EvidenceGraph, JoinReceipt
 from .remote_config import ConfiguredAPI
 from .schema import Contract, SourceSpec, digest
 from .transport import MAX_UNPAGED_ROWS, TransportError, Unavailable, bounded_api, instance_root, next_page
@@ -482,13 +480,7 @@ class GitLabAPI:
         snapshot = ledger.snapshot(summary, SOURCE_VERSION, 'gitlab-rest-v4')
         if selection.schema_version < 9: return snapshot
         # Schema 9 only: a graph of server-reported MR commit membership lets a local Git journal be joined offline.
-        refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in ledger.records.items()}
-        joins = tuple(JoinReceipt(refs[child], refs[parent], 'commit_on', 'gitlab.native', 'gitlab-claims-v1',
-            (refs[child], refs[parent]), basis='native_fields') for relation, child, parent in sorted(ledger.relations)
-            if relation == 'reported_commit_in_mr')
-        graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(refs.values()), joins)
-        graph.validate(source, ledger.records.values())
-        return replace(snapshot, graph=graph)
+        return ledger.with_commit_graph(snapshot, 'reported_commit_in_mr', 'gitlab.native', 'gitlab-claims-v1')
 
     def _diffs(self, ledger, key, iid, parent, budget):
         """Capture only fingerprints of returned file paths and server-reported change flags."""

@@ -700,9 +700,9 @@ import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
 execution's version. Declared Codex and Claude Code instruction inventories are
 described below, as are the static hook inventory and path-scoped rules. Managed
-and global instruction capture remains open in #46. Observed loading,
-independently evidenced execution bindings and Gitea commit reconciliation
-(the Git/GitHub and Git/GitLab joins are below) remain open in #58/#77–#80.
+and global instruction capture remains open in #46. Observed loading and
+independently evidenced execution bindings remain open in #58/#77–#80 (the
+Git/GitHub, Git/GitLab and Git/Gitea commit joins are below).
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
@@ -772,8 +772,7 @@ atomically through the existing journal. Cached status and explicit analyze/doct
 context can inspect those facets without reading Git. Older checkpoints retain
 their captured graph when HEAD, refs or current files change. `task test:sources:git`
 runs the native synthetic Git contract and compatibility cases. Historical execution
-binding, Gitea reconciliation and independent proof persistence remain
-open in #58.
+binding and independent proof persistence remain open in #58.
 
 ### Explicit local Git relationship recheck
 
@@ -937,10 +936,49 @@ squash or rebase commit is not related to the original. No outcome, grade,
 independent root, verification or execution authority follows. The report holds
 fingerprints only, has `publication_allowed: false` and profile
 `cross-journal-gitlab-mr-commit-join-v1`, and public benchmark export rejects it.
-Gitea has no equivalent graph yet and stays open in #46.
-`task test:sources:commit-join` runs synthetic controls for foreign scopes,
-stale membership, missing records and invalid inputs, plus one case through both
-built-in readers.
+The [Gitea PR join](#offline-gitgitea-pull-request-commit-join) below follows the
+same rules. `task test:sources:commit-join` runs synthetic controls for foreign
+scopes, stale membership, missing records and invalid inputs, plus one case through
+both built-in readers.
+
+### Offline Git/Gitea pull request commit join
+
+`sources.commit_join.join_pull_request_commit(git_source, git_store, gitea_source,
+gitea_store, selection=SEL, repository_id=ID, pull_id=PULL_ID, number=N,
+commit_sha=SHA)` relates one exact local commit to one Gitea PR's server-reported
+commit listing, across a `local_git/git` journal and an `api/gitea` journal captured
+with a [schema 6](#explicit-gitea-rest-captures) selection that includes `commits`
+and the PR number. It has the GitLab join's guarantees: it reads only the two
+selected journals, runs no Git, makes no network or model calls, changes neither
+journal and has no CLI exposure yet. The SHA must be full, lowercase, 40-hex; the
+three IDs must be positive integers; the Gitea source must carry the selection's
+version, repository and scope fingerprints. Violations raise before any journal is
+read.
+
+`repository_id` and `pull_id` are the server-reported object IDs, not the PR
+number. They are part of the record identities, so a recreated repository or a
+replaced PR with the same name or number is never matched. The Git source must
+declare the selection's repository fingerprint, which is the declared instance
+plus the case-insensitive `owner/repo` name, not a verified repository identity.
+The `gitea_repository` and `gitea_pull` records must be current in the latest Gitea
+checkpoint. Statuses follow the GitLab join: `matched` (the commit record is
+current in both latest checkpoints, the PR-commit record for that PR is current and
+the latest Gitea graph holds the server-reported `commit_on` edge from that
+PR-commit record to that PR record), `stale`, `unlinked` (different declared
+fingerprints) and `unknown` (unavailable checkpoint or graph, missing repository or
+PR record, unobserved, reference-only, truncated or ambiguous, or
+`commit_link_unobserved` when no such edge ties the two records). The edge is what
+binds `pull_id` to `number`: the PR object record is keyed on the object ID alone
+and the PR-commit record on the number alone, so a caller-supplied pair naming two
+different selected PRs finds both records current but no edge, and is not matched.
+A `matched` report carries one `same_commit` candidate receipt with basis `source_declaration`, and states
+`membership: server_reported` and `ancestry: unknown`. Gitea merge and head SHAs
+are not ancestry, so a squash or rebase commit is not related to the original. No
+outcome, grade, independent root, verification or execution authority follows. The
+report holds fingerprints only, has `publication_allowed: false` and profile
+`cross-journal-gitea-pull-commit-join-v1`, and public benchmark export rejects it.
+`task test:sources:commit-join` runs its synthetic controls, plus one case through
+both built-in readers.
 
 ### Offline PR commit-role join
 
@@ -3399,6 +3437,15 @@ or conflicting pagination totals and unavailable pages block checkpoints.
 Collection is bounded at 10,000 returned files and by transport budgets. Reads
 are non-atomic; reported changes do not verify execution or outcomes. V5 has a
 separate scope, and earlier histories are unchanged.
+
+An opt-in `schema_version=6`, `version="v6"` profile accepts every capability of
+schemas 3-5 and also emits an evidence graph with one `commit_on` candidate join
+per server-reported PR commit (commit record to PR record, namespace
+`gitea.native`). It adds no request, so the graph holds only what `commits`
+already captured, and schemas 1-5 keep their graph-less checkpoints. V6 has a
+separate scope, and earlier histories are unchanged.
+[`join_pull_request_commit`](#offline-gitgitea-pull-request-commit-join) reads
+that graph.
 
 For v2, a review listing returning 404 remains `not_found` and blocks a
 checkpoint: the response alone does not establish whether the endpoint is
