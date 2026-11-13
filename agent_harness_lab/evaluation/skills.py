@@ -279,7 +279,7 @@ def procedure_compliance(spec, *, events, artifacts):
 
     A requirement is `tool_call` (observed), `no_tool_call` (not observed) or `artifact` (a named
     executable check passed). Each resolves to met, unmet or unknown. An absent tool call is unmet only
-    when every row of a nonempty capture says it is complete; otherwise it is unknown, as is an artifact
+    when every row of a nonempty capture says it is complete and every tool call is named; otherwise it is unknown, as is an artifact
     check that is missing, ungraded by an executable grader or not boolean. Skill-activation signals and
     phrasing never satisfy a requirement. Safety requirements are reported apart from the procedure.
     """
@@ -302,8 +302,10 @@ def procedure_compliance(spec, *, events, artifacts):
     rows = [event(raw) for raw in events]
     if len({row['case_id'] for row in rows}) > 1:
         raise ValueError('procedure compliance requires one case')
-    called = {row.get('tool_name') for row in rows if row['activity'] == 'tool_call'}
-    complete = bool(rows) and all(row.get('capture_complete') is True for row in rows)
+    calls = [row for row in rows if row['activity'] == 'tool_call']
+    called = {row.get('tool_name') for row in calls}
+    # A nameless tool call may be any tool, so it makes absence undecidable like a partial capture.
+    complete = bool(rows) and all(row.get('capture_complete') is True for row in rows) and all(row.get('tool_name') for row in calls)
 
     def resolve(row):
         kind, target = row['kind'], row['target']

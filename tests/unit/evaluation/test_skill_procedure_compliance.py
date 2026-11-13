@@ -75,6 +75,15 @@ def test_an_absent_tool_call_is_unknown_without_a_complete_capture(events):
     assert report['safety_state'] == 'unknown'
 
 
+def test_a_nameless_tool_call_in_a_complete_capture_keeps_absence_unknown():
+    # The unnamed call may be the forbidden tool or the required one, so no absence can be decided.
+    nameless = dict(case_id='case', event_id='nameless', activity='tool_call', capture_complete=True)
+    report = procedure_compliance(SPEC, events=[call('Read'), nameless], artifacts=ARTIFACTS)
+    assert report['alternatives']['run-then-report']['requirements']['tool_call:Bash'] == 'unknown'
+    assert report['safety']['no_tool_call:WebFetch'] == 'unknown'
+    assert (report['state'], report['safety_state']) == ('unknown', 'unknown')
+
+
 def test_an_observed_tool_call_counts_even_when_capture_is_partial():
     report = procedure_compliance(SPEC, events=[call('Bash', complete=False)], artifacts=ARTIFACTS)
     assert report['alternatives']['run-then-report']['state'] == 'compliant'
