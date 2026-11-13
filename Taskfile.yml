@@ -1133,6 +1133,12 @@ tasks:
     desc: Require each regression pin (fixed-in marker) to fail on the unfixed parent commit; needs full Git history
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_pins.py'
+  test:isolated:
+    desc: Run a command in a temporary worktree of REPO and fail when REPO changed (opt-in, not part of task test); see docs/isolated-project-check.md
+    requires:
+      vars: [REPO]
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{.REPO | shellQuote}} {{.CLI_ARGS}}'
   test:runtime-contracts:
     desc: Opt-in probes of the real claude and codex CLIs (flags and exit codes, zero model calls); skipped runtimes are listed
     env:
