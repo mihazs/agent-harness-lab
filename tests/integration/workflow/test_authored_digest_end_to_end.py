@@ -83,7 +83,8 @@ class Stub:
         self.mode.write_text(mode)
         try:
             code = main(['improve', str(self.project), *(['--events', str(self.events)] if events else []),
-                         '--agent', self.runtime, '--timeout', '120', *extra])
+                         '--agent', self.runtime, '--timeout', '120',
+                         '--focus', 'synthetic hypothesis', *extra])  # findings without outcomes need a hypothesis source (#803)
         except SystemExit as stop:
             code = stop.code
         capsys.readouterr()

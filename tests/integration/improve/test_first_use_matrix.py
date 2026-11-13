@@ -5,12 +5,15 @@ Every cell builds a synthetic project and recorded sessions under tmp_path with 
 import json
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import os
+import subprocess
 
 import pytest
 
 from agent_harness_lab import cli
 from tests.support.first_use_history import Home
 
+NEEDS_796 = pytest.mark.xfail(strict=True, reason='needs #796 (PR 819)')
 NEEDS_332 = pytest.mark.xfail(strict=True, reason='needs #332')
 
 
@@ -109,6 +112,22 @@ def test_sessions_under_another_path_end_with_the_existing_typed_reason_and_reme
     code, receipt, _ = improve(home)
     assert (receipt['status'], receipt['reason']) == ('blocked', 'history_no_matching_sessions')
     assert receipt['remediation'] and home.model_calls == 0
+
+
+@NEEDS_796
+def test_sessions_recorded_under_the_main_checkout_name_the_worktree_path_as_the_cause(home):
+    environment = {**os.environ, 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_TERMINAL_PROMPT': '0'}
+    identity = ['-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', '-c', 'commit.gpgsign=false']
+    for arguments in (['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'synthetic']):
+        subprocess.run(['git', *identity, *arguments], cwd=home.project, check=True, capture_output=True, env=environment)
+    linked = (home.root/'linked').resolve()
+    subprocess.run(['git', *identity, 'worktree', 'add', '-q', '--detach', str(linked)], cwd=home.project, check=True,
+                   capture_output=True, env=environment)
+    for name in ('a', 'b', 'c'): home.codex(name, cwd=home.project.resolve())
+    home.project = linked
+    code, receipt, _ = improve(home)
+    assert receipt['status'] == 'blocked' and receipt['remediation'] and home.model_calls == 0
+    assert [row['reason'] for row in receipt['history']['capture_reasons']] == ['history_not_found_for_worktree']
 
 
 def test_mixed_runtimes_with_failures_end_typed_and_spend_nothing(home):

@@ -126,7 +126,8 @@ def test_public_improve_delivers_complete_large_analysis_through_both_preparatio
     f.backend.run.side_effect=execute
     command=['improve',str(f.project),'--agent','responses','--inference-settings',str(f.args.inference_settings),
         '--cgroup-root',str(f.args.cgroup_root),'--image-root',str(f.args.image_root),
-        '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes)]
+        '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes),
+        '--focus','synthetic hypothesis']  # findings without outcomes need a hypothesis source (#803)
     if canonical:command+=['--evaluation-store',str(f.root/'history')]
     output=io.StringIO()
     with patch('agent_harness_lab.cli.evaluator',return_value=f.runner), \
