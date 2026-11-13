@@ -23,6 +23,13 @@ SOFT_BUDGET='instruction_launch_lines_above_soft_budget'
 PROCEDURE_SOURCE='https://code.claude.com/docs/en/features-overview'
 
 
+class InventoryBlocked(ValueError):
+    """The fresh inventory exceeded the entry bound; carries the typed reason and the largest directories."""
+    def __init__(self, remedy):
+        super().__init__('audit inventory blocked: ' + remedy['reason'])
+        self.remedy = remedy
+
+
 def select(path, project, runtime):
     if runtime != 'codex': raise ValueError('audit recheck requires the Codex runtime')
     descriptor=os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -61,6 +68,8 @@ def select(path, project, runtime):
               and row.get('status') in ('weak','missing') and isinstance(row.get('id'),str)}
     profile=dict(schema_version=1,runtime='codex',version=surfaces.PINS['codex'],task_cwd=cwd)
     inventory=harness_inventory.capture(project,profile,schema_version=2)
+    remedy=harness_inventory.entry_bound_remedy(project,profile) if inventory.blocked_reason=='entry_bound_exceeded' else None
+    if remedy: raise InventoryBlocked(remedy)
     fresh=audit.audit(inventory,task_cwd=cwd,codex_project_doc_max_bytes=limit)
     if fresh.status!='completed' or report.get('harness_inventory_sha256')!=fresh.harness_inventory_sha256:
         raise ValueError('audit inventory changed or is unavailable')

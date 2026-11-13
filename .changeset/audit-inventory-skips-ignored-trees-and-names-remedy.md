@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": patch
+---
+
+Stop a long-lived checkout from blocking `ahl audit`. The harness inventory no longer counts or enters a directory that the checkout's own `.gitignore` files exclude (a conservative subset of git's rules; an ignore file it cannot model exactly is never used to skip anything), so a checkout with ignored dependency or build folders is audited like a fresh one. A root harness folder, the root `skills` tree and the task directory are still walked. When the entry bound is still exceeded, the report keeps `blocked_reason: entry_bound_exceeded` and adds `inventory_remedy` with the largest top-level directories by entry count (names and counts only); the human output prints it and `next_action` names the two ways out: ignore a directory that holds no harness files, or rerun with the new `ahl audit --max-inventory-entries N` (at most 200000). `ahl improve --from-audit` now returns `status: blocked`, `reason: inventory_entry_bound_exceeded` and the same ranking before staging anything or calling a model, instead of a generic input error.

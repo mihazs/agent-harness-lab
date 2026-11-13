@@ -1,5 +1,6 @@
 """Offline command for the read-only static harness audit."""
 import argparse
+import contextlib
 from dataclasses import asdict
 import json
 import os
@@ -98,8 +99,12 @@ def main(argv=None):
                         help='Recheck ambiguous Codex budget boundaries in a separate private observation')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
                         help='Checkout instruction-line convention (default: 200; not a validated threshold)')
+    parser.add_argument('--max-inventory-entries', type=int, help='Raise the directory-entry bound of the inventory walk (default: '
+                        f'{harness_inventory.MAX_ENTRIES}; at most {harness_inventory.ENTRY_CEILING}); directories the checkout .gitignore excludes are not counted')
     args = parser.parse_args(argv)
+    limits = contextlib.ExitStack()
     try:
+        limits.enter_context(harness_inventory.entry_limit(args.max_inventory_entries))
         if (args.improvement_recheck or args.improvement_recheck_soft_budget) and args.runtime != 'codex':
             raise ValueError('improvement recheck currently supports Codex only')
         if args.codex_project_doc_max_bytes is not None and args.runtime != 'codex':
@@ -122,6 +127,8 @@ def main(argv=None):
         inventory = harness_inventory.capture(project, profile, schema_version=2)
         report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd,
             codex_project_doc_max_bytes=args.codex_project_doc_max_bytes).document(), args.task_cwd)
+        if inventory.blocked_reason == 'entry_bound_exceeded':
+            report['inventory_remedy'] = harness_inventory.entry_bound_remedy(project, profile)
         if args.runtime == 'codex':
             boundaries = {} if args.codex_budget_boundary else None
             report['codex_budget_declaration'] = dict(
@@ -209,6 +216,11 @@ def main(argv=None):
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
+            if report.get('inventory_remedy'):
+                bound = report['inventory_remedy']['max_entries']
+                report['next_action'] = (f'The inventory examined more than {bound} directory entries. Add a listed directory '
+                    'that holds no harness files to .gitignore' + (f', or rerun with --max-inventory-entries N (at most {harness_inventory.ENTRY_CEILING})'
+                    if bound < harness_inventory.ENTRY_CEILING else '') + '.')
         elif candidate:
             report['next_action'] = ('Evaluate a proposed change for finding ' + candidate['id'] + ' with ahl improve; '
                 'the convention check does not establish a performance improvement.')
@@ -258,6 +270,12 @@ def main(argv=None):
                           f"hook: {row['hook_match']}; enforcement: unknown")
             if report['constraint_references']['status'] != 'completed':
                 print('Constraint reference coverage: unknown')
+            remedy = report.get('inventory_remedy')
+            if remedy:
+                print(f"Inventory blocked: {remedy['reason']} (more than {remedy['max_entries']} directory entries examined)")
+                for row in remedy['largest_directories']:
+                    print(f"Large directory: {json.dumps(row['directory'], ensure_ascii=True)} "
+                          f"({'at least ' if row['at_least'] else ''}{row['entries']} entries)")
             for row in report['findings']:
                 print(f"{row['dimension']}: {row['reason']} ({row['path']}) — {row['remediation'] or 'not checked'}")
             print(report['next_action'])
@@ -267,3 +285,5 @@ def main(argv=None):
         parser.exit(2, f'ahl audit: {exc}\n')
     except NotImplementedError:
         parser.exit(3, 'ahl audit: required filesystem capabilities unavailable; no unsafe fallback\n')
+    finally:
+        limits.close()

@@ -4,9 +4,13 @@ Every node's path_sha256 is the HarnessFile identity (schema.digest of the relat
 names the snapshot captured from the same checkout, so baseline/candidate binding keeps one inventory. The walk
 opens each directory and file by name beneath an already opened directory with O_NOFOLLOW: links, special files,
 .git and nested repositories are refused, never followed. Nothing is executed, written or loaded, and roots
-outside the checkout are read only when the caller declares them. A node is a declaration, never evidence that
-a runtime loaded the file: observed_loading and effective are always 'unknown'.
+outside the checkout are read only when the caller declares them. A directory that the checkout's own .gitignore
+files exclude (see ignore_rules) is neither counted nor entered, and so is neither listed nor refused, except a root
+harness folder, the root skills tree and the task directory; with no .git entry at the checkout root, or an ignore
+file the walk cannot model, nothing is skipped. A node is a declaration, never evidence that a runtime loaded the file:
+observed_loading and effective are always 'unknown'.
 """
+import contextlib
 from dataclasses import asdict, dataclass
 import hashlib
 import importlib
@@ -15,6 +19,7 @@ from pathlib import PurePosixPath
 import stat
 from agent_harness_lab import surfaces
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
+from . import ignore_rules
 from .schema import digest, fingerprint, label
 
 PROFILE = 'ahl-harness-inventory-v1'
@@ -22,6 +27,7 @@ MAX_FILES = 1000              # inventory nodes
 MAX_BYTES = 10 * 1024 * 1024  # bytes read from candidate files, across every root
 MAX_DEPTH = 32                # directory nesting below a root
 MAX_ENTRIES = 20000           # directory entries examined, candidates or not
+ENTRY_CEILING = 200000        # the most a caller may raise MAX_ENTRIES to, so one directory listing stays bounded in memory
 MAX_FACTS = 50000             # parser facts across every node, so many small files cannot amplify memory
 MAX_CONFIG_BYTES = 1024 * 1024  # one JSON or TOML runtime configuration, checked before any parser decodes it
 ORIGINS = ('checkout', 'caller_declared_external')
@@ -31,6 +37,7 @@ PARSE_STATUSES = ('not_parsed', 'not_read', 'no_parser', 'parsed', 'parse_failed
 REFUSALS = ('symlink', 'special_file', 'hardlink', 'nested_repository', 'vcs_metadata')
 PROFILE_FIELDS = {'schema_version', 'runtime', 'version', 'task_cwd'}
 STUB = __name__ + ':not_parsed'
+KEPT_ROOTS = (*surfaces.ROOT_HARNESS_FOLDERS, 'skills')  # folders the surface rules treat as project-owned even when ignored
 _DIRECTORY = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
@@ -186,14 +193,26 @@ class _Walk:
         self.profile, self.parsers, self.schema_version = profile, parsers(), schema_version
         self.nodes, self.refusals, self.directories = [], [], set()
         self.entries = self.bytes = self.facts = 0
+        self.rules = ()  # ignore rules in force at the directory being walked, lowest precedence first
 
     def root(self, path, origin, name):
         descriptor = open_directory_nofollow(path)
         try:
             rows = self.listing(descriptor)
             skills = any(entry == 'skills' and stat.S_ISDIR(info.st_mode) for entry, info in rows)
+            # Ignore rules mean something only in a repository root; without one, or for a declared root, skip nothing.
+            repository = origin == 'checkout' and any(entry == '.git' for entry, _ in rows)
+            self.rules = () if repository else (ignore_rules.UNKNOWN,)
             self.walk(descriptor, '', 0, (origin, name, skills), rows)
         finally: os.close(descriptor)
+
+    def ignore_rules_of(self, descriptor, prefix, info):
+        """Rules of the .gitignore in this directory; a file that is not a readable, modelled regular file is UNKNOWN."""
+        if not stat.S_ISREG(info.st_mode): return (ignore_rules.UNKNOWN,)
+        try: text = self.read(descriptor, '.gitignore', info).decode('utf-8')
+        except UnicodeDecodeError: return (ignore_rules.UNKNOWN,)
+        rules = ignore_rules.parse(text, tuple(prefix.split('/')[:-1]), ignore_rules.MAX_RULES - len(self.rules))
+        return (ignore_rules.UNKNOWN,) if rules is ignore_rules.UNKNOWN else rules
 
     def listing(self, descriptor):
         rows = []
@@ -205,7 +224,16 @@ class _Walk:
         return sorted(rows, key=lambda row: row[0])
 
     def walk(self, descriptor, prefix, depth, root, rows):
-        if root[0] == 'checkout': self.directories.add(prefix[:-1] or '.')
+        if root[0] != 'checkout': return self.visit(descriptor, prefix, depth, root, rows)
+        self.directories.add(prefix[:-1] or '.')
+        outer = self.rules
+        ignore = next((info for name, info in rows if name == '.gitignore'), None)
+        if ignore is not None and ignore_rules.UNKNOWN not in outer:
+            self.rules = outer + self.ignore_rules_of(descriptor, prefix, ignore)
+        try: self.visit(descriptor, prefix, depth, root, rows)
+        finally: self.rules = outer
+
+    def visit(self, descriptor, prefix, depth, root, rows):
         for name, info in rows:
             path, mode = prefix + name, info.st_mode
             if name == '.git': self.refuse(root, path, 'vcs_metadata')
@@ -214,7 +242,14 @@ class _Walk:
             elif not stat.S_ISREG(mode): self.refuse(root, path, 'special_file')
             else: self.file(descriptor, name, path, info, root)
 
+    def skipped(self, path):
+        """A checkout directory the repository's ignore rules exclude, unless it holds a root harness surface or the task."""
+        task = self.profile.get('task_cwd', '.')
+        return (path.split('/')[0] not in KEPT_ROOTS and task != path and not task.startswith(path + '/')
+                and ignore_rules.ignored(self.rules, tuple(path.split('/'))))
+
     def child(self, descriptor, name, path, info, depth, root):
+        if root[0] == 'checkout' and self.skipped(path): return
         if depth > MAX_DEPTH: raise _Blocked('depth_bound_exceeded')
         nested = os.open(name, _DIRECTORY, dir_fd=descriptor)
         try:
@@ -296,6 +331,58 @@ def _same(descriptor, info):
     opened = os.fstat(descriptor)
     if (opened.st_dev, opened.st_ino, stat.S_IFMT(opened.st_mode)) != (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)):
         raise ValueError('harness inventory input changed during reading')
+
+
+class _Census(_Walk):
+    """Counts the entries the walk would examine in each top-level directory and reads no file but ignore files.
+
+    Each directory is counted only up to MAX_ENTRIES, so the cost stays bounded however large one tree is."""
+
+    def __init__(self, profile):
+        super().__init__(profile)
+        self.counts, self.capped, self.region = {}, set(), None
+
+    def file(self, descriptor, name, path, info, root): return
+
+    def listing(self, descriptor):
+        rows = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                self.counts[self.region] = count = self.counts.get(self.region, 0) + 1
+                if count > MAX_ENTRIES: raise _Blocked('entry_bound_exceeded')
+                rows.append((entry.name, entry.stat(follow_symlinks=False)))
+        return sorted(rows, key=lambda row: row[0])
+
+    def child(self, descriptor, name, path, info, depth, root):
+        if depth > 1: return super().child(descriptor, name, path, info, depth, root)
+        self.region = name
+        try: super().child(descriptor, name, path, info, depth, root)
+        except _Blocked: self.capped.add(name)  # past the bound or too deep: the count is a lower bound
+
+
+def entry_bound_remedy(checkout, profile=None, limit=5):
+    """None while the checkout's walk stays within MAX_ENTRIES; otherwise the typed reason and the largest top-level
+    directories by entry count, names and counts only (at_least marks a count that stopped at the bound). Ignored
+    directories are absent, as in the walk. A checkout that cannot be opened raises OSError, never an empty ranking."""
+    census = _Census(profile or {})
+    try: census.root(os.path.abspath(checkout), 'checkout', 'checkout')
+    except _Blocked: pass  # a flat root, an oversized ignore file or a deep tree: what was counted is a lower bound
+    if sum(census.counts.values()) <= MAX_ENTRIES: return None
+    ranked = sorted(((name, count) for name, count in census.counts.items() if name is not None), key=lambda row: (-row[1], row[0]))
+    return dict(reason='entry_bound_exceeded', max_entries=MAX_ENTRIES, largest_directories=[
+        dict(directory=name, entries=count, at_least=name in census.capped) for name, count in ranked[:limit]])
+
+
+@contextlib.contextmanager
+def entry_limit(limit):
+    """Run a block under a caller-declared MAX_ENTRIES (None keeps the current one), restored afterwards."""
+    global MAX_ENTRIES
+    if limit is not None and (type(limit) is not int or not 0 < limit <= ENTRY_CEILING):
+        raise ValueError(f'entry bound must be an integer from 1 to {ENTRY_CEILING}')
+    saved = MAX_ENTRIES
+    if limit is not None: MAX_ENTRIES = limit
+    try: yield
+    finally: MAX_ENTRIES = saved
 
 
 def parse(reference, path, raw, profile):

@@ -430,6 +430,50 @@ def test_audit_recheck_rejects_changed_or_fabricated_findings(wf, monkeypatch, c
     with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')
 
 
+def recorded_audit(wf, monkeypatch, capsys):
+    """A completed recheck report for a one-file checkout, written beside the project."""
+    (wf.project/'.git').mkdir();(wf.project/'AGENTS.md').write_text('bad\n'*100)
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck','--codex-project-doc-max-bytes','16']) == 0
+    receipt=wf.root/'audit.json';receipt.write_text(capsys.readouterr().out)
+    return receipt
+
+
+def test_audit_recheck_of_an_oversized_checkout_blocks_with_the_typed_reason_before_any_model_stage(wf, monkeypatch, capsys):
+    from agent_harness_lab.sources import harness_inventory
+    receipt=recorded_audit(wf,monkeypatch,capsys)
+    (wf.project/'bulk').mkdir()
+    for index in range(60):(wf.project/'bulk'/f'f{index}.txt').write_text('')
+    monkeypatch.setattr(harness_inventory,'MAX_ENTRIES',40)
+    args=wf.args();args.from_audit=receipt
+    with patch('agent_harness_lab.workflow._improve',side_effect=AssertionError('a model stage was reached')):
+        result=improve(args)
+    assert (result['status'],result['reason'],result['changed_files'])==('blocked','inventory_entry_bound_exceeded',[])
+    assert result['inventory_remedy']['largest_directories'][0]==dict(directory='bulk',entries=41,at_least=True)
+    assert 'inventory_remedy' in result['remediation']
+    assert json.loads((Path(result['output'])/'workflow.json').read_text())['reason']==result['reason']
+    assert (wf.project/'AGENTS.md').read_text()=='bad\n'*100
+
+
+def test_audit_recheck_of_an_oversized_ignored_tree_is_not_blocked_by_it(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+    from agent_harness_lab.sources import harness_inventory
+    receipt=recorded_audit(wf,monkeypatch,capsys)
+    (wf.project/'.gitignore').write_text('bulk/\n');(wf.project/'bulk').mkdir()
+    for index in range(60):(wf.project/'bulk'/f'f{index}.txt').write_text('')
+    monkeypatch.setattr(harness_inventory,'MAX_ENTRIES',40)
+    assert select(receipt,wf.project,'codex')['profile']=='ahl-audit-hypothesis-v1'
+
+
+def test_audit_recheck_reports_other_blocked_inventories_as_unavailable_not_as_an_entry_overflow(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+    from agent_harness_lab.sources import harness_inventory
+    receipt=recorded_audit(wf,monkeypatch,capsys)
+    monkeypatch.setattr(harness_inventory,'MAX_BYTES',10)
+    with pytest.raises(ValueError,match='inventory changed or is unavailable') as blocked:select(receipt,wf.project,'codex')
+    assert type(blocked.value) is ValueError
+
+
 def test_rechecked_skill_collision_reaches_synthetic_routing_evaluation(wf, monkeypatch, capsys):
     (wf.project/'.git').mkdir();(wf.project/'mode').write_text('skill_route')
     for name in ('alpha','beta'):

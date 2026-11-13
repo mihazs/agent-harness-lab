@@ -1254,8 +1254,16 @@ def _run_improvement(args, *, parent_started=None):
         if getattr(args,'from_audit',None) is not None:
             if getattr(args,'focus',None) is not None or getattr(args,'repair_contracts',False):
                 raise ValueError('audit hypothesis cannot be combined with focus or contract repair')
-            from .audit.recheck import select
-            args._audit_hypothesis=select(args.from_audit,args.project,args.agent)
+            from .audit.recheck import InventoryBlocked, select
+            try: args._audit_hypothesis=select(args.from_audit,args.project,args.agent)
+            except InventoryBlocked as error:  # typed and before any model spend: nothing was staged or run
+                output = output_dir(args,deadline=started+args.timeout)
+                reason = 'inventory_' + error.remedy['reason']
+                result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                              remediation=REMEDIATION[reason], inventory_remedy=error.remedy)
+                construction_receipt(result, args)
+                write_json(output/'workflow.json', result)
+                return result
             args.focus=args._audit_hypothesis['focus']
             if now()>=started+args.timeout: raise TimeoutError('audit recheck exhausted improvement budget')
         return _improve(args)

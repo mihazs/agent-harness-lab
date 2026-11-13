@@ -261,6 +261,38 @@ unsupported runtime version gives the report status `blocked` or `unsupported`,
 every dimension `unknown` with `inventory_<reason>`, and no findings, never a
 partial pass.
 
+### Ignored directories and the entry bound
+
+The inventory examines at most 20,000 directory entries. In a checkout that has a
+`.git` entry at its root, it neither counts nor enters a directory that the
+checkout's own `.gitignore` files exclude, such as an installed dependency or build
+folder, so a long-lived checkout is inventoried like a fresh one. The walk reads
+only `.gitignore` files below the checkout, as ordinary bytes, in a conservative
+subset of git's rules: `*`, `?`, bracket classes, `**`, a leading or middle `/`
+anchor, a trailing `/` and `!` negation, with the last matching line deciding and a
+deeper file overriding a shallower one. A line it cannot model exactly (a
+backslash escape, a POSIX class or `[^` set, an unbalanced bracket, an empty
+segment, too many segments or `**` wildcards), an unreadable, non-UTF-8 or
+non-regular `.gitignore` or more rules than its bound make that file, and every
+directory below it, count as not ignored: the walk then reads everything, as
+before, and never skips on a guess. The user's global excludes file, `.git/info/exclude` and the
+index are never consulted, so a file that is tracked inside an ignored directory
+is not inventoried. The root `.claude`, `.agents` and `.codex` folders and the root
+`skills` tree, each with everything below it, and the `--task-cwd` directory and its
+parents are walked even when ignored.
+Without a `.git` entry nothing is skipped. Refusals under an ignored directory,
+such as a symlink or nested repository, are not reported.
+
+When the entry bound is still exceeded, the report keeps `blocked_reason:
+entry_bound_exceeded` and adds `inventory_remedy`: `max_entries` and the largest
+top-level directories as `{directory, entries, at_least}` rows, names and counts
+only (`at_least` is true where counting stopped at the bound). `next_action` names the
+two ways out: add a listed directory that holds no harness files to `.gitignore`, or
+rerun with `--max-inventory-entries N` (1 to 200,000, for that run only). The
+human output prints the same ranking. Raising the bound reads more of the tree, so
+it is not a substitute for ignoring a dependency folder. See
+[audit a long-lived checkout](audit-long-lived-checkout.md) for the steps.
+
 ## Findings
 
 Each surface that is not conformant gives one finding with an `id`, its
@@ -393,7 +425,11 @@ The procedure shape and routing collisions are lexical hypotheses, not evidence
 that a skill is needed or that routing failed. The procedure check re-observes
 selected instruction files separately and rejects the hypothesis if that observation
 is unsettled or the chain is truncated. It cannot be combined
-with `--focus` or deterministic contract repair.
+with `--focus` or deterministic contract repair. When the fresh inventory exceeds
+the entry bound, `ahl improve` stops before staging anything or calling a model:
+the receipt has `status: blocked`, `reason: inventory_entry_bound_exceeded`, the
+same `inventory_remedy` ranking and no changed files. Ignore the large directory
+and run `ahl audit` again to obtain a report for the recheck.
 
 The supplied report is an untrusted selection and its parameters are caller
 assertions. The recheck requires a matching inventory and freshly observed
