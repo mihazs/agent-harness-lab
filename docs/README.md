@@ -29,6 +29,7 @@ reader purpose.
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), and [audit sampling](audit-sampling.md).
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
+- [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
 - [Stage budgets and early stops](budget-stages.md): the construction time box, feasibility check, uninformative stop, refinement reuse and per-stage receipt.
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).

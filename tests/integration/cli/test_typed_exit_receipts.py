@@ -59,7 +59,6 @@ def assert_typed(receipt, tmp_path, status, reason, stage, code):
     assert str(tmp_path) not in text and tmp_path.name not in text and SENTINEL not in text
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 def test_a_tiny_budget_that_cuts_the_preparation_ends_with_a_typed_budget_reason(stub, capsys, tmp_path):
     stub.mode.write_text(json.dumps(dict(cut=100)))
     code, receipt, _ = improve(stub, capsys, timeout='3')
@@ -68,7 +67,6 @@ def test_a_tiny_budget_that_cuts_the_preparation_ends_with_a_typed_budget_reason
     assert '--timeout' in receipt['exit_receipt']['next_step']
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 def test_a_symlinked_instruction_file_ends_with_a_typed_unsupported_input_reason(stub, capsys, tmp_path):
     real = stub.project / 'real.md'
     real.write_text(SENTINEL)
@@ -80,7 +78,6 @@ def test_a_symlinked_instruction_file_ends_with_a_typed_unsupported_input_reason
     assert 'regular file' in receipt['exit_receipt']['next_step']
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 def test_resume_with_execution_options_names_the_corrected_command_shape(stub, capsys, tmp_path):
     code, receipt, _ = invoke(capsys, ['improve', str(stub.project), '--resume', 'run-synthetic', '--timeout', '100'])
     assert code == 2
@@ -88,7 +85,6 @@ def test_resume_with_execution_options_names_the_corrected_command_shape(stub, c
     assert receipt['exit_receipt']['next_step'] == 'Resume with no other option: ahl improve PROJECT --resume RUN_ID'
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 def test_a_second_invocation_on_one_workspace_ends_busy_and_not_as_a_usage_error(stub, capsys, tmp_path):
     with workflow.project_lock(stub.project.resolve()):
         code, receipt, _ = improve(stub, capsys)
@@ -104,7 +100,6 @@ USAGE_ERRORS = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 @pytest.mark.parametrize('name', USAGE_ERRORS)
 def test_every_usage_error_exits_2_with_a_typed_reason(stub, capsys, tmp_path, name):
     code, receipt, _ = invoke(capsys, USAGE_ERRORS[name](stub))
@@ -117,7 +112,6 @@ def _constants(tree):
     return {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)}
 
 
-@pytest.mark.xfail(strict=True, reason='#837: the typed exit receipt is not implemented')
 def test_the_catalog_of_nonzero_exit_paths_has_no_path_without_a_typed_reason():
     package = Path(agent_harness_lab.__file__).parent
     cli = ast.parse((package / 'cli.py').read_text())
