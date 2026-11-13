@@ -187,6 +187,8 @@ def test_cancelled_call_drops_the_late_result_but_a_delivered_one_cannot_be_canc
                  b'"tool_use_id": "t", "session_id": "run-1"}', 'malformed_event', id='nan-payload'),
     pytest.param(b'[' * 5000, 'malformed_event', id='deep-nesting'),
     pytest.param(event(hook_event_name='PreToolUse'), 'unsupported_event', id='other-event'),
+    pytest.param(event(hook_event_name=[]), 'unsupported_event', id='list-event-name'),
+    pytest.param(event(hook_event_name={'a': 1}), 'unsupported_event', id='object-event-name'),
     pytest.param(event(tool_use_id=''), 'malformed_event', id='missing-call-identity'),
     pytest.param(event(tool_name=7), 'malformed_event', id='bad-tool'),
     pytest.param(json.dumps({k: v for k, v in json.loads(event()).items() if k != 'tool_response'}).encode(),

@@ -63,7 +63,8 @@ def probe_runtime(runtime, version):
 
 
 def _envelope(event):
-    status = EVENTS.get(event.get('hook_event_name')) if isinstance(event, dict) else None
+    name = event.get('hook_event_name') if isinstance(event, dict) else None
+    status = EVENTS.get(name) if isinstance(name, str) else None  # unhashable JSON names must not raise
     if status is None:
         raise BridgeFailure('unsupported_event')
     if not _bounded(event.get('tool_use_id')) or not _bounded(event.get('tool_name')):
