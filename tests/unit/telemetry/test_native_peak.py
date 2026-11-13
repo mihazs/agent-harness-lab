@@ -85,8 +85,8 @@ def plain(value):
         from agent_harness_lab.telemetry.schema import SOURCE_ORDER
         if 'source_order_profile' in value: value = {k: v for k, v in value.items() if k not in SOURCE_ORDER}
         # The working-directory class and drift counts were added later and are pinned in test_claude_cwd_drift;
-        # the input fingerprint is pinned in test_native_input_fingerprints.
-        value = {k: v for k, v in value.items() if k not in ('cwd_class', 'cwd_drift', 'input_fingerprint')}
+        # the input fingerprint is pinned in test_native_input_fingerprints and the error class in test_native_error_classes.
+        value = {k: v for k, v in value.items() if k not in ('cwd_class', 'cwd_drift', 'input_fingerprint', 'tool_error_class')}
         return {repr(k) if isinstance(k, tuple) else k: plain(v) for k, v in value.items()}
     if isinstance(value, (set, frozenset)): return sorted((plain(v) for v in value), key=repr)
     if isinstance(value, (list, tuple)): return [plain(v) for v in value]

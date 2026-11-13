@@ -88,12 +88,12 @@ def test_a_duplicate_line_whose_error_text_differs_is_still_the_same_idempotent_
     assert summary['duplicates_skipped'] == 1 and len(results(records)) == 2
 
 
-def test_the_class_is_left_out_of_the_body_insensitive_metadata_fingerprint(tmp_path):
-    (tmp_path / 'a').mkdir(); (tmp_path / 'b').mkdir()
-    first = Capture().build(tmp_path / 'a', outcomes={'call-1': MESSAGES['command_exit_nonzero'], 'call-2': None})
-    second = Capture().build(tmp_path / 'b', outcomes={'call-1': MESSAGES['read_before_edit'], 'call-2': None})
-    assert first.path.read_bytes() != second.path.read_bytes()
-    assert first.collect()['fingerprint'] == second.collect()['fingerprint']
+def test_the_class_is_left_out_of_the_body_insensitive_metadata_fingerprint(capture):
+    assert capture.classes() == [None, 'command_exit_nonzero']  # the Read result precedes the Bash result in capture order
+    before = capture.collect()['fingerprint']
+    capture.set({'call-1': MESSAGES['read_before_edit'], 'call-2': None})  # same call, same status, a different error class
+    assert capture.classes() == [None, 'read_before_edit']
+    assert capture.collect()['fingerprint'] == before
 
 
 def scan(events):
