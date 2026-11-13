@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.196.0
+
+### Minor Changes
+
+- 02df1dc: Link saved Cognee `recall` chunk, graph and code results to the graph-export claims they came from by hashing `metadata.data_id`, `metadata.chunk_id` and a code fact's pinned code-graph node ID (with its node type) under the declared dataset scope, keep names, paths and lines out of the claims, and refuse malformed provenance fields. Part of #52.
+- 75e925f: Add `local_file/hindsight-model-references/v2`, which decodes a Hindsight mental model's `reflect_response` when the manifest declares `bank_rows_json_encoding: "serialized"`, the pinned exporter's default. Undeclared, mismatched, malformed or over-limit values stay unknown, nested decoding shares the archive's JSON budget, and references remain unverified claims. `v1` is unchanged. Part of #51.
+- a9c00af: Add `ahl sources mempalace capabilities`, an offline report of the four MemPalace import profiles, the pinned read tools without a profile, the write tools AHL refuses and the unsupported live import, with an optional names-only comparison of a saved MCP `tools/list` result against the pinned input schemas. Part of #50.
+- 692a29c: Add an offline `local_file/quality-reports/v1` source that imports selected SARIF 2.1.0 logs bound to a caller-declared full commit SHA. Each result becomes a hash-only `quality_finding` development-artifact record that keeps SARIF's own `level`, `kind` and suppression marker apart from test statuses and carries no outcome, so a static-analysis or security finding is never a test failure or a task grade. Absent, unrecognized or contradictory levels stay `unknown`, a log without findings or without a reported successful tool run is flagged as not clean, and a run with external property file references is refused. Messages, code flows and URIs are never stored, followed or fetched, and profile `ci-quality-reports-v1` is rejected by public export. `ahl sources preview` reports a `quality_reports_summary`. Part of #53: TAP, coverage and lint reports, artifact download and live expiry warnings remain open.
+- d251233: Add `agent_harness_lab.memory.reuse`, a pure offline stage reuse planner: canonical domain-separated node keys, a cycle-checked stage dependency graph with transitive invalidation, typed hit/miss/invalid/blocked reason codes, and a frozen `ahl-stage-reuse-v1` receipt that lists reused, executed, excluded and unknown stages. Unverified freshness or an unchecked live authority is reported as unknown, never as a hit. Committing outputs to the store and a CLI are left to later slices.
+
+### Patch Changes
+
+- a533e60: The static comparison viewer tests now assert that an unknown usage total renders as `unknown` with a non-zero unknown-record count, so a regression that shows it as zero fails. Test-only change. Follow-up to #37.
+- a9c00af: Make the MemPalace capability check treat a saved `tools/list` page with a `nextCursor` as incomplete: it adds `listing_incomplete` and reports `inconclusive`, not `incompatible`, when a profile tool is absent. Part of #50.
+- a9c00af: Stop the MemPalace capability check from counting `mempalace_reconnect` in `advertised_write_tools`: the pinned server keeps it listed in read-only mode, so its presence is not evidence that the server was not read-only. It stays in the refused state-changing tools. Part of #50.
+- fa6a95f: Correct the evidence reuse contract matrix: role projection also passes the operator-supplied `incident_retrieval` result, not only `paired_history_analysis`, and the projection test now covers it. Part of #631.
+
 ## 0.195.0
 
 ### Minor Changes
