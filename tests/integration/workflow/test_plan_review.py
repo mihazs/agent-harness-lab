@@ -9,13 +9,14 @@ import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from agent_harness_lab import config
 from agent_harness_lab.cli import main
 from agent_harness_lab.harness_change_plan import attach, produce
-from agent_harness_lab.promotion.journal import Journal
+from agent_harness_lab.promotion.journal import GuardedTransactionError, Journal
 from agent_harness_lab import workflow
 from agent_harness_lab.workflow import candidate_states, snapshot, write_json
 from tests.support.one_call import one as one  # noqa: F401
@@ -90,6 +91,64 @@ def test_authorization_naming_another_plan_is_refused_before_any_write(rolled_ba
     code, message = apply(one.run, '--project', one.project, '--authorize-plan', '0' * 64)
     assert code == 2 and 'different plan' in message
     assert tree(one.project) == before and journal(one).active == one.rollback
+
+
+def interrupted_write(*, after):
+    """Fail the journal's target write before the replace (the target is untouched) or after it (the target holds the repair)."""
+    original = Journal._write_snapshot
+
+    def write(self, *args, **kwargs):
+        if after:
+            original(self, *args, **kwargs)
+        raise OSError(f'injected interruption {"after" if after else "before"} the target write')
+    return patch.object(Journal, '_write_snapshot', write)
+
+
+def unfinished(one):
+    folder = journal(one).folder
+    return [p.stem for p in folder.glob('*.json') if p.name != 'active.json' and json.loads(p.read_text())['status'] == 'applying']
+
+
+def test_interruption_before_the_target_write_leaves_the_project_and_a_retry_applies_once(rolled_back):
+    one = rolled_back
+    with interrupted_write(after=False):
+        code, message = apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)
+    assert code == 1 and 'before the target write' in message
+    assert one.skill.read_bytes() == b'\xef\xbb\xbf' + one.valid and journal(one).active == one.rollback
+    [pending] = unfinished(one)
+    code, packet = apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)
+    assert (code, packet['status']) == (0, 'applied_verified') and one.skill.read_bytes() == one.valid
+    assert journal(one).active == packet['receipt']['deployment'] != pending
+    assert apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)[1]['status'] == 'stale'
+
+
+def test_interruption_after_the_target_write_is_never_applied_twice_and_recovers_to_the_reviewed_bytes(rolled_back):
+    one = rolled_back
+    with interrupted_write(after=True):
+        code, message = apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)
+    assert code == 1 and 'after the target write' in message
+    assert one.skill.read_bytes() == one.valid and journal(one).active == one.rollback
+    [pending] = unfinished(one)
+    code, packet = apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)
+    assert (code, packet['status'], packet['binding']['project_inventory']) == (3, 'stale', 'changed')
+    assert unfinished(one) == [pending] and journal(one).active == one.rollback
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert main(['promotion', str(one.project), '--deployment', pending, '--action', 'recover']) == 0
+    assert journal(one).active == pending and journal(one).load(pending)['metadata']['plan_sha256'] == one.plan_sha256
+    assert one.skill.read_bytes() == one.valid and apply(one.run, '--project', one.project, '--authorize-plan', one.plan_sha256)[0] == 3
+    assert main(['rollback', pending, '--project', str(one.project)]) == 0
+    assert one.skill.read_bytes() == b'\xef\xbb\xbf' + one.valid
+
+
+def test_a_guarded_transaction_that_needs_intervention_prints_its_receipt_and_exits_one(rolled_back):
+    one = rolled_back
+    error = GuardedTransactionError(SimpleNamespace(folder='journal'), dict(deployment='d' * 32), ['.agents/skills/example/SKILL.md'])
+    output = io.StringIO()
+    with patch('agent_harness_lab.workflow.adopt_with_receipt', side_effect=error), contextlib.redirect_stdout(output):
+        assert main(['apply', str(one.run), '--project', str(one.project), '--authorize-plan', one.plan_sha256]) == 1
+    receipt = json.loads(output.getvalue())
+    assert (receipt['status'], receipt['deployment'], receipt['publication_allowed']) == ('requires_intervention', 'd' * 32, False)
+    assert receipt['changed_files'] == ['.agents/skills/example/SKILL.md']
 
 
 @pytest.mark.parametrize('change,field', [

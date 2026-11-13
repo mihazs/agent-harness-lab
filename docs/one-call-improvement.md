@@ -871,13 +871,19 @@ record's metadata names `reviewed_plan_apply` and the plan hash. A second run wi
 and writes no second journal entry. The target-state receipt is the one described above and asserts neither
 activation nor behavior.
 
+An interrupted application is never applied twice. If the write fails before the target is replaced, the project
+is unchanged and the same authorized command applies it once. If the process stops after the replace, the target
+already holds the reviewed bytes, so the command reports `stale` and writes nothing; finish the recorded
+transaction with `ahl promotion PROJECT --deployment ID --action recover` or undo it with `ahl rollback ID
+--project PROJECT`. These apply-stage cases are covered by `tests/integration/workflow/test_plan_review.py`.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. `ahl apply` reviews every saved plan but applies only the
-independently reproduced skill-header repair; interruption-between-stage tests
-across planning, evaluation, review and application, Codex hook application and
-real-runtime evidence remain. Effective instruction hierarchy (#79, whose scoped rewrite
+independently reproduced skill-header repair; interruption tests cover only its
+application stage (planning, evaluation and review interruptions, Codex hook
+application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation and operation-level review are described above; actual loading evidence and
 the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
