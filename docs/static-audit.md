@@ -23,7 +23,14 @@ The separate `agent_harness_lab.audit.protected_paths.capture()` inventory lists
 common secret, configuration and CI path candidates using checkout metadata only;
 it never opens their contents. This private, bounded inventory does not determine
 whether any path is protected. Refused paths leave coverage unknown. The walk is
-not an atomic filesystem snapshot.
+not an atomic filesystem snapshot. It shares the inventory walk, so in a checkout
+with a `.git` entry at its root it does not enter a directory the checkout's own
+`.gitignore` files exclude (see [ignored
+directories](#ignored-directories-and-the-entry-bound)): a secret, configuration or
+CI path below one is not listed, while an ignored file in a walked directory is.
+`coverage: walked_checkout_metadata_only` does not say those directories were walked,
+and the report counts none of them, so a path absent below an ignored directory is
+unknown, not clear.
 The CLI includes this separately captured inventory under `protected_path_inventory`;
 it is not covered by `audit_sha256`, which binds the harness inventory audit.
 
@@ -281,7 +288,10 @@ is not inventoried. The root `.claude`, `.agents` and `.codex` folders and the r
 `skills` tree, each with everything below it, and the `--task-cwd` directory and its
 parents are walked even when ignored.
 Without a `.git` entry nothing is skipped. Refusals under an ignored directory,
-such as a symlink or nested repository, are not reported.
+such as a symlink or nested repository, are not reported. The protected-path and
+feedback-sensor inventories use this walk and skip the same directories; their
+`coverage` value does not record the omission, so read their lists as incomplete
+below an ignored directory.
 
 When the entry bound is still exceeded, the report keeps `blocked_reason:
 entry_bound_exceeded` and adds `inventory_remedy`: `max_entries` and the largest
@@ -461,6 +471,13 @@ inventory. `coverage` describes only the metadata walk: refused paths make it
 unknown, and unrecognized filenames mean detection completeness is unknown even
 when the walk completed. The `.github/workflows`, `.circleci`, and `.buildkite`
 subtrees are excluded; other hosted configuration paths may not be recognized.
+The walk is the inventory walk, so in a checkout with a `.git` entry at its root a
+directory the checkout's own `.gitignore` files exclude is not entered (see
+[ignored directories](#ignored-directories-and-the-entry-bound)): a test path,
+configuration file or task runner below one, and a `tests` directory name there, is
+not listed, while an ignored file in a walked directory is. `walked_checkout_metadata_only`
+does not say those directories were walked, and the report counts none of them, so
+a candidate absent below an ignored directory is unknown, not missing.
 Instruction-to-command consistency and stale-target
 detection are not checked in this slice. The inventory is a separate metadata
 observation, not an atomic snapshot with other audit inputs. Without the option,

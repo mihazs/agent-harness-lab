@@ -219,6 +219,19 @@ def test_instruction_validation_failure_blocks_before_evaluation(wf):
     assert (wf.project/'AGENTS.md').read_text() == 'bad'
 
 
+def test_an_oversized_checkout_blocks_instruction_validation_with_the_typed_reason_and_remedy(wf, monkeypatch):
+    from agent_harness_lab.sources import harness_inventory
+    (wf.project/'mode').write_text('rooted'); (wf.project/'bulk').mkdir()
+    for index in range(60): (wf.project/'bulk'/f'f{index}.txt').write_text('')
+    monkeypatch.setattr(harness_inventory,'MAX_ENTRIES',40)
+    result=improve(wf.args())
+    assert (result['status'],result['reason'],result['instruction_reasons']) == ('blocked','inventory_entry_bound_exceeded',['inventory_entry_bound_exceeded'])
+    assert result['inventory_remedy']['largest_directories'][0] == dict(directory='bulk',entries=41,at_least=True)
+    assert json.loads(Path(result['instruction_validation']).read_text())['inventory_remedy'] == result['inventory_remedy']
+    assert not (Path(result['output'])/'preparation/evaluation-0').exists()
+    assert (wf.project/'AGENTS.md').read_text() == 'bad'
+
+
 def test_concurrent_source_change_is_preserved(wf):
     (wf.project/'mode').write_text('concurrent')
     with pytest.raises(ValueError): improve(wf.args())

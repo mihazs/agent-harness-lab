@@ -431,6 +431,18 @@ def test_hook_requires_a_plan_for_nested_edits_only(ws):
     assert missing_cwd['reasons'] == ['task_cwd_unavailable']
 
 
+def test_an_oversized_project_blocks_validation_with_the_typed_reason_and_the_largest_directories(ws, monkeypatch):
+    from agent_harness_lab.sources import harness_inventory
+    for index in range(60): ws.write(ws.project, f'bulk/f{index}.txt', '')
+    monkeypatch.setattr(harness_inventory, 'MAX_ENTRIES', 40)
+    document = ws.validate()
+    assert (document['status'], document['reasons']) == ('blocked', ['inventory_entry_bound_exceeded'])
+    assert document['inventory_remedy']['largest_directories'][0] == dict(directory='bulk', entries=41, at_least=True)
+    monkeypatch.setattr(harness_inventory, 'MAX_BYTES', 10)  # another blocked inventory stays the untyped reason, with no ranking
+    other = ws.validate()
+    assert (other['reasons'], 'inventory_remedy' in other) == (['project_inventory_blocked'], False)
+
+
 def test_validation_leaves_inputs_graders_and_heldout_untouched(ws):
     evaluation = ws.root / 'evaluation'
     ws.write(evaluation, 'heldout/original', 'synthetic held-out input')

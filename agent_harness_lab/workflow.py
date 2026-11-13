@@ -809,6 +809,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if instruction['status'] != 'valid':
                 result.update(status='blocked', reason='instruction_validation_'+instruction['status'],
                               instruction_reasons=instruction['reasons'])
+                if 'inventory_entry_bound_exceeded' in instruction['reasons']:  # the typed reason the audit reports
+                    result.update(reason='inventory_entry_bound_exceeded', inventory_remedy=instruction.get('inventory_remedy'))
                 break
         stopped = (agents_validation.review_tree(baseline, candidate, original, proposed).outcome()
                    or skill_validation.review_tree(baseline, candidate, original, proposed,

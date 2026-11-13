@@ -35,8 +35,16 @@ adds on disk. Nothing here changes the project: the audit only reads it.
    ```
 
 4. Run the audit again. When it reports `completed`, `ahl improve . --from-audit
-   REPORT` re-audits the same way. If the tree still overflows, `improve` stops
-   before staging anything or calling a model, with `reason:
-   inventory_entry_bound_exceeded` and the same ranking in `inventory_remedy`.
+   REPORT` re-audits with the same ignore rules but under the default bound, because
+   `--max-inventory-entries` belongs to the audit run alone and `improve` has no
+   such flag. A report that completed only because of step 3 therefore blocks the
+   recheck: `improve` stops before staging anything or calling a model, with `reason:
+   inventory_entry_bound_exceeded` and the same ranking in `inventory_remedy`. Use
+   step 2 for that report.
+
+   A plain `ahl improve .` reads the inventory only when its candidate edits a
+   nested instruction or rule file or declares an instruction plan. It does so after
+   the proposal call, so that model call has already run, and a tree that
+   still overflows stops the run with the same `reason` and `inventory_remedy`.
 
 The report is a convention check, not evidence of harness performance.
