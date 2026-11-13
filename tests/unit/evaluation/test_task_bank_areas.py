@@ -79,3 +79,18 @@ def test_malformed_task_areas_are_typed_errors_with_or_without_a_registry(tmp_pa
 def test_error_names_the_bank_file_actually_read(tagged):
     renamed = tagged.rename(tagged.with_name('project-bank.json'))
     assert rejected(renamed, registry=[]).file == 'project-bank.json'
+
+
+def test_untagged_task_declaration_has_no_areas_field_and_parses_back_equal():
+    task = json.loads(config.starter().read_text())['tasks'][0]
+    parsed = TaskSpec.parse(task, analysis_only=True)
+    assert parsed.declaration() == task
+    assert TaskSpec.parse(json.loads(json.dumps(parsed.declaration())), analysis_only=True) == parsed
+
+
+def test_tagged_task_declaration_keeps_its_areas_and_parses_back_equal():
+    task = {**json.loads(config.starter().read_text())['tasks'][0], 'areas': ['coding', 'ux-ui']}
+    parsed = TaskSpec.parse(task, analysis_only=True)
+    assert parsed.areas == ('coding', 'ux-ui')
+    assert json.loads(json.dumps(parsed.declaration())) == task
+    assert TaskSpec.parse(json.loads(json.dumps(parsed.declaration())), analysis_only=True) == parsed

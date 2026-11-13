@@ -1,6 +1,6 @@
 """Versioned reviewed tasks, deterministic leakage checks and final-access ledger."""
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -58,6 +58,12 @@ class TaskSpec:
         if obj.independence not in ('reviewed', 'unverified') or not obj.source_ref or not obj.safety:
             raise ValueError('missing task provenance/safety boundary')
         return obj
+
+    def declaration(self):
+        """The JSON task declaration this spec parses back from; an untagged task has no areas field."""
+        value = json.loads(json.dumps(asdict(self)))
+        if not self.areas: del value['areas']
+        return value
 
 
 def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None, registry=None):
