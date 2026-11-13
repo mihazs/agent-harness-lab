@@ -1,29 +1,31 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design with four implemented slices: the optional frozen `bayes_decision`
-spec field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
-reference); the pure posterior and decision function (issue b, see
-[Decision function](#decision-function)); the exact sign-permutation cross-check as a
-pure module (issue c, see [Frequentist cross-check](#frequentist-cross-check-option-1-role));
-and the wiring (issue d, see [Wiring](#wiring)): `ahl experiment --records`, the
-history-store analysis that `ahl improve` carries and its decision receipt report the
-`bayesian_decision` block for a plan that declares `bayes_decision`, and `ahl compare`
-displays a supplied block. A plan without the declaration prints byte-identical output.
-The page explains what a numeric, non-LLM decision score should be, why it takes this
-shape, and which choices the operator must confirm. The reference section at the end
-fixes names and fields so the remaining implementation issues can be written against
-it.
+This page explains a numeric, non-LLM score that answers whether a candidate harness is
+better than, equivalent to or worse than a baseline, or whether the evidence is
+insufficient, and why it takes this shape. It is implemented and opt-in: a plan that
+declares the frozen `bayes_decision` field gets a `bayesian_decision` block from
+`ahl experiment --records`, the history-store analysis that `ahl improve` carries and its
+decision receipt, and `ahl compare` displays a supplied block. A plan without the
+declaration prints byte-identical output. Calibration of the thresholds and the
+descriptive report are not yet implemented (see [Status](#status)).
 
-The existing decision path is unchanged by this design. The weighted-root Hoeffding
+Use the [how-to](bayesian-decision-how-to.md) to add the score to a plan and read it, and
+the [reference](bayesian-decision-reference.md) for the spec field, the output block, the
+reasons, the verdict meanings and the six synthetic fixtures. This page keeps the reasoning
+and the choices the operator must confirm. Read the [evidence status](#evidence-status)
+and the [limits](#limits) before relying on a verdict: the method is an inference by
+analogy and the score is recommendation-only.
+
+The existing decision path is unchanged. The weighted-root Hoeffding
 analysis in `evaluation/statistics.py` stays the only path that can reach
 `recommended` in `promotion/policy.decide`, and `automatic_promotion` stays `false`
 everywhere.
 
 ## Evidence status
 
-No peer-reviewed work applies this method (a paired Bayesian posterior with a region
-of practical equivalence) to agent harness scoring. The design is an inference by
-analogy from three nearby literatures, none of which was validated for harnesses:
+No peer-reviewed work applies a paired Bayesian posterior with a region of practical
+equivalence to agent harness scoring. The design is an inference by analogy from three
+nearby literatures, none of which was validated for harnesses:
 
 - Bayesian estimation with a region of practical equivalence, from Kruschke,
   "Rejecting or accepting parameter values in Bayesian estimation" (Advances in
@@ -36,21 +38,21 @@ analogy from three nearby literatures, none of which was validated for harnesses
 
 These citations were written from the literature as known and were not re-fetched
 while drafting. They motivate the shape of the score; they do not show that it
-controls error for agent tasks. Only the calibration step below, run on synthetic
+controls error for agent tasks. Only the [calibration step](#calibration-planned), run on synthetic
 outcome models, can show that for this repository, and even then only under the
 declared synthetic model, as `power.py` already says of its own rates.
 
 ## Report availability
 
-The design brief names a research report ("Modelos de score para harness", expected
+The research report this design cites was not available, so every claim that depends on
+it is unverified. The design brief names it ("Modelos de score para harness", expected
 at `research/modelos-de-score-para-harness.md` or `reports/Modelos de score para
-harness.md`). It was not found. A search of `~/Documents`, `~/Downloads`, `~/dev` and
-`/tmp` for file names matching `*modelos*score*` and `*score*harness*` returned
-nothing, and a search of Markdown files for the phrase "region of practical
-equivalence" returned nothing. It is not in the repository.
+harness.md`). It was not in the repository, and a search of the usual document locations
+of the machine for file names matching `*modelos*score*` and `*score*harness*`, and of
+Markdown files for the phrase "region of practical equivalence", returned nothing.
 
-So every claim that depends on that report is unverified. In particular, this design
-takes the operator's summary of the report's recommendation as given:
+In particular, this design takes the operator's summary of the report's recommendation
+as given:
 
 - Option 2 (paired Bayesian posterior with a ROPE) is the core.
 - Option 1 (frequentist) is a cross-check.
@@ -59,11 +61,10 @@ takes the operator's summary of the report's recommendation as given:
 
 The identity of Options 1, 5 and 6 beyond those roles is not known from the repository.
 This page maps Option 1 to an exact sign-permutation test, Option 5 to a descriptive
-desirability and Pareto epsilon-indicator report (matching the suggested issue
-split), and Option 6 to a guard that can only downgrade a verdict. Those mappings are
-guesses and are listed under open decisions. If the report turns up and disagrees,
-the report's text wins over this page's mapping, and the page should be amended
-before any implementation issue starts.
+desirability and Pareto epsilon-indicator report (the planned optional report), and
+Option 6 to a guard that can only downgrade a verdict. Those mappings are guesses and are
+listed under open decisions. If the report turns up and disagrees,
+the report's text wins over this page's mapping, and this page should be amended.
 
 ## Why add a second analysis
 
@@ -327,7 +328,7 @@ Role and limits:
   accepts at .05, so it is the root floor of the decision that withholds the verdict.
 - It does not use the Hoeffding bound and does not replace it.
 
-### Implemented module
+### The module
 
 `agent_harness_lab/evaluation/sign_permutation.py` has two pure functions and no
 dependence on the posterior, a clock, a file or a model.
@@ -369,8 +370,9 @@ regression control or a resource verdict keeps its own result and sets neither f
 so the cross-check can never undo a veto or a block. `equivalent` and
 `insufficient_evidence` are returned unchanged because the design defines no
 cross-check for them. The only possible change is to `insufficient_evidence`, and the
-function has no path that raises a verdict. Wiring the call into the gate and the
-output block is issue d.
+function has no path that raises a verdict. The
+[wiring](bayesian-decision-reference.md#wiring) passes the check to the decision function
+and the output block.
 
 ## Guard role (Option 6)
 
@@ -379,8 +381,7 @@ gives it the narrowest role consistent with that name: a check that can only tur
 verdict into `insufficient_evidence` or `worse` and can never grant anything. The
 per-family non-inferiority check and the resource stage above are the guards this
 design defines. The operator must confirm whether the report's Option 6 is something
-else, for example a worst-case-over-families rule, before the issue for stage 4 is
-written.
+else, for example a worst-case-over-families rule.
 
 ## Descriptive-only role (Option 5)
 
@@ -392,7 +393,7 @@ gate keeps explicit, so a single desirability number is never a decision input.
 
 ## Relationship to the existing code
 
-Verified against the current repository (see the PR for file and function evidence):
+Checked against the repository code:
 
 - `statistics.analyze` returns `supported`, `rejected`, `inconclusive`, `incomplete`
   or `blocked`; it already treats critical regression as a veto before unknown grades,
@@ -435,24 +436,22 @@ supplied analysis already contains it.
   `recommended` in `promotion.policy.decide`. Publication stays disallowed.
 - No LLM or model call appears anywhere in the score, the cross-check or the gate.
 
-## Implementation split
+## Status
 
-| Issue | Content | Depends on |
-|-------|---------|------------|
-| a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged (implemented) | none |
-| b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` (implemented, not wired) | a |
-| c | exact and Monte Carlo sign-permutation cross-check (implemented as a pure module) | a |
-| d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` (implemented, see [Wiring](#wiring)) | b, c |
-| e | calibration with `power.simulate` on declared null, in-ROPE and beneficial models; held-out seeds fixed before the run | b, c |
-| f | docs and the six fixtures listed below | d |
-| g | optional descriptive desirability and Pareto epsilon-indicator report | d |
+| Part | State |
+|------|-------|
+| `bayes_decision` spec field, validation and schema; digests of plans without it unchanged | implemented |
+| Stage 1 posterior, floors, unknown bounds and the decision function | implemented |
+| exact and Monte Carlo sign-permutation cross-check | implemented |
+| the `bayesian_decision` block in `ahl experiment`, the history-store analysis and the decision receipt; display in `ahl compare` | implemented |
+| documentation and the six synthetic fixtures | implemented (this page, the [how-to](bayesian-decision-how-to.md) and the [reference](bayesian-decision-reference.md)) |
+| calibration with `power.simulate` on declared null, in-ROPE and beneficial models | planned |
+| descriptive desirability and Pareto epsilon-indicator report | planned, optional |
 
-Every defect found in these issues gets a failing pytest regression test written first,
-in `tests/unit/evaluation/` or `tests/integration/evaluation/`. Open pull request #776
-touches `statistics.py` and `experiment-precision.md`; issue d should rebase after it
-merges.
+Every defect found in this work gets a failing pytest regression test written first, in
+`tests/unit/evaluation/` or `tests/integration/evaluation/`.
 
-### Calibration (issue e)
+### Calibration (planned)
 
 Declare and freeze, before running: the models, the seeds, the simulation count, and
 the acceptance rule. The rule extends the existing one: under a null model and under a
@@ -462,14 +461,14 @@ the Hoeffding path to. Under a beneficial model the Wilson lower bound of the `b
 rate is reported as power, with no pass or fail requirement because the Bayesian path
 is meant to be less conservative. `p_cut` may be raised and the root floor may be raised
 if the rule fails, and each change is made once on a tuning seed set and confirmed on
-a separate held-out set. If the held-out set fails, the issue stops and reports; it
+a separate held-out set. If the held-out set fails, the work stops and reports; it
 does not search for parameters that pass. Dependent-root models (the nominal bound
 fails there, as the existing precision page records) are reported, not required to pass.
 
-### Fixtures (issue f)
+### Fixtures
 
-All fixtures are synthetic and built from a seeded generator, with the expected verdict
-fixed before the numbers are tuned:
+Six synthetic banks come from a seeded generator, and the expected verdict of each was
+fixed before any number was tuned, so a fixture cannot be adjusted to its result:
 
 - Clear win: two families, many roots, candidate better by well over `epsilon` in
   both. Expected `better`.
@@ -478,222 +477,15 @@ fixed before the numbers are tuned:
   `equivalent`.
 - Mixed with unknowns: a win-shaped bank where a fraction of arms are ungraded.
   Expected `insufficient_evidence` with reason `unknown_outcomes`, no point `S`, and
-  `S_low <= S_high`.
+  `S_low <= S_high`. An unknown outcome is never a failure.
 - Critical regression veto: the clear-win bank plus one critical candidate record.
   Expected `worse` with reason `critical_regression`, whatever `S` is.
 - Starter bank: six roots, every one a candidate win. Expected `insufficient_evidence`
   (root floor), including when the posterior alone would exceed `p_cut`.
 
-## Reference
-
-### Spec field
-
-`bayes_decision` (optional, in `ExperimentSpec`, omitted from `to_dict` when `None`):
-
-| Key | Type | Rule |
-|-----|------|------|
-| `schema_version` | int | 1 |
-| `profile` | str | `bayesian-rope-decision-v1` |
-| `rope_epsilon` | float | finite, 0 < value < 1 |
-| `prior` | object | `kind` `dirichlet_pseudo_root`, `concentration` > 0, `anchor` 0 |
-| `p_cut` | float | .5 < value < 1 |
-| `regression_margin` | float | finite, 0 <= value < 1 |
-| `posterior_draws` | int | 1,000 to 200,000 |
-| `allow_bound_resolved_verdict` | bool | |
-| `cross_check_alpha` | float | 0 < value < .5 |
-
-Validation also requires `precision_half_width` to be set, the plan to be fixed-final
-and not cohort-pinned, and unknown keys to be rejected.
-
-Implemented in `evaluation/bayes_spec.py`; the schema of the frozen (resolved) form is
-[`schemas/bayes-decision-spec.schema.json`](schemas/bayes-decision-spec.schema.json).
-
-- **Optional and opt-in.** A plan without `bayes_decision` serializes, hashes and
-  schedules exactly as before. An empty object is not an opt-in: `schema_version`
-  and `profile` are always required.
-- **Defaults resolve at construction.** An omitted `rope_epsilon`, `prior`, `p_cut`,
-  `regression_margin`, `posterior_draws`, `allow_bound_resolved_verdict` or
-  `cross_check_alpha` is filled with the default from the table above when the spec
-  is constructed, and the filled values are what `to_dict` and `ExperimentSpec.digest`
-  carry. Later changes to `effect_margin` or `family_margin` are therefore separate
-  edits that change the digest anyway; they never silently move a frozen Bayesian
-  parameter. `rope_epsilon` has no default when `effect_margin` is 0, and
-  `cross_check_alpha` has none when `1 - p_cut` rounds to 0; both must then be given.
-- **One spelling per value.** Integer fields (`schema_version`, `posterior_draws`,
-  `prior.anchor`) reject `20000.0` and `True`. `NaN`, infinities, strings and booleans
-  are rejected for every numeric field.
-- **Errors are typed.** A rejected declaration raises `BayesDecisionError`, a
-  `ValueError` whose `field` names the key, for example `bayes_decision.p_cut`, or
-  `sequential`, `precision_half_width` or `cohort_manifest_sha256` for a plan-level
-  conflict. `ahl experiment` reports it as an evaluation contract error (exit 2).
-- **Frozen.** Any change to any parameter changes the plan digest and every trial id,
-  so records of one plan do not fit a plan with an edited declaration. The caller's
-  object is copied at construction, and validation re-checks the stored object, so an
-  in-place edit is caught either by validation or by the digest check.
-
-### Output block
-
-Key `bayesian_decision` on the analysis result:
-
-| Field | Meaning |
-|-------|---------|
-| `profile`, `plan_sha256`, `parameters_sha256` | identity of the rule and the frozen parameters |
-| `verdict` | `better`, `equivalent`, `worse`, `insufficient_evidence`, `blocked` |
-| `reason` | typed reason, for example `critical_regression`, `unknown_outcomes`, `insufficient_independent_roots`, `cross_check_disagrees`, `family_regression_not_excluded`, `resource_gate_not_evaluated`, `monte_carlo_margin` |
-| `stage` | the gate stage that decided, `validity`, `critical_veto`, `quality`, `regression_controls` or `resource` |
-| `score` | `S` (null with unknown arms), `S_worse`, `S_equiv`, the central interval, `S_low` and `S_high` |
-| `draws`, `seed_source`, `monte_carlo_se` | simulation facts |
-| `roots`, `unknown_arms`, `bound_resolution` | evidence coverage |
-| `families` | per-family posterior mean, interval and non-inferiority probability |
-| `cross_check` | method (`exact` or `monte_carlo`), `p_better`, `p_worse`, `basis` (`point` or, with an ungraded arm, `worst_case_over_completions`), alpha and agrees |
-| `resource_gate` | the attached `resource_decision` state or `not_declared` |
-| `prior_sensitivity` | `S` under half and double the prior concentration, report only |
-| `oracle_validity` | copied from the analysis the block sits beside (`unverified` in `ahl experiment`, `current` or the stored state in the history store); the block never raises it |
-| `recommendation_authority`, `automatic_promotion`, `publication_allowed` | always `false` |
-
-### Decision function
-
-Implemented in `evaluation/bayes_decision.py` and not called by any command yet.
-`decide(spec, roots, *, critical, validity, groups, resource_decision, cross_check)` is
-pure: no file, clock, network or model call, and it never calls `statistics.analyze`
-or `promotion.policy.decide`. It returns the block above, plus `gate` (the five stage
-statuses, `passed`, `failed`, `not_evaluated` or `not_declared`), `floors` and
-`critical_regression`.
-
-- **Inputs.** `roots` holds one `RootDifference(root, family, low, high, unknown_arms)`
-  per planned root, exactly the roots of `spec.tasks`. `root_difference(root, family,
-  pairs)` builds one from `(candidate, baseline)` outcome pairs (`True`, `False` or
-  ungraded), averaging repetitions inside the root so they never add evidence, and
-  bounds an ungraded arm the way `statistics.incomplete_bounds` does. `critical` is
-  `True` (observed), `False` or `None` (a flag is unknown). `validity` is a typed
-  reason when the caller's own stage 1 checks failed. `groups` maps a root to its
-  similarity component; roots of one component merge into one unit by their mean,
-  and a component that spans families is refused. `cross_check` is the downgrade-only
-  input `{method, p_better, p_worse}` that issue c will supply; absent means not
-  evaluated and never blocks. Malformed input raises `BayesDecisionError`.
-- **Sampling.** `random.gammavariate` only. The seed is a SHA-256 of the profile
-  label, a stream name and the plan digest (`sampling_seed`), so the same inputs and
-  plan give identical output and a different plan gives a different seed. The call is
-  bounded: `posterior_draws x (independent roots + 3 x families)` above 20,000,000
-  returns `blocked` with reason `work_bound_exceeded` before any sampling.
-- **Unknown outcomes.** One pass draws the Dirichlet weights once and applies them to
-  the worst-case and best-case root differences, so `S_low <= S <= S_high` holds draw
-  by draw for every completion of the ungraded arms. The same holds for the loss
-  probability (`S_worse_low`, `S_worse_high`) and the equivalence probability
-  (`S_equiv_low`, `S_equiv_high`). The equivalence lower bound is the probability that
-  the worst case is above `-epsilon` and the best case below `epsilon` in the same
-  draw, which is what holds for every completion; requiring each extreme separately
-  would not. With any ungraded arm `score.estimate`, `S_worse` and `S_equiv` are
-  `null` and the verdict is `insufficient_evidence` with reason `unknown_outcomes`;
-  `bound_resolution` reports `better_under_all_completions`,
-  `worse_under_all_completions`, `equivalent_under_all_completions` or `unresolved`.
-  With the frozen `allow_bound_resolved_verdict` set to `true`, the same guaranteed
-  bounds drive the decision table, the precision floor (an interval that encloses every
-  completion) and the family checks (the minimum over completions), so a verdict is
-  issued only when it holds for every completion; the reason stays `unknown_outcomes`
-  when it does not. `score.estimate` stays `null` either way.
-- **Order.** The caller's validity reason, then the critical veto (before the root
-  floor, as `statistics.analyze` does, so observed harm is reported on any bank
-  size), then the root floor (stage `validity`, reason
-  `insufficient_independent_roots`), unknown outcomes, the precision floor, the
-  Monte Carlo margin and the decision table, the cross-check downgrade of `better` or
-  `worse`, family regression (`worse`, reason `family_regression`, when
-  `P(theta_f < -regression_margin) >= p_cut`), an unknown critical flag, family
-  non-inferiority (`family_regression_not_excluded`) and the resource stage. The
-  score is still computed and reported when a floor withholds the verdict, so a reader
-  can see that the posterior alone would have passed.
-- **Monte Carlo margin.** `monte_carlo_se` is the binomial standard error at `p_cut`, `sqrt(p_cut (1 - p_cut) / draws)`. Any of `S`, `S_worse` and `S_equiv` within four binomial
-  standard errors of `p_cut` withholds the verdict (`monte_carlo_margin`). A family
-  probability counts as meeting the cut only when it is also outside that band.
-- **Resource stage.** When the plan pins a contract, a `resource_decision.decide`
-  result for the same contract digest with decision `noninferior` or `improvement` lets
-  `better` or `equivalent` stand. The attested `conditional_*` decisions do not pass,
-  and the stage never touches `worse`. Without a pinned contract the stage reports
-  `not_declared`.
-- **Authority.** `recommendation_authority`, `automatic_promotion` and
-  `publication_allowed` are `false` in every result.
-
-The standard-library sampler follows the Bayesian bootstrap and so is overconfident
-with few discrete root differences; the floors and the margin limit that, and
-calibration (issue e) is what can show whether they are enough.
-
-### Wiring
-
-Implemented in `evaluation/bayes_analysis.py`. `attach(spec, records, analysis, *,
-root_similarity_evidence, root_similarity_bank, resource_decision)` returns a copy of
-`analysis` with one added key `bayesian_decision`, or `analysis` itself when the plan
-declares no `bayes_decision`, so every existing output is byte-identical. It never
-calls or edits `statistics.analyze`, `promotion.policy.decide` or
-`resource_decision.decide`, makes no model, network, clock or file access, and runs
-after the promotion decision, so `decide` never sees the block.
-
-| Command | Where the block appears |
-|---------|-------------------------|
-| `ahl experiment --spec ... --records ...` | beside `status` and `promotion`; `--preflight`, `--power-model` and the sequential mode are unchanged |
-| the history-store analysis (`ahl analyze --history-store`, the decision receipt that `ahl improve` writes and verifies) | in the analysis; the receipt's `analysis_disposition.bayesian_decision` carries verdict, reason, stage and `parameters_sha256` only when the plan declares it, and `analysis_sha256` binds the whole block |
-| `ahl compare` | a "Bayesian decision score" section, only when the supplied analysis already contains a block; it is displayed, never recomputed |
-
-How the inputs are read:
-
-- **Roots.** One paired difference per planned root: the mean over its (task,
-  repetition) pairs of candidate minus baseline, so repetitions never add evidence.
-  Root-similarity components merge into one unit through the existing
-  `root_similarity.binding`; a binding that cannot be validated blocks the block
-  (`root_similarity_binding_missing_or_invalid`) and a component that spans families
-  blocks it (`root_similarity_component_spans_families`) instead of failing the
-  analysis.
-- **Unknown.** A trial that is missing, not graded by the executable grader or without
-  a boolean outcome is an unknown arm, never a failure. A missing trial is an unknown
-  arm, not a validity failure, so a partial bank gets bounds and the verdict
-  `insufficient_evidence` (`unknown_outcomes`). An unknown critical flag is `unknown`.
-- **Validity.** The analysis' own `blocked` reason (provenance, root-similarity, an
-  oracle that is quarantined or not sealed, an incomplete behavior observation)
-  carries into the block as `blocked`, with every arm reported unknown. Duplicate
-  trials (`missing_or_duplicate_trials`), trials outside the schedule
-  (`unexpected_trial_set`), a provenance mismatch (`provenance_mismatch`) and an empty
-  record set (`zero_trials`, the vacuity label of issue 805) also block it.
-- **Critical veto.** A graded executable record with `critical_regression` true, or an
-  analysis that already reports the `critical_regression` veto (an observed critical
-  behavior effect in the history store), gives `worse` at the `critical_veto` stage
-  before any score is read, as `statistics.analyze` does.
-- **Cross-check.** The sign-permutation p-values go to `decide` as the downgrade-only
-  input, with `draws` equal to the frozen `posterior_draws`. With an ungraded arm the
-  p-values hold for every completion of the unknowns (`better` at the worst-case
-  completion, `worse` at the best-case one) and `basis` says so. A plan that `decide`
-  blocks for its work bound, or a critical veto, skips the check.
-- **Resource gate.** No command computes `resource_decision.decide` for a recorded
-  analysis yet, so a plan that pins a resource contract reports
-  `resource_gate_not_evaluated` instead of `better` or `equivalent`. The `resource_decision`
-  argument exists for the day one does; a decision for another contract or one that is
-  not `noninferior` or `improvement` blocks `better` and `equivalent`.
-- **Oracle.** `ahl experiment` labels the oracle `unverified` and so does the block it
-  adds (`oracle_validity`); promotion stays blocked by the existing policy. Only the
-  history store can label it `current`.
-
-**Reach in `ahl improve`.** A plan that declares `bayes_decision` must also freeze a
-`precision_half_width`, and the controller refuses to execute a plan whose Hoeffding
-precision preflight is `infeasible`. The Bayesian block is therefore reachable through
-`ahl improve` and `ahl experiment-history` only for banks large enough to pass that
-unchanged preflight (hundreds of roots for a half-width of .1, as the
-[experiment precision](experiment-precision.md) page reports), which is the regime
-where the fixed analysis already answers. Recorded results of any bank size reach the
-block through `ahl experiment --records`, and a sealed history of a larger bank carries
-it into the analysis and the decision receipt. The preflight is not changed here; the
-open decisions below name the question.
-
-A `better` or `equivalent` block next to a Hoeffding `inconclusive` still gives no
-recommendation: `promotion.policy.decide` reads only `analysis['status']`, the oracle
-label and the prerequisites, and its decision is identical with and without the block.
-
-### Verdict meanings
-
-| Verdict | Meaning | Authority |
-|---------|---------|-----------|
-| `better` | the posterior probability that the candidate beats the baseline by more than `epsilon` is at least `p_cut` and every gate stage passed | none; a review aid beside the unchanged certification path |
-| `equivalent` | the posterior probability of a difference inside the ROPE is at least `p_cut` and every gate stage passed | none; not noninferiority certification |
-| `worse` | a critical veto, or the posterior probability of a loss beyond `epsilon` or a family regression is at least `p_cut` | none |
-| `insufficient_evidence` | no stage vetoed, but evidence does not meet the pre-registered floors or cuts | none |
-| `blocked` | validity failed; no score is meaningful | none |
+The committed expectations, the commands that reproduce each fixture and a test that runs
+them are in the [how-to](bayesian-decision-how-to.md#reproduce-the-six-examples) and the
+[reference](bayesian-decision-reference.md#fixtures).
 
 ## Open decisions for the operator
 

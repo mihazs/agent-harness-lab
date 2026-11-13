@@ -15,7 +15,7 @@ reader purpose.
 - [Repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
-- [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
+- [Preflight experiment precision](experiment-precision.md), [add a Bayesian decision score to a plan and read it](bayesian-decision-how-to.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
 - [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), or [try AHL on a real project without changing it](isolated-project-check.md).
 
@@ -25,6 +25,7 @@ reader purpose.
 - [Campaign specification and planned records](campaign-specification.md).
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
+- [Bayesian decision score reference](bayesian-decision-reference.md): the `bayes_decision` spec field, the output block with the recorded input behind each number, reasons, verdict meanings and the six synthetic fixtures.
 - [Controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), and [audit sampling](audit-sampling.md).
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
@@ -39,7 +40,7 @@ reader purpose.
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
-- [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): a design for a numeric, non-LLM better, equivalent, worse or insufficient-evidence score beside the unchanged Hoeffding path. Its frozen `bayes_decision` spec field and schema, the pure posterior and decision function, and its exact sign-permutation cross-check are implemented, and `ahl experiment`, the history-store analysis that `ahl improve` carries and `ahl compare` report or display the block for a plan that declares it.
+- [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): why a numeric, non-LLM better, equivalent, worse or insufficient-evidence score runs beside the unchanged Hoeffding path, how it treats unknown outcomes, its evidence status (no peer-reviewed work applies the method to agent harness scoring) and its limits.
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 
 ## Historical and maintainer material

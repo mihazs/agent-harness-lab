@@ -7,6 +7,7 @@ import contextlib
 from dataclasses import asdict, replace
 import io
 import json
+from pathlib import Path
 import random
 
 from agent_harness_lab.cli import main
@@ -16,6 +17,12 @@ from tests.support.bayes_scenarios import SHAPES, outcome_pair, plan
 
 REPEATS = 4  # repetitions averaged inside one root
 KINDS = ('clear_win', 'clear_loss', 'tie', 'mixed_unknowns', 'critical_veto', 'starter_bank')
+EXPECTED_VERDICTS = Path(__file__).resolve().parents[2] / 'examples' / 'bayes-decision' / 'expected-verdicts.json'
+
+
+def expected_verdicts():
+    """kind -> {verdict, reason, stage, analysis}: the committed expectations, fixed from each bank's construction."""
+    return json.loads(EXPECTED_VERDICTS.read_text())['fixtures']
 
 
 def trial_records(spec, pair_of, *, unknown=0.0, critical=0, rng=None):

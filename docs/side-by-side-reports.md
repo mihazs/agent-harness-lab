@@ -100,7 +100,7 @@ the page. Each pair has a collapsible timeline with its alignment mode. Usage th
 is unknown is shown as `unknown`, never zero.
 
 When the supplied analysis already contains a `bayesian_decision` block (see the
-[Bayesian decision score](bayesian-decision-score.md#wiring)), the page adds a
+[Bayesian decision score](bayesian-decision-reference.md#wiring)), the page adds a
 "Bayesian decision score" section with its verdict, scores, gate stages, cross-check
 and resource state as text. It is copied from the analysis, never recomputed, labelled
 recommendation-only, and states that no peer-reviewed work applies the method to agent

@@ -13,15 +13,9 @@ from agent_harness_lab.evaluation import statistics
 from agent_harness_lab.evaluation.statistics import analyze
 from agent_harness_lab.promotion import policy
 from agent_harness_lab.promotion.policy import decide
-from tests.support.bayes_records import GOLDEN_KINDS, KINDS, bank, experiment, golden_case, run
+from tests.support.bayes_records import GOLDEN_KINDS, KINDS, bank, expected_verdicts, experiment, golden_case, run
 
 GOLDEN = Path(__file__).resolve().parents[2] / 'support' / 'golden_profiles' / 'ahl-experiment-analysis-v1.json'
-EXPECTED = {'clear_win': ('better', 'all_gate_stages_passed', 'resource'),
-            'clear_loss': ('worse', 'posterior_worse_cut_met', 'quality'),
-            'tie': ('equivalent', 'all_gate_stages_passed', 'resource'),
-            'mixed_unknowns': ('insufficient_evidence', 'unknown_outcomes', 'quality'),
-            'critical_veto': ('worse', 'critical_regression', 'critical_veto'),
-            'starter_bank': ('insufficient_evidence', 'insufficient_independent_roots', 'validity')}
 AUTHORITY = ('recommendation_authority', 'automatic_promotion', 'publication_allowed')
 
 
@@ -35,7 +29,8 @@ def reported(tmp_path, case):
 def test_each_named_fixture_reaches_its_verdict_through_the_command(tmp_path, kind):
     result = reported(tmp_path, bank(kind))
     block = result['bayesian_decision']
-    assert (block['verdict'], block['reason'], block['stage']) == EXPECTED[kind]
+    row = expected_verdicts()[kind]  # committed in examples/bayes-decision/expected-verdicts.json
+    assert (block['verdict'], block['reason'], block['stage']) == (row['verdict'], row['reason'], row['stage'])
     assert all(block[name] is False for name in AUTHORITY) and result['promotion']['automatic'] is False
     assert block['oracle_validity'] == result['oracle_validity'] == 'unverified'
     assert result['promotion']['status'] != 'recommended'
