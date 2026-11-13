@@ -1,5 +1,4 @@
 """Bank tasks carry optional capability areas; a declared registry decides which ids are allowed."""
-# fixed-in: 7806f58c -k declaration
 import json
 
 import pytest
