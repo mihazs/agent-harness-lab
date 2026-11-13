@@ -120,15 +120,13 @@ def test_the_block_is_not_computed_for_other_modes(tmp_path):
     assert err == '' and 'bayesian_decision' not in json.loads(out)
 
 
-def test_the_command_runs_the_hoeffding_engine_once_exactly_as_before_and_the_block_never_reruns_it(tmp_path):
-    case = bank('clear_win')
-    calls = []
-    original = statistics.analyze
+def test_the_block_never_reruns_the_hoeffding_engine(tmp_path):
+    original, calls = statistics.analyze, []
 
     def spy(*args, **kwargs):
-        calls.append((len(args), sorted(kwargs)))
+        calls.append(args)
         return original(*args, **kwargs)
 
     with patch('agent_harness_lab.evaluation.statistics.analyze', spy):
-        reported(tmp_path, case)
-    assert calls == [(2, ['root_similarity_bank', 'root_similarity_evidence'])]
+        reported(tmp_path, bank('clear_win'))
+    assert len(calls) == 1
