@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "note": "Each verdict is the one the design page fixes for that bank from its construction (true paired effect and number of roots), before any score was computed. Reason and stage name the gate step that decides it; analysis is the status the unchanged fixed analysis reports beside it. Changing a value here is changing a pre-registered expectation, never tuning a fixture to a number.",
+  "fixtures": {
+    "clear_win": {"verdict": "better", "reason": "all_gate_stages_passed", "stage": "resource", "analysis": "inconclusive"},
+    "clear_loss": {"verdict": "worse", "reason": "posterior_worse_cut_met", "stage": "quality", "analysis": "inconclusive"},
+    "tie": {"verdict": "equivalent", "reason": "all_gate_stages_passed", "stage": "resource", "analysis": "inconclusive"},
+    "mixed_unknowns": {"verdict": "insufficient_evidence", "reason": "unknown_outcomes", "stage": "quality", "analysis": "incomplete"},
+    "critical_veto": {"verdict": "worse", "reason": "critical_regression", "stage": "critical_veto", "analysis": "rejected"},
+    "starter_bank": {"verdict": "insufficient_evidence", "reason": "insufficient_independent_roots", "stage": "validity", "analysis": "inconclusive"}
+  }
+}

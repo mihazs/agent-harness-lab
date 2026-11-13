@@ -17,7 +17,7 @@ ROOT=Path(__file__).resolve().parents[3]
 ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),('sources','inventory'),('sources','claude','pin-check'),('sources','claude-mem','tool-check'),('sources','github','quota'),('memory',),('config',),
     ('campaign',),('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),('annotation-plan',),('compare',),
     ('doctor',),('audit',),('research-simulate',),('bank',),('mine',),('evaluate',),('evaluate','hooks'),('diagnose',),('benchmark',),('skills',),('skills','activation-receipt'))
-SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/publish_pending_releases.py','scripts/check_commit_message.py','scripts/check_pins.py','scripts/isolated_project_check.py','install.py','tools/perf_bench.py')
+SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/publish_pending_releases.py','scripts/check_commit_message.py','scripts/check_pins.py','scripts/isolated_project_check.py','scripts/build_bayes_fixtures.py','install.py','tools/perf_bench.py')
 PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',
         'sources/cli.py','sources/claude_mem_tools.py','sources/lineage.py','sources/harness_inventory.py','sources/github_quota.py','telemetry/claude_contract.py','evaluation/cli.py','user_config.py','evaluation/regression_review.py',
