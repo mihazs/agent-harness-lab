@@ -12,6 +12,7 @@ from .analysis_inputs import AnalysisInputs
 from .. import surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
 from ..diagnostics.brief import rendered
+from ..diagnostics.mechanisms import MECHANISM_GUIDANCE
 
 BRIEF_LINE = ('\nStart from /inputs/fixture/analysis-brief.json: a bounded, content-free brief of mechanism summaries, weak-outcome signals '
     'and missing evidence. Its patterns are observed, not diagnoses; a missing_evidence entry is unknown, not a clean result.')
@@ -71,6 +72,7 @@ Modify only these project-owned surfaces under candidate: ''' + surfaces.adoptab
 Never modify settings, permissions, hooks or credentials.
 Write proposal.json as {"status":"no_change","reason":"supported explanation"} if no repair is supported,
 or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded repair.
+''' + MECHANISM_GUIDANCE + '''
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
     if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE

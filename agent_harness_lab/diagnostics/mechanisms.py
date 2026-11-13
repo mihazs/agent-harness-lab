@@ -68,6 +68,10 @@ class MechanismRecord:
 # receipt; None means unlimited. Oversized or malformed entries are rejected with
 # a reason, never truncated, upgraded or silently dropped.
 ADMISSION_PROFILE = 'proposer-mechanism-admission-v1'
+# Stated to the proposer; the controller admits entries as unverified hypotheses and records why any is refused.
+MECHANISM_GUIDANCE = ('Each "mechanisms" entry is an object with mechanism_id, symptom, evidence_refs (ids listed in the brief), '
+                      'component, severity, boundary, controls, counterexamples, competing_explanations and falsifier. '
+                      'The parent records it as an unverified hypothesis; an entry that cites unlisted evidence is recorded as refused.')
 ADMITTED_STATUS = 'proposed_unverified'
 SEVERITIES = ('critical', 'high', 'normal')
 DEFAULT_PROPOSAL_LIMITS = dict(mechanisms=32, falsifiers=64, list_items=64, text=4096, identifier=128)
@@ -77,6 +81,8 @@ _AUTHORITY_FIELDS = frozenset({'disposition', 'status', 'reason', 'history', 'ke
                                'validated', 'verified', 'diagnosed', 'evidence_version', 'component_version'})
 _REF_LISTS = ('evidence_refs', 'controls', 'counterexamples')
 _ID_CHARS = frozenset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-')
+# Citations also name the analysis brief's `tool/category` mechanism IDs; a mechanism's own ID keeps the narrower alphabet.
+_REF_CHARS = _ID_CHARS | {'/'}
 
 
 @dataclass(frozen=True)
@@ -106,9 +112,9 @@ def _within(value, bound):
     return bound is None or len(value) <= bound
 
 
-def _identifier(value, bound):
+def _identifier(value, bound, chars=_ID_CHARS):
     return (isinstance(value, str) and bool(value) and _within(value, bound)
-            and value[0].isascii() and value[0].isalnum() and set(value) <= _ID_CHARS)
+            and value[0].isascii() and value[0].isalnum() and set(value) <= chars)
 
 
 def _text(value):
@@ -147,7 +153,7 @@ def _mechanism(item, refs, limits):
             return None, 'list_bound_exceeded:' + name
         for row in rows:
             if name in _REF_LISTS:
-                if not _identifier(row, limits['identifier']):
+                if not _identifier(row, limits['identifier'], _REF_CHARS):
                     return None, 'invalid_reference:' + name
                 if row not in refs:
                     return None, 'unknown_evidence_reference:' + name

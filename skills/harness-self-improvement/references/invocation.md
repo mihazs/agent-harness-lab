@@ -116,6 +116,10 @@ The receipt holds the facts a final report may state. Hazards it closes, and the
   with more evidence (for example `--history`, another `--focus`), not manual trial rigs. A model trial run
   outside the controller is reported as `outside_budget_unverified` and counts against the user's
   authorization for model calls.
+- **Mechanism coverage.** `mechanism_coverage` lists the mechanisms the proposer named as unverified
+  hypotheses. `coverage.open` entries are not covered, whatever happened to the candidate, and
+  `coverage_complete: false` means unseen mechanisms are possible. Do not say a mechanism was repaired
+  or diagnosed from this field; quote `admission[].rejection_reasons` for entries the contract refused.
 - **Pre-edit check.** Before staging or applying an edit to a harness file, check read-only for open pull
   requests (`gh pr list --state open --search PATH`) and uncommitted changes touching it. The controller's
   `pre_edit_check` covers local Git status only; report `open_pull_requests: not_checked` unless you checked.

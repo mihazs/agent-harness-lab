@@ -541,6 +541,7 @@ def _bounded_sha256(path, limit=8*1024*1024):
 
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
+    from .diagnostics.mechanisms import MECHANISM_GUIDANCE
     from .one_call import invocation_context
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
@@ -677,6 +678,7 @@ def _improve(args):
     if 'history' in data: result['history'] = data['history']
     protected = {}
     refinement_feedback = []
+    proposals = []
     single_run = None
     final_attempt = None
     proposed = None
@@ -752,6 +754,7 @@ The parent freezes the patch; {'the configured task bank supplies the evaluation
 Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparation/task roles and {args.timeout} seconds;
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
+{MECHANISM_GUIDANCE}
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
@@ -785,6 +788,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
+        proposals.append(proposal)
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(status='no_change',reason=brief.disposition(data))
@@ -1177,6 +1181,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis
+    if proposals:
+        from .diagnostics import improve_coverage
+        try:
+            result['mechanism_coverage']=improve_coverage.attach(output,[improve_coverage.admit(item,getattr(args,'_analysis_brief',None),baseline_hash) for item in proposals])
+        except (ValueError,TypeError,KeyError,OSError) as exc:  # Advisory bookkeeping never changes the run result.
+            result['mechanism_coverage']=dict(status='unavailable',reason=type(exc).__name__,authority='none')
     if access is not None:
         result['construction_access']=access.report()
         result['publication_allowed']=False

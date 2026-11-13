@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
@@ -52,8 +52,26 @@ explicit expected-negative labels, never from a record's own component, so
 unreviewed proposer records defer as `route_requires_review` and unauthorized
 adapter routes defer. Order, deduplication and budget charges match
 `run_queue`; eligible records stay `proposed`. Both receipts are private
-profiles rejected by public export. Neither is attached to the `ahl improve`
-receipt yet; that integration remains open in #10.
+profiles rejected by public export. The route-disposition plan is not attached
+to the `ahl improve` receipt yet; that integration remains open in #10.
+
+`ahl improve` admits every `candidate` proposal it reads through
+`mechanisms.from_proposal` and adds a compact `mechanism_coverage` field to its
+receipt (`workflow.json`). The proposer is told the entry format; the allowlist
+of citable evidence is the analysis brief it was shown, meaning its listed
+mechanism IDs (such as `Bash/tool_reported_error`) and its observed weak-outcome
+signals, never an unknown or unobserved signal. The admission receipts
+(`mechanism-admission-<attempt>.json`) and the coverage report
+(`mechanism-coverage.json` and `.md`) stay in the private run folder. Every
+admitted record is `proposed` and unreviewed, so a tie, an accepted patch or an
+evaluation error leaves it listed as `open`, never `resolved`; the controller
+declares no capture completeness, so `coverage_complete` is `false` and unseen
+mechanisms stay possible. An entry the contract refuses, including the older
+free-text form, is counted with its reason, and a run whose proposal admits
+nothing reports `no_mechanisms_recorded`. The receipt field is advisory: a
+failure to write it is reported as `unavailable` and never changes the run
+status. It records bookkeeping, not a diagnosis, a validated repair or a
+statement of which mechanism a combined patch repaired.
 
 `coverage.report` summarizes records, or the `run_queue` output, as a private
 `mechanism-coverage-v1` report without evaluating, charging or mutating
