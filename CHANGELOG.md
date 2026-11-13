@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.193.0
+
+### Minor Changes
+
+- 54886c3: Add `task test:isolated` (scripts/isolated_project_check.py): run a command in a temporary detached worktree of a real repository and prove the repository did not change, with a reproducible receipt.
+
 ## 0.192.0
 
 ### Minor Changes
