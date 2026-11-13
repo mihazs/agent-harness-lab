@@ -21,4 +21,5 @@ ahl rollback DEPLOYMENT_ID --project /path/to/project
 ```
 
 Rollback reports a conflict rather than overwriting intervening edits. Runtime
-activation remains unknown.
+activation remains unknown. To repair your user-level skills instead of, or together
+with, the project's, see [choose the project or user-level scope](improve-scope.md).

@@ -85,7 +85,10 @@ cooperative, not sandboxed):
   recommends and rejects a stale result, but it does not revert such a change.
 - `ahl improve . --repair-contracts` is the one exception: it may apply a bounded
   skill-header repair, without model calls and with a rollback journal. A project
-  `ahl.json` keeps even that repair recommendation-only.
+  `ahl.json` keeps even that repair recommendation-only. The default scope never
+  reads or writes user-level files; only an explicit `--scope global` or
+  `--scope project+global` with `--agent codex|claude` includes your user-level
+  skill directory ([scope how-to](docs/improve-scope.md)).
 - `ahl watch .` reruns the same recommendation-only staging and evaluation when
   evidence or execution configuration changes, or after a classified transient
   failure. It writes run artifacts and a private checkpoint, has no

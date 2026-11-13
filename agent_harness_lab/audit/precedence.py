@@ -6,6 +6,7 @@ from agent_harness_lab.sources.schema import digest
 
 CODEX = 'https://developers.openai.com/codex/guides/agents-md'
 CLAUDE = 'https://code.claude.com/docs/en/memory'
+LOAD_ORDER = {'codex': ['user', 'project_root_to_task_directory'], 'claude': ['managed', 'user', 'project', 'local']}
 
 
 def report(inventory, task_cwd):
@@ -36,8 +37,7 @@ def report(inventory, task_cwd):
             for index, lower in enumerate(selected):
                 for higher in selected[index + 1:]:
                     relations.append(dict(higher=higher, lower=lower, rule='closer_directory_if_both_loaded', source=source))
-    order = ((['user', 'project_root_to_task_directory'] if runtime == 'codex'
-              else ['managed', 'user', 'project', 'local']) if inventory.status == 'declared' else [])
+    order = list(LOAD_ORDER['codex' if runtime == 'codex' else 'claude']) if inventory.status == 'declared' else []
     return dict(runtime=runtime, status='declared' if inventory.status == 'declared' else 'not_checked',
         source=source, files=files, refusals=refusals, documented_load_order=order,
         order_source=source, conditional_relations=relations,

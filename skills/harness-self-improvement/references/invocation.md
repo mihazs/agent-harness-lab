@@ -78,6 +78,13 @@ writes a project file for it). Relay `remediation` verbatim. A request the comma
 cannot satisfy, such as a historical-session evidence input, must be reported as
 unsupported, not silently dropped.
 
+User-level skills are in scope only when the user explicitly asks for them. Then add
+`--repair-contracts --scope global --agent codex|claude` (or `--scope project+global`);
+the default scope never touches them and a project file cannot select them. Without
+`--repair-contracts` the command returns `blocked` (model evaluation of the user-level
+layer is not available). Report each layer's row from the receipt, relay its `rollback`
+command, and never call a blocked, exhausted or failed layer a success.
+
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its
 private artifacts and report the concrete remaining requirement. Recovery must
@@ -151,7 +158,9 @@ an authenticated CLI application result. Use executable evidence for applied
 changes and name unavailable runtime/evidence prerequisites. Do not bootstrap a
 new runner or silently install tools to simulate adapter availability.
 
-Automated global scope is unsupported. An explicitly authorized manual global
-task retains its exact named scope, snapshots, evaluation and rollback boundaries.
+Automated global scope is limited to the deterministic skill-header repair
+(`--repair-contracts --scope global|project+global --agent`); any other global task
+is manual. An explicitly authorized manual global task retains its exact named
+scope, snapshots, evaluation and rollback boundaries.
 Project invocation does not authorize global discovery links, global instructions
 or another project's changes.
