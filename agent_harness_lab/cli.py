@@ -8,7 +8,14 @@ import runpy
 import sys
 import time
 
-from . import budget_stages
+from . import budget_stages, typed_exit
+
+
+class _TypedParser(argparse.ArgumentParser):
+    """An argument error is a usage exit with a typed receipt like every other non-zero exit."""
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        typed_exit.fail(self, 'invalid_usage', message)
 
 
 def _progress_reporter(stream=None, clock=None):
@@ -91,12 +98,12 @@ def evaluator():
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
-        argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'nested_invocation_refused', 'managed preparation cannot start a CLI operation')
     from .read_only import require_safe_cli_destinations, FrozenProjectError
     try:
         require_safe_cli_destinations(argv)
     except FrozenProjectError as exc:
-        argparse.ArgumentParser(prog='ahl').exit(2, f'ahl: {exc}\n')
+        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'protected_destination', str(exc))
     if argv[:2] == ['skills', 'activation-receipt']:
         from .evaluation.skills import activation_receipt_main
         return activation_receipt_main(argv[2:])
@@ -175,7 +182,7 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
-    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
+    parser = _TypedParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action=_VersionAction, help='Print the installed AHL version and exit without running a command')
@@ -341,9 +348,9 @@ def main(argv=None):
             if args.resume is not None:
                 explicit = {arg.split('=',1)[0] for arg in argv if arg.startswith('--')}
                 if explicit != {'--resume'}:
-                    raise ValueError('--resume cannot be combined with execution options')
+                    raise typed_exit.TypedExit('usage_conflict', '--resume cannot be combined with execution options')
                 from .recovery import resume
-                result = resume(args)
+                result = typed_exit.seal(resume(args), args)
                 args._progress(result['status'])
                 print(json.dumps(result, indent=2))
                 from .monitoring.state import exit_code
@@ -360,6 +367,7 @@ def main(argv=None):
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
+        typed_exit.seal(result, args)
         args._progress(result['status'])
         if args.command == 'improve':
             summarize(result)
@@ -375,25 +383,25 @@ def main(argv=None):
         else:
             from .exit_guidance import summary
             print('ahl: ' + summary({'status': 'blocked'}), file=sys.stderr)
-        parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
+        typed_exit.fail(parser, 'capability_unavailable', 'required filesystem capabilities unavailable; no unsafe fallback', args)
     except KeyboardInterrupt:
         if started is not None: summarize(dict(status='interrupted', output=getattr(args, '_run_output', None)))
         args._progress('interrupted')
         if started is None:
             from .exit_guidance import summary
             print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
-        parser.exit(1, 'ahl: interrupted\n')
+        typed_exit.fail(parser, 'interrupted', 'interrupted', args)
     except (ValueError, OSError, TypeError, KeyError) as exc:
         from .evaluation.manifest_contract import typed
         exc = typed(exc, getattr(args, 'command', None) or 'cli')  # an unexpected KeyError/TypeError is never printed as its bare message
-        reason = getattr(exc, 'reason', None)
+        reason, status = typed_exit.classify(exc, getattr(args, '_run_output', None) is not None)
         if started is not None:
-            summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None), reason=reason))
+            summarize(dict(status=status, output=getattr(args, '_run_output', None), reason=reason))
         else:
             from .exit_guidance import summary
-            print('ahl: ' + summary({'status': 'invalid_input', 'reason': reason}), file=sys.stderr)
-        parser.exit(2, f'ahl: {exc}\n')
-
+            print('ahl: ' + summary({'status': status, 'reason': reason}), file=sys.stderr)
+        typed_exit.fail(parser, reason, str(exc), args, status=status, stage=getattr(exc, 'stage', None),
+                        next_step=getattr(exc, 'next_step', None))
 
 if __name__ == '__main__':
     raise SystemExit(main())
