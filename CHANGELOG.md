@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.190.2
+
+### Patch Changes
+
+- 602b1f7: Document the rule that every bug found or fixed ships with an automated regression test that fails before the fix, placed by the native pytest layout and pinned with `fixed-in`.
+
 ## 0.190.1
 
 ### Patch Changes
