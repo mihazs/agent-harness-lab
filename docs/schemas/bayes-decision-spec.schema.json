@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ExperimentSpec bayes_decision (frozen form)",
+  "description": "The optional frozen paired Bayesian decision declaration of an ExperimentSpec. This schema describes the resolved form stored in to_dict and hashed into ExperimentSpec.digest: every key is present. A declaration may omit every key except schema_version and profile; the omitted keys are filled at construction and the filled values are what is frozen. Cross-field rules (precision_half_width set, no sequential design, no cohort pin) are enforced by ExperimentSpec.validate. The Python validation is stricter than the JSON Schema keyword integer: a value written with a decimal point, such as 20000.0 or an anchor of 0.0, is rejected so one frozen value has one spelling in the digest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile", "rope_epsilon", "prior", "p_cut", "regression_margin", "posterior_draws", "allow_bound_resolved_verdict", "cross_check_alpha"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "profile": {"type": "string", "const": "bayesian-rope-decision-v1"},
+    "rope_epsilon": {"description": "Half-width of the region of practical equivalence. Default: the frozen effect_margin; explicit when effect_margin is 0.", "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+    "prior": {
+      "description": "Default: one pseudo-root at difference 0 with concentration 1. All three keys are given together or not at all.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "concentration", "anchor"],
+      "properties": {
+        "kind": {"type": "string", "const": "dirichlet_pseudo_root"},
+        "concentration": {"type": "number", "exclusiveMinimum": 0},
+        "anchor": {"type": "integer", "const": 0}
+      }
+    },
+    "p_cut": {"description": "Posterior probability a verdict needs. Default .95.", "type": "number", "exclusiveMinimum": 0.5, "exclusiveMaximum": 1},
+    "regression_margin": {"description": "Per-family regression margin. Default: the frozen family_margin.", "type": "number", "minimum": 0, "exclusiveMaximum": 1},
+    "posterior_draws": {"description": "Monte Carlo draws. Default 20000.", "type": "integer", "minimum": 1000, "maximum": 200000},
+    "allow_bound_resolved_verdict": {"description": "Default false.", "type": "boolean"},
+    "cross_check_alpha": {"description": "One-sided level of the sign-permutation cross-check. Default 1 - p_cut, rounded to 12 decimals.", "type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 0.5}
+  }
+}
