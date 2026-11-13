@@ -1,7 +1,10 @@
 """The benchmark runs end to end on a tiny corpus, writes its report and enforces budgets with its exit status."""
+import argparse
 import json
 from pathlib import Path
+from unittest.mock import patch
 
+from agent_harness_lab import cli
 from tools import perf_bench
 
 TINY = ['--runs', '1', '--repeats', '2', '--sizes', '300']
@@ -30,3 +33,21 @@ def test_an_exceeded_budget_fails_the_command(tmp_path, capsys):
 def test_committed_startup_budgets_cover_every_command_the_cli_lists():
     budgets = json.loads((Path(__file__).resolve().parents[3] / 'tools/perf_budgets.json').read_text())
     assert set(budgets['startup_ratio_max']) == {'(no subcommand)', *perf_bench.cli_commands()}
+
+
+def test_measured_commands_are_exactly_the_parsers_top_level_commands():
+    # Independent of the benchmark's own `--help` parsing: a hand-picked or truncated list must fail here.
+    class Captured(BaseException):
+        pass
+
+    def stop(parser, *args, **kwargs):
+        raise Captured(parser)
+
+    with patch.object(argparse.ArgumentParser, 'parse_args', stop):
+        try:
+            cli.main([])
+        except Captured as captured:
+            parser = captured.args[0]
+    commands = next(action.choices for action in parser._actions if isinstance(action, argparse._SubParsersAction))
+    assert len(commands) > 30
+    assert sorted(perf_bench.cli_commands()) == sorted(commands)
