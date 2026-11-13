@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.189.1
+
+### Patch Changes
+
+- 4fd3582: Start every command about 8 ms faster by resolving the package version, and importing importlib.metadata, only when --version is requested.
+
 ## 0.189.0
 
 ### Minor Changes
