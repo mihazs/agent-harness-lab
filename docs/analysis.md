@@ -376,6 +376,8 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
 | `analysis_incomplete` | Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings. |
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
+| `area_duplicate` | List each area id once, in the ahl.json areas and in every task areas list, then rerun. |
+| `area_registry_invalid` | Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |
@@ -483,6 +485,10 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
+| `task_area_undeclared` | Declare the area in the ahl.json areas with an id, a label and a description, or correct the tag on the task, then rerun. |
+| `task_areas_empty` | Give a tagged task one to three area ids, or remove its areas field to leave it untagged, then rerun. |
+| `task_areas_invalid` | Write the task areas field as a list of one to three lowercase kebab-case area ids, then rerun. |
+| `task_areas_too_many` | Tag a task with at most three areas and keep the ones it genuinely exercises, then rerun. |
 | `status:applied` | Review the recorded deployment and its rollback information. |
 | `status:blocked` | Review the reported prerequisite before retrying. |
 | `status:budget_exhausted` | Review the recorded budget before retrying. |

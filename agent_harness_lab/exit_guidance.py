@@ -1,5 +1,5 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
-from .evaluation.manifest_contract import REASONS as CONTRACT_REASONS
+from .evaluation.manifest_contract import ALL_REASONS as CONTRACT_REASONS
 from .typed_exit import REASONS as TYPED_EXIT_REASONS
 
 REMEDIATION = {

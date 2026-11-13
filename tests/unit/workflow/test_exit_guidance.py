@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_harness_lab.evaluation.manifest_contract import DECLARATION_REASONS, ContractError
 from agent_harness_lab.exit_guidance import REMEDIATION, STATUS_ACTION, summary
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -94,3 +95,11 @@ def test_no_change_receipt_names_a_worktree_path_mismatch_only_when_it_was_recor
     receipt = {'status': 'no_change', 'reason': 'no_change_evidence_insufficient', **({} if reasons is None else {'capture_reasons': reasons})}
     assert summary(receipt).endswith(REMEDIATION['history_not_found_for_worktree']) is appended
     assert summary(receipt).startswith('Evidence insufficient.')
+
+
+@pytest.mark.parametrize('reason', sorted(DECLARATION_REASONS))
+def test_a_declaration_defect_summary_names_stage_file_field_and_origin(reason):
+    error = ContractError(reason, 'bank_validation', 'tasks[2].areas[1]', 'bank.json')
+    rendered = summary(dict(status='invalid_input', reason=reason, contract_violation=error.receipt()))
+    assert rendered.endswith(REMEDIATION[reason] + ' Stage: bank_validation; file: bank.json; field: tasks[2].areas[1]; '
+                             'origin: project_declaration_defect.')
