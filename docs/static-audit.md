@@ -23,7 +23,14 @@ The separate `agent_harness_lab.audit.protected_paths.capture()` inventory lists
 common secret, configuration and CI path candidates using checkout metadata only;
 it never opens their contents. This private, bounded inventory does not determine
 whether any path is protected. Refused paths leave coverage unknown. The walk is
-not an atomic filesystem snapshot.
+not an atomic filesystem snapshot. It shares the inventory walk, so in a checkout
+with a `.git` entry at its root it does not enter a directory the checkout's own
+`.gitignore` files exclude (see [ignored
+directories](#ignored-directories-and-the-entry-bound)): a secret, configuration or
+CI path below one is not listed, while an ignored file in a walked directory is.
+`coverage: walked_checkout_metadata_only` does not say those directories were walked,
+and the report counts none of them, so a path absent below an ignored directory is
+unknown, not clear.
 The CLI includes this separately captured inventory under `protected_path_inventory`;
 it is not covered by `audit_sha256`, which binds the harness inventory audit.
 
@@ -261,6 +268,41 @@ unsupported runtime version gives the report status `blocked` or `unsupported`,
 every dimension `unknown` with `inventory_<reason>`, and no findings, never a
 partial pass.
 
+### Ignored directories and the entry bound
+
+The inventory examines at most 20,000 directory entries. In a checkout that has a
+`.git` entry at its root, it neither counts nor enters a directory that the
+checkout's own `.gitignore` files exclude, such as an installed dependency or build
+folder, so a long-lived checkout is inventoried like a fresh one. The walk reads
+only `.gitignore` files below the checkout, as ordinary bytes, in a conservative
+subset of git's rules: `*`, `?`, bracket classes, `**`, a leading or middle `/`
+anchor, a trailing `/` and `!` negation, with the last matching line deciding and a
+deeper file overriding a shallower one. A line it cannot model exactly (a
+backslash escape, a POSIX class or `[^` set, an unbalanced bracket, an empty
+segment, too many segments or `**` wildcards), an unreadable, non-UTF-8 or
+non-regular `.gitignore` or more rules than its bound make that file, and every
+directory below it, count as not ignored: the walk then reads everything, as
+before, and never skips on a guess. The user's global excludes file, `.git/info/exclude` and the
+index are never consulted, so a file that is tracked inside an ignored directory
+is not inventoried. The root `.claude`, `.agents` and `.codex` folders and the root
+`skills` tree, each with everything below it, and the `--task-cwd` directory and its
+parents are walked even when ignored.
+Without a `.git` entry nothing is skipped. Refusals under an ignored directory,
+such as a symlink or nested repository, are not reported. The protected-path and
+feedback-sensor inventories use this walk and skip the same directories; their
+`coverage` value does not record the omission, so read their lists as incomplete
+below an ignored directory.
+
+When the entry bound is still exceeded, the report keeps `blocked_reason:
+entry_bound_exceeded` and adds `inventory_remedy`: `max_entries` and the largest
+top-level directories as `{directory, entries, at_least}` rows, names and counts
+only (`at_least` is true where counting stopped at the bound). `next_action` names the
+two ways out: add a listed directory that holds no harness files to `.gitignore`, or
+rerun with `--max-inventory-entries N` (1 to 200,000, for that run only). The
+human output prints the same ranking. Raising the bound reads more of the tree, so
+it is not a substitute for ignoring a dependency folder. See
+[audit a long-lived checkout](audit-long-lived-checkout.md) for the steps.
+
 ## Findings
 
 Each surface that is not conformant gives one finding with an `id`, its
@@ -393,7 +435,11 @@ The procedure shape and routing collisions are lexical hypotheses, not evidence
 that a skill is needed or that routing failed. The procedure check re-observes
 selected instruction files separately and rejects the hypothesis if that observation
 is unsettled or the chain is truncated. It cannot be combined
-with `--focus` or deterministic contract repair.
+with `--focus` or deterministic contract repair. When the fresh inventory exceeds
+the entry bound, `ahl improve` stops before staging anything or calling a model:
+the receipt has `status: blocked`, `reason: inventory_entry_bound_exceeded`, the
+same `inventory_remedy` ranking and no changed files. Ignore the large directory
+and run `ahl audit` again to obtain a report for the recheck.
 
 The supplied report is an untrusted selection and its parameters are caller
 assertions. The recheck requires a matching inventory and freshly observed
@@ -425,6 +471,13 @@ inventory. `coverage` describes only the metadata walk: refused paths make it
 unknown, and unrecognized filenames mean detection completeness is unknown even
 when the walk completed. The `.github/workflows`, `.circleci`, and `.buildkite`
 subtrees are excluded; other hosted configuration paths may not be recognized.
+The walk is the inventory walk, so in a checkout with a `.git` entry at its root a
+directory the checkout's own `.gitignore` files exclude is not entered (see
+[ignored directories](#ignored-directories-and-the-entry-bound)): a test path,
+configuration file or task runner below one, and a `tests` directory name there, is
+not listed, while an ignored file in a walked directory is. `walked_checkout_metadata_only`
+does not say those directories were walked, and the report counts none of them, so
+a candidate absent below an ignored directory is unknown, not missing.
 Instruction-to-command consistency and stale-target
 detection are not checked in this slice. The inventory is a separate metadata
 observation, not an atomic snapshot with other audit inputs. Without the option,

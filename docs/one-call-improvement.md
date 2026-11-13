@@ -547,7 +547,12 @@ paths make governing: an instruction directory below the `task_cwd` chain, such
 as an on-demand Claude `docs/CLAUDE.md`, and every path rule that does not load
 at launch. The bound scope drops those, and an edit to one of them is refused
 (`task_path_scope_unbound`). Any refusal stops the run as
-`instruction_validation_blocked` before those trials. The rewritten
+`instruction_validation_blocked` before those trials, except a project that exceeds
+the inventory entry bound: validation reads the project's instruction and rule files
+through the harness inventory, so that run stops as `inventory_entry_bound_exceeded`
+with `inventory_remedy` (the largest top-level directories, names and counts only;
+see [audit a long-lived checkout](audit-long-lived-checkout.md)). The inventory is
+read after the proposal call, so that call has run; no trial has. The rewritten
 `instruction-validation-<attempt>.json` records `scope.source:
 "evaluation_manifest_task_cwds"` and `scope.task_cwds`, and `check_scope`
 enforces that bound scope from then on. `current` reports `scope_unbound` for a

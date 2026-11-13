@@ -1369,11 +1369,17 @@ capability reference such as `instructions:codex`, which names the matching
 and `harness_sha256` names the `HarnessSnapshot` captured in the same Git read.
 The inventory therefore extends that snapshot without changing its fingerprint
 or the controller binding. Files that classify as `private_excluded` are
-`present_content_not_read`: their bytes are never read or hashed. A file below a
-vendored tree such as `node_modules` or `.venv` is still listed under its kind,
-with the fact `vendored: true`, because the classifier never makes it
-adoptable. The inventory runs no git, so a folder excluded only by ignore rules
-is not labelled here; the promotion journal checks those rules.
+`present_content_not_read`: their bytes are never read or hashed. In a checkout with
+a `.git` entry at its root, a directory that the checkout's own `.gitignore` files
+exclude, such as the usual `node_modules` or `.venv`, is neither counted, entered nor
+listed, and the refusals and files below it are not reported. The root `.claude`,
+`.agents` and `.codex` folders, the root `skills` tree and the `task_cwd` directory
+are walked even when ignored. The inventory runs no git: it reads only `.gitignore`
+files below the checkout, in a conservative subset of git's rules, and an ignore
+file it cannot model exactly (or a checkout with no `.git` entry) skips nothing.
+A file below a vendored tree that the ignore rules do not exclude is still listed
+under its kind, with the fact `vendored: true`, because the classifier never makes
+it adoptable. The promotion journal checks ignore rules separately.
 `observed_loading` and `effective` are always `unknown`. Construction rejects
 any other value, because a listed file is not evidence that a runtime loaded it.
 
@@ -1387,9 +1393,11 @@ reaches a node.
 Bounds: 1000 nodes, 10 MiB of read candidate bytes across all roots, directory
 depth 32, 20000 examined directory entries and 50000 parser facts across all
 nodes, so many small parsed files cannot multiply memory. Entries are counted as each is
-read, so one huge directory is blocked before it is held in memory. Exceeding
-any bound returns `blocked` with its reason and no nodes or refusals, never a
-truncated result.
+read, so one huge directory is blocked before it is held in memory; ignored
+directories are skipped before they are listed, so their entries are not counted.
+`ahl audit --max-inventory-entries N` (1 to 200000, for that run only) raises the
+entry bound; the other bounds are fixed. Exceeding any bound returns `blocked` with
+its reason and no nodes or refusals, never a truncated result.
 Roots outside the checkout, such as `~/.claude`, `$CODEX_HOME`, plugin caches
 and managed paths, are never read implicitly. The caller can declare one with
 `--external-root LABEL=PATH`. It must be an absolute path that does not overlap

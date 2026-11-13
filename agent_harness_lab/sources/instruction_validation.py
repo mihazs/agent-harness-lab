@@ -64,7 +64,10 @@ PROPOSER_GUIDANCE = ('Edit an instruction file only at its governing scope (the 
 
 
 class _Blocked(Exception):
-    """A condition that blocks validation before both closures resolve."""
+    """A condition that blocks validation before both closures resolve; remedy is the inventory's entry-bound ranking."""
+    def __init__(self, reason, remedy=None):
+        super().__init__(reason)
+        self.remedy = remedy
 
 
 def _norm(text):
@@ -199,6 +202,8 @@ def _project_files(project, profile):
     declared = {key: profile[key] for key in harness_inventory.PROFILE_FIELDS}
     try: inventory = harness_inventory.capture(project, declared)
     except ValueError as error: raise _Blocked('task_cwd_unavailable') from error
+    if inventory.blocked_reason == 'entry_bound_exceeded':
+        raise _Blocked('inventory_entry_bound_exceeded', harness_inventory.entry_bound_remedy(project, declared))
     if inventory.status != 'declared': raise _Blocked('project_inventory_' + inventory.status)
     files = {}
     for node in inventory.nodes:
@@ -384,7 +389,9 @@ def validate(baseline, candidate, plan, *, runtime=None, project=None, deadline=
     fallback = tuple(profile.get('fallback_filenames', ()))
     staged_before, staged_after = _files(baseline), _files(candidate)
     try: ambient = _project_files(project, profile) if project is not None else {}
-    except _Blocked as error: return _document('blocked', [str(error)], scope=None, **identity)
+    except _Blocked as error:
+        remedy = {} if error.remedy is None else dict(inventory_remedy=error.remedy)
+        return _document('blocked', [str(error)], scope=None, **identity, **remedy)
     if project is not None and pair[0] == 'claude-code':
         sources = [*ambient.items(), *staged_before.items(), *staged_after.items()]
         ambient.update(_imported(project, sources, staged_before, profile['task_cwd']))
