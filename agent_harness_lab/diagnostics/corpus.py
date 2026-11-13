@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import tempfile
 
+from agent_harness_lab.diagnostics import triage_policy
 from agent_harness_lab.evaluation.integrity import contained
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
 from agent_harness_lab.evaluation.task_bank import identifier
@@ -21,6 +22,10 @@ NEAR_RULE = 'word-3gram-jaccard-v1'
 NEAR_PERMILLE = 800
 NEAR_DECISIONS = ('distinct_incident','same_lineage')
 MAX_DECISIONS = 1024
+ACCESS_PROFILE = 'diagnostic-corpus-protected-access-v1'
+ACCESS_PARTITION = 'validation'  # certification stays reserved: no genuine qualification issuer exists
+ACCESS_LIMITATIONS = ('Validation labels are operator-attested declarations, not gold labels; reviewer and root independence are unverified.',
+    'Retirement records the exposure in this store only; it cannot stop a model owner from refitting on the reported result.')
 LIMITATIONS = ('Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
     'Near-duplicate detection is lexical only; verified lineage binding and held-out classifier evaluation are not implemented.')
 
@@ -98,6 +103,12 @@ def annotation(value, inputs):
 
 def _eligible(inputs):
     return inputs['capture_complete'] is True and inputs['permission']=='approved' and not inputs['ambiguity']
+
+
+def _outcome(opened):
+    """The eligible known adjudicated terminal outcome of one opened case, else None."""
+    _,inputs,_,_,final=opened
+    return final['outcome'] if final is not None and final['outcome']!='unknown' and _eligible(inputs) else None
 
 
 def _separate(groups, texts, inputs, partition):
@@ -343,21 +354,76 @@ class CorpusStore(PrivateJournal):
             return dict(schema_version=1,revision_sha256=revision,items=items,publication_allowed=False,
                 classifier_selection_allowed=False,root_independence='unverified')
 
+    def _isolated(self, rows, summaries):
+        """Raise on an alias or undecided near duplicate across effective partitions; return the recorded decisions."""
+        groups={}; texts={}; decisions=self._decisions()
+        for (_,opened),summary in zip(rows,summaries): _separate(groups,texts,opened[1],summary['partition'])
+        _near([(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)],decisions)
+        return decisions
+
+    def _untouched(self):
+        """Snapshot, the untouched validation cases (every review state, so inputs reveal no label progress) and their labels.
+
+        A root is labeled only when each of its cases has an eligible, known adjudication and they agree, so no
+        rejection depends on a label; otherwise it is unlabeled."""
+        rows,summaries,revision=self._snapshot(); self._isolated(rows,summaries)
+        cases=sorted((key,opened) for (key,opened),summary in zip(rows,summaries) if summary['partition']==ACCESS_PARTITION)
+        if not cases: raise ValueError('no untouched validation cases')
+        roots={}
+        for _,opened in cases: roots.setdefault(opened[1]['root_id'],set()).add(_outcome(opened))
+        labels=[_outcome(opened) if len(roots[opened[1]['root_id']])==1 else None for _,opened in cases]
+        return revision,cases,labels,_digest([revision,[key for key,_ in cases]])
+
+    def protected_inputs(self):
+        """Label-free classifier inputs for the untouched validation partition, bound to this exact corpus revision."""
+        with self.locked():
+            revision,cases,_,plan=self._untouched()
+            return dict(schema_version=1,profile=ACCESS_PROFILE,partition=ACCESS_PARTITION,revision_sha256=revision,plan_sha256=plan,
+                cases=[dict(case_id=key,text=opened[1]['summary']) for key,opened in cases],publication_allowed=False)
+
+    def evaluate_protected(self, plan_sha256, policy, model_sha256, scores):
+        """Evaluate frozen per-case class scores against validation labels once; no label is released.
+
+        ``scores`` maps every case ID of the ``protected_inputs`` plan to one score per policy class. The policy
+        classes must be exactly the corpus terminal outcomes, a label-independent check. The frozen triage policy
+        evaluation runs first, so an invalid input retires nothing. A returned result means every labeled case is
+        retired to development, so a validation label supports one evaluation."""
+        _sha(plan_sha256); _sha(model_sha256)
+        if set(triage_policy.check_policy(policy,require_disjoint_roles=True)[0])!=set(OUTCOMES)-{'unknown'}:
+            raise ValueError('policy classes must be exactly the corpus terminal outcomes')
+        with self.locked():
+            revision,cases,labels,plan=self._untouched()
+            if plan_sha256!=plan: raise ValueError('stale protected access plan')
+            if not isinstance(scores,dict) or set(scores)!={key for key,_ in cases}:
+                raise ValueError('scores must cover exactly the frozen validation cases')
+            report=triage_policy.evaluate(policy,[dict(root_case_id=opened[1]['root_id'],split='heldout',label=label,
+                scores=scores[key],model_sha256=model_sha256) for (key,opened),label in zip(cases,labels)],report_version=5)
+            used=[item for item,label in zip(cases,labels) if label is not None]
+            if any(len(opened[2])>=self.max_events for _,opened in used): raise ValueError('case journal operation bound exceeded')
+            access_id=_digest(dict(plan=plan,policy=report['policy_sha256'],model=model_sha256,scores=scores))
+            for _,(case,_,events,_,_) in used:
+                self.append(case,events,'exposed','exposed',dict(reason='protected validation access '+access_id))
+            return dict(access=dict(schema_version=1,profile=ACCESS_PROFILE,access_id=access_id,partition=ACCESS_PARTITION,
+                corpus_revision_sha256=revision,plan_sha256=plan,policy_sha256=report['policy_sha256'],model_sha256=model_sha256,
+                labeled_cases=len(used),unlabeled_cases=len(cases)-len(used),retired_case_ids=[key for key,_ in used],
+                label_provenance=PROVENANCE,gold_label=False,reviewer_authentication='operator_attested',
+                root_independence='unverified',classifier_selection_allowed=False,publication_allowed=False,
+                limitations=list(ACCESS_LIMITATIONS)),evaluation=report)
+
     def export_development(self, expected_revision_sha256):
         """Export reviewed declarations only; protected labels have no training export."""
         _sha(expected_revision_sha256)
         with self.locked():
             rows,summaries,revision=self._snapshot()
             if revision!=expected_revision_sha256: raise ValueError('stale corpus export revision')
-            groups={}; texts={}; exported=[]; decisions=self._decisions()
+            exported=[]; decisions=self._isolated(rows,summaries)
             for (key,(_,inputs,events,submissions,final)),summary in zip(rows,summaries):
-                partition=summary['partition']; _separate(groups,texts,inputs,partition)
+                partition=summary['partition']
                 if partition not in ('fitting','development') or final is None or final['outcome']=='unknown': continue
                 if not _eligible(inputs): continue
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
                     review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,
                     retirement=self._retirement(key,inputs,events)))
-            _near([(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)],decisions)
             ids={row['case_id'] for row in exported}
             body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
                 near_duplicate_decisions=[v for k,v in sorted(decisions.items()) if set(k)<=ids],
