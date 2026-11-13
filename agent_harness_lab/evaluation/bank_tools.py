@@ -56,6 +56,15 @@ def _external_controls(bank_path, tasks, admission):
     return result
 
 
+def _executable(tasks,*,explicit):
+    """Quarantined tasks stay inspectable but are never executable: drop them, or refuse an explicit pick."""
+    quarantined=[t['task_id'] for t in tasks if t['review_status']=='quarantined']
+    if quarantined and explicit: raise ValueError('quarantined tasks cannot be selected: '+', '.join(quarantined))
+    tasks=[t for t in tasks if t['review_status']!='quarantined']
+    if not tasks: raise ValueError('bank has no executable task: every task is quarantined')
+    return tasks
+
+
 def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
     if type(max_trials) is not int or not 1<=max_trials<=10000:
         raise ValueError('explicit export trial ceiling must be an integer from 1 to 10000')
@@ -75,6 +84,7 @@ def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
         indexed={t['task_id']:t for t in value['tasks']}
         if any(t not in indexed for t in task_ids): raise ValueError('unknown export task selection')
         value['tasks']=[indexed[t] for t in task_ids]
+    value['tasks']=_executable(value['tasks'],explicit=task_ids is not None)
     if 2*len(value['tasks'])>max_trials: raise ValueError('bank export exceeds caller trial ceiling')
     external=_external_controls(bank_path,value['tasks'],admission)
     for task in value['tasks']:
@@ -247,7 +257,9 @@ def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds
     if time.monotonic() >= deadline:
         return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
     admission=_eligible(reviewed)
-    tasks=json.loads(bank_path.read_text())['tasks']
+    declared=json.loads(bank_path.read_text())['tasks']
+    tasks=_executable(declared,explicit=False)
+    result['quarantined_skipped']=[t['task_id'] for t in declared if t['review_status']=='quarantined']
     external=_external_controls(bank_path,tasks,admission)
     if time.monotonic() >= deadline:
         return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
