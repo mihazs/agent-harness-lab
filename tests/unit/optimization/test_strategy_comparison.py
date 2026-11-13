@@ -1,4 +1,5 @@
 """Matched-budget strategy comparison through the shared search contracts, using fake proposers."""
+# fixed-in: e940cc1143 -k smaller_ceiling or exceeds_the_requested_budget or no_further_work or no_recorded_budget
 import json
 
 import pytest

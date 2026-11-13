@@ -1,4 +1,5 @@
 """Strategy registry and built-ins through the shared search contracts, using fake proposers."""
+# fixed-in: e940cc1143 -k smaller_budget_than_the_saved_spend
 import json
 
 import pytest
