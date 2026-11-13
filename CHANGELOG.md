@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.190.0
+
+### Minor Changes
+
+- 48b7579: Add `task bench`, a reproducible per-command startup, throughput and memory benchmark on seeded synthetic traces with opt-in regression budgets (`task bench:check`).
+
 ## 0.189.1
 
 ### Patch Changes
