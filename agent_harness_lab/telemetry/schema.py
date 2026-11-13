@@ -4,6 +4,8 @@ import json
 import math
 import re
 
+from .error_catalog import VOCABULARY as TOOL_ERROR_CLASSES
+
 TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'actor', 'timestamp', 'tool_name', 'input_fingerprint', 'result_fingerprint',
         'state_revision', 'tool_effect', 'contract_ref', 'harness_fingerprint',
@@ -14,7 +16,7 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
         'reported_model_fingerprint', 'native_stop_reason_fingerprint',
-        'message_fingerprint', 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+        'message_fingerprint', 'tool_error_class', 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 # Where a row's working directory sat relative to the project that attributed the session; never a path or name.
 CWD_CLASSES = ('project_root', 'project_subdirectory', 'registered_worktree_of_project', 'other_location')
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
@@ -29,8 +31,8 @@ FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', *SOURCE_ORD
 PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model_hypothesis', 'unknown'}
 
 
-# Derived from private tool-call bodies: kept out of duplicate checks and the body-insensitive metadata fingerprint of native captures.
-BODY_DERIVED = frozenset(('input_fingerprint',))
+# Derived from private tool-call and tool-result bodies: kept out of duplicate checks and the body-insensitive metadata fingerprint of native captures.
+BODY_DERIVED = frozenset(('input_fingerprint', 'tool_error_class'))
 FINGERPRINT = re.compile(r'[0-9a-f]{16}\Z')
 MIN_FINGERPRINT_WORDS = 4
 
@@ -86,6 +88,9 @@ def event(value):
             raise ValueError('invalid capture order')
     if 'cwd_class' in result and result['cwd_class'] not in CWD_CLASSES:
         raise ValueError('invalid working-directory class')
+    if 'tool_error_class' in result and (result['activity'] != 'tool_result' or result.get('execution_status') != 'error'
+            or result['tool_error_class'] not in TOOL_ERROR_CLASSES):
+        raise ValueError('invalid tool error class')
     if 'message_fingerprint' in result and (result['activity'] != 'user_message' or not FINGERPRINT.match(result['message_fingerprint'])):
         raise ValueError('invalid message fingerprint')
     declared = [key in result for key in SOURCE_ORDER]

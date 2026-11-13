@@ -76,6 +76,12 @@ a truncated capture explains it as well as abandonment). Groups rank by reported
 roots, cases, bins with occurrences and error count. Counts are lower bounds when
 `counts_are_lower_bounds` is true.
 
+Where the capture came from a pinned native Claude release the catalog covers, each group also reports
+`errors_by_error_class` and `cases_by_error_class`: a fixed vocabulary of runtime-generated messages such as
+`read_before_edit` or `edit_target_not_unique`, with everything else `unclassified` and no message text kept. The brief's
+`tool_error_classes` names the catalog version and totals. See
+[tool error classes](telemetry.md#tool-error-classes).
+
 The brief also lists capture coverage and exclusions, the methods that ran and the
 exact prerequisite each missing method lacks, weak-outcome signals, and a
 `missing_evidence` list whose entries carry the command that would supply it. Weak-outcome signals
