@@ -23,7 +23,8 @@ class Authorization:
         return hashlib.sha256(repr(self).encode()).hexdigest()
 
 
-def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
+def _checked(envelope, authorization, adapter_id):
+    """Validate one tool envelope against the controller authorization and return an independent copy."""
     if adapter_id not in authorization.adapter_ids or envelope.get('tool') not in authorization.tools:
         raise ValueError('adapter/tool not explicitly authorized')
     if not isinstance(envelope.get('call_id'),str) or not 0<len(envelope['call_id'])<=128:
@@ -32,7 +33,11 @@ def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
         raise ValueError('malformed tool envelope')
     encoded=json.dumps(envelope,sort_keys=True,allow_nan=False)
     if len(encoded.encode())>65536: raise ValueError('tool envelope exceeds bound')
-    original=copy.deepcopy(envelope)
+    return copy.deepcopy(envelope)
+
+
+def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
+    original=_checked(envelope, authorization, adapter_id)
     result=dict(original=original,adapter_id=adapter_id,authorization_digest=authorization.digest)
     if envelope['status']=='error':
         payload=envelope['payload']
@@ -42,17 +47,46 @@ def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
     return result
 
 
-def verify(original, transformed, authorization):
+def identity(envelope, authorization, adapter_id):
+    """The baseline transform: the exact original envelope bound to the authorization, with nothing added."""
+    return dict(original=_checked(envelope, authorization, adapter_id),adapter_id=adapter_id,
+                authorization_digest=authorization.digest)
+
+
+TRANSFORMS = {'identity': identity, 'structured-error-v1': normalize_error}
+
+
+def verify(original, transformed, authorization, transform='structured-error-v1'):
     try:
-        expected=normalize_error(original,authorization,transformed.get('adapter_id'))
-        return expected==transformed
+        return TRANSFORMS[transform](original,authorization,transformed.get('adapter_id'))==transformed
     except (ValueError,TypeError,KeyError,AttributeError):
         return False
 
 
+# Documented, unverified candidate insertion points; a row is evidence to investigate, never support.
+# See docs/adapter-runtime-decision.md for the references and blockers.
+CANDIDATE_INSERTION_POINTS = {
+    'claude-code': dict(insertion_point='PostToolUse and PostToolUseFailure command hooks', minimum_version=(2,1,121),
+                        blockers=('failures_are_additive_context_only','shape_mismatch_falls_back_to_original',
+                                  'hook_runs_outside_the_isolated_worker','no_live_application_evidence')),
+}
+
+
+def _version(text):
+    parts=str(text).split('.')
+    return tuple(int(p) for p in parts) if len(parts)==3 and all(p.isascii() and p.isdigit() for p in parts) else None
+
+
 def runtime_capability(runtime,version):
-    return dict(status='unsupported',runtime=runtime,version=version,
+    result=dict(status='unsupported',runtime=runtime,version=version,
                 reason='no_version_verified_tool_interception_or_controlled_proxy',automatic_promotion=False)
+    candidate=CANDIDATE_INSERTION_POINTS.get(runtime)
+    if candidate:
+        parsed=_version(version)
+        result['candidate']=dict(insertion_point=candidate['insertion_point'],
+                                 version_documented=parsed is not None and parsed>=candidate['minimum_version'],
+                                 blockers=list(candidate['blockers']))
+    return result
 
 
 SPEC_SCHEMA = 'ahl.adapter-spec.v1'
