@@ -1,12 +1,13 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design. Only its first slice exists: the optional frozen
-`bayes_decision` spec field, with validation and a JSON schema (issue a, see the
-[Spec field](#spec-field) reference). There is no posterior code and no new output
-block yet. It explains what a numeric, non-LLM decision score should be, why it takes
-this shape, and which choices the operator must confirm. The reference section at the
-end fixes names and fields so the remaining implementation issues can be written
-against it.
+This page is a design. Two slices exist: the optional frozen `bayes_decision` spec
+field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
+reference), and the exact sign-permutation cross-check as a pure module (issue c, see
+[Frequentist cross-check](#frequentist-cross-check-option-1-role)). There is no
+posterior code and no new output block yet. It explains what a numeric, non-LLM
+decision score should be, why it takes this shape, and which choices the operator must
+confirm. The reference section at the end fixes names and fields so the remaining
+implementation issues can be written against it.
 
 The existing decision path is unchanged by this design. The weighted-root Hoeffding
 analysis in `evaluation/statistics.py` stays the only path that can reach
@@ -316,8 +317,55 @@ Role and limits:
   with reason `cross_check_disagrees`. It never upgrades a verdict.
 - It tests a symmetry assumption, not a causal claim, and with `n` roots its smallest
   possible p-value is `2^-n`, so a very small bank cannot satisfy it. That is one more
-  reason for the root floor.
+  reason for the root floor. The check does not enforce that floor: a six-root bank
+  whose roots are all candidate wins reaches the minimum `2^-6`, which the check alone
+  accepts at .05, so it is the root floor of the decision that withholds the verdict.
 - It does not use the Hoeffding bound and does not replace it.
+
+### Implemented module
+
+`agent_harness_lab/evaluation/sign_permutation.py` has two pure functions and no
+dependence on the posterior, a clock, a file or a model.
+
+`sign_permutation(roots, family_weights, epsilon, alpha, *, plan_digest, draws)`
+takes the root differences `d_r` of each family (repetitions already averaged inside
+the root, root-similarity groups already merged by the caller), the frozen
+`family_weights`, `rope_epsilon`, `cross_check_alpha`, the plan digest and a draw
+count. Every root of family `f` carries `w_f / n_f`, exactly as the Hoeffding path
+does; the weights are not renormalized, and the p-value does not depend on their
+scale. It returns the p-value of each side, `better` (shift `d_r - epsilon`) and
+`worse` (shift `-d_r - epsilon`), with the number of nonzero roots per side.
+
+- **Exact up to 20 nonzero roots.** Zero shifted differences are dropped, so they are
+  neither counted as roots nor allowed to move the p-value, and an input with no
+  nonzero root returns p = 1 without error. The count of flips at least as extreme
+  as the observed one runs in integer arithmetic by meeting in the middle, so a flip
+  that ties the observed value counts and no float rounding can break a tie. Inputs
+  are read as the nearest rational with a denominator of at most one million, which
+  makes `0.1 + 0.2` and `0.3` tie, as they do in the data they summarize.
+- **Seeded Monte Carlo above 20.** `draws` random sign vectors give
+  `(1 + hits) / (draws + 1)`, which is never 0, and the result is labeled
+  `monte_carlo` with its `draws` and `seed`. The seed is the SHA-256 of the profile,
+  a fixed label and the plan digest, so a rerun repeats and nobody can search seeds.
+  A result is labeled `monte_carlo` when either side is sampled. The cost is
+  `draws * roots` integer additions per side in pure Python.
+- **Bounds with unknown outcomes.** Raising one `d_r` moves the observed
+  statistic up by at least as much as it moves any flipped statistic, so the `better`
+  p-value never rises when a `d_r` rises (and the `worse` p-value never falls).
+  Computing the check at the worst-case and the best-case completion of
+  the unknown arms therefore brackets the p-value of every completion; an unknown arm
+  is never treated as a failure and no point p-value is reported for it. This holds
+  for the exact method; a Monte Carlo bracket is itself estimated.
+
+`compare(check, verdict, stage)` compares the quality-stage verdict with the check.
+It returns `verdict`, `reason`, `agrees` and `disagrees`. Only a `better` or `worse`
+reached at stage `quality` is compared; a validity block, a critical veto, a family
+regression control or a resource verdict keeps its own result and sets neither flag,
+so the cross-check can never undo a veto or a block. `equivalent` and
+`insufficient_evidence` are returned unchanged because the design defines no
+cross-check for them. The only possible change is to `insufficient_evidence`, and the
+function has no path that raises a verdict. Wiring the call into the gate and the
+output block is issue d.
 
 ## Guard role (Option 6)
 
@@ -388,7 +436,7 @@ supplied analysis already contains it.
 |-------|---------|------------|
 | a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged (implemented) | none |
 | b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` | a |
-| c | exact and Monte Carlo sign-permutation cross-check | b |
+| c | exact and Monte Carlo sign-permutation cross-check (implemented as a pure module) | a |
 | d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` | b, c |
 | e | calibration with `power.simulate` on declared null, in-ROPE and beneficial models; held-out seeds fixed before the run | b, c |
 | f | docs and the six fixtures listed below | d |
