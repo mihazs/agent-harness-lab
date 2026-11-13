@@ -17,7 +17,7 @@ temporary worktree path, which is also the command's working directory.
 - The worktree is checked out from `--ref` (default `HEAD`) with git hooks disabled, so no project script runs. Uncommitted
   edits and untracked files in the real checkout are neither copied nor touched.
 - The command gets a private temporary `AHL_STATE_HOME` and, unless you pass `--inherit-home`, a private empty `HOME`. Use
-  `--pass-env NAME` for other host variables a runtime login needs.
+  `--pass-env NAME` for other host variables a runtime login needs. `--log-dir DIR` keeps the command's stdout and stderr in a private folder; the receipt itself keeps only their hashes.
 - The worktree is removed and pruned even when the command fails or times out.
 - The real checkout is fingerprinted before and after (HEAD, all refs, stash count, linked worktrees, working-tree status,
   index and `.git/config`). Any difference is `drift` and the exit status is 1; otherwise the command's own status is returned
