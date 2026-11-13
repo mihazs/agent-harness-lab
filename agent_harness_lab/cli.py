@@ -13,9 +13,15 @@ from . import budget_stages, typed_exit
 
 class _TypedParser(argparse.ArgumentParser):
     """An argument error is a usage exit with a typed receipt like every other non-zero exit."""
+    command = None  # the command word of this invocation: subparsers share it with the top-level parser
+
     def error(self, message):
         self.print_usage(sys.stderr)
-        typed_exit.fail(self, 'invalid_usage', message)
+        typed_exit.fail(self, 'invalid_usage', message, stdout=_TypedParser.command in ('improve', 'watch'))
+
+
+def _stdout(args):
+    return getattr(args, 'command', None) in ('improve', 'watch')
 
 
 def _progress_reporter(stream=None, clock=None):
@@ -98,12 +104,12 @@ def evaluator():
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
-        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'nested_invocation_refused', 'managed preparation cannot start a CLI operation')
+        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'nested_invocation_refused', 'managed preparation cannot start a CLI operation', stdout=False)
     from .read_only import require_safe_cli_destinations, FrozenProjectError
     try:
         require_safe_cli_destinations(argv)
     except FrozenProjectError as exc:
-        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'protected_destination', str(exc))
+        typed_exit.fail(argparse.ArgumentParser(prog='ahl'), 'protected_destination', str(exc), stdout=False)
     if argv[:2] == ['skills', 'activation-receipt']:
         from .evaluation.skills import activation_receipt_main
         return activation_receipt_main(argv[2:])
@@ -182,6 +188,7 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
+    _TypedParser.command = argv[0] if argv else None
     parser = _TypedParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
@@ -383,14 +390,14 @@ def main(argv=None):
         else:
             from .exit_guidance import summary
             print('ahl: ' + summary({'status': 'blocked'}), file=sys.stderr)
-        typed_exit.fail(parser, 'capability_unavailable', 'required filesystem capabilities unavailable; no unsafe fallback', args)
+        typed_exit.fail(parser, 'capability_unavailable', 'required filesystem capabilities unavailable; no unsafe fallback', args, stdout=_stdout(args))
     except KeyboardInterrupt:
         if started is not None: summarize(dict(status='interrupted', output=getattr(args, '_run_output', None)))
         args._progress('interrupted')
         if started is None:
             from .exit_guidance import summary
             print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
-        typed_exit.fail(parser, 'interrupted', 'interrupted', args)
+        typed_exit.fail(parser, 'interrupted', 'interrupted', args, stdout=_stdout(args))
     except (ValueError, OSError, TypeError, KeyError) as exc:
         from .evaluation.manifest_contract import typed
         exc = typed(exc, getattr(args, 'command', None) or 'cli')  # an unexpected KeyError/TypeError is never printed as its bare message
@@ -401,7 +408,7 @@ def main(argv=None):
             from .exit_guidance import summary
             print('ahl: ' + summary({'status': status, 'reason': reason}), file=sys.stderr)
         typed_exit.fail(parser, reason, str(exc), args, status=status, stage=getattr(exc, 'stage', None),
-                        next_step=getattr(exc, 'next_step', None))
+                        next_step=getattr(exc, 'next_step', None), stdout=_stdout(args))
 
 if __name__ == '__main__':
     raise SystemExit(main())

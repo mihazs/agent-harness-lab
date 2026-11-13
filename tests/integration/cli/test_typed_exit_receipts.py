@@ -12,7 +12,7 @@ import pytest
 import agent_harness_lab
 from agent_harness_lab import workflow
 from agent_harness_lab.cli import main
-from agent_harness_lab.monitoring.state import EXIT_CODES
+from agent_harness_lab.monitoring.state import EXIT_CODES, exit_code
 from tests.integration.workflow.test_budget_stages_end_to_end import Budgeted
 
 SENTINEL = 'SYNTHETIC-INSTRUCTION-BODY-837'
@@ -130,5 +130,6 @@ def test_the_catalog_of_nonzero_exit_paths_has_no_path_without_a_typed_reason():
     assert produced
     assert produced <= set(typed_exit.DEFAULT_REASON), sorted(produced - set(typed_exit.DEFAULT_REASON))
     assert {status for status in EXIT_CODES if EXIT_CODES[status]} <= set(typed_exit.DEFAULT_REASON)
+    assert len({step for _, _, step in typed_exit.REASONS.values()}) == len(typed_exit.REASONS)  # remediation is keyed by reason
     for reason, (status, stage, next_step) in typed_exit.REASONS.items():
-        assert EXIT_CODES[status] and stage in typed_exit.STAGES and next_step and reason in exit_guidance.REMEDIATION, reason
+        assert exit_code(status) and stage in typed_exit.STAGES and next_step and reason in exit_guidance.REMEDIATION, reason

@@ -168,7 +168,7 @@ def test_forked_public_repair_cannot_overlap_the_parent_transaction(one):
             assert process.exitcode == 0
             assert reader.poll(1), 'Competing repair returned no result'
             outcome = reader.recv()
-            assert outcome['code'] == 2
+            assert outcome['code'] == 1  # a busy workspace is a conflict, not a usage error (#837)
             assert 'Another run or stale lock exists' in outcome['error']
             assert outcome['unchanged']
             assert one.skill.read_bytes() == before

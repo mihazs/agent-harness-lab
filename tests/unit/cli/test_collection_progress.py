@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_harness_lab import cli, evidence
+from tests.support.typed_exit import typed_stdout
 
 
 @pytest.fixture
@@ -156,6 +157,6 @@ def test_exception_reports_measured_budget_without_claiming_trial_spend(case):
         with pytest.raises(SystemExit) as stopped:
             cli.main(['improve', str(case.project), '--timeout', '60'])
     assert stopped.value.code == 2
-    assert output.getvalue() == ''
+    assert typed_stdout(output.getvalue())['status'] == 'invalid_input'
     assert re.search(r'budget_spent_seconds=[0-9.]+ remaining_seconds=[0-9.]+', error.getvalue())
     assert 'trials_spent=unknown' in error.getvalue()

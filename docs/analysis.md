@@ -399,6 +399,27 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `instruction_template_missing` | This release ships no instruction template, so the instruction file was left unchanged; install a newer release with: ahl update |
 | `instruction_write_failed` | Fix the filesystem error reported for the instruction file, then run: ahl update |
 | `region_edited_by_user_replaced` | Text edited inside the managed region of the instruction file was replaced and the edited text is in the backup; keep your own text outside the markers |
+| `invalid_usage` | Correct the option or project argument named on stderr, then rerun; ahl improve --help lists every option. |
+| `usage_conflict` | Resume with no other option: ahl improve PROJECT --resume RUN_ID |
+| `protected_destination` | Choose an output or state location outside the project and its history, then rerun. |
+| `unsupported_instruction_layout` | Make each instruction file a regular file inside the project instead of a symbolic link, then rerun. |
+| `run_input_rejected` | Read the rejected input named on stderr, correct it, then rerun; the private receipt of the run records the stage. |
+| `workspace_busy` | Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock. |
+| `run_conflict` | Read the conflict recorded in the private receipt of the run, resolve it, then rerun. |
+| `budget_exhausted` | Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun. |
+| `execution_failed` | Read the stage error recorded in the private receipt, fix the runtime or environment problem it names, then rerun. |
+| `system_error` | Fix the filesystem or operating-system condition reported on stderr, then rerun. |
+| `interrupted` | Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID |
+| `proposal_invalid` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
+| `evaluation_run_failed` | Read the failed evaluation records in the private receipt, fix the cause they name, then rerun. |
+| `run_incomplete` | Read which evidence is missing in the private receipt of the run, restore it, then rerun. |
+| `intervention_required` | Read the intervention the private receipt records, perform it, then rerun. |
+| `setup_failed` | Correct the setup problem reported on stderr, then rerun. |
+| `evidence_inconclusive` | Read the incomplete evidence recorded in the private receipt before drawing any conclusion, then rerun with more evidence. |
+| `prerequisite_blocked` | Satisfy the prerequisite recorded in the private receipt, then rerun. |
+| `capability_unavailable` | Run where the required filesystem capabilities exist; there is no unsafe fallback. |
+| `nested_invocation_refused` | Run ahl from the user shell, not from a managed preparation session. |
+| `legacy_attempted` | Read the recorded legacy operation in the private receipt before retrying. |
 | `fixed_comparison_inference_budget_infeasible` | Increase the declared inference budget for the comparison. |
 | `fresh_comparison_incomplete` | Review the incomplete comparison and its missing trial coverage. |
 | `frozen_inputs_changed` | Review the changed frozen inputs before starting a fresh evaluation. |

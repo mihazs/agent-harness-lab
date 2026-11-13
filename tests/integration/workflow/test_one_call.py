@@ -56,7 +56,7 @@ def test_journal_write_error_preserves_target_and_reports_only_read_only(one, er
     with patch('agent_harness_lab.promotion.journal.os.open', side_effect=fault):
         code, result = one.invoke('--repair-contracts')
     assert code != 0 and result['status'] == 'execution_error'
-    assert result.get('reason') == expected and result['changed_files'] == []
+    assert result.get('reason') == (expected or 'execution_failed') and result['changed_files'] == []  # typed, never null (#837)
     assert (one.skill.read_bytes(), one.skill.stat().st_mode & 0o777) == original
 
 
@@ -66,7 +66,7 @@ def test_read_only_state_directory_is_not_reported_as_target(one):
     with patch.object(Journal, 'prepare', side_effect=error):
         code, result = one.invoke('--repair-contracts')
     assert code != 0 and result['status'] == 'execution_error'
-    assert 'reason' not in result and result['changed_files'] == []
+    assert result['reason'] == 'execution_failed' != 'target_filesystem_read_only' and result['changed_files'] == []  # the read-only target is not claimed (#837)
     assert one.skill.read_bytes() == original
 
 
