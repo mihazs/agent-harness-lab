@@ -52,6 +52,18 @@ Omitting the optional target preserves existing plan hashes and trial IDs. The
 standalone command exits 0 for a feasible design and 3 for an infeasible design;
 invalid inputs are errors.
 
+## Inconclusive is an expected result
+
+The fixed analysis is deliberately conservative: it assumes nothing about outcome
+variance and counts only independent roots, so its interval is wide. With 100 equally
+weighted roots the half-width is about .296, and about 877 roots are needed to reach .1.
+Most real banks are smaller, so `inconclusive` is the normal answer to a small design,
+not a malfunction. It means the evidence does not support a claim at the frozen margins;
+it is not evidence that the candidate is worse, and it is not evidence of noninferiority.
+Repeating each task does not shrink the interval, because repeats are not roots. For
+a reliability view of the same recorded outcomes, see the
+[repeat reliability profile](repeat-reliability.md).
+
 ## Minimum independent roots
 
 The same report includes `sample_size_plan` (profile

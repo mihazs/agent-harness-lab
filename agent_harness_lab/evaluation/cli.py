@@ -156,7 +156,7 @@ def main(argv):
                     cohort_json=read_regular(args.cohorts,1024*1024) if args.cohorts else None
                     result=analyze_sequential(spec,records,binding,cohort_json=cohort_json,include_missing_bounds=True)
                 else:
-                    result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
+                    result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank, include_reliability=True)
                 result['oracle_validity'] = 'unverified'
                 result['promotion'] = asdict(decide(spec, result))
                 code = 3
