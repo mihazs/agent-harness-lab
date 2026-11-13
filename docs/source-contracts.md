@@ -903,8 +903,9 @@ for foreign repositories, force-push staleness, abbreviated/case-variant SHAs,
 missing repository identity and truncated history. It also runs one native case
 through both built-in readers. The [PR commit-role join](#offline-pr-commit-role-join)
 below answers the PR head and merge-result questions this join leaves open. The
-remaining cross-source chain, persisted proofs, contradiction reports and the
-diagnostic-utility study stay open in #58.
+remaining cross-source chain, persisted proofs, most contradiction reports and the
+diagnostic-utility study stay open in #58; [merged PRs with failing CI](#merged-pull-requests-with-failing-ci)
+is the one lead implemented offline.
 
 ### Offline Git/GitLab merge request commit join
 
@@ -3941,6 +3942,42 @@ in two reports keeps one origin per report. Reruns stay correlated replicates
 a model caused it. Warnings from both sides, including the unread logs, artifacts and
 annotations, stay in the report, and `capture_completeness` is `partial`.
 `task test:sources:test-results` runs the synthetic controls.
+
+### Merged pull requests with failing CI
+
+`sources.ci_leads.merged_pull_failing_ci_leads(summary, *, repository_id)` turns the
+GitHub reader's `summary` (a capture that selected the `checks` and/or `actions`
+detail) into scoped investigation leads for one contradiction pattern: a PR was
+merged while the CI captured for its exact head commit still fails. It reads no file
+or network and returns profile `merged-pull-failing-ci-leads-v1` (rejected by public
+export). A repository whose fingerprint differs from `repository_id` is `unlinked`
+with no leads.
+
+CI is attached to a PR only through the head commit identity the PR node carries.
+Failing evidence is a check run with conclusion `failure`, `timed_out` or
+`startup_failure`, a workflow run (latest attempt) with the same conclusions, or the
+newest commit status of a context in state `error` or `failure`. Cancelled, skipped,
+neutral, pending and unfinished results are not failures. A status context whose
+newest entries share one instant but disagree is neither failing nor passing and is
+listed as `conflicting_same_instant_statuses`. Each lead groups the failing evidence of
+one PR and labels every item `before_close`, `after_close` or `unknown` against the
+merge time; a run's `updated_at` only bounds when it finished, so a later value stays
+`unknown`. Several failing items on one head are one lead, not extra roots.
+
+A lead carries no `verdict` and lists `possible_explanations`: the check may not be
+required for merge, a rerun outside the capture may have passed, or a maintainer may
+have accepted the failure. The `required_checks_unknown` and
+`merge_commit_ci_not_evaluated` warnings always apply, as do the capture's own
+warnings (for example `latest_checks_only`). Open PRs are skipped. Not evaluated, with a
+reason, are closed-unmerged PRs (`closed_without_merge`: closing with failing CI is
+consistent), closed plain issues (`issue_without_commit_identity`: an issue names no
+commit and closing references are not read), merged PRs when no CI detail was
+selected (`ci_detail_not_selected`) and merged PRs with no CI captured for the head
+(`no_ci_evidence_for_head`).
+`causal_status` is `unknown`, `task_outcomes_verified` is `false` and
+`independent_roots` is `null`. `task test:sources:test-results` runs the synthetic
+controls. The `wiki claims a skill was used` and `PR says fixed but no graded run
+exists` leads remain open in #58.
 
 ## Offline SARIF quality and security reports
 
