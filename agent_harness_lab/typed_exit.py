@@ -68,9 +68,8 @@ def budget(args):
 
 
 def _fill(result, reason, stage, next_step):
-    status = result['status']
     result.setdefault('reason', reason)
-    result['exit_receipt'] = dict(profile=PROFILE, code=exit_code(status), stage=stage, next_step=next_step)
+    result['exit_receipt'] = dict(profile=PROFILE, code=exit_code(result.get('status')), stage=stage, next_step=next_step)
     return result
 
 
@@ -121,9 +120,9 @@ def classify(exc, started):
     """(reason, status) of an exception that reached the entry point; every exception maps into the vocabulary."""
     if isinstance(exc, TypedExit):
         return exc.reason, exc.status
-    reason = getattr(exc, 'reason', None)  # a manifest ContractError keeps its own registered reason
-    if isinstance(reason, str):
-        return reason, 'invalid_input'
+    from .evaluation.manifest_contract import ContractError
+    if isinstance(exc, ContractError):  # only it registers its reason; ssl.SSLError and URLError carry free text in `.reason`
+        return exc.reason, 'invalid_input'
     if isinstance(exc, TimeoutError):
         return 'budget_exhausted', 'budget_exhausted'
     if isinstance(exc, OSError):

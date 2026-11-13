@@ -1349,6 +1349,16 @@ def construction_receipt(result, args):
         result['budget_exhaustion'] = budget_stages.exhausted(stages, getattr(args, '_observed', None))  # unset: the evaluation never reported, so unknown
 
 
+def _sealed(result, args):
+    """Type a non-zero result and keep its private receipt file in step."""
+    if exit_code(result.get('status')) and 'exit_receipt' not in result:
+        typed_exit.seal(result, args)
+        output = result.get('output')
+        if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
+            write_json(Path(output)/'workflow.json', result)
+    return result
+
+
 def improve(args):
     if getattr(args,'from_audit',None) is not None:
         from copy import copy
@@ -1365,12 +1375,7 @@ def improve(args):
         output = result.get('output')
         if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
             write_json(Path(output)/'workflow.json', result)
-    if exit_code(result.get("status")) and 'exit_receipt' not in result:
-        typed_exit.seal(result, args)
-        output = result.get('output')
-        if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
-            write_json(Path(output)/'workflow.json', result)
-    return result
+    return _sealed(result, args)
 
 
 def watch_configuration(args):
@@ -1458,10 +1463,12 @@ def watch(args):
                         result = _run_improvement(options,parent_started=started)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
-                        result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
-                                      **({'reason': exc.reason} if isinstance(exc, manifest_contract.ContractError) else {}),
+                        result = dict(status=exc.status if isinstance(exc, typed_exit.TypedExit) else
+                                      'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
+                                      **({'reason': exc.reason} if isinstance(exc, (manifest_contract.ContractError, typed_exit.TypedExit)) else {}),
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
                         construction_receipt(result, options)
+                    _sealed(result, options)  # a normally returned result and the one built above both end typed
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
@@ -1473,8 +1480,11 @@ def watch(args):
             if args.once or status == 'interrupted':
                 if not emitted:
                     print('ahl: No fresh run. Evidence coverage: unavailable. Next: Review the private watch checkpoint.', file=sys.stderr)
+                    if exit_code(status):  # the previous disposition, not a fresh failure: say so, typed
+                        print(json.dumps(typed_exit.seal(dict(status=status, fresh_run=False))), flush=True)
                 return exit_code(status)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print('ahl: Inconclusive. Evidence coverage: unavailable. Next: Review the interrupted run before starting another.', file=sys.stderr)
+        print(json.dumps(typed_exit.seal(dict(status='interrupted'))), flush=True)
         return exit_code('interrupted')

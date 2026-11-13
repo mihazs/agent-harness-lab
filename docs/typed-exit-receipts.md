@@ -16,6 +16,12 @@ keep stdout empty and print the same object as one `ahl: exit_receipt=...` stder
 The run's own `output` field, when present, is the pre-existing private run location,
 not part of the typed block.
 
+`ahl watch` seals every result it prints, including a run that returned normally and one
+that failed on invalid input, and an interrupt prints an `interrupted` receipt. When `--once`
+ends without a fresh run and the checkpointed disposition is non-zero, stdout carries that
+disposition as a typed receipt with `fresh_run: false`, so a replayed failure is never
+mistaken for a new one.
+
 | Field | Meaning |
 | --- | --- |
 | `status` | One of the workflow statuses; the process exit code follows it. |
@@ -33,7 +39,8 @@ never 0.
 ## Exit codes
 
 `0` completed; `1` execution, conflict, interruption or budget; `2` usage, input or setup
-error (an operating-system error before a run is `setup_error`/`system_error`); `3` blocked or inconclusive. Exit `2` stays reserved for usage, input and setup errors,
+error (any operating-system or network error before a run is `setup_error`/`system_error`; only a manifest
+contract error keeps its own registered reason); `3` blocked or inconclusive. Exit `2` stays reserved for usage, input and setup errors,
 and they carry a typed reason too. A busy workspace is a `conflict` (`1`), not a usage
 error.
 
