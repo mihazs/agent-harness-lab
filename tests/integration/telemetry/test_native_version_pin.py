@@ -1,4 +1,5 @@
 """Synthetic stores: a release inside the fixture-verified range parses as declared_range; any other is typed and never parsed as verified."""
+# fixed-in: 943ddb01 -k declared_range_selects_only_verified_captures or explicit_and_default_discovery_agree
 from argparse import Namespace
 from copy import deepcopy
 import json
