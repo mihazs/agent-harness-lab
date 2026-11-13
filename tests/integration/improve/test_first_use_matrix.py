@@ -11,7 +11,6 @@ import pytest
 from agent_harness_lab import cli
 from tests.support.first_use_history import Home
 
-NOT_YET = pytest.mark.xfail(strict=True, reason='first-use outcome fix pending in this change (#803)')
 NEEDS_332 = pytest.mark.xfail(strict=True, reason='needs #332')
 
 
@@ -46,7 +45,6 @@ def assert_candidate_or_typed_reason(receipt):
         assert explained['causes'] and all(type(count) is int and 0 < count <= findings for count in explained['causes'].values())
 
 
-@NOT_YET
 def test_recurring_failures_without_outcomes_end_typed_and_spend_nothing(home):
     """The field case: findings across sessions, zero verified outcomes, no hypothesis source."""
     for name in ('a', 'b', 'c'): home.codex(name)
@@ -59,7 +57,6 @@ def test_recurring_failures_without_outcomes_end_typed_and_spend_nothing(home):
     assert receipt['changed_files'] == [] and receipt['automatic_promotion'] is False
 
 
-@NOT_YET
 def test_a_single_failure_without_outcomes_ends_typed_and_spends_nothing(home):
     home.codex('only', calls=1)
     code, receipt, _ = improve(home)
@@ -68,7 +65,6 @@ def test_a_single_failure_without_outcomes_ends_typed_and_spends_nothing(home):
     assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
 
 
-@NOT_YET
 def test_failures_beside_a_user_focus_still_run_preparation_and_label_the_unevaluated_spend(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis')
@@ -80,7 +76,6 @@ def test_failures_beside_a_user_focus_still_run_preparation_and_label_the_uneval
     assert receipt['findings_not_candidates']['causes']['proposer_returned_no_change'] == receipt['analysis']['findings']
 
 
-@NOT_YET
 @pytest.mark.parametrize('status', [0, None], ids=['only_successes', 'every_outcome_unknown'])
 def test_history_without_findings_that_spent_preparation_is_labelled_and_never_called_fine(home, status):
     for name in ('a', 'b', 'c'): home.codex(name, status=status)
@@ -91,7 +86,6 @@ def test_history_without_findings_that_spent_preparation_is_labelled_and_never_c
     assert_candidate_or_typed_reason(receipt)
 
 
-@NOT_YET
 def test_failures_beside_only_unknown_outcomes_end_typed_and_never_count_the_unknown_as_evidence(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     home.ungraded_evaluation()
@@ -101,7 +95,6 @@ def test_failures_beside_only_unknown_outcomes_end_typed_and_never_count_the_unk
     assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
 
 
-@NOT_YET
 def test_sessions_outside_the_verified_version_range_end_typed_and_say_the_capture_is_unverified(home):
     for number in range(3): home.claude(number)
     code, receipt, _ = improve(home, '--source', 'claude')
@@ -118,7 +111,6 @@ def test_sessions_under_another_path_end_with_the_existing_typed_reason_and_reme
     assert receipt['remediation'] and home.model_calls == 0
 
 
-@NOT_YET
 def test_mixed_runtimes_with_failures_end_typed_and_spend_nothing(home):
     home.codex('a'); home.codex('b'); home.claude(1); home.claude(2)
     code, receipt, _ = improve(home)

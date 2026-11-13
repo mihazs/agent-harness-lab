@@ -188,7 +188,8 @@ def scenario_no_change_dispositions_are_honest(installed, sb):
     (sb.project / 'mode').write_text('no_change')
     events = sb.root / 'events.jsonl'
     events.write_text(''.join(json.dumps(row) + '\n' for row in history(3)))
-    code, result, _ = sb.ahl('improve', sb.project, '--events', events, '--agent', 'codex', '--timeout', '60')
+    code, result, _ = sb.ahl('improve', sb.project, '--events', events, '--agent', 'codex', '--timeout', '60',
+                         '--focus', 'synthetic hypothesis')  # findings without outcomes reach the proposer only with a hypothesis source
     assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
     steps = result['next_steps']
     assert [row['rank'] for row in steps] == list(range(1, len(steps) + 1)) and all(row['command'] for row in steps)

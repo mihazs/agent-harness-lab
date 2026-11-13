@@ -49,7 +49,8 @@ def _improve_summary(result, elapsed, budget=None):
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
-          f'coverage={json.dumps(coverage)} next={action}', file=sys.stderr, flush=True)
+          f'coverage={json.dumps(coverage)}{" label=" + result["spend_label"] if result.get("spend_label") else ""} next={action}',
+          file=sys.stderr, flush=True)
 
 
 def assets():

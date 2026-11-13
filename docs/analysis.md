@@ -359,6 +359,16 @@ caveat. Every other case is `no_change_evidence_insufficient`: the receipt then 
 `next_steps` list (strongest observed patterns, each missing-evidence item, then `ahl audit .`), each with
 the command to run. Neither reason claims the harness is correct beyond the examined behaviors.
 
+A receipt that ends without a candidate while `analysis.findings` is above zero (`no_outcome_evidence`, or a
+`no_change` after preparation) carries `findings_not_candidates`: `reason: findings_not_actionable`, the
+`findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
+`capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
+never an independence or severity claim. `no_outcome_evidence` is returned before any preparation call when no
+verified executable-grader outcome exists and no hypothesis source (`--from-audit` or `--focus`) was supplied;
+`next_steps` then lists the evidence that would unlock a candidate. A run whose preparation called the model and
+evaluated no trial carries `spend_label: spent_without_evaluation` (also in the `ahl: outcome=` line as `label=`)
+and a `spent_without_evaluation` object with `preparation_seconds` and `provider_reported_spend: unverified`.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
@@ -441,6 +451,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `precision_target_infeasible` | Review the requested precision target and available budget. |
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
+| `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |

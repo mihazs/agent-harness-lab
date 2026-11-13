@@ -584,6 +584,16 @@ def _improve(args):
         construction_receipt(result, args)
         write_json(output/'workflow.json', result)
         return result
+    from . import first_use
+    if first_use.blocked(data, args):
+        # Findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
+        result = dict(status='blocked', reason=first_use.NO_OUTCOME, output=str(output), changed_files=[], analysis=data['execution'],
+                      next_steps=getattr(args, '_analysis_next_steps', []), automatic_promotion=False, publication_allowed=False)
+        if 'history' in data: result['history'] = data['history']
+        first_use.attach(result, data, args, prepared=False)
+        construction_receipt(result, args)
+        write_json(output/'workflow.json', result)
+        return result
     progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
@@ -685,6 +695,7 @@ def _improve(args):
     final_attempt = None
     proposed = None
     grader_changed = False
+    prepared = ran_trials = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
@@ -729,6 +740,7 @@ def _improve(args):
                     prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None),analysis=True)
             else:
                 proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None),analysis=True)
+            prepared = True
             write_json(proposal_path,proposal)
             write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
@@ -768,6 +780,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             write_json(output / f'preparation-{attempt}.environment.json',
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
             run = runner.execute(command, prepare, remaining(), prompt, env=environment)
+            prepared = True
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
@@ -794,6 +807,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             result.update(status='no_change',reason=brief.disposition(data))
             if result['reason'] == 'no_change_evidence_insufficient':
                 result['next_steps'] = getattr(args,'_analysis_next_steps',[])
+            first_use.attach(result, data, args, prepared=True)
             break
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
@@ -853,6 +867,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
             with stages.charge('trials'): compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            ran_trials = True
             check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
@@ -1040,6 +1055,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'evaluation',
                         'grader_bundles' if 'bundle' in str(exc) else 'grader_self_tests') from exc
                 raise
+        ran_trials = True
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         args._observed = evaluated.get('trials', [])
         if hasattr(args, 'project_settings'):
@@ -1172,6 +1188,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
+    first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
