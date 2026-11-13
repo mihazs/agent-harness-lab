@@ -1,4 +1,5 @@
 """Synthetic private admission; operator labels never prove native provenance."""
+# fixed-in: 7806f58c -k test_admitting_an_untagged_regression_writes_a_task_without_an_areas_field
 import hashlib
 import json
 from pathlib import Path
