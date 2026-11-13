@@ -125,6 +125,57 @@ def test_a_dirty_file_that_is_not_valid_utf8_does_not_break_the_fingerprint(repo
     assert check.run(repo, py('pass'))['verdict'] == 'unchanged'
 
 
+@pytest.fixture
+def repo_with_side_branch(repo):
+    """A second commit and a `side` branch one commit behind HEAD: something a concurrent session could move."""
+    git(repo, 'branch', 'side')
+    (repo / 'AGENTS.md').write_text('# Later\n')
+    git(repo, 'commit', '-qam', 'second')
+    return repo
+
+
+MOVE_SIDE = py("import os, subprocess; subprocess.run(['git', '-C', os.environ['REAL_CHECKOUT'], 'branch', '-f', 'side', 'HEAD'], check=True)")
+
+
+def test_a_ref_moved_in_the_real_checkout_is_named_in_the_receipt(repo_with_side_branch):
+    """Regression (#793): on a busy repository the bare `refs` verdict could not say which ref moved, so a concurrent
+    session's commit looked like the command's own damage."""
+    receipt = check.run(repo_with_side_branch, MOVE_SIDE)
+
+    assert receipt['verdict'] == 'drift' and 'refs' in receipt['drift']
+    assert receipt['ref_changes'] == {'added': [], 'removed': [], 'updated': ['refs/heads/side'], 'ignored': []}
+
+
+def test_a_new_and_a_removed_branch_are_listed_by_name(repo_with_side_branch):
+    command = py("import os, subprocess as s; r = os.environ['REAL_CHECKOUT']; s.run(['git', '-C', r, 'branch', 'fresh'], check=True); s.run(['git', '-C', r, 'branch', '-D', 'side'], check=True)")
+
+    receipt = check.run(repo_with_side_branch, command)
+
+    assert receipt['ref_changes']['added'] == ['refs/heads/fresh'] and receipt['ref_changes']['removed'] == ['refs/heads/side']
+
+
+def test_an_ignored_ref_pattern_is_not_drift_but_stays_visible(repo_with_side_branch):
+    receipt = check.run(repo_with_side_branch, MOVE_SIDE, ignore_refs=('refs/heads/side',))
+
+    assert receipt['verdict'] == 'unchanged' and receipt['drift'] == []
+    assert receipt['ref_changes']['ignored'] == ['refs/heads/side'] and receipt['ref_changes']['updated'] == []
+    assert receipt['ignore_refs'] == ['refs/heads/side'], 'the receipt says what was excused'
+
+
+def test_an_ignored_pattern_does_not_hide_a_different_ref(repo_with_side_branch):
+    receipt = check.run(repo_with_side_branch, MOVE_SIDE, ignore_refs=('refs/remotes/*',))
+
+    assert receipt['verdict'] == 'drift' and receipt['ref_changes']['updated'] == ['refs/heads/side']
+
+
+def test_the_ignore_refs_option_reaches_the_command_line_tool(repo_with_side_branch):
+    assert check.main([str(repo_with_side_branch), '--ignore-refs', 'refs/heads/*', '--', *MOVE_SIDE]) == 0
+
+
+def test_a_moved_ref_without_the_option_exits_one_on_the_command_line(repo_with_side_branch):
+    assert check.main([str(repo_with_side_branch), '--', *MOVE_SIDE]) == 1
+
+
 def test_drift_makes_the_command_line_tool_exit_one(repo):
     stray = py("import os, pathlib; pathlib.Path(os.environ['REAL_CHECKOUT'], 'stray.txt').write_text('x')")
 

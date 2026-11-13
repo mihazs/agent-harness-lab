@@ -25,6 +25,15 @@ temporary worktree path, which is also the command's working directory.
   REPO is a linked worktree). Any difference is `drift` and the exit status is 1; otherwise the command's own status is
   returned (124 on timeout). Setup problems return 2.
 
+## Repositories other people are working in
+
+Anything that moves a ref in the real checkout while the command runs counts as drift, including a colleague's or another
+agent session's commit on its own branch. The receipt therefore names every ref that was added, removed or moved
+(`ref_changes`: `added`, `removed`, `updated`, `ignored`), so you can tell the command's own damage from concurrent work. On a busy
+repository pass `--ignore-refs PATTERN` (repeatable, `fnmatch` syntax such as `refs/heads/feat/*` or `refs/remotes/*`): matching
+changes are not drift, but they stay listed under `ignored` and the patterns are recorded in `ignore_refs`. HEAD, the working
+tree, the index, stashes, linked worktrees and the git config are never excusable.
+
 ## What it does not undo
 
 The fingerprint hashes content for tracked changes and untracked files. For ignored files (build output, caches) it compares

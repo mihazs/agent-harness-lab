@@ -13,6 +13,7 @@ The receipt names changed files and hashes; it holds no file contents. Keep it p
 """
 import argparse
 import hashlib
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -61,7 +62,33 @@ def _tree_digest(repo, names, content):
     return total.hexdigest()[:16]
 
 
-def fingerprint(repo):
+def ref_tips(repo):
+    """Every ref and the commit it points at (names and ids only)."""
+    tips = {}
+    for line in _git(repo, 'for-each-ref', '--format=%(refname) %(objectname)').splitlines():
+        name, _, tip = line.partition(' ')
+        tips[name] = tip
+    return tips
+
+
+def ref_changes(before, after, ignore_refs=()):
+    """Name the refs that were added, removed or moved; refs matching an ignore pattern are listed apart."""
+    excused = lambda name: any(fnmatch.fnmatchcase(name, pattern) for pattern in ignore_refs)
+    changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+    kinds = {'added': [], 'removed': [], 'updated': [], 'ignored': []}
+    for name in changed:
+        if excused(name):
+            kinds['ignored'].append(name)
+        elif name not in before:
+            kinds['added'].append(name)
+        elif name not in after:
+            kinds['removed'].append(name)
+        else:
+            kinds['updated'].append(name)
+    return kinds
+
+
+def fingerprint(repo, ignore_refs=()):
     """What a command could change in a checkout, as hashes and counts; no file content.
 
     Covers HEAD, refs, stashes, linked worktrees, the status and index listings, the content of tracked changes and of
@@ -75,7 +102,8 @@ def fingerprint(repo):
     ignored = _git(repo, 'ls-files', '-z', '--others', '--ignored', '--exclude-standard').split('\0')
     return {
         'head': _git(repo, 'rev-parse', 'HEAD').strip(),
-        'refs': _digest(_git(repo, 'for-each-ref', '--format=%(refname) %(objectname)')),
+        'refs': _digest('\n'.join(f'{name} {tip}' for name, tip in sorted(ref_tips(repo).items())
+                                 if not any(fnmatch.fnmatchcase(name, pattern) for pattern in ignore_refs))),
         'stashes': len(_git(repo, 'stash', 'list').splitlines()),
         'worktrees': len(worktrees),
         'status': _digest(_git(repo, 'status', '--porcelain=v1', '-uall')),
@@ -107,13 +135,13 @@ def changed_in(worktree):
     return sorted(line[3:] for line in status.splitlines())
 
 
-def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None, inherit_home=False, pass_env=(), log_dir=None, which=shutil.which):
+def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None, inherit_home=False, pass_env=(), log_dir=None, ignore_refs=(), which=shutil.which):
     """Execute COMMAND in a temporary worktree of REPO at REF; return the receipt (a dict)."""
     repo = Path(repo).resolve()
     if not (repo / '.git').exists():
         raise RuntimeError(f'{repo} is not a git checkout')
     commit = _git(repo, 'rev-parse', '--verify', f'{ref}^{{commit}}').strip()
-    before = fingerprint(repo)
+    before, tips_before = fingerprint(repo, ignore_refs), ref_tips(repo)
     receipt = {'tool_version': VERSION, 'commit': commit, 'command': list(command), 'timeout_seconds': timeout,
                'memory_cap_gib': memory_cap_gib, 'inherit_home': inherit_home, 'pass_env': sorted(pass_env), 'before': before}
     with tempfile.TemporaryDirectory(prefix='ahl-isolated-') as temporary:
@@ -149,9 +177,10 @@ def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None
         finally:
             subprocess.run(['git', *NO_HOOKS, 'worktree', 'remove', '--force', str(worktree)], cwd=repo, capture_output=True)
             subprocess.run(['git', *NO_HOOKS, 'worktree', 'prune'], cwd=repo, capture_output=True)
-    after = fingerprint(repo)
+    after = fingerprint(repo, ignore_refs)
     differing = drift(before, after)
-    receipt.update(after=after, drift=differing, verdict='drift' if differing else 'unchanged')
+    receipt.update(after=after, drift=differing, verdict='drift' if differing else 'unchanged',
+                   ref_changes=ref_changes(tips_before, ref_tips(repo), ignore_refs), ignore_refs=sorted(ignore_refs))
     return receipt
 
 
@@ -164,6 +193,7 @@ def main(argv=None):
     parser.add_argument('--memory-cap-gib', type=int, help='Run the command in a systemd user scope with this memory limit')
     parser.add_argument('--inherit-home', action='store_true', help='Pass the real HOME (needed for a runtime login); default: a private empty home')
     parser.add_argument('--pass-env', action='append', default=[], metavar='NAME', help='Pass this host variable through (repeatable)')
+    parser.add_argument('--ignore-refs', action='append', default=[], metavar='PATTERN', help='Do not count changes to refs matching this fnmatch pattern as drift (repeatable); use on a repository other people are working in. Ignored changes stay listed in the receipt')
     parser.add_argument('--log-dir', type=Path, help='Also write the command stdout.txt and stderr.txt here (private; the receipt keeps hashes only)')
     parser.add_argument('--receipt', type=Path, help='Write the JSON receipt here (default: print it). It records the command line verbatim: never put a secret on it')
     argv = list(sys.argv[1:] if argv is None else argv)
@@ -172,7 +202,7 @@ def main(argv=None):
     if not command:
         parser.error('a command is required after --')
     try:
-        receipt = run(args.repo, command, args.ref, args.patch, args.timeout, args.memory_cap_gib, args.inherit_home, args.pass_env, args.log_dir)
+        receipt = run(args.repo, command, args.ref, args.patch, args.timeout, args.memory_cap_gib, args.inherit_home, args.pass_env, args.log_dir, args.ignore_refs)
     except RuntimeError as error:
         print(f'isolated check could not start: {error}', file=sys.stderr)
         return 2
