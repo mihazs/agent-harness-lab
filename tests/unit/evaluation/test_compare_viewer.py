@@ -49,11 +49,20 @@ def test_verdicts_are_text_labels_and_no_color_semantics():
     assert not re.search(r'color|#[0-9a-f]{3,6}', style, re.I) and 'style=' not in document
 
 
-def test_unknown_usage_is_not_zero_and_event_bodies_never_render():
+def test_event_bodies_never_render():
     value = fixture()
     value['trials'][0]['events'][0]['arguments'] = 'SECRET-BODY'
-    document = page(value)
-    assert 'SECRET-BODY' not in document and '<td>unknown</td>' in document
+    assert 'SECRET-BODY' not in page(value)
+
+
+def test_unknown_usage_total_renders_unknown_never_zero():
+    value = fixture()
+    value['trials'][0]['usage'] = None  # baseline record of a comparable pair
+    rows = re.findall(r'<tr><td>(\w+)</td><td>(\w+)</td><td>(\d+)</td><td>(\d+)</td><td>(\w+)</td></tr>', page(value))
+    usage = {(arm, field): (known, unknown, total) for arm, field, known, unknown, total in rows}
+    assert usage[('baseline', 'duration_ms')][1:] == ('1', 'unknown')
+    assert usage[('baseline', 'input_tokens')][1:] == ('1', 'unknown')
+    assert usage[('candidate', 'duration_ms')][1] == '0' and usage[('candidate', 'duration_ms')][2] != 'unknown'
 
 
 def test_public_or_foreign_report_is_refused():
