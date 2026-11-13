@@ -99,6 +99,13 @@ is coloured by the direction of a point difference, and no decision is computed 
 the page. Each pair has a collapsible timeline with its alignment mode. Usage that
 is unknown is shown as `unknown`, never zero.
 
+When the supplied analysis already contains a `bayesian_decision` block (see the
+[Bayesian decision score](bayesian-decision-score.md#wiring)), the page adds a
+"Bayesian decision score" section with its verdict, scores, gate stages, cross-check
+and resource state as text. It is copied from the analysis, never recomputed, labelled
+recommendation-only, and states that no peer-reviewed work applies the method to agent
+harness scoring. A page whose analysis has no block is unchanged.
+
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without
 JavaScript. Not yet covered: browser-driven keyboard and network-interception

@@ -1,13 +1,18 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design. Two slices exist: the optional frozen `bayes_decision` spec
-field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
-reference), and the pure posterior and decision function (issue b, see
-[Decision function](#decision-function)). Neither is wired into any command, so no
-analysis result carries the output block yet. It explains what a numeric, non-LLM decision score should be, why it takes
-this shape, and which choices the operator must confirm. The reference section at the
-end fixes names and fields so the remaining implementation issues can be written
-against it.
+This page is a design with four implemented slices: the optional frozen `bayes_decision`
+spec field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
+reference); the pure posterior and decision function (issue b, see
+[Decision function](#decision-function)); the exact sign-permutation cross-check as a
+pure module (issue c, see [Frequentist cross-check](#frequentist-cross-check-option-1-role));
+and the wiring (issue d, see [Wiring](#wiring)): `ahl experiment --records`, the
+history-store analysis that `ahl improve` carries and its decision receipt report the
+`bayesian_decision` block for a plan that declares `bayes_decision`, and `ahl compare`
+displays a supplied block. A plan without the declaration prints byte-identical output.
+The page explains what a numeric, non-LLM decision score should be, why it takes this
+shape, and which choices the operator must confirm. The reference section at the end
+fixes names and fields so the remaining implementation issues can be written against
+it.
 
 The existing decision path is unchanged by this design. The weighted-root Hoeffding
 analysis in `evaluation/statistics.py` stays the only path that can reach
@@ -317,8 +322,55 @@ Role and limits:
   with reason `cross_check_disagrees`. It never upgrades a verdict.
 - It tests a symmetry assumption, not a causal claim, and with `n` roots its smallest
   possible p-value is `2^-n`, so a very small bank cannot satisfy it. That is one more
-  reason for the root floor.
+  reason for the root floor. The check does not enforce that floor: a six-root bank
+  whose roots are all candidate wins reaches the minimum `2^-6`, which the check alone
+  accepts at .05, so it is the root floor of the decision that withholds the verdict.
 - It does not use the Hoeffding bound and does not replace it.
+
+### Implemented module
+
+`agent_harness_lab/evaluation/sign_permutation.py` has two pure functions and no
+dependence on the posterior, a clock, a file or a model.
+
+`sign_permutation(roots, family_weights, epsilon, alpha, *, plan_digest, draws)`
+takes the root differences `d_r` of each family (repetitions already averaged inside
+the root, root-similarity groups already merged by the caller), the frozen
+`family_weights`, `rope_epsilon`, `cross_check_alpha`, the plan digest and a draw
+count. Every root of family `f` carries `w_f / n_f`, exactly as the Hoeffding path
+does; the weights are not renormalized, and the p-value does not depend on their
+scale. It returns the p-value of each side, `better` (shift `d_r - epsilon`) and
+`worse` (shift `-d_r - epsilon`), with the number of nonzero roots per side.
+
+- **Exact up to 20 nonzero roots.** Zero shifted differences are dropped, so they are
+  neither counted as roots nor allowed to move the p-value, and an input with no
+  nonzero root returns p = 1 without error. The count of flips at least as extreme
+  as the observed one runs in integer arithmetic by meeting in the middle, so a flip
+  that ties the observed value counts and no float rounding can break a tie. Inputs
+  are read as the nearest rational with a denominator of at most one million, which
+  makes `0.1 + 0.2` and `0.3` tie, as they do in the data they summarize.
+- **Seeded Monte Carlo above 20.** `draws` random sign vectors give
+  `(1 + hits) / (draws + 1)`, which is never 0, and the result is labeled
+  `monte_carlo` with its `draws` and `seed`. The seed is the SHA-256 of the profile,
+  a fixed label and the plan digest, so a rerun repeats and nobody can search seeds.
+  A result is labeled `monte_carlo` when either side is sampled. The cost is
+  `draws * roots` integer additions per side in pure Python.
+- **Bounds with unknown outcomes.** Raising one `d_r` moves the observed
+  statistic up by at least as much as it moves any flipped statistic, so the `better`
+  p-value never rises when a `d_r` rises (and the `worse` p-value never falls).
+  Computing the check at the worst-case and the best-case completion of
+  the unknown arms therefore brackets the p-value of every completion; an unknown arm
+  is never treated as a failure and no point p-value is reported for it. This holds
+  for the exact method; a Monte Carlo bracket is itself estimated.
+
+`compare(check, verdict, stage)` compares the quality-stage verdict with the check.
+It returns `verdict`, `reason`, `agrees` and `disagrees`. Only a `better` or `worse`
+reached at stage `quality` is compared; a validity block, a critical veto, a family
+regression control or a resource verdict keeps its own result and sets neither flag,
+so the cross-check can never undo a veto or a block. `equivalent` and
+`insufficient_evidence` are returned unchanged because the design defines no
+cross-check for them. The only possible change is to `insufficient_evidence`, and the
+function has no path that raises a verdict. Wiring the call into the gate and the
+output block is issue d.
 
 ## Guard role (Option 6)
 
@@ -389,8 +441,8 @@ supplied analysis already contains it.
 |-------|---------|------------|
 | a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged (implemented) | none |
 | b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` (implemented, not wired) | a |
-| c | exact and Monte Carlo sign-permutation cross-check | b |
-| d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` | b, c |
+| c | exact and Monte Carlo sign-permutation cross-check (implemented as a pure module) | a |
+| d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` (implemented, see [Wiring](#wiring)) | b, c |
 | e | calibration with `power.simulate` on declared null, in-ROPE and beneficial models; held-out seeds fixed before the run | b, c |
 | f | docs and the six fixtures listed below | d |
 | g | optional descriptive desirability and Pareto epsilon-indicator report | d |
@@ -493,9 +545,10 @@ Key `bayesian_decision` on the analysis result:
 | `draws`, `seed_source`, `monte_carlo_se` | simulation facts |
 | `roots`, `unknown_arms`, `bound_resolution` | evidence coverage |
 | `families` | per-family posterior mean, interval and non-inferiority probability |
-| `cross_check` | method (`exact` or `monte_carlo`), p-value, agrees |
+| `cross_check` | method (`exact` or `monte_carlo`), `p_better`, `p_worse`, `basis` (`point` or, with an ungraded arm, `worst_case_over_completions`), alpha and agrees |
 | `resource_gate` | the attached `resource_decision` state or `not_declared` |
 | `prior_sensitivity` | `S` under half and double the prior concentration, report only |
+| `oracle_validity` | copied from the analysis the block sits beside (`unverified` in `ahl experiment`, `current` or the stored state in the history store); the block never raises it |
 | `recommendation_authority`, `automatic_promotion`, `publication_allowed` | always `false` |
 
 ### Decision function
@@ -564,6 +617,74 @@ The standard-library sampler follows the Bayesian bootstrap and so is overconfid
 with few discrete root differences; the floors and the margin limit that, and
 calibration (issue e) is what can show whether they are enough.
 
+### Wiring
+
+Implemented in `evaluation/bayes_analysis.py`. `attach(spec, records, analysis, *,
+root_similarity_evidence, root_similarity_bank, resource_decision)` returns a copy of
+`analysis` with one added key `bayesian_decision`, or `analysis` itself when the plan
+declares no `bayes_decision`, so every existing output is byte-identical. It never
+calls or edits `statistics.analyze`, `promotion.policy.decide` or
+`resource_decision.decide`, makes no model, network, clock or file access, and runs
+after the promotion decision, so `decide` never sees the block.
+
+| Command | Where the block appears |
+|---------|-------------------------|
+| `ahl experiment --spec ... --records ...` | beside `status` and `promotion`; `--preflight`, `--power-model` and the sequential mode are unchanged |
+| the history-store analysis (`ahl analyze --history-store`, the decision receipt that `ahl improve` writes and verifies) | in the analysis; the receipt's `analysis_disposition.bayesian_decision` carries verdict, reason, stage and `parameters_sha256` only when the plan declares it, and `analysis_sha256` binds the whole block |
+| `ahl compare` | a "Bayesian decision score" section, only when the supplied analysis already contains a block; it is displayed, never recomputed |
+
+How the inputs are read:
+
+- **Roots.** One paired difference per planned root: the mean over its (task,
+  repetition) pairs of candidate minus baseline, so repetitions never add evidence.
+  Root-similarity components merge into one unit through the existing
+  `root_similarity.binding`; a binding that cannot be validated blocks the block
+  (`root_similarity_binding_missing_or_invalid`) and a component that spans families
+  blocks it (`root_similarity_component_spans_families`) instead of failing the
+  analysis.
+- **Unknown.** A trial that is missing, not graded by the executable grader or without
+  a boolean outcome is an unknown arm, never a failure. A missing trial is an unknown
+  arm, not a validity failure, so a partial bank gets bounds and the verdict
+  `insufficient_evidence` (`unknown_outcomes`). An unknown critical flag is `unknown`.
+- **Validity.** The analysis' own `blocked` reason (provenance, root-similarity, an
+  oracle that is quarantined or not sealed, an incomplete behavior observation)
+  carries into the block as `blocked`, with every arm reported unknown. Duplicate
+  trials (`missing_or_duplicate_trials`), trials outside the schedule
+  (`unexpected_trial_set`), a provenance mismatch (`provenance_mismatch`) and an empty
+  record set (`zero_trials`, the vacuity label of issue 805) also block it.
+- **Critical veto.** A graded executable record with `critical_regression` true, or an
+  analysis that already reports the `critical_regression` veto (an observed critical
+  behavior effect in the history store), gives `worse` at the `critical_veto` stage
+  before any score is read, as `statistics.analyze` does.
+- **Cross-check.** The sign-permutation p-values go to `decide` as the downgrade-only
+  input, with `draws` equal to the frozen `posterior_draws`. With an ungraded arm the
+  p-values hold for every completion of the unknowns (`better` at the worst-case
+  completion, `worse` at the best-case one) and `basis` says so. A plan that `decide`
+  blocks for its work bound, or a critical veto, skips the check.
+- **Resource gate.** No command computes `resource_decision.decide` for a recorded
+  analysis yet, so a plan that pins a resource contract reports
+  `resource_gate_not_evaluated` instead of `better` or `equivalent`. The `resource_decision`
+  argument exists for the day one does; a decision for another contract or one that is
+  not `noninferior` or `improvement` blocks `better` and `equivalent`.
+- **Oracle.** `ahl experiment` labels the oracle `unverified` and so does the block it
+  adds (`oracle_validity`); promotion stays blocked by the existing policy. Only the
+  history store can label it `current`.
+
+**Reach in `ahl improve`.** A plan that declares `bayes_decision` must also freeze a
+`precision_half_width`, and the controller refuses to execute a plan whose Hoeffding
+precision preflight is `infeasible`. The Bayesian block is therefore reachable through
+`ahl improve` and `ahl experiment-history` only for banks large enough to pass that
+unchanged preflight (hundreds of roots for a half-width of .1, as the
+[experiment precision](experiment-precision.md) page reports), which is the regime
+where the fixed analysis already answers. Recorded results of any bank size reach the
+block through `ahl experiment --records`, and a sealed history of a larger bank carries
+it into the analysis and the decision receipt. The preflight is not changed here; the
+open decisions below name the question.
+
+A `better` or `equivalent` block next to a Hoeffding `inconclusive` still gives no
+recommendation: `promotion.policy.decide` reads only `analysis['status']`, the oracle
+label and the prerequisites, and its decision is identical with and without the block.
+
 ### Verdict meanings
 
 | Verdict | Meaning | Authority |
@@ -585,4 +706,13 @@ calibration (issue e) is what can show whether they are enough.
 - Whether a verdict may ever come from `bound_resolution` when outcomes are unknown.
 - Whether the Bayesian verdict may become an accepted quality status in a new frozen
   resource quality policy. Today only the Hoeffding `supported` is accepted.
+- Whether a plan that declares `bayes_decision` should be allowed to execute through the
+  controller when only the Hoeffding precision preflight is infeasible, since that
+  preflight is what keeps the Bayesian score out of `ahl improve` for small banks.
+- Which command should compute `resource_decision.decide` for a recorded analysis, so a
+  pinned resource contract can reach `noninferior` rather than `resource_gate_not_evaluated`.
+  Today none does.
+- Whether an unverified oracle (`ahl experiment`) should block the Bayesian block instead of
+  labeling it. The block follows the Hoeffding analysis, which also reports `supported`
+  beside `oracle_validity: unverified`.
 - What the report's Options 1, 5 and 6 are, since the report was not found.

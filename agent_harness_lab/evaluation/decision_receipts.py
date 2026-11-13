@@ -75,6 +75,9 @@ def build(store,run_id):
         evidence_scope='controller_recomputed_analysis_only',native_identity='unverified',
         reviewer_identity='operator_attested_unverified' if membership else 'unverified',
         independence='unverified',publication_allowed=False,automatic_promotion=False,adoption_authority=False)
+    if 'bayesian_decision' in analysis:  # recommendation-only; the whole block is bound by analysis_sha256
+        payload['analysis_disposition']['bayesian_decision']={
+            key:analysis['bayesian_decision'][key] for key in ('verdict','reason','stage','parameters_sha256')}
     raw=encoded(payload)
     if len(raw)>MAX_BYTES: raise ValueError('decision receipt byte bound exceeded')
     # Numeric work and metadata reads must not leave stale captured eligibility.

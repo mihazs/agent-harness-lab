@@ -41,6 +41,51 @@ def _event(event):
     return ' / '.join(str(event.get(name)) for name in ('kind', 'name', 'status', 'error_class') if event.get(name)) + f" [{event['event_id']}]"
 
 
+EVIDENCE_STATUS = ('Evidence status: an inference by analogy; no peer-reviewed work applies this method (a paired Bayesian '
+                   'posterior with a region of practical equivalence) to agent harness scoring.')
+
+
+def _at(value, *path):
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+
+def _cell(value):
+    return ('unknown' if value is None else str(value).lower() if isinstance(value, bool)
+            else f'{value:.4f}' if isinstance(value, float) else value)
+
+
+def _bayesian(analysis):
+    """The supplied bayesian_decision block as text; display only, so nothing is recomputed or coloured."""
+    block = _at(analysis, 'bayesian_decision')
+    if not isinstance(block, dict): return ''
+    score, interval = _at(block, 'score'), _at(block, 'score', 'interval')
+    check = _at(block, 'cross_check')
+    rows = [('Verdict', _at(block, 'verdict')), ('Reason', _at(block, 'reason')), ('Decided at stage', _at(block, 'stage'))]
+    if isinstance(score, dict):
+        rows += [('Point score S', score.get('estimate')), ('Probability of a loss beyond the ROPE', score.get('S_worse')),
+                 ('Probability of equivalence', score.get('S_equiv')), ('S worst case', score.get('S_low')),
+                 ('S best case', score.get('S_high')), ('Interval low', _at(interval, 'low')), ('Interval high', _at(interval, 'high'))]
+    rows += [('Independent roots', _at(block, 'roots', 'independent')), ('Unknown arms', _at(block, 'unknown_arms')),
+             ('Bound resolution', _at(block, 'bound_resolution')), ('Posterior draws', _at(block, 'draws')),
+             ('Cross-check method', _at(check, 'method')), ('Cross-check p (better)', _at(check, 'p_better')),
+             ('Cross-check p (worse)', _at(check, 'p_worse')), ('Cross-check agrees', _at(check, 'agrees')),
+             ('Resource gate', _at(block, 'resource_gate', 'status')), ('Critical regression', _at(block, 'critical_regression')),
+             ('Oracle validity', _at(block, 'oracle_validity')), ('Recommendation authority', _at(block, 'recommendation_authority')),
+             ('Automatic promotion', _at(block, 'automatic_promotion')), ('Publication allowed', _at(block, 'publication_allowed'))]
+    gate = [(row.get('stage'), row.get('status')) for row in block['gate'] if isinstance(row, dict)] if isinstance(block.get('gate'), list) else []
+    families = block['families'].items() if isinstance(block.get('families'), dict) else ()
+    return ('<h3>Bayesian decision score (recommendation-only)</h3>'
+            '<p>Copied from the supplied analysis, not recomputed here. It is a review aid beside the fixed analysis above: it '
+            'grants no promotion, adoption or publication authority, and an unknown outcome is never a failure.</p>'
+            f'<p>{_e(EVIDENCE_STATUS)}</p>' + _table(('Measure', 'Value'), [(name, _cell(value)) for name, value in rows])
+            + (_table(('Gate stage', 'Status'), gate) if gate else '')
+            + (_table(('Family', 'Roots', 'Posterior mean', 'P(not worse than margin)', 'P(regression)'),
+                      [(name, *(_cell(_at(row, *key)) for key in (('roots',), ('mean',), ('p_noninferior',), ('p_regression',))))
+                       for name, row in families]) if families else ''))
+
+
 def render(report):
     """Return one self-contained HTML document for a `side_by_side.build` report."""
     if report.get('profile') != sbs.REPORT_PROFILE or report.get('publication_allowed') is not False:
@@ -87,7 +132,7 @@ def render(report):
             f'<h1>Side-by-side experiment review: {_e(report["experiment_id"])}</h1>'
             f'<p><strong>Private {_e(report["execution_kind"])} report.</strong> Observation only: no causal attribution, '
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
-            f'<h2>Summary</h2>{lead}{_table(("Measure", "Value"), counts)}'
+            f'<h2>Summary</h2>{lead}{_bayesian(analysis)}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'
             f'<h2 id="pairs">Task table</h2>{_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'
