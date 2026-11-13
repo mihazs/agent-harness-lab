@@ -23,6 +23,7 @@ import tempfile
 
 VERSION = 1
 NO_HOOKS = ('-c', 'core.hooksPath=/dev/null')
+BUS_VARIABLES = ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')
 
 
 def _git(repo, *args, check=True):
@@ -89,6 +90,7 @@ def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None
             if patch:
                 _git(worktree, 'apply', str(Path(patch).resolve()))
             argv = wrap_with_memory_cap(substitute(command, worktree), memory_cap_gib, which)
+            capped = argv[:1] == ['systemd-run']
             env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'AHL_STATE_HOME': str(state),
                    'REAL_CHECKOUT': str(repo), 'WORKTREE': str(worktree)}
             if inherit_home and 'HOME' in os.environ:  # a real runtime needs its saved login; tests keep a private home
@@ -96,7 +98,9 @@ def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None
             else:
                 env['HOME'] = str(Path(temporary) / 'home')
                 Path(env['HOME']).mkdir()
-            env.update({name: os.environ[name] for name in pass_env if name in os.environ})
+            # `systemd-run --user` needs the user bus; without these the capped command never starts.
+            names = [*pass_env, *(BUS_VARIABLES if capped else ())]
+            env.update({name: os.environ[name] for name in names if name in os.environ})
             try:
                 done = subprocess.run(argv, cwd=worktree, env=env, capture_output=True, text=True, timeout=timeout)
                 receipt.update(command_status=done.returncode, command_timed_out=False,

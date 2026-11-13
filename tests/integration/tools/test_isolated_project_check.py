@@ -184,6 +184,33 @@ def test_memory_cap_command_construction():
     assert check.wrap_with_memory_cap(['tool'], None, which) == ['tool'], 'no cap requested'
 
 
+@pytest.fixture
+def stub_systemd_run(tmp_path, monkeypatch):
+    """A stand-in `systemd-run` that, like the real one, refuses to start without a user bus, then runs the command."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    stub = bin_dir / 'systemd-run'
+    stub.write_text('#!/bin/sh\n[ -n "$XDG_RUNTIME_DIR" ] && [ -n "$DBUS_SESSION_BUS_ADDRESS" ] || exit 9\n'
+                    'while [ "$1" != "--" ]; do shift; done; shift; exec "$@"\n')
+    stub.chmod(0o755)
+    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
+    monkeypatch.setenv('XDG_RUNTIME_DIR', '/run/user/test')
+    monkeypatch.setenv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/run/user/test/bus')
+
+
+def test_a_memory_capped_command_can_reach_the_user_bus(repo, stub_systemd_run):
+    """Regression (#793): the stripped environment hid the user bus, so `systemd-run --user` failed before the command ran."""
+    receipt = check.run(repo, py("import os; assert os.environ['XDG_RUNTIME_DIR'] == '/run/user/test'"), memory_cap_gib=2)
+
+    assert receipt['command_status'] == 0, 'the capped command must start, not fail in systemd-run'
+
+
+def test_without_a_cap_the_bus_variables_are_not_passed(repo, stub_systemd_run):
+    receipt = check.run(repo, py("import os, sys; sys.exit(0 if 'XDG_RUNTIME_DIR' not in os.environ else 8)"))
+
+    assert receipt['command_status'] == 0
+
+
 def test_main_returns_the_commands_status_and_writes_a_receipt(repo, tmp_path):
     receipt_file = tmp_path / 'receipt.json'
 
