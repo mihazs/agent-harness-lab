@@ -63,7 +63,7 @@ def version():
     package = assets() / 'package.json'
     if package.exists():
         return json.loads(package.read_text())['version']
-    import importlib.metadata  # about 20 ms of startup; only an installed package without package.json needs it
+    import importlib.metadata  # only an installed package without package.json needs it; a top-level import cost startup time on every command
     try:
         return importlib.metadata.version('agent-harness-lab')
     except importlib.metadata.PackageNotFoundError:
