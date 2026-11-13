@@ -1,9 +1,10 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design. Only its first slice exists: the optional frozen
-`bayes_decision` spec field, with validation and a JSON schema (issue a, see the
-[Spec field](#spec-field) reference). There is no posterior code and no new output
-block yet. It explains what a numeric, non-LLM decision score should be, why it takes
+This page is a design. Two slices exist: the optional frozen `bayes_decision` spec
+field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
+reference), and the pure posterior and decision function (issue b, see
+[Decision function](#decision-function)). Neither is wired into any command, so no
+analysis result carries the output block yet. It explains what a numeric, non-LLM decision score should be, why it takes
 this shape, and which choices the operator must confirm. The reference section at the
 end fixes names and fields so the remaining implementation issues can be written
 against it.
@@ -387,7 +388,7 @@ supplied analysis already contains it.
 | Issue | Content | Depends on |
 |-------|---------|------------|
 | a | `bayes_decision` spec field, validation and schema; digests of plans without it unchanged (implemented) | none |
-| b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` | a |
+| b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` (implemented, not wired) | a |
 | c | exact and Monte Carlo sign-permutation cross-check | b |
 | d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` | b, c |
 | e | calibration with `power.simulate` on declared null, in-ROPE and beneficial models; held-out seeds fixed before the run | b, c |
@@ -496,6 +497,72 @@ Key `bayesian_decision` on the analysis result:
 | `resource_gate` | the attached `resource_decision` state or `not_declared` |
 | `prior_sensitivity` | `S` under half and double the prior concentration, report only |
 | `recommendation_authority`, `automatic_promotion`, `publication_allowed` | always `false` |
+
+### Decision function
+
+Implemented in `evaluation/bayes_decision.py` and not called by any command yet.
+`decide(spec, roots, *, critical, validity, groups, resource_decision, cross_check)` is
+pure: no file, clock, network or model call, and it never calls `statistics.analyze`
+or `promotion.policy.decide`. It returns the block above, plus `gate` (the five stage
+statuses, `passed`, `failed`, `not_evaluated` or `not_declared`), `floors` and
+`critical_regression`.
+
+- **Inputs.** `roots` holds one `RootDifference(root, family, low, high, unknown_arms)`
+  per planned root, exactly the roots of `spec.tasks`. `root_difference(root, family,
+  pairs)` builds one from `(candidate, baseline)` outcome pairs (`True`, `False` or
+  ungraded), averaging repetitions inside the root so they never add evidence, and
+  bounds an ungraded arm the way `statistics.incomplete_bounds` does. `critical` is
+  `True` (observed), `False` or `None` (a flag is unknown). `validity` is a typed
+  reason when the caller's own stage 1 checks failed. `groups` maps a root to its
+  similarity component; roots of one component merge into one unit by their mean,
+  and a component that spans families is refused. `cross_check` is the downgrade-only
+  input `{method, p_better, p_worse}` that issue c will supply; absent means not
+  evaluated and never blocks. Malformed input raises `BayesDecisionError`.
+- **Sampling.** `random.gammavariate` only. The seed is a SHA-256 of the profile
+  label, a stream name and the plan digest (`sampling_seed`), so the same inputs and
+  plan give identical output and a different plan gives a different seed. The call is
+  bounded: `posterior_draws x (independent roots + 3 x families)` above 20,000,000
+  returns `blocked` with reason `work_bound_exceeded` before any sampling.
+- **Unknown outcomes.** One pass draws the Dirichlet weights once and applies them to
+  the worst-case and best-case root differences, so `S_low <= S <= S_high` holds draw
+  by draw for every completion of the ungraded arms. The same holds for the loss
+  probability (`S_worse_low`, `S_worse_high`) and the equivalence probability
+  (`S_equiv_low`, `S_equiv_high`). The equivalence lower bound is the probability that
+  the worst case is above `-epsilon` and the best case below `epsilon` in the same
+  draw, which is what holds for every completion; requiring each extreme separately
+  would not. With any ungraded arm `score.estimate`, `S_worse` and `S_equiv` are
+  `null` and the verdict is `insufficient_evidence` with reason `unknown_outcomes`;
+  `bound_resolution` reports `better_under_all_completions`,
+  `worse_under_all_completions`, `equivalent_under_all_completions` or `unresolved`.
+  With the frozen `allow_bound_resolved_verdict` set to `true`, the same guaranteed
+  bounds drive the decision table, the precision floor (an interval that encloses every
+  completion) and the family checks (the minimum over completions), so a verdict is
+  issued only when it holds for every completion; the reason stays `unknown_outcomes`
+  when it does not. `score.estimate` stays `null` either way.
+- **Order.** The caller's validity reason, then the critical veto (before the root
+  floor, as `statistics.analyze` does, so observed harm is reported on any bank
+  size), then the root floor (stage `validity`, reason
+  `insufficient_independent_roots`), unknown outcomes, the precision floor, the
+  Monte Carlo margin and the decision table, the cross-check downgrade of `better` or
+  `worse`, family regression (`worse`, reason `family_regression`, when
+  `P(theta_f < -regression_margin) >= p_cut`), an unknown critical flag, family
+  non-inferiority (`family_regression_not_excluded`) and the resource stage. The
+  score is still computed and reported when a floor withholds the verdict, so a reader
+  can see that the posterior alone would have passed.
+- **Monte Carlo margin.** `monte_carlo_se` is the binomial standard error at `p_cut`, `sqrt(p_cut (1 - p_cut) / draws)`. Any of `S`, `S_worse` and `S_equiv` within four binomial
+  standard errors of `p_cut` withholds the verdict (`monte_carlo_margin`). A family
+  probability counts as meeting the cut only when it is also outside that band.
+- **Resource stage.** When the plan pins a contract, a `resource_decision.decide`
+  result for the same contract digest with decision `noninferior` or `improvement` lets
+  `better` or `equivalent` stand. The attested `conditional_*` decisions do not pass,
+  and the stage never touches `worse`. Without a pinned contract the stage reports
+  `not_declared`.
+- **Authority.** `recommendation_authority`, `automatic_promotion` and
+  `publication_allowed` are `false` in every result.
+
+The standard-library sampler follows the Bayesian bootstrap and so is overconfident
+with few discrete root differences; the floors and the margin limit that, and
+calibration (issue e) is what can show whether they are enough.
 
 ### Verdict meanings
 
