@@ -6,6 +6,7 @@ import pytest
 from agent_harness_lab.diagnostics import cascade
 
 SEVERE, OTHER = 'tool_misuse', 'instruction_drift'
+_MISSING = object()
 
 
 def policy(**changes):
@@ -68,7 +69,16 @@ def test_unknown_labels_are_not_negatives_and_no_labels_is_inconclusive():
     result = cascade.evaluate(policy(), [row('a', None, SEVERE, second=OTHER)])
     assert result['unknown_roots'] == 1 and result['labeled_roots'] == 0
     assert result['final'] == dict(correct=0, wrong=0, abstained=0, severe_misses=0)
-    assert 'no_labeled_roots' in result['reasons'] and result['status'] == 'rejected'
+    assert 'no_labeled_roots' in result['reasons'] and result['status'] == 'insufficient_evidence'
+    assert not any(r.endswith(('_below_minimum', '_above_maximum', '_increased')) for r in result['reasons'])
+
+
+def test_no_labels_still_reject_on_label_free_limits():
+    rows = [row(f'r{i}', None, None, second=None, first_cost=3, second_cost=3) for i in range(3)]
+    result = cascade.evaluate(policy(max_review_roots=2, max_total_cost=10), rows)
+    assert result['status'] == 'rejected'
+    assert {'review_roots_above_maximum', 'total_cost_above_maximum', 'no_labeled_roots'} <= set(result['reasons'])
+    assert 'net_errors_removed_below_minimum' not in result['reasons']
 
 
 def test_always_abstaining_cascade_exposes_review_burden():
@@ -94,11 +104,14 @@ def test_unmeasured_resources_stay_unknown_not_zero():
 
 
 @pytest.mark.parametrize('bad', [
-    dict(split='train'), dict(root_case_id=''), dict(first='invented'), dict(second='invented'),
+    dict(split='train'), dict(root_case_id=''), dict(first='invented'), dict(first=_MISSING), dict(second='invented'),
     dict(label=['x']), dict(first_cost=-1), dict(first_cost=float('nan')), dict(first_cost=True)])
 def test_invalid_rows_are_refused(bad):
+    value = {**row('a', OTHER, SEVERE), **bad}
+    if bad.get('first') is _MISSING:
+        del value['first']  # missing capture is unknown, never a first-stage abstention
     with pytest.raises(ValueError):
-        cascade.evaluate(policy(), [{**row('a', OTHER, SEVERE), **bad}])
+        cascade.evaluate(policy(), [value])
 
 
 def test_duplicate_roots_and_empty_input_are_refused():

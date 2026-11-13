@@ -12,7 +12,8 @@ the answers it broke, so corrections alone never read as a benefit.
 ## Input
 
 Each row is a dict with `root_case_id`, `split: "heldout"`, `label` (a declared class or `null`
-for unknown) and `first` (a declared class, or `null` when the first stage abstained). A `second`
+for unknown) and `first` (a declared class, or `null` when the first stage abstained). The `first` key is
+required: a row that omits it has unknown capture, which is not an abstention, so it is refused. A `second`
 key means the second stage ran: its class replaces the first answer, and `null` (abstention)
 leaves the first answer in place. A row without `second` never ran the second stage. The
 optional `first_cost`, `second_cost`, `first_latency_seconds` and `second_latency_seconds` are
@@ -50,12 +51,15 @@ measurement, and the report lists `cost_unmeasured` or `latency_seconds_unmeasur
 
 The status is `rejected` when the net error removal is below the policy minimum, introduced errors,
 final severe misses or review roots exceed their maximum, final severe misses exceed the first
-stage's, or measured cost exceeds its limit. Otherwise it is `insufficient_evidence`. The report
-never issues a beneficial verdict: `beneficial_claim: not_issued`, `certification: not_issued`,
-`automatic_promotion: false` and `publication_allowed: false`. It does not verify label authority,
-root independence or that the policy was frozen before the held-out data were seen. Unknown labels
-are counted separately and never become negatives; a run with no labeled roots lists
-`no_labeled_roots`. Reports carry counts only, not root IDs.
+stage's, or measured cost exceeds its limit. Otherwise it is `insufficient_evidence`. The net
+removal, introduced-error and severe-miss checks need labels: with no labeled roots they are
+skipped, not failed, because the counts are unknown rather than zero. Such a run lists
+`no_labeled_roots` and stays `insufficient_evidence` unless a label-free limit (review roots or
+measured cost) is exceeded. The report never issues a beneficial verdict: `beneficial_claim:
+not_issued`, `certification: not_issued`, `automatic_promotion: false` and
+`publication_allowed: false`. It does not verify label authority, root independence or that the
+policy was frozen before the held-out data were seen. Unknown labels are counted separately and
+never become negatives. Reports carry counts only, not root IDs.
 
 Self-consistent agreement between the two stages is not evidence: only the supplied labels are
 compared. A synthetic pass is a protocol check, not a real-world accuracy claim.

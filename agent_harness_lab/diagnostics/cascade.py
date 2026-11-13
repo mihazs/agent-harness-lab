@@ -54,7 +54,8 @@ def evaluate(policy, observations):
     """Describe the cascade on held-out roots; supplied labels and costs grant no authority.
 
     Each row has ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
-    ``first`` (declared class or None for abstention). A present ``second`` key means the second
+    ``first`` (declared class or None for abstention; the key is required, a missing one is
+    unknown capture and is refused). A present ``second`` key means the second
     stage ran (a class, or None for abstention); its decided answer replaces the first answer,
     and an abstaining or skipped second stage leaves the first answer. Optional
     ``{first,second}_{cost,latency_seconds}`` are caller-measured nonnegative numbers.
@@ -73,7 +74,9 @@ def evaluate(policy, observations):
         if not isinstance(root, str) or not root or len(root) > 256 or root in seen:
             raise ValueError('cascade validation requires one row per declared root')
         seen.add(root)
-        label, first = row.get('label'), row.get('first')
+        if 'first' not in row:
+            raise ValueError('cascade validation requires the first-stage answer; omission is not abstention')
+        label, first = row.get('label'), row['first']
         ran = 'second' in row
         second = row.get('second')
         if not all(v is None or isinstance(v, str) and v in classes for v in (label, first, second)):
@@ -117,14 +120,15 @@ def evaluate(policy, observations):
     net = firsts['wrong'] - finals['wrong']
     total_cost = None if 'cost' in unmeasured else totals['cost']
     failed = []
-    if net < policy['min_net_errors_removed']:
-        failed.append('net_errors_removed_below_minimum')
-    if introduced > policy['max_introduced_errors']:
-        failed.append('introduced_errors_above_maximum')
-    if severe_misses['final'] > policy['max_severe_misses']:
-        failed.append('severe_misses_above_maximum')
-    if severe_misses['final'] > severe_misses['first']:
-        failed.append('severe_misses_increased')
+    if labeled:  # without labels the label-derived metrics are unknown, never zero-valued failures
+        if net < policy['min_net_errors_removed']:
+            failed.append('net_errors_removed_below_minimum')
+        if introduced > policy['max_introduced_errors']:
+            failed.append('introduced_errors_above_maximum')
+        if severe_misses['final'] > policy['max_severe_misses']:
+            failed.append('severe_misses_above_maximum')
+        if severe_misses['final'] > severe_misses['first']:
+            failed.append('severe_misses_increased')
     if review['final'] > policy['max_review_roots']:
         failed.append('review_roots_above_maximum')
     if policy['max_total_cost'] is not None and total_cost is not None and total_cost > policy['max_total_cost']:
