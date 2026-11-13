@@ -412,6 +412,8 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `inference_sandbox_unavailable` | Provide the required inference sandbox capabilities. |
 | `inference_tool_count_exhausted` | Review the configured inference tool-call limit. |
 | `inference_transport_failed_no_retry` | Inspect the recorded inference transport failure before any retry. |
+| `history_not_found_for_worktree` | No session was recorded under this path, which is a linked worktree of a repository, so history recorded for the repository's main checkout was not read; this does not show there is nothing to learn. Rerun with --history-from MAIN_CHECKOUT to read that checkout's sessions read-only, or run from the main checkout. |
+| `source_project_path_differs` | Sessions recorded for another checkout of this repository (--history-from) were read instead of this path's; read any finding as that checkout's history, and an empty result as no captures there. |
 | `history_no_matching_sessions` | No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
 | `history_runtime_has_no_captures` | No captured events of the requested runtime matched this project, --since and --session; rerun with --source native to include both runtimes, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
 | `history_source_ai_memory_unsupported` | ahl improve reads native Codex and Claude sessions only and opens no network connection; rerun with --source native, codex or claude, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis. |
