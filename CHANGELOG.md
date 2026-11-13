@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.190.1
+
+### Patch Changes
+
+- f1af182: Cut the peak memory of `ahl diagnose` by about half or more (46% at 20,000 events, 62% at 240,000 on synthetic traces) by streaming `findings.json` to disk instead of building the whole text first. The file is byte-identical, and a failed write no longer leaves a truncated file.
+
 ## 0.190.0
 
 ### Minor Changes
