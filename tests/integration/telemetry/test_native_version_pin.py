@@ -15,7 +15,7 @@ from agent_harness_lab.telemetry.native import observed_version
 from tests.integration.telemetry.test_claude_native import ClaudeNativeTests, VERSION
 
 PINNED, PATCH, MINOR, RANGE, MIDDLE = ('00000000-0000-4000-8000-00000000000%d' % n for n in (1, 2, 3, 4, 5))
-VERIFIED = ['2.1.316', '2.1.317', '2.1.318']
+VERIFIED = ['2.1.316', '2.1.317', '2.1.318', '2.1.322']
 REASON = 'capture_version_differs_from_pin'
 
 
@@ -55,11 +55,28 @@ class TestNativeVersionPin:
         text = json.dumps(result)
         for private in (PINNED, PATCH, MINOR, RANGE, MIDDLE, str(self.project), 'SYNTHETIC_SECRET'): assert private not in text
 
+    def add(self, session, version):
+        rows = deepcopy(self.f.rows)
+        for row in rows:
+            if 'sessionId' in row: row.update(sessionId=session, version=version, cwd=str(self.project.resolve()))
+        (self.projects/self.name/(session+'.jsonl')).write_text(''.join(json.dumps(row)+'\n' for row in rows))
+
+    def test_the_current_release_is_read_as_declared_range_and_the_releases_before_it_stay_typed(self):
+        current, gap = '00000000-0000-4000-8000-0000000000c1', '00000000-0000-4000-8000-0000000000c2'
+        self.add(current, '2.1.322'); self.add(gap, '2.1.320')
+        explicit = self.explicit(); discovery = explicit['sources'][0]['native_coverage']['discovery']
+        assert discovery['capture_counts'] == dict(selected=7, parsed=4, skipped=3, skipped_reasons={REASON: 3},
+            pin_compatibility=dict(exact=0, declared_range=4, unverified=3))
+        assert discovery['unverified_versions'] == {'2.1.319': 1, '2.1.320': 1, '2.2.0': 1} and discovery['verified_versions'] == VERIFIED
+        by_version = {tuple(s['recorded_versions']): (s['pin_compatibility'], s['adapter']) for s in self.default()['sources']}
+        assert by_version[('2.1.322',)] == ('declared_range', 'verified_native') and by_version[('2.1.320',)] == ('unverified', 'descriptive_unverified')
+        assert self.explicit(session=current)['analysis']['events'] > 0 and self.explicit(session=gap)['analysis']['events'] == 0
+
     def test_a_store_with_only_newer_captures_names_the_cause_not_a_missing_capture(self):
         for verified in (PINNED, RANGE, MIDDLE): (self.projects/self.name/(verified+'.jsonl')).unlink()
         result = self.explicit()
         assert result['analysis']['events'] == 0 and result['sources'][0]['pin_compatibility'] == 'unverified'
-        assert any(c.startswith(REASON) and '2.1.316, 2.1.317, 2.1.318' in c for c in result['caveats'])
+        assert any(c.startswith(REASON) and '2.1.316, 2.1.317, 2.1.318, 2.1.322' in c for c in result['caveats'])
         assert 'No matching native capture was found; completeness remains unknown.' not in result['caveats']
 
     def test_explicit_and_default_discovery_agree_on_the_verified_range(self):

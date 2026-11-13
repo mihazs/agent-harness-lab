@@ -55,10 +55,19 @@ class TestRuntimeLag:
         assert 'recorded 2.1.400' in checks[0]['observed_value'] and NEWEST_VERIFIED in checks[0]['observed_value']
         assert 'ahl sources claude pin-check --events' in checks[0]['remediation']
 
-    @pytest.mark.parametrize('versions', [('2.1.316', '2.1.318'), ('2.1.317',), ()])
+    @pytest.mark.parametrize('versions', [('2.1.316', '2.1.318'), ('2.1.317',), ('2.1.322',), ('2.1.315',), ()])
     def test_doctor_stays_silent_for_verified_older_or_absent_captures(self, versions):
         self.store(*versions)
         with self.env(): assert not [c for c in doctor(self.project)['checks'] if c['check_id'] == 'claude_runtime_lag']
+
+    @pytest.mark.parametrize('release', ['2.1.319', '2.1.320', '2.1.321'])
+    def test_a_release_between_two_verified_runs_is_surfaced_because_it_is_unverified_though_not_newer(self, release):
+        self.store('2.1.318', release, '2.1.322')
+        with self.env(): checks = [c for c in doctor(self.project)['checks'] if c['check_id'] == 'claude_runtime_lag']
+        assert len(checks) == 1 and checks[0]['status'] == 'warn' and 'recorded %s' % release in checks[0]['observed_value']
+        lag = self.history()['runtime_lag']
+        assert lag['captures_by_version'] == {release: 1} and lag['newest_recorded'] == release and lag['newest_verified'] == NEWEST_VERIFIED
+        assert lag['status'] == 'recorded_runtime_outside_verified_set' and 'pin-check' in lag['next_step']
 
     def test_the_improve_history_receipt_carries_the_lag_once_with_counts_only(self):
         self.store('2.1.318', '2.1.399', '2.1.399')

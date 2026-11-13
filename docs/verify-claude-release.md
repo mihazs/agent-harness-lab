@@ -1,7 +1,8 @@
 # Verify a new Claude Code release
 
 Use this when `ahl doctor` or the `ahl improve --history` receipt says your recorded
-Claude Code release is newer than the newest verified one, or when captures are
+Claude Code release is newer than the newest verified one or lies in a gap between
+verified releases, or when captures are
 skipped with `capture_version_differs_from_pin`. The goal is to learn, without
 reading any message text, whether the verified adapter can read that release.
 
@@ -49,7 +50,8 @@ Never commit a real session file or a skeleton you have not reviewed.
 ## Read the surfaces that report the lag
 
 - `ahl doctor` adds one `claude_runtime_lag` warning when the session headers of
-  the project record a release newer than the newest verified one. It reads
+  the project record a release that is not verified and not older than the first
+  verified one: newer than the newest, or in a gap between verified ranges. It reads
   dotted version strings only, from at most the first 200 session files, under every
   profile including `offline`. The check is never required.
 - The `ahl improve --history` receipt carries `history.runtime_lag` once, with counts
