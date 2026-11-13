@@ -123,6 +123,12 @@ def test_role_projection_is_a_fixed_allow_list(tmp_path):
     assert 'untrusted evidence' in ' '.join(summary['limitations'])
     assert summary['findings'] == [dict(kind='k', status='s', explanation='e')]
     assert not {'source_context', 'evaluation_outcomes', 'sources'} & set(summary)
+    aggregate = {'events', 'cases', 'activities', 'field_coverage', 'deferred_mechanisms', 'process_mining',
+                 'method_inputs', 'method_execution', 'profile', 'findings', 'recurring_sequences', 'limitations'}
+    copied = set(summary) - aggregate
+    assert copied == {'incident_retrieval', 'paired_history_analysis'}
+    # The doc once omitted a projected key; a new pass-through key must be named in the matrix before this passes.
+    assert all(f'`{key}`' in MATRIX for key in copied), copied
 
 
 def test_analysis_is_deterministic_and_one_pass():
