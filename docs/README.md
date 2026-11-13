@@ -38,6 +38,7 @@ reader purpose.
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
+- [Where a tool-result adapter may attach to a runtime](adapter-runtime-decision.md): the evidence, decision and open blockers for the identity bridge.
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 
 ## Historical and maintainer material
