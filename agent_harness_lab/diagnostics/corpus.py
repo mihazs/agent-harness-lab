@@ -12,6 +12,8 @@ from agent_harness_lab.diagnostics import triage_policy
 from agent_harness_lab.evaluation.integrity import contained
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
 from agent_harness_lab.evaluation.task_bank import identifier
+from agent_harness_lab.sources.execution import RecordRef
+from agent_harness_lab.sources.schema import digest
 
 FORMAT = 'diagnostic-corpus-v1'
 PARTITIONS = ('fitting','calibration','threshold','development','validation','certification')
@@ -22,12 +24,15 @@ NEAR_RULE = 'word-3gram-jaccard-v1'
 NEAR_PERMILLE = 800
 NEAR_DECISIONS = ('distinct_incident','same_lineage')
 MAX_DECISIONS = 1024
+GROUPING = 'reviewed-lineage-grouping-v1'
+MAX_GROUPINGS = 16
+MAX_GROUP_REVISIONS = 4096
 ACCESS_PROFILE = 'diagnostic-corpus-protected-access-v1'
 ACCESS_PARTITION = 'validation'  # certification stays reserved: no genuine qualification issuer exists
 ACCESS_LIMITATIONS = ('Validation labels are operator-attested declarations, not gold labels; reviewer and root independence are unverified.',
     'Retirement records the exposure in this store only; it cannot stop a model owner from refitting on the reported result.')
 LIMITATIONS = ('Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
-    'Near-duplicate detection is lexical only; verified lineage binding and held-out classifier evaluation are not implemented.')
+    'Near-duplicate detection is lexical only; recorded lineage groupings are operator-attested links over frozen cache revisions, not verified native lineage, and held-out classifier evaluation is not implemented.')
 
 
 def _fields(value, names):
@@ -170,6 +175,69 @@ def _near(entries, decisions):
             if found['decision']!='distinct_incident': raise ValueError('same-lineage near duplicates leak across protected splits')
 
 
+def _components(value):
+    """Check disjoint lineage components of exact source revisions; return each revision's component index."""
+    if not isinstance(value,list): raise ValueError('lineage components must be a list')
+    owner={}
+    for index,item in enumerate(value):
+        _fields(item,'component_sha256 revisions'); _sha(item['component_sha256']); revisions=item['revisions']
+        if not isinstance(revisions,list) or not revisions: raise ValueError('lineage component revisions required')
+        for revision in revisions: _sha(revision)
+        if revisions!=sorted(set(revisions)): raise ValueError('sorted unique lineage component revisions required')
+        for revision in revisions:
+            if owner.setdefault(revision,index)!=index: raise ValueError('lineage components overlap')
+        if len(owner)>MAX_GROUP_REVISIONS: raise ValueError('lineage grouping bound exceeded')
+    return owner
+
+
+def _stored_grouping(value):
+    _fields(value,'schema_version profile grouping_revision_sha256 cache_sha256 components review_authentication')
+    _sha(value['grouping_revision_sha256']); _sha(value['cache_sha256']); _components(value['components'])
+    if (type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=GROUPING
+            or value['review_authentication']!='operator_attested'):
+        raise ValueError('invalid lineage grouping record')
+    return deepcopy(value)
+
+
+def grouping(value):
+    """Reduce a reviewed ``LineageStore.query`` receipt to exact source-revision components.
+
+    A receipt with conflicts, stale cases or any claim beyond operator-attested links is refused, so unresolved
+    lineage never becomes a recorded grouping."""
+    names='schema_version grouping_revision_sha256 cache_sha256 applicability native_freshness components conflicts stale_cases independent_roots task_outcomes_verified execution_authorized publication_allowed'
+    if not isinstance(value,dict) or not set(names.split())<=set(value): raise ValueError('lineage grouping receipt fields differ from the frozen contract')
+    _sha(value['grouping_revision_sha256']); _sha(value['cache_sha256'])
+    if (type(value['schema_version']) is not int or value['schema_version']!=1 or value['applicability']!='selected_frozen_cache_only'
+            or value['native_freshness']!='unverified' or value['independent_roots'] is not None
+            or value['task_outcomes_verified'] is not False or value['execution_authorized'] is not False
+            or value['publication_allowed'] is not False):
+        raise ValueError('lineage grouping receipt claims more than operator-attested links')
+    if value['conflicts']!=[] or value['stale_cases']!=[]: raise ValueError('lineage grouping with conflicts or stale cases cannot be recorded')
+    rows=value['components']
+    if not isinstance(rows,list): raise ValueError('lineage components must be a list')
+    components=[]
+    for row in rows:
+        _fields(row,'component_sha256 members'); members=row['members']
+        if not isinstance(members,list) or not members or len(members)>MAX_GROUP_REVISIONS: raise ValueError('lineage grouping bound exceeded')
+        refs=[RecordRef.parse(member) for member in members]
+        if row['component_sha256']!=digest(members): raise ValueError('lineage component digest differs')
+        components.append(dict(component_sha256=row['component_sha256'],revisions=sorted({ref.revision_sha256 for ref in refs})))
+    return _stored_grouping(dict(schema_version=1,profile=GROUPING,grouping_revision_sha256=value['grouping_revision_sha256'],
+        cache_sha256=value['cache_sha256'],components=components,review_authentication='operator_attested'))
+
+
+def _lineage(groupings, entries):
+    """Fail when one reviewed lineage component holds incidents in more than one effective partition.
+
+    entries are (case_id, effective_partition, incident); a component matches an incident by its source revision."""
+    for found in groupings:
+        owner=_components(found['components']); seen={}
+        for _,partition,mine in entries:
+            index=owner.get(mine['source_revision_sha256'])
+            if index is not None and seen.setdefault(index,partition)!=partition:
+                raise ValueError('reviewed lineage group leaks across protected splits')
+
+
 def transition(state, kind, target, previous_kind=None):
     if state is None: return kind==target=='pending'
     if kind=='audit_assigned': return state=='pending' and previous_kind=='pending' and target=='pending'
@@ -275,6 +343,40 @@ class CorpusStore(PrivateJournal):
             self._publish(self._locked_store,path,value)
             return _decision(value)
 
+    def _groupings(self):
+        folder=contained(self.root,'lineage_groupings'); found={}
+        if not folder.exists(): return found
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if len(found)>=MAX_GROUPINGS: raise ValueError('lineage grouping bound exceeded')
+                value,_=record(Path(entry.path),1024*1024); value=_stored_grouping(value)
+                if entry.name!=value['grouping_revision_sha256']+'.json': raise ValueError('lineage grouping file differs from its revision')
+                found[value['grouping_revision_sha256']]=value
+        return found
+
+    def bind_lineage(self, receipt):
+        """Record one immutable reviewed lineage grouping; its components stay inside one effective partition.
+
+        ``receipt`` is a ``LineageStore.query`` result. Incidents join a component through an exact
+        ``source_revision_sha256`` equal to a member's revision. Operator-attested links are not native proof, and an
+        incident whose source revision is outside every component is unbound, never independent."""
+        value=grouping(receipt)
+        with self.locked(create=True):
+            groupings=self._groupings()
+            if value['grouping_revision_sha256'] in groupings: raise ValueError('lineage grouping already recorded')
+            if len(groupings)>=MAX_GROUPINGS: raise ValueError('lineage grouping bound exceeded')
+            rows,summaries,_=self._snapshot(); entries=[(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)]
+            _lineage([value],entries)
+            self._publish(self._locked_store,contained(self.root,f"lineage_groupings/{value['grouping_revision_sha256']}.json"),value)
+            owner=_components(value['components']); matched=[(owner[mine['source_revision_sha256']],mine['root_id']) for _,_,mine in entries
+                if mine['source_revision_sha256'] in owner]
+            roots={}
+            for index,root in matched: roots.setdefault(index,set()).add(root)
+            return dict(schema_version=1,profile=GROUPING,grouping_revision_sha256=value['grouping_revision_sha256'],
+                components=len(value['components']),matched_cases=len(matched),
+                multi_root_components=sum(len(found)>1 for found in roots.values()),review_authentication='operator_attested',
+                root_independence='unverified',publication_allowed=False)
+
     def enqueue(self, value):
         inputs=incident(value); case_id=_digest(inputs)
         with self.locked(create=True):
@@ -344,8 +446,10 @@ class CorpusStore(PrivateJournal):
             raise ValueError('ambiguous competing incident revisions')
         current=[row for row in rows if row[0] not in superseded]
         summaries=[self._summary(key,*opened[1:]) for key,opened in current]
+        groupings=sorted(self._groupings())
         revision=_digest(dict(engine=engine(),preprocessing='whitespace-casefold-v1',near_duplicate=NEAR_RULE,
-            decisions=sorted(_digest(v) for v in self._decisions().values()),cases=[(key,opened[2][-1][1]) for key,opened in rows]))
+            decisions=sorted(_digest(v) for v in self._decisions().values()),cases=[(key,opened[2][-1][1]) for key,opened in rows],
+            **(dict(lineage=groupings) if groupings else {})))
         return current,summaries,revision
 
     def snapshot(self):
@@ -358,7 +462,8 @@ class CorpusStore(PrivateJournal):
         """Raise on an alias or undecided near duplicate across effective partitions; return the recorded decisions."""
         groups={}; texts={}; decisions=self._decisions()
         for (_,opened),summary in zip(rows,summaries): _separate(groups,texts,opened[1],summary['partition'])
-        _near([(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)],decisions)
+        entries=[(key,summary['partition'],opened[1]) for (key,opened),summary in zip(rows,summaries)]
+        _near(entries,decisions); _lineage(self._groupings().values(),entries)
         return decisions
 
     def _untouched(self):
@@ -410,6 +515,15 @@ class CorpusStore(PrivateJournal):
                 root_independence='unverified',classifier_selection_allowed=False,publication_allowed=False,
                 limitations=list(ACCESS_LIMITATIONS)),evaluation=report)
 
+    def _exported_groupings(self, revisions):
+        """Recorded components cut to exported revisions; a component with fewer than two needs no consumer check."""
+        found=[]
+        for value in sorted(self._groupings().values(),key=lambda v:v['grouping_revision_sha256']):
+            kept=[dict(component_sha256=c['component_sha256'],revisions=[r for r in c['revisions'] if r in revisions]) for c in value['components']]
+            kept=[c for c in kept if len(c['revisions'])>1]
+            if kept: found.append(dict(grouping_revision_sha256=value['grouping_revision_sha256'],components=kept))
+        return found
+
     def export_development(self, expected_revision_sha256):
         """Export reviewed declarations only; protected labels have no training export."""
         _sha(expected_revision_sha256)
@@ -424,9 +538,10 @@ class CorpusStore(PrivateJournal):
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
                     review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,
                     retirement=self._retirement(key,inputs,events)))
-            ids={row['case_id'] for row in exported}
+            ids={row['case_id'] for row in exported}; revisions={row['record']['source_revision_sha256'] for row in exported}
             body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
                 near_duplicate_decisions=[v for k,v in sorted(decisions.items()) if set(k)<=ids],
+                lineage_groupings=self._exported_groupings(revisions),
                 publication_allowed=False,classifier_selection_allowed=False,root_independence='unverified',
                 limitations=list(LIMITATIONS))
             return dict(body,manifest_sha256=_digest(body))
@@ -452,7 +567,7 @@ def development_export(value):
 
     The digest detects changed or truncated content; it is not an authenticity signature,
     so the protected-partition, eligibility and provenance checks run independently."""
-    _fields(value,'schema_version profile revision_sha256 records near_duplicate_decisions publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
+    _fields(value,'schema_version profile revision_sha256 records near_duplicate_decisions lineage_groupings publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
     _sha(value['revision_sha256']); _sha(value['manifest_sha256'])
     if value['manifest_sha256']!=_digest({k:v for k,v in value.items() if k!='manifest_sha256'}):
         raise ValueError('diagnostic corpus manifest digest differs')
@@ -478,4 +593,9 @@ def development_export(value):
         if not set(item['cases'])<=seen or tuple(item['cases']) in decisions: raise ValueError('near-duplicate decision names no exported pair')
         decisions[tuple(item['cases'])]=item
     _near(entries,decisions)
+    groupings=value['lineage_groupings']
+    if not isinstance(groupings,list) or len(groupings)>MAX_GROUPINGS: raise ValueError('bounded lineage groupings required')
+    for item in groupings:
+        _fields(item,'grouping_revision_sha256 components'); _sha(item['grouping_revision_sha256']); _components(item['components'])
+    _lineage(groupings,entries)
     return deepcopy(value)

@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Let the private diagnostic corpus consume a reviewed source-lineage grouping (`CorpusStore.bind_lineage`, from the `ahl sources lineage` query receipt). All incidents of one reviewed component, matched by exact source revision, must share one effective partition: binding a grouping that already crosses partitions is refused and records nothing, and a later incident, review or exposure that makes a recorded component cross partitions makes export, protected inputs and protected evaluation fail. Receipts with conflicts, stale cases, tampered component digests, overlapping components or any claim of independent roots, verified outcomes, native freshness or authority are refused. Recorded groupings change the corpus revision, and development export manifests carry `lineage_groupings` that `development_export` re-checks, so older exports no longer validate. Operator-attested links stay unverified: incidents outside every component are unbound rather than independent, and components that span several declared roots are disclosed, not rejected.
