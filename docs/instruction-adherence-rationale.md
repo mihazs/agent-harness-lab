@@ -16,7 +16,9 @@ A rule can only be ignored by an agent that had it. When the capture shows the i
 file was never loaded, a prohibited call says something about loading, not about the agent,
 so it is reported as `not_loaded`. When loading is truncated or unknown the call is only a
 possible violation. The `turn` in a `loaded` entry matters for the same reason: a call made
-before the rule arrived is not an ignored rule.
+before the rule arrived is not an ignored rule. A native capture cannot say what was in context
+before its first attachment, so there the earlier calls stay unknown rather than `not_loaded`, and
+a path-only or different-text attachment is not evidence that the judged file was loaded.
 
 ## Unknown stays unknown
 

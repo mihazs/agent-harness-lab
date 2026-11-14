@@ -82,7 +82,7 @@ def native_files(tmp_path):
     project = tmp_path / 'project'
     project.mkdir()
     (project / 'AGENTS.md').write_text('- Never run `git push --force`.\n')
-    write(tmp_path / 'one.jsonl', claude(project, [('memory', str(project / 'AGENTS.md')), ('user', f'Push {SECRET}.'),
+    write(tmp_path / 'one.jsonl', claude(project, [('memory', str(project / 'AGENTS.md'), '- Never run `git push --force`.\n'), ('user', f'Push {SECRET}.'),
                                                     ('call', 'Bash', dict(command='git push --force origin main'))], session=f'id-{SECRET}'))
     write(tmp_path / 'two.jsonl', claude(project, [('user', 'status'), ('call', 'Bash', dict(command='git status'))], session='second'))
     return project, tmp_path
@@ -108,3 +108,23 @@ def test_native_flag_and_sessions_file_inputs_do_not_mix(files):
     assert run(files, 'sessions.json', 'sessions.json').returncode == 2
     assert run(files, 'sessions.json', '--project', '.').returncode == 2
     assert run(files, '--native', 'codex', 'sessions.json').returncode == 2
+
+
+def test_native_path_only_attachment_is_no_observed_violation(native_files):
+    project, folder = native_files
+    write(folder / 'path-only.jsonl', claude(project, [('memory', str(project / 'AGENTS.md')), ('user', 'push'),
+                                                        ('call', 'Bash', dict(command='git push --force origin main'))], session='path-only'))
+    result = run(project, '--native', 'claude', '--project', '.', str(folder / 'path-only.jsonl'), '--rules', 'project=AGENTS.md')
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report['counts'] == {} and [(f['status'], f['loading']) for f in report['abstentions']] == [('possible_violation', 'unknown')]
+
+
+def test_native_attachment_of_another_text_than_the_rules_file_it_is_judged_against_is_no_observed_violation(native_files):
+    project, folder = native_files
+    (project / 'other').mkdir()
+    (project / 'other' / 'AGENTS.md').write_text('- Never run `git push --force`.\n- Be kind.\n')
+    result = run(project, '--native', 'claude', '--project', '.', str(folder / 'one.jsonl'), '--rules', 'project=other/AGENTS.md')
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report['counts'] == {} and [f['status'] for f in report['abstentions']] == ['possible_violation']

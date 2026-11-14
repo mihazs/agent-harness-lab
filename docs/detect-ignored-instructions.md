@@ -36,7 +36,9 @@ Leave `capture` out, or say `unknown`, when you do not know whether the turns ar
 whole session: an unknown capture is reported as unknown and decides nothing. Leave
 `root` out when you do not know which sessions share a lineage; those sessions are
 counted apart and never as independent roots. Give a `loaded` state only when you know
-it (`loaded`, `truncated`, `not_loaded`); a source you do not list is `unknown`.
+it (`loaded`, `truncated`, `not_loaded`); a source you do not list is `unknown`. If you know a file
+was in context only from some turn on, write `{"state": "loaded", "turn": N, "before": "unknown"}`;
+without `before`, a call made before turn N is reported as `not_loaded`.
 
 ## 1b. Or read native Claude Code and Codex sessions directly
 
@@ -51,9 +53,13 @@ Each file must be a session of that project (or of a directory inside it), writt
 repository's adapters verify, and a user session rather than a subagent transcript. The command refuses
 the whole run and names the reason counts when any file is not (for example `foreign_project=1`), so
 nothing is dropped silently. A native capture is always read as `partial` with unknown lineage. Claude
-Code records a root `AGENTS.md` or `CLAUDE.md` it attached, so those rules can be `loaded`; Codex records
-no loading signal, so a violation of a harness rule in a Codex session is only a `possible_violation`
-and is held back as an abstention. A prompt instruction is judged either way.
+Code records a root `AGENTS.md` or `CLAUDE.md` it attached with the text it attached. That rule file is
+`loaded` from the attachment onward only when the attached text is exactly the text of the file you pass
+with `--rules` (or the project file, in an analysis); a path with no text, or a file that has changed since,
+leaves loading `unknown`. Calls before the first such attachment are `unknown` too, since a file loaded at
+launch leaves no attachment. Codex records no loading signal. In every unknown case a violation of a harness
+rule is only a `possible_violation` and is held back as an abstention, never an `observed_violation` or
+`not_loaded`. A prompt instruction is judged either way.
 
 ## 2. Run it
 

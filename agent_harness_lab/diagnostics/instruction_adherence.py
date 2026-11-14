@@ -92,10 +92,12 @@ def _turn(raw, index):
 
 
 def _state(value):
-    state, begin = (value, 0) if isinstance(value, str) else (value.get('state'), value.get('turn', 0)) if isinstance(value, dict) else (None, 0)
-    if state not in LOADING or type(begin) is not int or begin < 0 or isinstance(value, dict) and set(value) - {'state', 'turn'}:
-        raise ValueError('loaded entries are a state or {state, turn}')
-    return state, begin
+    """(state, from turn, what the turns before it are): a bare state, or {state, turn, before} where before is not_loaded (default) or unknown."""
+    state, begin, before = (value, 0, 'not_loaded') if isinstance(value, str) else (
+        value.get('state'), value.get('turn', 0), value.get('before', 'not_loaded')) if isinstance(value, dict) else (None, 0, None)
+    if state not in LOADING or type(begin) is not int or begin < 0 or before not in ('not_loaded', 'unknown') or isinstance(value, dict) and set(value) - {'state', 'turn', 'before'}:
+        raise ValueError('loaded entries are a state or {state, turn, before}')
+    return state, begin, before
 
 
 def _session(raw, seen):
@@ -298,8 +300,8 @@ def _session_findings(session, harness, detail):
         counts['undecided_unknown_capture'] = sum(1 for row in harness if row['rule'])
         return [], counts, Counter()
     n = len(session['turns'])
-    items = [dict(row, direction='harness', turn=None, lo=0, hi=n, until=n, restated=None,
-                  loading=session['loaded'].get(row['source'], ('unknown', 0))[0], begin=session['loaded'].get(row['source'], ('unknown', 0))[1])
+    items = [dict(row, direction='harness', turn=None, lo=0, hi=n, until=n, restated=None, **dict(zip(
+                  ('loading', 'begin', 'before'), session['loaded'].get(row['source'], ('unknown', 0, 'not_loaded')))))
              for row in harness if row['rule']]
     users = _user_items(session)
     prompts = Counter(row['klass'] for row in users)
@@ -317,9 +319,9 @@ def _session_findings(session, harness, detail):
         counts['violated' if verdict == 'violated' else 'satisfied' if verdict == 'satisfied' else 'undecided_' + reason] += 1
         corroboration = ['user_restated'] if item['restated'] is not None else []
         if verdict == 'violated' and item['ref'] not in conflicted:
-            # Only calls at or after the turn the rule was loaded can have ignored it.
+            # Only calls at or after the turn the rule was loaded can have ignored it; earlier calls are not_loaded or unknown, as the entry says.
             live = [turn for turn in bad if turn >= item['begin']]
-            state, bad = (item['loading'], live) if live else ('not_loaded', bad)
+            state, bad = (item['loading'], live) if live else (item.get('before', 'not_loaded'), bad)
             call = next((c for c in session['calls'] if c['turn'] == bad[0]), dict(tool='', command='', path=''))
             status = 'not_loaded' if state == 'not_loaded' else 'observed_violation' if state == 'loaded' else 'possible_violation'
             found = _finding(session, dict(item, loading=state), status, MECHANISMS[item['rule']['kind']], bad,
@@ -420,7 +422,7 @@ def main(argv=None):
             raise ValueError('rule files need distinct layer and file name pairs, at most 16')
         if args.native:
             from .adherence_native import sessions_document
-            document = sessions_document(args.sessions, args.native, args.project or Path('.'))
+            document = sessions_document(args.sessions, args.native, args.project or Path('.'), harness)
         else:
             document = record(args.sessions[0], MAX_BYTES)[0]
         report = build(load_sessions(document), harness, detail=args.private_detail)

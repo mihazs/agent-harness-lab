@@ -13,13 +13,14 @@ from tests.support.native_session_fixture import claude, codex, write
 SECRET = 'zz-private-token'
 SESSION = '00000000-0000-4000-8000-000000000001'
 FORBIDDEN = 'git push --force origin main'
+RULE_TEXT = '- Never run `git push --force`.\n'
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     project = tmp_path / 'project'
     project.mkdir()
-    (project / 'AGENTS.md').write_text('- Never run `git push --force`.\n')
+    (project / 'AGENTS.md').write_text(RULE_TEXT)
     for name, folder in (('CODEX_HOME', 'codex'), ('CLAUDE_CONFIG_DIR', 'claude'), ('AHL_STATE_HOME', 'state')):
         monkeypatch.setenv(name, str(tmp_path / folder))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'unused-xdg'))
@@ -42,7 +43,7 @@ def analyze(project, *extra, name='output'):
 
 
 def test_analysis_writes_a_redacted_adherence_artifact_and_a_counts_only_brief_section(home):
-    capture(home, [('memory', str(home / 'AGENTS.md')), ('user', f'Push {SECRET}.'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    capture(home, [('memory', str(home / 'AGENTS.md'), RULE_TEXT), ('user', f'Push {SECRET}.'), ('call', 'Bash', dict(command=FORBIDDEN))])
     folder, brief = analyze(home)
     section = brief['instruction_adherence']
     assert (section['status'], section['findings'], section['mechanisms'], section['sessions']['read']) == (
@@ -53,6 +54,13 @@ def test_analysis_writes_a_redacted_adherence_artifact_and_a_counts_only_brief_s
     for text in (artifact, json.dumps(brief)):
         assert SECRET not in text and 'git push' not in text and str(home) not in text
     assert not re.search(r'[0-9a-f]{64}', json.dumps(section))
+
+
+def test_analysis_of_a_path_only_attachment_reports_an_abstention_because_the_attached_text_is_not_known_to_be_the_rule_file(home):
+    capture(home, [('memory', str(home / 'AGENTS.md')), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    folder, brief = analyze(home)
+    assert (brief['instruction_adherence']['findings'], brief['instruction_adherence']['abstentions']) == ({}, 1)
+    assert json.loads((folder / 'instruction-adherence.json').read_text())['abstentions'][0]['loading'] == 'unknown'
 
 
 def test_analysis_of_a_codex_capture_reports_a_possible_violation_as_an_abstention_because_loading_is_unknown(home):
@@ -79,14 +87,14 @@ def test_analysis_reports_the_typed_reason_when_no_native_capture_could_be_read(
 
 
 def test_analysis_counts_a_skipped_capture_beside_the_sessions_it_read(home):
-    capture(home, [('memory', str(home / 'AGENTS.md')), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    capture(home, [('memory', str(home / 'AGENTS.md'), RULE_TEXT), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
     capture(home, [('user', 'older')], version='9.9.9', session='00000000-0000-4000-8000-000000000002')
     _, brief = analyze(home)
     assert brief['instruction_adherence']['sessions'] == dict(read=1, unknown_lineage=1, skipped=dict(unsupported_version=1))
 
 
 def test_adherence_artifact_is_identical_across_two_analyses_of_the_same_captures(home):
-    capture(home, [('memory', str(home / 'AGENTS.md')), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    capture(home, [('memory', str(home / 'AGENTS.md'), RULE_TEXT), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
     first, _ = analyze(home)
     text = (first / 'instruction-adherence.json').read_bytes()
     second, _ = analyze(home, name='again')

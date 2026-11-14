@@ -5,8 +5,11 @@ projects a capture into turns in memory and keeps nothing else. A capture is rea
 repository's adapters verify, when its recorded directory is the project or inside it, and when it is a user session (a
 subagent transcript's prompts come from another agent). Anything else is skipped with a typed reason and counted, never read
 as clean. A native capture is always partial and has no verified lineage; Claude records a memory-file attachment (the only
-loading signal), the pinned Codex rollout records none, so Codex rules stay unknown. Field names of Codex tool calls and of the
-Claude memory attachment are assumptions checked against synthetic fixtures only, like the telemetry adapters.
+loading signal), the pinned Codex rollout records none, so Codex rules stay unknown. An attachment marks a rule file loaded only
+when the text it carries is exactly the text the report judges; a path alone, other text or a file that is not judged leaves
+loading unknown, and so do the turns before the first such attachment (a file loaded at launch has no attachment event). Field
+names of Codex tool calls and of the Claude memory attachment are assumptions checked against synthetic fixtures only, like the
+telemetry adapters.
 """
 from collections import Counter
 import json
@@ -57,8 +60,10 @@ def _text(value):
 
 
 class _Capture:
-    def __init__(self, project):
+    def __init__(self, project, harness):
+        # The text the report will judge, by loaded key: an attachment counts only when it carries exactly this text.
         self.project, self.id, self.turns, self.loaded = PurePosixPath(project), None, [], {}
+        self.judged = {f"{source['layer']}:{source['name']}": source['text'] for source in harness}
 
     def add_turn(self, turn):
         if len(self.turns) < MAX_TURNS:
@@ -107,8 +112,14 @@ class _Claude(_Capture):
     def attachment(self, attachment):
         path = attachment.get('path') if isinstance(attachment, dict) and attachment.get('type') == 'nested_memory' else None
         where = PurePosixPath(path) if isinstance(path, str) and path else None
-        if where is not None and where.parent == self.project and where.name in RULE_FILES:
-            self.loaded.setdefault(f'project:{where.name}', dict(state='loaded', turn=len(self.turns)))
+        if where is None or where.parent != self.project or where.name not in RULE_FILES:
+            return
+        content = attachment.get('content')
+        text = content.get('content') if isinstance(content, dict) and content.get('path', path) == path else None
+        key = f'project:{where.name}'
+        # Loaded only from this turn on: a path alone or other text proves nothing, and the turns before the first attachment stay unknown.
+        if isinstance(text, str) and text == self.judged.get(key):
+            self.loaded.setdefault(key, dict(state='loaded', turn=len(self.turns), before='unknown'))
 
     def conversation(self, kind, message):
         content = message.get('content') if isinstance(message, dict) and message.get('role') == kind else None
@@ -178,11 +189,14 @@ def _reason(error):
     return 'malformed'
 
 
-def read_session(path, runtime, project):
-    """One native capture as a raw session of the sessions file; raises Skipped with a typed reason when it cannot be read."""
+def read_session(path, runtime, project, harness=()):
+    """One native capture as a raw session of the sessions file; raises Skipped with a typed reason when it cannot be read.
+
+    harness is the rule files (layer, name, text) the report will judge; a rule file counts as loaded only when an attachment carries its text.
+    """
     if runtime not in RUNTIMES:
         raise ValueError('runtime must be claude or codex')
-    capture = (_Claude if runtime == 'claude' else _Codex)(Path(project).resolve())
+    capture = (_Claude if runtime == 'claude' else _Codex)(Path(project).resolve(), harness)
     # The directory the caller named may hold `..` or links; the file itself must be a plain regular file (checked below).
     path = Path(path).absolute()
     path = path.parent.resolve() / path.name
@@ -210,7 +224,7 @@ def read_session(path, runtime, project):
     return capture.finish()
 
 
-def read_sessions(files, project):
+def read_sessions(files, project, harness=()):
     """(raw sessions, {reason: count}) for (runtime, path) pairs; every skipped capture is counted, none is read as clean."""
     files, sessions, skipped, seen, spent = list(files), [], Counter(), set(), 0
     for number, (runtime, path) in enumerate(files):
@@ -225,7 +239,7 @@ def read_sessions(files, project):
             skipped['over_byte_budget'] = len(files) - number
             break
         try:
-            session = read_session(path, runtime, project)
+            session = read_session(path, runtime, project, harness)
         except Skipped as error:
             skipped[error.reason] += 1
             continue
@@ -262,11 +276,12 @@ def for_analysis(args, data):
     base = dict(authority='descriptive_only', causal_diagnosis=False)
     if not files:
         return dict(base, status='not_run', reason='no_native_capture_path'), None
-    sessions, skipped = read_sessions(files, project)
+    harness = harness_files(project)
+    sessions, skipped = read_sessions(files, project, harness)
     if not sessions:
         return dict(base, status='not_run', reason='no_readable_native_session', skipped=skipped), None
     try:
-        report = adherence.build(adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)), harness_files(project))
+        report = adherence.build(adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)), harness)
     except ValueError:
         return dict(base, status='not_run', reason='adherence_input_rejected', skipped=skipped), None
     layers_not_read = ['global'] if 'global' in getattr(args, 'scope', 'project').split('+') else []
@@ -278,9 +293,9 @@ def for_analysis(args, data):
     return section, report
 
 
-def sessions_document(paths, runtime, project):
+def sessions_document(paths, runtime, project, harness=()):
     """The sessions file for explicit native captures; the CLI refuses it when any capture is skipped, so nothing is dropped silently."""
-    sessions, skipped = read_sessions([(runtime, path) for path in paths], project)
+    sessions, skipped = read_sessions([(runtime, path) for path in paths], project, harness)
     if skipped:
         raise ValueError('native captures skipped: ' + ', '.join(f'{reason}={count}' for reason, count in skipped.items()))
     return dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)

@@ -24,7 +24,7 @@ Profile `ahl-instruction-sessions-v1`: at most 5,000 sessions and 16 MiB. Unknow
 | `capture` | `complete`, `partial` or `unknown`; absent is `unknown` |
 | `root` | Optional lineage label; absent means unknown lineage |
 | `project_dir` | Optional absolute path; lets absolute call paths be compared with project-relative rules |
-| `loaded` | Optional map of `LAYER:FILE-NAME` to `loaded`, `truncated`, `not_loaded`, `unknown` or `{"state": ..., "turn": N}` (loaded from turn N) |
+| `loaded` | Optional map of `LAYER:FILE-NAME` to `loaded`, `truncated`, `not_loaded`, `unknown` or `{"state": ..., "turn": N, "before": ...}` (loaded from turn N; `before` is what the earlier turns are, `not_loaded` by default or `unknown` when the capture cannot show whether the file was already in context) |
 
 A turn is `{"role": "user"|"agent", "text": ...}` or `{"role": "tool_call", "tool": ..., "command": ..., "path": ...}`
 where `command` and `path` are optional; each text is at most 64 KiB.
@@ -43,7 +43,7 @@ directory) and is projected into one session in memory; nothing but the turns be
 | Claude calls | `command` from the tool input, and `path` from `file_path`, `notebook_path` or `path` |
 | Codex calls | `exec_command` `cmd`; `shell` and `shell_command` `command` (a `bash -lc` wrapper is read as its script); `apply_patch` one call per file named in the patch; arguments that do not parse leave the call without a command |
 | Capture | Always `partial`; lineage (`root`) is always unknown |
-| Loading | Claude: a memory attachment for the project-root `AGENTS.md` or `CLAUDE.md` marks that file `loaded` from that turn. Codex: none recorded, so every rule stays unknown. Any other file is not recorded |
+| Loading | Claude: a memory attachment for the project-root `AGENTS.md` or `CLAUDE.md` marks that file `loaded` from that turn only when the text it carries is exactly the text of the file the report judges; the turns before that attachment stay `unknown`, never `not_loaded`, because a file loaded at launch has no attachment event. An attachment with no text, other text, or for a file that is not judged leaves the file `unknown`. Codex: none recorded, so every rule stays unknown. Any other file is not recorded |
 
 The Codex call fields and the Claude memory attachment are assumptions checked against synthetic fixtures,
 like the telemetry adapters; a call whose shape differs is undecidable, never a violation.

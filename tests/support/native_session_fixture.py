@@ -13,7 +13,7 @@ def write(path, rows, *, tail=''):
 
 
 def claude(project, steps, *, session='claude-1', version=CLAUDE_VERSION, sidechain=False):
-    """Claude rows for steps: ('user'|'meta'|'agent', text), ('call', tool, input), ('result',) or ('memory', absolute path)."""
+    """Claude rows for steps: ('user'|'meta'|'agent', text), ('call', tool, input), ('result',) or ('memory', absolute path[, attached text])."""
     rows = []
     for number, (kind, *rest) in enumerate(steps):
         common = dict(uuid=f'u{number}', parentUuid=f'u{number - 1}' if number else None, timestamp=STAMP, sessionId=session,
@@ -24,7 +24,8 @@ def claude(project, steps, *, session='claude-1', version=CLAUDE_VERSION, sidech
             rows.append(dict(common, type='user', message=dict(role='user', content=[
                 dict(type='tool_result', tool_use_id=f'call{number - 1}', is_error=False, content='tool output')])))
         elif kind == 'memory':
-            rows.append(dict(common, type='attachment', attachment=dict(type='nested_memory', path=rest[0])))
+            attached = dict(content=dict(path=rest[0], type='Project', content=rest[1])) if len(rest) > 1 else {}
+            rows.append(dict(common, type='attachment', attachment=dict(type='nested_memory', path=rest[0], **attached)))
         else:
             block = dict(type='text', text=rest[0]) if kind == 'agent' else dict(type='tool_use', id=f'call{number}', name=rest[0], input=rest[1])
             rows.append(dict(common, type='assistant', message=dict(role='assistant', id=f'r{number}', content=[block])))

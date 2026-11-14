@@ -40,16 +40,42 @@ def test_claude_session_is_partial_with_unknown_lineage_and_names_the_project(pr
 
 
 @pytest.mark.parametrize('name', ['AGENTS.md', 'CLAUDE.md'])
-def test_claude_memory_attachment_marks_the_project_rule_file_loaded_from_that_turn(project, tmp_path, name):
-    path = write(tmp_path / 's.jsonl', claude(project, [('user', 'hi'), ('memory', str(project / name)), ('call', 'Bash', dict(command='ls'))]))
-    assert native.read_session(path, 'claude', project)['loaded'] == {f'project:{name}': dict(state='loaded', turn=1)}
+def test_claude_memory_attachment_carrying_the_judged_file_text_marks_it_loaded_from_that_turn_and_earlier_turns_unknown(project, tmp_path, name):
+    judged = [dict(layer='project', name=name, text=RULES[0]['text'])]
+    path = write(tmp_path / 's.jsonl', claude(project, [('user', 'hi'), ('memory', str(project / name), RULES[0]['text']), ('call', 'Bash', dict(command='ls'))]))
+    assert native.read_session(path, 'claude', project, judged)['loaded'] == {f'project:{name}': dict(state='loaded', turn=1, before='unknown')}
+
+
+@pytest.mark.parametrize('attached', [None, '- Be nice.\n', RULES[0]['text'].rstrip(), ''], ids=['path only', 'other text', 'near miss', 'empty text'])
+def test_claude_memory_attachment_without_the_judged_file_text_leaves_loading_unknown(project, tmp_path, attached):
+    steps = [('memory', str(project / 'AGENTS.md'), *([] if attached is None else [attached])), ('user', 'hi')]
+    path = write(tmp_path / 's.jsonl', claude(project, steps))
+    assert native.read_session(path, 'claude', project, RULES)['loaded'] == {}
+
+
+@pytest.mark.parametrize('judged', [[], [dict(layer='project', name='CLAUDE.md', text=RULES[0]['text'])]], ids=['no rule file', 'another rule file'])
+def test_claude_memory_attachment_for_a_file_that_is_not_judged_leaves_loading_unknown(project, tmp_path, judged):
+    path = write(tmp_path / 's.jsonl', claude(project, [('memory', str(project / 'AGENTS.md'), RULES[0]['text']), ('user', 'hi')]))
+    assert native.read_session(path, 'claude', project, judged)['loaded'] == {}
+
+
+def test_claude_memory_attachment_text_attributed_to_another_path_is_not_the_file_text(project, tmp_path):
+    rows = claude(project, [('memory', str(project / 'AGENTS.md'), RULES[0]['text'])])
+    rows[0]['attachment']['content']['path'] = str(project / 'docs' / 'AGENTS.md')
+    assert native.read_session(write(tmp_path / 's.jsonl', rows), 'claude', project, RULES)['loaded'] == {}
+
+
+def test_claude_re_attachment_with_the_judged_text_marks_loading_from_that_later_turn(project, tmp_path):
+    steps = [('memory', str(project / 'AGENTS.md'), '- Be nice.\n'), ('user', 'hi'), ('memory', str(project / 'AGENTS.md'), RULES[0]['text'])]
+    path = write(tmp_path / 's.jsonl', claude(project, steps))
+    assert native.read_session(path, 'claude', project, RULES)['loaded'] == {'project:AGENTS.md': dict(state='loaded', turn=1, before='unknown')}
 
 
 @pytest.mark.parametrize('where', ['outside', 'nested'], ids=['outside the project', 'not at the project root'])
 def test_claude_memory_attachment_that_is_not_a_root_rule_file_is_not_recorded(project, tmp_path, where):
     target = '/elsewhere/AGENTS.md' if where == 'outside' else str(project / 'docs' / 'AGENTS.md')
-    path = write(tmp_path / 's.jsonl', claude(project, [('user', 'hi'), ('memory', target)]))
-    assert native.read_session(path, 'claude', project)['loaded'] == {}
+    path = write(tmp_path / 's.jsonl', claude(project, [('user', 'hi'), ('memory', target, RULES[0]['text'])]))
+    assert native.read_session(path, 'claude', project, RULES)['loaded'] == {}
 
 
 def test_claude_session_started_in_a_project_subdirectory_belongs_to_the_project(project, tmp_path):
@@ -198,10 +224,10 @@ def test_read_sessions_refuses_a_capture_larger_than_the_byte_bound(project, tmp
     assert native.read_sessions([('claude', path)], project) == ([], dict(oversized=1))
 
 
-def test_prohibited_call_after_a_loaded_rule_is_an_observed_violation(project, tmp_path):
-    path = write(tmp_path / 's.jsonl', claude(project, [('memory', str(project / 'AGENTS.md')), ('user', 'push it'),
+def test_prohibited_call_after_an_attachment_of_the_judged_rule_text_is_an_observed_violation(project, tmp_path):
+    path = write(tmp_path / 's.jsonl', claude(project, [('memory', str(project / 'AGENTS.md'), RULES[0]['text']), ('user', 'push it'),
                                                          ('call', 'Bash', dict(command='git push --force origin main'))]))
-    found = report([native.read_session(path, 'claude', project)])['findings']
+    found = report([native.read_session(path, 'claude', project, RULES)])['findings']
     assert [(f['status'], f['direction']) for f in found] == [('observed_violation', 'harness')]
 
 
@@ -218,8 +244,8 @@ def test_user_prohibition_ignored_in_a_native_session_is_an_observed_violation(p
 
 def test_native_session_never_proves_a_skipped_required_step(project, tmp_path):
     harness = [dict(layer='project', name='AGENTS.md', text='- Always run `make test`.\n')]
-    path = write(tmp_path / 's.jsonl', claude(project, [('memory', str(project / 'AGENTS.md')), ('user', 'fix it'), ('call', 'Edit', dict(file_path='a.py'))]))
-    result = report([native.read_session(path, 'claude', project)], harness)
+    path = write(tmp_path / 's.jsonl', claude(project, [('memory', str(project / 'AGENTS.md'), harness[0]['text']), ('user', 'fix it'), ('call', 'Edit', dict(file_path='a.py'))]))
+    result = report([native.read_session(path, 'claude', project, harness)], harness)
     assert result['findings'] == [] and result['decisions'] == dict(undecided_capture_partial=1)
 
 
@@ -271,3 +297,37 @@ def test_analysis_reports_the_same_report_whatever_order_the_sources_are_listed(
     listed = [dict(format='claude', path=str(path)) for path in (one, two)]
     first = native.for_analysis(analysis(project), dict(sources=listed))
     assert native.for_analysis(analysis(project), dict(sources=listed[::-1])) == first
+
+
+# Loading evidence: only attached text equal to the judged file text, and only from the attachment onward.
+
+PUSH = ('call', 'Bash', dict(command='git push --force origin main'))
+
+
+def adherence_of(project, steps):
+    """The full report an analysis builds for one Claude capture, judging the project's current root AGENTS.md."""
+    (project / 'AGENTS.md').write_text(RULES[0]['text'])
+    path = write(project.parent / 's.jsonl', claude(project, steps))
+    return native.for_analysis(analysis(project), dict(sources=[dict(format='claude', path=str(path))]))[1]
+
+
+@pytest.mark.parametrize('attached', [None, '- Be nice.\n', RULES[0]['text'].rstrip()], ids=['path only', 'other text', 'near miss'])
+def test_attachment_that_is_not_the_judged_file_text_gives_an_abstention_not_an_observed_violation(project, attached):
+    result = adherence_of(project, [('memory', str(project / 'AGENTS.md'), *([] if attached is None else [attached])), ('user', 'push it'), PUSH])
+    assert result['counts'] == {} and [(f['status'], f['loading']) for f in result['abstentions']] == [('possible_violation', 'unknown')]
+
+
+def test_attachment_of_the_judged_file_text_gives_an_observed_violation_for_a_later_call(project):
+    result = adherence_of(project, [('memory', str(project / 'AGENTS.md'), RULES[0]['text']), ('user', 'push it'), PUSH])
+    assert result['counts'] == dict(observed_violation=1) and result['findings'][0]['loading'] == 'loaded'
+
+
+def test_call_before_the_first_attachment_is_unknown_loading_never_not_loaded(project):
+    result = adherence_of(project, [('user', 'push it'), PUSH, ('memory', str(project / 'AGENTS.md'), RULES[0]['text'])])
+    assert result['counts'] == {} and [(f['status'], f['loading']) for f in result['abstentions']] == [('possible_violation', 'unknown')]
+
+
+def test_call_after_the_attachment_is_observed_even_when_an_earlier_call_is_unknown(project):
+    result = adherence_of(project, [('user', 'push it'), PUSH, ('memory', str(project / 'AGENTS.md'), RULES[0]['text']), PUSH])
+    assert result['counts'] == dict(observed_violation=1) and result['findings'][0]['span'] == dict(first_turn=2, last_turn=2)
+
