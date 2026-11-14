@@ -5002,12 +5002,13 @@ commit `37f788bd287750e10d7610173e5332b3843f6ebd`. Any other `cognee_version` is
 refused. `cognee.export(dataset, format=...)` in
 [`cognee/api/v1/export/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/api/v1/export/export.py)
 checks read permission on one dataset and writes that dataset's graph. Two of
-its file shapes are accepted:
+its file shapes and one archive directory are accepted:
 
 | `format` | Upstream writer at the pin | Shape |
 | --- | --- | --- |
 | `graph_snapshot` | `format="pydantic"` with a `destination`: `GraphSnapshot.save()` in [`cognee/modules/migration/snapshot.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/snapshot.py) | `dataset_name`, `dataset_id`, `nodes`, and `edges` of `source_id`/`target_id`/`relationship`/`properties` |
 | `nodes_edges` | `format="json"`: `write_json` in [`cognee/modules/migration/formats.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/formats.py) | `nodes`, and `edges` of `source`/`target`/`relationship_name` with properties flattened beside them |
+| `cogx_archive` | `format="cogx"`: `_write_cogx` in [`cognee/modules/migration/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/export.py) and `COGXArchiveWriter` in [`cognee/modules/migration/cogx.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/cogx.py) | a directory of `manifest.json` and the JSONL files `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` (see [COGX archives](#cogx-archives)) |
 
 Node types come from the `DataPoint` subclasses at the pin:
 [`DataPoint`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/infrastructure/engine/models/DataPoint.py),
@@ -5016,8 +5017,8 @@ and its subclasses,
 [`DocumentChunk`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/chunking/models/DocumentChunk.py)
 (`document_id` and the `is_part_of` and `contains` fields), and
 [`Entity`/`EntityType`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/engine/models/Entity.py)
-(`is_a`). The `cogx`, `graphml` and `cypher` formats, an in-memory
-`GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
+(`is_a`). The `graphml` and `cypher` formats, a packed `.cogx.tar.gz` file, an
+in-memory `GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
 selection whose file has no `dataset_id` key is refused, and so is a
 `nodes_edges` selection whose file has one. The shape is read from code, not
 from a published schema, and no real export has been read: the profile reports
@@ -5138,6 +5139,43 @@ references, conflicting chunk documents, edge and version revisions, refused
 releases and formats, bounds, capture changes, and CLI output and cache with no
 body, ID, name or path while Cognee is unimportable.
 
+### COGX archives
+
+`format: "cogx_archive"` reads the directory `cognee.export(dataset, format="cogx",
+destination=...)` writes, selected by `export` as a directory path relative to the
+manifest. Only the files the pinned writer emits are opened: `manifest.json`, then
+whichever of `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` exist.
+Any other entry (another record file such as `memories.jsonl`, a stray file, a
+subdirectory) is never opened; it is counted in `archive.entries_not_read` with
+`archive_entries_not_read`. A directory of more than 64 entries, a symlinked
+directory or file, and a packed `.cogx.tar.gz` (a file, not a directory) are refused.
+Unpacking is the user's own step, so no archive extraction happens here.
+
+| Archive part | Behaviour |
+| --- | --- |
+| `permissions.json` | Present under any letter case or as a symlink: the whole archive is refused before any file is opened. `export(include_permissions=True)` writes owner and grant accounts with emails and password hashes into it, so a directory holding it is a secret and is never imported. |
+| `manifest.json` | `cogx_version` must be `0.1` and `source_system` `cognee`; another release, producer, a non-object or a malformed `counts` is refused. An archive written by a failed export has no manifest and is refused. `migration_revision` (the source store's data-migration revision) is kept only as `archive.migration_revision_sha256`, or `null` when absent. A key the writer does not emit is `unknown_manifest_fields`. |
+| `nodes.jsonl` | Each line is one node's own property dict (`id`, `type`, ...): every node the writer has no typed record for, and each chunk beside its typed copy. Mapped exactly as a graph export's node. |
+| `entities.jsonl` | A named `Entity` the writer wrote as a typed record instead of a raw node; `external_id` is its node ID. Its `created_at` and `updated_at` are ISO instants and are read as native timestamps. |
+| `documents.jsonl` | The text copy of a `DocumentChunk`. A chunk that also has a raw node is that one claim; one without it becomes a chunk claim with no `document_id`, so its origin is `missing`, never guessed. |
+| `facts.jsonl` | One edge each, from `subject_ref` through `predicate` to `object_ref`; the other fields (`fact_text`, `valid_at`, `invalid_at`) are fingerprinted as the edge body. Edge and origin rules are the graph export's. |
+
+Every record file's lines must be objects, typed records must carry their own `kind`
+and `external_system: "cognee"`, and a duplicate key, `NaN`, non-UTF-8 byte or truncated
+line refuses the archive. Counts in the manifest are compared with the records read:
+a difference, or a count for a record kind that was not read, is
+`manifest_counts_mismatch`; the archive is still read so the gap is visible, never
+silently complete. The archive carries no dataset ID (the dataset name appears only
+in a free-text note, which is not read as an identity), so lineage is
+`caller_declared` with the selection's `dataset_id`, or `unknown` without one,
+`cross_source_joins` is `disabled` and `dataset_lineage_unverified` is set; a claim
+is still namespaced by instance, `dataset` label and declared `dataset_id`, so two
+datasets' archives share no claim. `export_sha256` covers the manifest and each record
+file read, in the fixed order above. The limits are the graph export's: `max_export_bytes`
+counts all files together, and `max_rows` counts record lines plus the export record,
+checked before mapping. The shape is read from code and no real archive has been
+read: `compatibility: unverified`, `upstream_shape: source_inferred`.
+
 ### Saved recall results
 
 `format: "recall_results"` reads a JSON list the user saved from their own
@@ -5169,8 +5207,8 @@ Bodies, questions, answers and text are fingerprinted only. `max_rows`,
 `max_fields` and the JSON screens bound the file before mapping; a saved list is
 always `partial` because top-k truncation cannot be seen.
 
-Still open in #52: verifying either shape against a real export or result list;
-`cogx` archives; evidence-reference mapping; an opt-in, explicitly authorized
+Still open in #52: verifying any shape, including COGX archives, against a real
+export or result list; evidence-reference mapping; an opt-in, explicitly authorized
 live `recall` connector with verified read-only API semantics and bounded
 cancellation of result streams; further releases and backends.
 
