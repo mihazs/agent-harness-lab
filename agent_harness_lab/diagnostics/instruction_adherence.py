@@ -382,7 +382,7 @@ def summary(report):
         'ahl instruction-adherence: sessions=%d unknown_capture=%d findings=%d abstentions=%d' % (
             sessions['total'], sessions['unknown_capture'], len(report['findings']), len(report['abstentions'])),
         '  ' + ' '.join(f'{name}={counts.get(name, 0)}' for name in (*CLAIMED, 'not_loaded', 'conflict')),
-        '  calibration (reviewed synthetic sample, n=%d): precision %s, recall %s, abstention %s' % (
+        '  calibration (author-labelled synthetic sample, n=%d): precision %s, recall %s, abstention %s' % (
             calibration['sample']['cases'], interval('precision'), interval('recall'), interval('abstention_rate')),
         '  report is private, redacted by default and descriptive only; it names no cause'))
 
