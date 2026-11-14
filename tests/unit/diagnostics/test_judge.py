@@ -18,7 +18,7 @@ def policy(**changes):
 
 
 def reply(order, verdict, **extra):
-    return dict(judge_ref=JUDGE, rubric_revision=RUBRIC, presented=order, verdict=verdict) | extra
+    return dict(judge_ref=JUDGE, rubric_revision=RUBRIC, presented=order, verdict=verdict, citations=[]) | extra
 
 
 def follows(arm, **extra):
@@ -89,6 +89,29 @@ def test_verdict_outside_the_declared_vocabulary_is_never_a_decision(verdict):
     result = judge.evaluate(policy(), [row('a', 'first', responses)])
     assert result['states']['invalid_verdict'] == 1 and result['states']['decided'] == 0
     assert 'invalid_verdicts_present' in reasons(result)
+
+
+def omit(responses, key, orders):
+    """The responses with ``key`` left out of the ones recorded for ``orders``."""
+    return [{k: v for k, v in r.items() if not (k == key and r['presented'] in orders)} for r in responses]
+
+
+_OMITTED_IN = [pytest.param(('first_second',), id='first-order'), pytest.param(('second_first',), id='second-order'),
+               pytest.param(('first_second', 'second_first'), id='both-orders')]
+
+
+@pytest.mark.parametrize('orders', _OMITTED_IN)
+def test_response_omitting_the_verdict_is_refused_not_read_as_abstention(orders):
+    responses = omit(follows('first', citations=[]), 'verdict', orders)
+    with pytest.raises(ValueError, match='omission is not abstention'):
+        judge.evaluate(policy(), [row('a', 'first', responses)])
+
+
+@pytest.mark.parametrize('orders', _OMITTED_IN)
+def test_response_omitting_citations_is_refused_not_read_as_uncited(orders):
+    responses = omit(follows('first', citations=[]), 'citations', orders)
+    with pytest.raises(ValueError, match='omission is not an uncited claim'):
+        judge.evaluate(policy(), [row('a', 'first', responses, spans=['s1'])])
 
 
 def test_coverage_exactly_at_the_minimum_is_not_rejected_and_below_is():

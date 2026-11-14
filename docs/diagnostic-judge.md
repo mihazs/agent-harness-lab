@@ -16,9 +16,11 @@ presentation orders, and it is compared with the supplied labels, not with itsel
 Each row is a dict with `root_case_id`, `split: "heldout"`, `label` (`first`, `second`, `tie`, or
 `null` for unknown) and `responses`: one recorded response per presentation order, `first_second`
 and `second_first`. A response has `judge_ref`, `rubric_revision`, `presented`, `verdict` (`A`,
-`B` or `tie`; `null` is an abstention), optional `citations` (evidence span identifiers) and an
-optional `confidence` that is validated and then ignored. A response from another judge or
-rubric revision than the policy's is refused, never mixed into one report.
+`B` or `tie`; `null` is an abstention), `citations` (evidence span identifiers; `[]` when the
+response cited nothing) and an optional `confidence` that is validated and then ignored. The
+`verdict` and `citations` keys are required: a response that omits one is refused, because
+omission is not abstention and not an uncited claim. A response from another judge or rubric
+revision than the policy's is refused, never mixed into one report.
 
 Optional row fields:
 
@@ -28,8 +30,9 @@ Optional row fields:
 - `control`: `style`, `verbosity` or `wording` marks a matched control whose two arms differ only
   in that factor. Its label must be `tie`. Controls are counted apart from the case roots.
 
-A root appears in one row; a repeated root, a non-held-out row, a label or verdict outside the
-vocabulary, oversized identifier lists or an invalid measurement is refused.
+A root appears in one row; a repeated root, a non-held-out row, a label outside the vocabulary,
+oversized identifier lists or an invalid measurement is refused. A verdict outside the vocabulary
+is not refused: it is counted as `invalid_verdict` (see Report).
 
 ## Policy
 
