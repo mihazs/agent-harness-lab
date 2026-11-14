@@ -84,8 +84,10 @@ set of inputs. Read `decision.bindings` and `decision.observed`:
 
 Apply this to the receipt of every step, not as a run of its own.
 
-- A receipt with a `vacuity` block (`vacuous: true`) must end `inconclusive` with `reason: evaluation_vacuous`, no `plan` and no
-  `recommendation`. Any success wording on a vacuous evaluation is FAIL.
+- A receipt with a `vacuity` block (`vacuous: true`) must end typed, with no `plan`, no `recommendation` and no success wording.
+  The reason is `evaluation_vacuous`, or the reason the receipt already ended for: `evaluation_uninformative` (`inconclusive`)
+  and `missing_or_duplicate_trials` (`incomplete`) carry the block too ([vacuity labels](vacuity-labels.md)). A `vacuity` block
+  on a receipt with a `plan`, a `recommendation` or success wording is FAIL.
 - Every number must trace to a recorded trial. `decision.bindings.evaluation` names the evaluation folder under
   `$AHL_STATE_HOME`; `observed.trials` must equal the number of rows in `trials` of its `results.json`, and
   `sha256sum results.json` must equal `results_sha256`. A count you cannot trace is FAIL; a missing file is KNOWN_GAP.
@@ -122,7 +124,7 @@ the criterion: any non-zero end without a `status` and a `reason` is FAIL.
 | Runtime missing | run with a `PATH` that lacks the runtime | `blocked`, `agent_runtime_unavailable` |
 | Runtime newer than the verified range | none needed on a current runtime | `capture_unverified` among `findings_not_candidates` causes, never a clean pass |
 | Time budget too small | `--timeout 5` on the command | a typed `budget_exhausted` or `blocked`, not `execution_error` |
-| Concurrent runs | start two checks together | both end typed; neither changes the checkout |
+| Concurrent runs | start two checks together | both end typed. Each sees the other's temporary worktree, so `verdict: drift` with `drift: ['worktrees']` is expected by design; HEAD, refs and `git status` of the real checkout are unchanged |
 | Interrupted run | stop the check with Ctrl-C | the worktree is gone (`git worktree list`) and the checkout is unchanged |
 
 The scenario matrix with failure injection is slice FU-5 (#807); until it lands, the cells above are the manual subset.
