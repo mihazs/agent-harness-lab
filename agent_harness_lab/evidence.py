@@ -170,7 +170,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None, history_runtime=None, history_from=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None, history_runtime=None, history_from=None, reused_process_mining=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -418,7 +418,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
 
     # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
     attribution = dict(source_order_declared_by='native_adapter') if native_order or events is None else {}
-    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True, **attribution)
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True,
+                       reused_process_mining=reused_process_mining, **attribution)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(checkout, max_files, sources, fingerprint, caveats)

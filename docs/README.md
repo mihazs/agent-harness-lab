@@ -11,7 +11,7 @@ reader purpose.
 ## Complete a task
 
 - [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
-- [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
+- [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [reuse analysis work on unchanged input](incremental-analysis.md); [inspect CLI help](cli-help.md).
 - [Audit a long-lived checkout whose inventory is blocked](audit-long-lived-checkout.md), [repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
 - [Annotate pull requests with the static audit](audit-pull-requests.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).

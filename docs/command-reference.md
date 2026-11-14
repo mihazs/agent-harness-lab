@@ -10,6 +10,7 @@
 | `ahl improve [project] --repair-contracts --scope project\|global\|project+global [--agent codex\|claude]` | Repair skill headers in the project (default), the named runtime's user-level skill directory, or both; see [choose the project or user-level scope](improve-scope.md) |
 | `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
+| `ahl analyze [project] --events FILE --memory-store DIR --incremental [--explain-reuse]` | Reuse the verified process-mining output of an unchanged capture and harness from an opt-in private store, and explain every hit and miss; offline, no model call; see [reuse analysis work on unchanged input](incremental-analysis.md) |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
