@@ -139,7 +139,8 @@ def calibrate(split):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='python -m agent_harness_lab.evaluation.bayes_calibration', description=__doc__.splitlines()[0])
-    parser.add_argument('--split', choices=sorted(PROTOCOL['seeds']), required=True)
+    parser.add_argument('--split', choices=sorted(PROTOCOL['seeds']), required=True,
+                        help='Seed split to simulate: tuning to choose p_cut, held_out to confirm it once; runs offline with no model or network.')
     print(json.dumps(calibrate(parser.parse_args(argv).split), indent=1, sort_keys=True))
     return 0
 
