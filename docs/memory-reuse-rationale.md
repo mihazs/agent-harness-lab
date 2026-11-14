@@ -49,3 +49,15 @@ bodies keep private content out of any index. Excluding historical findings from
 projections preserves the existing role isolation. Treating the knowledge wiki as a
 navigation layer follows from all of the above: it can point to evidence but cannot
 decide what the evidence means.
+
+## A harness has an identity and a history
+
+A comparison is only as precise as the statement of what changed and what it was compared
+against. The [snapshot id](harness-snapshots.md) therefore names the declared surface
+files, their modes and the declared runtime and trust, and not a commit: a commit says
+nothing about uncommitted or ignored files, so two snapshots of one commit can differ and
+the commit relation is a separate annotation. Timeline events point at the authoritative
+record and never carry a cause, because a change that precedes a result is not shown to
+have produced it. A baseline chosen after outcomes were seen is a different, descriptive
+claim, so a fixed reference must be declared first, and reselecting one is recorded and
+never lifts an existing claim.

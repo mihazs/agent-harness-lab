@@ -7,7 +7,7 @@ objects are authoritative; a SQLite index is derived from them and can always be
 rebuilt. This slice provides the store, its integrity checks and its maintenance
 commands. Nothing populates it yet and no planner reads it. The store never modifies a
 `HistoryStore`: a row here is never proof that an original store was updated. The separate
-`history` command only reads selected stores.
+`history` command only reads selected stores. [Harness snapshots, change associations and baseline policies](harness-snapshots.md) can be stored in it as `capture` and `manifest` artifacts.
 
 ## Create and check a store
 
