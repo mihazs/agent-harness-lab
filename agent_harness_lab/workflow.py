@@ -698,6 +698,8 @@ def _improve(args):
             raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
+    from . import incremental
+    args._incremental = incremental.begin(args, output, original, None if allowed_paths(args) is None else sorted(allowed_paths(args)))
     if getattr(args,'_audit_hypothesis',None) is not None:
         from .audit.recheck import discover, select
         if getattr(args,'_static_automatic',False):
@@ -917,6 +919,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
+        incremental.froze(args._incremental, attempt, proposed)
+        if incremental.repeats_regression(args._incremental, proposed, runtime_sha256):
+            incremental.block_repeat(result, args._incremental)  # an earlier run measured this very candidate worse on this baseline
+            break
         if repeated is not None:
             repeated.protect([baseline,candidate,frozen,*role_views.values()],settings)
             manifest_path=repeated.bind(baseline,frozen,grader_options['image_sha256'])
@@ -1276,6 +1282,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
                                                   brief=getattr(args, '_analysis_brief', None))
         with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
+    incremental.attach(result, args._incremental, original)
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
@@ -1325,7 +1332,7 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
     if hasattr(args,'_automatic_focus'): args.focus = None
-    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots'):
+    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started

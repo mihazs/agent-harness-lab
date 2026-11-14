@@ -34,6 +34,7 @@ reader purpose.
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
 - [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
 - [Before/after guard](before-after-guard.md): the paired verdict, the frozen-inputs identity of both arms and the investigation record of a regressed candidate.
+- [Incremental runs](incremental-runs.md): what a second `ahl improve` reads from the first: applied, ignored, regressed or edited candidates, historical beside fresh scores, and the finished regression it does not repeat.
 - [Stage budgets and early stops](budget-stages.md): the construction time box, feasibility check, uninformative stop, refinement reuse and per-stage receipt.
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
