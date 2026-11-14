@@ -98,8 +98,8 @@ def test_both_arms_record_the_same_frozen_inputs_identity(run):
 
 
 def test_the_same_inputs_have_the_same_identity_in_another_run_folder(run):
-    first, first_output, _ = run('good', 'worse')
-    second, second_output, _ = run('good', 'worse')
+    first, first_output, _ = run('bad')  # a candidate that is not regressed: an identical regressed one is not evaluated twice (#806)
+    second, second_output, _ = run('bad')
     assert first_output != second_output
     assert first['before_after']['frozen_inputs']['baseline'] == second['before_after']['frozen_inputs']['baseline']
 
