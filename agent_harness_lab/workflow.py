@@ -541,6 +541,44 @@ def _bounded_sha256(path, limit=8*1024*1024):
     except (ValueError, OSError): return 'unknown'
 
 
+def static_runtime(args):
+    """The runtime whose conventions a first run audits, or None when the backend has no audit profile (Responses)."""
+    agent = args.agent
+    if agent == 'auto': agent = 'codex' if shutil.which(args.codex) else 'claude'
+    return agent if agent in ('codex', 'claude') else None
+
+
+def static_convention_stage(args, data, progress):
+    """History with findings but no verified outcome has no trace-derived candidate: stage the best static convention.
+
+    An eligible convention seeds the run as an audit hypothesis (never a diagnosis, never applied), which first_use counts as a
+    hypothesis source. When none is eligible the run falls through to the first-use gate with the audit's own cause recorded, so
+    no model call that cannot succeed is made. Runs that carry a focus, an audit receipt, a verified outcome or no history keep
+    their path unchanged."""
+    from . import first_use
+    if (not getattr(args, 'history', False) or getattr(args, 'focus', None) is not None or getattr(args, 'from_audit', None) is not None
+            or static_runtime(args) is None or first_use.verified_outcomes(data) or not data['analysis']['findings']):
+        return
+    from .audit.recheck import discover
+    progress('static_convention_audit')
+    audited = discover(args.project, static_runtime(args))
+    if audited['candidates']:
+        args._audit_hypothesis, args._static_automatic = audited['candidates'][0], True
+        args._static_candidates = dict(selected=audited['candidates'][0]['finding_id'], eligible=len(audited['candidates']),
+            not_selected=[dict(finding_id=row['finding_id'], reason=row['reason'], why='one_hypothesis_per_run') for row in audited['candidates'][1:]])
+        args._automatic_focus, args.focus = True, audited['candidates'][0]['focus']
+        return
+    totals = audited['instruction_totals']
+    if audited['inventory_status'] != 'completed':
+        cause = dict(why='audit_inventory_' + (audited['blocked_reason'] or audited['inventory_status']),
+                     remediation='Resolve the blocked audit inventory (run ahl audit on the project for its reason), then rerun.')
+    elif audited['unsettled']:
+        cause = dict(why='instruction_totals_unsettled', instruction_totals_reasons=totals['reasons'],
+                     remediation='Make the instruction chain settle (for Codex a Git project root and a trusted project; for Claude resolvable imports), then rerun.')
+    else: cause = dict(why='no_eligible_convention')
+    args._static_audit = dict(findings=audited['findings'], checked=audited['checked'], unsettled=audited['unsettled'], **cause)
+
+
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
     from .diagnostics.mechanisms import MECHANISM_GUIDANCE
@@ -586,6 +624,7 @@ def _improve(args):
         construction_receipt(result, args)
         write_json(output/'workflow.json', result)
         return result
+    static_convention_stage(args, data, progress)
     from . import first_use
     if first_use.blocked(data, args):
         # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
@@ -640,8 +679,11 @@ def _improve(args):
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
     if getattr(args,'_audit_hypothesis',None) is not None:
-        from .audit.recheck import select
-        if select(args.from_audit,args.project,args.agent)!=args._audit_hypothesis:
+        from .audit.recheck import discover, select
+        if getattr(args,'_static_automatic',False):
+            if discover(args.project,static_runtime(args))['candidates'][:1]!=[args._audit_hypothesis]:
+                raise ValueError('audit hypothesis changed during baseline snapshot')
+        elif select(args.from_audit,args.project,args.agent)!=args._audit_hypothesis:
             raise ValueError('audit hypothesis changed during baseline snapshot')
     shutil.copytree(baseline, candidate)
     if repeated is not None:repeated.freeze_baseline(baseline)
@@ -1199,7 +1241,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
-    result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
+    result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
     if proposed is not None:
         changed = sorted(name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name))
         result['pre_edit_check'] = pre_edit_check(args.project, changed)
@@ -1208,6 +1250,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis
+        if getattr(args,'_static_automatic',False): result['static_convention_candidates']=args._static_candidates
     if proposals:
         from .diagnostics import improve_coverage
         try:
@@ -1244,7 +1287,8 @@ def _run_improvement(args, *, parent_started=None):
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
-    for name in ('_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots'):
+    if hasattr(args,'_automatic_focus'): args.focus = None
+    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started

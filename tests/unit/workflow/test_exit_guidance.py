@@ -68,6 +68,8 @@ def test_empty_observed_blocked_and_unknown_summaries():
                             'next_steps': [dict(rank=1, action='Capture outcomes.', command='ahl evaluate --help')]})
     assert insufficient.startswith('Evidence insufficient.') and 'ahl evaluate --help' in insufficient
     assert 'harness is fine' not in insufficient.replace('does not show the harness is fine', '')
+    unevaluable = summary({'status': 'no_change', 'reason': 'no_change_no_evaluable_candidate'})
+    assert unevaluable.startswith('Evidence insufficient.') and not unevaluable.startswith('No change proposed')
     assert summary({'status': 'blocked', 'reason': 'agent_runtime_unavailable'}).startswith('Blocked by missing prerequisite.')
     assert summary({'status': 'inconclusive', 'reason': 'unknown_future_reason'}).startswith('Inconclusive.')
     assert summary({'status': 'no_change', 'reason': 'unknown_future_reason'}).startswith('Inconclusive.')

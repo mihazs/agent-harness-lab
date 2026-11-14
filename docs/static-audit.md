@@ -463,6 +463,36 @@ convention URL is a general reference, not the source of that threshold. Existin
 `--improvement-recheck` output remains v1 and does not support a soft-budget
 recheck; older consumers do not accept the v2 parameters.
 
+### Staging static conventions on a first run
+
+`ahl improve --history` runs this audit itself, without an audit report, when the history
+has findings and no verified evaluation outcome, and no `--focus` or `--from-audit` is
+given. The audit is fresh, read-only, bounded and uses no model. Eligible conventions for the
+selected `codex` or `claude` runtime are, most content-losing first: a Codex instruction chain
+the project-document budget truncates, an oversized instruction file
+(`instruction_exceeds_launch_bytes` for Claude, `instruction_exceeds_project_doc_bytes` for Codex), a
+skill-description routing collision, an instruction chain above the default 200-line convention (an
+assumed default, labelled `threshold_origin: assumed_default`, not a validated limit) and a
+procedure-shaped instruction section. The audit covers the project root with the default budget, so the
+skipped-chain and declared-budget reasons that `--from-audit` accepts cannot arise here. The
+truncation, routing, line and procedure conventions reuse the focus texts of `--from-audit`; the two
+oversized-file conventions use their own focus text, and `--from-audit` does not accept their reasons.
+The chain, line and procedure conventions depend on settled instruction totals.
+
+One convention is staged per run so the paired evaluation tests one change; the others are listed
+as `not_selected` in `static_convention_candidates`. The hypothesis is labelled
+`hypothesis_source: static_convention` with `selection: automatic_no_trace_candidate`, kept
+distinct from trace evidence. It never lowers the evidence bar and is never applied by default.
+When nothing is eligible the receipt states `no_change_no_evaluable_candidate` with a cause
+per source and no model call. The `static_audit` cause lists `checked` (the conventions the audit
+evaluated) and `unsettled` (applicable conventions it could not evaluate), and `why` is one of
+`no_eligible_convention` (every applicable convention was checked and none applies),
+`instruction_totals_unsettled` (the instruction chain could not be settled, for example Codex without
+a Git project root, an unresolved Claude import or an unreadable chain, so the truncation, line and
+procedure conventions are unknown, not clean; `instruction_totals_reasons` names why and the cause
+carries a remediation) or `audit_inventory_<reason>` (the inventory is blocked and nothing was
+checked). Evaluation feedback is not written back to the audit report.
+
 ### Feedback sensor candidates
 
 `ahl audit PROJECT --feedback-sensors` adds a private filename-only inventory for
