@@ -625,7 +625,7 @@ def _improve(args):
         write_json(output/'workflow.json', result)
         return result
     static_convention_stage(args, data, progress)
-    from . import first_use
+    from . import first_use, preparation
     if first_use.blocked(data, args):
         # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
         # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
@@ -736,7 +736,7 @@ def _improve(args):
     elif data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     protected = {}
     refinement_feedback = []
-    proposals = []
+    proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
     single_run = None
     final_attempt = None
     proposed = None
@@ -807,6 +807,7 @@ previous attempts, global skills, model settings, permissions, hooks or credenti
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
+{preparation.guidance()}
 Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
 {instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
@@ -839,18 +840,20 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             raise ValueError('Preparation changed a previous frozen evaluation')
         if runner.digest(baseline) != baseline_hash:
             raise ValueError('Preparation modified the baseline; nothing was applied')
-        if not proposal_path.is_file():
+        if access is None:
+            try: proposal = json.loads(proposal_path.read_text()) if proposal_path.is_file() else None
+            except ValueError: proposal = None  # malformed JSON is an unusable proposal, not an input error
+        if not isinstance(proposal, dict) or proposal.get('status') not in ('candidate', 'no_change'):
             result['status'] = 'invalid_proposal'
+            returned.append(None)
             break
-        if access is None:proposal = json.loads(proposal_path.read_text())
-        if not isinstance(proposal, dict):
-            raise ValueError('Proposal must be an object')
         check_configuration(args)
         current_harness = {str(path.relative_to(args.project)):file_state(path)
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
         proposals.append(proposal)
+        returned.append(proposal)
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(status='no_change',reason=brief.disposition(data))
@@ -858,8 +861,6 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result['next_steps'] = getattr(args,'_analysis_next_steps',[])
             first_use.attach(result, data, args, prepared=True)
             break
-        if proposal.get('status') != 'candidate':
-            raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
         # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
         instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
@@ -1239,6 +1240,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
+    if returned:
+        result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
+                                                  brief=getattr(args, '_analysis_brief', None))
+        with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
