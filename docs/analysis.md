@@ -63,6 +63,7 @@ an independence claim.
 | `analysis-brief.json` | What the cooperative preparation stage reads instead of `analysis.json` | Hard cap of 32 KiB on the file, independent of history size |
 | `mechanism-summaries.json` | Ranked groups with at most five evidence references each | At most 200 groups; omitted groups are counted in `truncated` |
 | `instruction-adherence.json` | Where the read Claude Code or Codex sessions ignored a project rule or a prompt instruction; digests only | At most 5,000 findings; written only when at least one native session was read; the brief's `instruction_adherence` section holds its counts |
+| `instruction-repair-plan.json` | Candidate mechanisms and repair classes for each adherence finding, recommendation only and digest only; see [instruction repair](instruction-repair.md) | One candidate per finding; written whenever `instruction-adherence.json` is; the brief carries counts only |
 
 Structured tool errors are grouped by tool class and a fixed error category. A tool
 class is a documented built-in tool name or a stable opaque label; free-text error

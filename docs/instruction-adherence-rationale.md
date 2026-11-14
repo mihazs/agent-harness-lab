@@ -70,3 +70,21 @@ the sample is authored. That makes the numbers a check that the documented behav
 intervals so a small sample is not mistaken for certainty. A reviewed sample drawn from real
 sessions would need the evidence-lineage and review controls of the
 [diagnostic corpus](diagnostic-corpus.md) and stays future work.
+
+## Why a repair plan is a recommendation
+
+A finding says an instruction was not honored; it does not say why. The same finding can come from a
+rule that never reached the agent, one buried in a long file, a hedged sentence, a prose rule that a hook
+would have enforced, a constraint lost over a long session or plain agent variance. The repair plan
+therefore lists every mechanism the structural facts leave open, each beside the others as a competing
+explanation and always beside "the agent erred for a reason unrelated to the harness". A mechanism the
+evidence cannot show, such as a compaction nobody recorded, is `not_excluded`, never asserted. Skill
+activation is listed as not assessed because the report holds no such evidence.
+
+Only a controlled comparison can show that a repair works, and a comparison that grades itself is not
+one. The screen is deliberately weaker: it applies the same detector to recorded arms, credits a rule only
+when it was loaded, counts unknown roots against the repair and rejects a repair that deletes a checkable
+rule or loses a preserved task, so a fix that makes the violation vanish by removing the rule cannot pass.
+Its best verdict says the recorded pair separates the arms and names the next step, the paired experiment.
+A finding that its reproduction cannot recreate gets a recommendation and no change, and a prompt
+instruction is repaired in the harness, by an echo or a re-grounding step, never by editing the prompt.

@@ -364,6 +364,7 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
         # Counts only: the digest-only findings stay in the private instruction-adherence.json the section names.
         brief['instruction_adherence'] = adherence
         if adherence.get('artifact'): brief['sources']['instruction_adherence'] = adherence['artifact']
+        if adherence.get('repair_plan'): brief['sources']['instruction_repair_plan'] = adherence['repair_plan']['artifact']
     for section in ('mechanisms', 'weak_outcome_signals', 'missing_evidence'):
         while _size(brief) > MAX_BRIEF_BYTES and brief[section]:
             brief[section].pop()

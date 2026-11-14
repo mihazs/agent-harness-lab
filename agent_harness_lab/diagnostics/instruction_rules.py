@@ -101,6 +101,11 @@ def extract(text, *, user=False):
     return rows
 
 
+def hedged(sentence):
+    """Whether a sentence carries a soft cue (should, try to, avoid, be careful) that no observable condition backs."""
+    return bool(_SOFT.search(sentence))
+
+
 def key(rule):
     return json.dumps(rule, sort_keys=True, separators=(',', ':'))
 
