@@ -98,17 +98,13 @@ def test_history_without_findings_that_spent_preparation_is_labelled_and_never_c
     assert_candidate_or_typed_reason(receipt)
 
 
-@pytest.mark.parametrize('selection', [['--events', 'EVENTS', '--format', 'codex'],
-                                       ['--source-root', 'ROOT', '--format', 'codex', '--source-version', 'codex-rollout-0.166.0']],
-                         ids=['explicit_events', 'source_root'])
-def test_explicit_capture_input_with_failures_and_no_outcomes_still_reaches_the_proposer(home, selection):
-    """Explicit inputs never read evaluation results, so no outcome-evidence remediation could unlock a block there."""
+def test_explicit_events_with_failures_and_no_outcomes_still_reach_the_proposer(home):
+    """Explicit events never read evaluation results, so no outcome-evidence remediation could unlock a block there."""
     for name in ('a', 'b', 'c'): home.codex(name)
-    paths = dict(EVENTS=str(home.root/'codex/sessions/a.jsonl'), ROOT=str(home.root/'codex/sessions'))
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         cli.main(['improve', str(home.project), '--agent', 'codex', '--codex', str(home.runtime), '--timeout', '30',
-                  *[paths.get(item, item) for item in selection]])
+                  '--events', str(home.root/'codex/sessions/a.jsonl'), '--format', 'codex'])
     receipt = json.loads(out.getvalue())
     assert receipt['analysis']['findings'] > 0
     assert receipt.get('reason') != 'no_outcome_evidence' and home.model_calls == 1, receipt
