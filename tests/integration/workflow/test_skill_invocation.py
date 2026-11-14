@@ -21,6 +21,7 @@ from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
 from tests.integration.workflow import test_workflow as fixtures
+from tests.support.typed_exit import typed_stdout
 from tests.support import clock
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
@@ -233,7 +234,7 @@ class TestSkillInvocation:
         (fixture.project/'ahl.json').write_text('{"schema_version":2,"authorized":true}')
         with patch.object(responses,'request',side_effect=AssertionError('no provider')):
             code,stdout,stderr=invoke(['skills','invoke',str(fixture.project)])
-        assert code == 2;assert stdout == '';assert stderr
+        assert code == 2;typed_stdout(stdout);assert stderr
         assert (fixture.project/'AGENTS.md').read_text() == 'bad'
 
     def test_private_failure_record_is_not_returned_as_a_public_receipt_or_retried(self,make_fixture):
@@ -245,7 +246,7 @@ class TestSkillInvocation:
         with patch.object(workflow,'_improve',side_effect=fail) as controller:
             code,stdout,stderr=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','10'])
         assert controller.call_count == 1
-        assert (code,stdout) == (2,'');assert 'synthetic interrupted validation' in stderr
+        assert code == 2 and 'output' not in typed_stdout(stdout);assert 'synthetic interrupted validation' in stderr  # the private record is never the public receipt
         records=list((fixture.root/'state/runs').glob('*/run-*/workflow.json'))
         assert len(records) == 1;assert json.loads(records[0].read_text())['status'] == 'invalid_input'
         assert (fixture.project/'AGENTS.md').read_text() == 'bad'
@@ -436,5 +437,5 @@ class TestEntryReceiptParity:
         results=[subprocess.run([sys.executable,'-m','agent_harness_lab',*prefix,str(missing)],
             capture_output=True,text=True,env=environment,timeout=30) for prefix in (['improve'],['skills','invoke'])]
         assert [(r.returncode,r.stdout,r.stderr) for r in results][0] == [(r.returncode,r.stdout,r.stderr) for r in results][1]
-        assert results[0].returncode != 0;assert results[0].stdout == '';assert results[0].stderr
+        assert results[0].returncode != 0;assert (results[0].stdout == '') if marker is not None else typed_stdout(results[0].stdout)['reason'] == 'invalid_usage';assert results[0].stderr  # a managed-preparation denial keeps stdout empty
         assert not (root/'state').exists()

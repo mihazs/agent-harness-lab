@@ -1,5 +1,6 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
 from .evaluation.manifest_contract import REASONS as CONTRACT_REASONS
+from .typed_exit import REASONS as TYPED_EXIT_REASONS
 
 REMEDIATION = {
     'target_filesystem_read_only': 'Use a separately authorized writable execution context or keep analysis read-only.',
@@ -76,6 +77,7 @@ REMEDIATION = {
     'inference_protocol_error_no_retry': 'Inspect the recorded inference protocol error before any retry.',
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
+    **{reason: step for reason, (_, _, step) in TYPED_EXIT_REASONS.items()},
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
     'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
     'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',

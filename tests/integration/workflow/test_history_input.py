@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab import cli, entry_parity
+from tests.support.typed_exit import typed_stdout
 from agent_harness_lab.exit_guidance import REMEDIATION
 
 DAY = 86400
@@ -136,5 +137,5 @@ def test_receipts_match_across_entry_routes(store):
                                   ('--history', '--events', 'x.jsonl')])
 def test_malformed_history_requests_are_explicit_input_errors(store, args):
     code, out, err = run(['improve', str(store.proj), *args])
-    assert (code, out) == (2, '')
+    assert code == 2 and typed_stdout(out)['reason'] == 'invalid_usage'
     assert '--since' in err or '--history' in err

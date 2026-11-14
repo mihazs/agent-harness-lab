@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 
-from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces
+from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces, typed_exit
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
@@ -98,7 +98,7 @@ def project_lock(project):
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
+        raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
@@ -212,7 +212,7 @@ def analyze_project(args):
 
 def file_state(path):
     if path.is_symlink():
-        raise ValueError('Symlinked harness files are outside automatic adoption scope')
+        raise typed_exit.TypedExit('unsupported_instruction_layout', 'Symlinked harness files are outside automatic adoption scope')
     if not path.exists():
         return None
     if not path.is_file():
@@ -255,7 +255,7 @@ def snapshot(project, target, *, allowed_paths=None):
     for path in harness_files(project,allowed_paths):
         relative = str(path.relative_to(project))
         if any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(project)):
-            raise ValueError('Snapshot path crosses a symlink')
+            raise typed_exit.TypedExit('unsupported_instruction_layout', 'Snapshot path crosses a symlink')
         total += path.stat().st_size
         if len(states) >= MAX_FILES or total > MAX_BYTES:
             raise ValueError('Harness snapshot exceeds its file/byte limit')
@@ -789,7 +789,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
             if runner.trace_result(check, agent)[0] != 'completed':
-                result['status'] = 'execution_error'
+                # A preparation cut off by the shared budget is a budget exhaustion of that stage, not an unexplained execution error.
+                result['status'] = 'budget_exhausted' if run.get('timeout') or remaining() <= 0 else 'execution_error'
                 break
         if any(runner.digest(path) != value for path, value in protected.items()):
             raise ValueError('Preparation changed a previous frozen evaluation')
@@ -1308,7 +1309,8 @@ def _run_improvement(args, *, parent_started=None):
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
-        status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
+        status = (exc.status if isinstance(exc, typed_exit.TypedExit) else
+                  'interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
@@ -1321,11 +1323,13 @@ def _run_improvement(args, *, parent_started=None):
             except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
 
         if inference_error: result['reason'] = str(exc)
+        if isinstance(exc, typed_exit.TypedExit): result['reason'] = exc.reason
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
         construction_receipt(result, args)
         from .scope import interrupted
         result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed
+        typed_exit.seal(result, args)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
             result['isolation_qualification']=permission_backend.permission_qualification()
@@ -1374,6 +1378,16 @@ def construction_receipt(result, args):
         result['budget_exhaustion'] = budget_stages.exhausted(stages, getattr(args, '_observed', None))  # unset: the evaluation never reported, so unknown
 
 
+def _sealed(result, args):
+    """Type a non-zero result and keep its private receipt file in step."""
+    if exit_code(result.get('status')) and 'exit_receipt' not in result:
+        typed_exit.seal(result, args)
+        output = result.get('output')
+        if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
+            write_json(Path(output)/'workflow.json', result)
+    return result
+
+
 def improve(args):
     if getattr(args,'from_audit',None) is not None:
         from copy import copy
@@ -1390,7 +1404,7 @@ def improve(args):
         output = result.get('output')
         if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
             write_json(Path(output)/'workflow.json', result)
-    return result
+    return _sealed(result, args)
 
 
 def watch_configuration(args):
@@ -1478,10 +1492,12 @@ def watch(args):
                         result = _run_improvement(options,parent_started=started)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
-                        result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
-                                      **({'reason': exc.reason} if isinstance(exc, manifest_contract.ContractError) else {}),
+                        result = dict(status=exc.status if isinstance(exc, typed_exit.TypedExit) else
+                                      'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
+                                      **({'reason': exc.reason} if isinstance(exc, (manifest_contract.ContractError, typed_exit.TypedExit)) else {}),
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
                         construction_receipt(result, options)
+                    _sealed(result, options)  # a normally returned result and the one built above both end typed
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
@@ -1493,8 +1509,11 @@ def watch(args):
             if args.once or status == 'interrupted':
                 if not emitted:
                     print('ahl: No fresh run. Evidence coverage: unavailable. Next: Review the private watch checkpoint.', file=sys.stderr)
+                    if exit_code(status):  # the previous disposition, not a fresh failure: say so, typed
+                        print(json.dumps(typed_exit.seal(dict(status=status, fresh_run=False))), flush=True)
                 return exit_code(status)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print('ahl: Inconclusive. Evidence coverage: unavailable. Next: Review the interrupted run before starting another.', file=sys.stderr)
+        print(json.dumps(typed_exit.seal(dict(status='interrupted'))), flush=True)
         return exit_code('interrupted')
