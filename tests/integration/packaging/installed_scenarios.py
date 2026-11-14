@@ -16,6 +16,7 @@ import tarfile
 
 from tests.integration.diagnostics.test_reported_actionable_analysis import history
 from tests.integration.workflow.test_workflow import FAKE
+from tests.unit.evaluation.test_compare_viewer import GOLDEN as COMPARE_GOLDEN, fixture as compare_fixture
 
 HOST_MARKERS = ('CLAUDECODE', 'CODEX_THREAD_ID', 'CODEX_CI', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED')
 EXIT_ZERO = '#!/bin/sh\nexit 0\n'
@@ -239,6 +240,21 @@ def scenario_run_directories_honor_the_state_home_override(installed, sb):
     override = sb.root / 'override-state'
     code, receipt, _ = sb.ahl('analyze', sb.project, AHL_STATE_HOME=str(override))
     assert Path(receipt['output']).is_relative_to(override)
+    sb.assert_isolated()
+
+
+def scenario_compare_viewer_writes_the_golden_report_without_remote_assets(installed, sb):
+    source, output = sb.root / 'experiment.json', sb.root / 'review'
+    source.write_text(json.dumps(compare_fixture()))
+    before = source.read_bytes()
+    code, receipt, err = sb.ahl('compare', '--experiment', source, '--output', output)
+    assert (code, receipt['status']) == (0, 'written'), err
+    assert sorted(path.name for path in output.iterdir()) == ['report.html', 'report.json']
+    assert (output / 'report.html').read_text() == COMPARE_GOLDEN.read_text()
+    assert not re.search(r'https?://|<script|<link', (output / 'report.html').read_text())
+    assert source.read_bytes() == before
+    code, receipt, err = sb.ahl('compare', '--experiment', source, '--output', output)
+    assert code == 2 and receipt is None and 'exists' in err
     sb.assert_isolated()
 
 
