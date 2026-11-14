@@ -1,7 +1,10 @@
 """Synthetic recorded sessions and a counting fake runtime for first-use scenarios; no real data."""
+import io
 import json
 import os
+from contextlib import redirect_stderr, redirect_stdout
 
+from agent_harness_lab import cli
 from tests.support.claude_order_fixture import session_rows
 from agent_harness_lab.telemetry.claude_discovery import directory_names
 
@@ -15,7 +18,12 @@ pathlib.Path(%r).open('a').write('call\\n')
 if pathlib.Path('context.json').exists():
     context = json.loads(pathlib.Path('context.json').read_text())
     status = pathlib.Path(%r).read_text() if pathlib.Path(%r).exists() else 'no_change'  # a candidate is written without editing it
-    pathlib.Path(context['evaluation'], 'proposal.json').write_text(json.dumps(dict(status=status, reason='synthetic')))
+    proposal = dict(status=status, reason='synthetic')
+    scripted = pathlib.Path(%r)
+    if scripted.exists():  # a scripted transcript: its fields replace the default; "edit" changes the candidate's instructions
+        proposal = json.loads(scripted.read_text())
+        if proposal.pop('edit', False): pathlib.Path(context['candidate'], 'AGENTS.md').open('a').write('synthetic edit\\n')
+    pathlib.Path(context['evaluation'], 'proposal.json').write_text(json.dumps(proposal))
 print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
 '''
 
@@ -27,9 +35,9 @@ class Home:
         self.root, self.project = root, root/'project'
         self.project.mkdir()
         (self.project/'AGENTS.md').write_text('synthetic instructions\n')
-        self.calls, self.proposal = root/'model-calls', root/'proposal-status'
+        self.calls, self.proposal, self.script = root/'model-calls', root/'proposal-status', root/'proposal-script.json'
         self.runtime = root/'agent'
-        self.runtime.write_text(RUNTIME % (str(self.calls), str(self.proposal), str(self.proposal)))
+        self.runtime.write_text(RUNTIME % (str(self.calls), str(self.proposal), str(self.proposal), str(self.script)))
         self.runtime.chmod(0o755)
         for name, folder in (('CODEX_HOME', 'codex'), ('CLAUDE_CONFIG_DIR', 'claude'), ('AHL_STATE_HOME', 'state')):
             monkeypatch.setenv(name, str(root/folder))
@@ -41,6 +49,10 @@ class Home:
     def proposes_an_unedited_candidate(self):
         """The fake preparation agent declares a candidate but leaves the candidate identical to the baseline."""
         self.proposal.write_text('candidate')
+
+    def scripts(self, **proposal):
+        """The fake preparation agent writes exactly this proposal; edit=True also edits the candidate's instructions."""
+        self.script.write_text(json.dumps(proposal))
 
     @property
     def model_calls(self):
@@ -83,3 +95,30 @@ class Home:
         grader = dict(exit_code=0, timeout=False, valid=True, grader_id='synthetic', grader_version='1', outcome=True)
         trial = dict(task='t', version='baseline', status='passed', grader=grader, execution=dict(exit_code=0, timeout=False))
         path.write_text(json.dumps(dict(inputs_unchanged=True, trials=[trial])))
+
+
+def improve(home, *extra):
+    """Run ``ahl improve --history`` on the synthetic project; returns the exit code, the stdout receipt and stderr."""
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code = cli.main(['improve', str(home.project), '--history', '--agent', 'codex', '--codex', str(home.runtime),
+                         '--timeout', '30', *extra])
+    return code, json.loads(out.getvalue()), err.getvalue()
+
+
+def candidates(receipt):
+    return len(receipt.get('candidates') or []) + int('plan' in receipt)
+
+
+def assert_candidate_or_typed_reason(receipt):
+    """The first-use rule: an evidenced candidate, or a typed reason with a remediation that explains the findings per cause."""
+    if candidates(receipt):
+        assert all(row.get('evidence') for row in receipt.get('candidates', []))
+        return
+    assert isinstance(receipt.get('reason'), str) and receipt['reason'], receipt
+    assert receipt.get('remediation'), receipt
+    findings = receipt['analysis']['findings'] if 'analysis' in receipt else 0
+    if findings:
+        explained = receipt['findings_not_candidates']
+        assert explained['reason'] == 'findings_not_actionable' and explained['findings'] == findings
+        assert explained['causes'] and all(type(count) is int and 0 < count <= findings for count in explained['causes'].values())
