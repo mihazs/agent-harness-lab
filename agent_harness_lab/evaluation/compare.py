@@ -1,9 +1,9 @@
-"""Static, offline HTML viewer for the private side-by-side review model (#37, stage 2).
+"""Static, offline HTML viewer for the side-by-side review model (#37, stage 2).
 
 The page is rendered from `side_by_side.build` output only. It runs no script,
 loads nothing remote, and shows no browser-computed decision: the supplied backend
 analysis is displayed verbatim, per-pair verdicts are text labels, and no value is
-coloured as good or bad.
+coloured as good or bad. A report is private unless `--public` asked for the explicit export.
 """
 import html
 import json
@@ -148,8 +148,10 @@ def _resource(report):
 
 def render(report):
     """Return one self-contained HTML document for a `side_by_side.build` report."""
-    if report.get('profile') != sbs.REPORT_PROFILE or report.get('publication_allowed') is not False:
-        raise ValueError('only a private side-by-side report can be rendered')
+    if (report.get('profile') != sbs.REPORT_PROFILE or report.get('publication_allowed') is not False
+            or report.get('publication') not in ('private', 'explicit_public_export')):
+        raise ValueError('only a side-by-side report that grants no publication authority can be rendered')
+    public = report['publication'] == 'explicit_public_export'
     summary, analysis, pairs = report['summary'], report['analysis'], report['pairs']
     roots = {(pair['family'], pair['root']) for pair in pairs if pair['planned']}
     if analysis is None:
@@ -183,14 +185,21 @@ def render(report):
                        + (f'<p>Truncated: {_e("; ".join(truncated))}</p>' if truncated else '')
                        + (_table(('Match', 'Baseline event', 'Candidate event'), events) if events else '<p>No timeline events.</p>') + '</details>')
     invalid = [(item['index'], item['reason']) for item in report['invalid_records']] + [(f"mapping {item['index']}", item['reason']) for item in report['invalid_mappings']]
-    limitations = report['limitations'] + [f"Execution is {report['execution_kind']}; capability claim: {report['capability_claim']}.",
-                                           'Private report: public export is not supported.']
+    limitations = report['limitations'] + [f"Execution is {report['execution_kind']}; capability claim: {report['capability_claim']}."]
+    if public:
+        declared = report['public_export']['provenance']
+        scope = (f"<strong>Public {_e(report['execution_kind'])} report.</strong> Declared provenance: {_e(declared['source_kind'])}, "
+                 f"reference {_e(declared['source_ref'])}, approved for publication, not derived from private data "
+                 '(the caller\'s attestation, not authenticated). Events and event mappings are omitted.')
+    else:
+        limitations.append('Private report: use `ahl compare --public` for an explicit export of approved synthetic or public data.')
+        scope = f"<strong>Private {_e(report['execution_kind'])} report.</strong>"
     return ('<!doctype html><html lang="en"><meta charset="utf-8"><title>Side-by-side experiment review</title>'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'\">"
             f'<style>{STYLE}</style><body><a href="#pairs">Skip to task table</a>'
             f'<h1>Side-by-side experiment review: {_e(report["experiment_id"])}</h1>'
-            f'<p><strong>Private {_e(report["execution_kind"])} report.</strong> Observation only: no causal attribution, '
+            f'<p>{scope} Observation only: no causal attribution, '
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
             f'<h2>Summary</h2>{lead}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
@@ -208,12 +217,13 @@ def main(argv=None):
     from agent_harness_lab.private_journal import record, write_bytes
     from agent_harness_lab.read_only import require_writable
     parser = argparse.ArgumentParser(prog='ahl compare', description='Render one baseline/candidate experiment record as a static, offline HTML review page. Read-only on the input; writes only a new private output directory. No server, browser, network or model call.',
-        epilog='Input is one ahl-side-by-side-experiment-v1 JSON object (see docs/side-by-side-reports.md). Output: report.html and report.json, mode 0600, in a directory that must not exist. Exit: 0 written; 2 invalid input or existing output. Example: ahl compare --experiment experiment.json --output review')
+        epilog='Input is one ahl-side-by-side-experiment-v1 JSON object (see docs/side-by-side-reports.md). Output: report.html and report.json, mode 0600, in a directory that must not exist. Exit: 0 written; 2 invalid input, a refused public export or existing output. Example: ahl compare --experiment experiment.json --output review')
     parser.add_argument('--experiment', type=Path, required=True, help='Existing regular JSON file (not a symlink) holding the experiment record, at most 16 MiB')
     parser.add_argument('--output', type=Path, required=True, help='New report directory; must not already exist; created mode 0700')
+    parser.add_argument('--public', action='store_true', help='Explicit public export: needs an approved synthetic or public provenance declaration in the input, drops events and event mappings; still publishes nothing')
     args = parser.parse_args(argv)
     try:
-        report = sbs.build(record(args.experiment, MAX_INPUT_BYTES)[0])
+        report = sbs.build(record(args.experiment, MAX_INPUT_BYTES)[0], public=args.public)
         page = render(report)
         require_writable(args.output)
         args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
