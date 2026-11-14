@@ -8,6 +8,7 @@ loss; ``improved`` also needs the interval to clear the margin, so a gain inside
 """
 from fractions import Fraction
 import hashlib
+import json
 import math
 from pathlib import Path
 import re
@@ -44,6 +45,13 @@ def launch_sha256(agent, executable, inherit_env=False):
     """Identity of the launch configuration both arms shared; it binds neither the served model nor the runtime build."""
     return digest(dict(profile='ahl-launch-configuration-v1', agent=agent, executable=str(Path(executable).resolve()),
                        inherit_env=bool(inherit_env)))
+
+
+def bank_sha256(manifest, folder):
+    """Identity of a constructed manifest's task content: the run's own budget fields and its folder path are not part of it."""
+    text = json.dumps({key: value for key, value in manifest.items() if key not in ('budget_seconds', 'timeout_seconds')}, sort_keys=True)
+    for name in {str(folder), str(Path(folder).resolve())}: text = text.replace(json.dumps(name)[1:-1], '<evaluation>')
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def frozen_inputs(**fields):

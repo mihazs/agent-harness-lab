@@ -38,7 +38,8 @@ ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
-                      'decision.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
+                      'decision.bindings.manifest_sha256', 'before_after.bindings.results_sha256',
+                      'before_after.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
                       # An application mints a new deployment ID; its rollback command embeds it.
                       'deployment', 'rollback', 'layers.*.deployment', 'layers.*.rollback', 'layers.*.plan_sha256'),
     # The recovery record embeds the receipt it will return.

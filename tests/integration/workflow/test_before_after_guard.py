@@ -12,6 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from agent_harness_lab.cli import main
+from agent_harness_lab.evaluation import before_after
+from agent_harness_lab.evidence_label import grader_fingerprint
 from agent_harness_lab.workflow import improve
 from tests.integration.workflow import test_workflow as workflow_fixture
 
@@ -89,9 +91,17 @@ def test_both_arms_record_the_same_frozen_inputs_identity(run):
     arms = guard['frozen_inputs']
     assert arms['baseline'] == arms['candidate'] and arms['comparison'] == dict(status='identical', mismatched=[], unknown=[])
     manifest = Path(guard['bindings']['evaluation']).parent / 'preparation' / f"evaluation-{guard['bindings']['attempt']}" / 'manifest.json'
-    assert arms['baseline']['bank_sha256'] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert arms['baseline']['bank_sha256'] == before_after.bank_sha256(json.loads(manifest.read_text()), manifest.parent)
+    assert arms['baseline']['grader_sha256'] == grader_fingerprint(manifest, portable=True)
     assert all(len(arms['baseline'][name]) == 64 for name in ('grader_sha256', 'seed_schedule_sha256', 'identity_sha256'))
     assert arms['baseline']['budget_share']['trials'] == 3 and len(arms['baseline']['runtime_sha256']) == 64
+
+
+def test_the_same_inputs_have_the_same_identity_in_another_run_folder(run):
+    first, first_output, _ = run('good', 'worse')
+    second, second_output, _ = run('good', 'worse')
+    assert first_output != second_output
+    assert first['before_after']['frozen_inputs']['baseline'] == second['before_after']['frozen_inputs']['baseline']
 
 
 def test_an_earlier_attempt_regression_does_not_relabel_a_run_whose_final_attempt_never_evaluated(run):

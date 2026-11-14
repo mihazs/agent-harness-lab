@@ -111,6 +111,19 @@ class TestGraderBoundary:
         assert grader_fingerprint(path) != first
         assert grader_fingerprint(tmp_path/'missing.json') is None
 
+    def test_a_portable_fingerprint_survives_a_move_to_another_run_folder_and_still_sees_an_edit(self, tmp_path):
+        def place(folder, grader='assert True\n'):
+            (tmp_path/folder).mkdir()
+            (tmp_path/folder/'grade.py').write_text(grader)
+            path = tmp_path/folder/'manifest.json'
+            path.write_text(json.dumps(dict(tasks=[dict(id='a', grader=['python3', str(tmp_path/folder/'grade.py'), '{workspace}'])])))
+            return path
+        one, two, edited = place('one'), place('two'), place('three', 'assert False\n')
+        assert grader_fingerprint(one) != grader_fingerprint(two)  # the default digest names the folder
+        assert grader_fingerprint(one, portable=True) == grader_fingerprint(two, portable=True)
+        assert grader_fingerprint(one, portable=True) != grader_fingerprint(edited, portable=True)
+        assert grader_fingerprint(tmp_path/'missing.json', portable=True) is None
+
 
 class TestPreEditCheck:
     def git(self, root, *args):
