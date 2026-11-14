@@ -56,10 +56,13 @@ report carries the SHA-256 of the policy.
 - `order_disagreement`: the orders conflict, which is what a verdict that follows the position
   rather than the arm looks like. `position_picks` counts the raw `A` and `B` answers.
 - `abstained`: a recorded order abstained. This is not a disagreement.
-- `order_unchecked`: only one order was recorded. It is never decided.
+- `order_unchecked`: only one order was recorded. It is never decided, and it is unknown capture
+  rather than a judge failure: it is left out of `coverage` and of the disagreement rate.
 - `invalid_verdict`: a verdict outside `A`, `B`, `tie`, `null`.
 
-`coverage` is the decided share of the case roots, so an always-abstaining judge reports zero.
+`coverage` is the decided share of the case roots that have both orders recorded, so an
+always-abstaining judge (explicit `null` verdicts) reports zero. When no root has both orders it is
+`null`, not zero.
 `label_agreement` counts decided roots whose arm matches the label as correct or wrong; unknown
 labels are counted in `unknown_labels` and are never wrong answers. Matched controls report the
 share that resolved to an arm instead of a tie, in total and `by_factor`; a control that is not
@@ -86,8 +89,9 @@ violation, and abstentions and order disagreements are not overrides.
 The status is `rejected` when coverage or label agreement is below its minimum, when order
 disagreement, control preference or citation failure is above its maximum, or when an executable
 violation was overridden. Otherwise it is `insufficient_evidence`. A rate with no denominator is
-`null`, not zero, and its check is skipped, with `zero_coverage`, `no_labeled_decisions`,
-`orders_unchecked`, `invalid_verdicts_present`, `no_controls`, `controls_unresolved` or
+`null`, not zero, and its check is skipped, with `zero_coverage` (roots were checked in both orders
+and none was decided), `no_labeled_decisions`, `orders_unchecked` (roots missing an order never set
+`rejected` on their own), `invalid_verdicts_present`, `no_controls`, `controls_unresolved` or
 `citations_unverified` listed in `reasons`. The report always lists `blinding_unverified`,
 `label_authority_unverified`, `root_independence_unverified` and
 `policy_preregistration_unverified`: AHL does not verify that the judge was blind to the treatment

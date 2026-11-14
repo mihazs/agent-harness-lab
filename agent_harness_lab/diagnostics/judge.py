@@ -172,7 +172,8 @@ def evaluate(policy, observations):
     roots = sum(cases.values())
     if not roots:
         raise ValueError('judge validation requires at least one case root')
-    coverage = cases['decided'] / roots
+    checked = roots - cases['order_unchecked']  # a root whose second order was never recorded is unknown capture
+    coverage = _share(cases['decided'], checked)
     agreement = _share(correct, correct + wrong)
     both = cases['decided'] + cases['order_disagreement']
     disagreement = _share(cases['order_disagreement'], both)
@@ -180,7 +181,7 @@ def evaluate(policy, observations):
     verifiable = sum(cited[k] for k in _CITATION_FAILURES) + cited['supported']
     citation_rate = _share(sum(cited[k] for k in _CITATION_FAILURES), verifiable)
     failed = []
-    if coverage < policy['min_coverage']:
+    if coverage is not None and coverage < policy['min_coverage']:
         failed.append('coverage_below_minimum')
     for value, key, name, below in ((agreement, 'min_label_agreement', 'label_agreement_below_minimum', True),
                                     (disagreement, 'max_order_disagreement_rate', 'order_disagreement_above_maximum', False),
@@ -192,7 +193,7 @@ def evaluate(policy, observations):
         failed.append('executable_violation_overridden')
     open_controls = controls['rows'] - controls['states']['decided']
     missing = [name for name, hit in (
-        ('zero_coverage', not cases['decided']), ('no_labeled_decisions', not (correct + wrong)),
+        ('zero_coverage', checked and not cases['decided']), ('no_labeled_decisions', not (correct + wrong)),
         ('orders_unchecked', cases['order_unchecked'] + controls['states']['order_unchecked'] > 0),
         ('invalid_verdicts_present', cases['invalid_verdict'] + controls['states']['invalid_verdict'] > 0),
         ('no_controls', not controls['rows']), ('controls_unresolved', open_controls > 0),

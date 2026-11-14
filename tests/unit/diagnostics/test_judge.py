@@ -74,7 +74,27 @@ def test_order_that_was_never_recorded_stays_unchecked_not_decided():
     single = [reply('first_second', 'A')]
     result = judge.evaluate(policy(), [row('a', 'first', single), row('b', 'first', follows('first'))])
     assert result['states']['order_unchecked'] == 1 and result['states']['decided'] == 1
-    assert result['coverage'] == .5 and 'orders_unchecked' in reasons(result)
+    assert result['coverage'] == 1 and 'orders_unchecked' in reasons(result)  # the unchecked root is not a miss
+    assert 'coverage_below_minimum' not in reasons(result)
+
+
+@pytest.mark.parametrize('count', [1, 4], ids=['one-root', 'four-roots'])
+def test_roots_with_only_one_recorded_order_are_unknown_capture_not_a_rejected_judge(count):
+    rows = [row(f'r{i}', 'first', [reply('first_second', 'A')]) for i in range(count)]
+    result = judge.evaluate(policy(), rows)
+    assert result['states']['order_unchecked'] == count and result['coverage'] is None
+    assert result['status'] == 'insufficient_evidence'
+    assert 'orders_unchecked' in reasons(result)
+    assert not {'coverage_below_minimum', 'zero_coverage'} & reasons(result)
+
+
+def test_unchecked_roots_do_not_hide_a_coverage_shortfall_among_the_checked_ones():
+    abstain = [reply('first_second', None), reply('second_first', None)]
+    rows = [row('a', 'first', [reply('first_second', 'A')]), row('b', 'first', follows('first')),
+            row('c', 'first', abstain), row('d', 'first', abstain), row('e', 'first', abstain)]
+    result = judge.evaluate(policy(), rows)
+    assert result['coverage'] == .25 and result['status'] == 'rejected'
+    assert {'coverage_below_minimum', 'orders_unchecked'} <= reasons(result)
 
 
 def test_abstaining_in_one_order_is_an_abstention_not_a_disagreement():
