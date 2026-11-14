@@ -20,29 +20,43 @@ def path():
     return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home()/'.config')/'agent-harness-lab'/FILENAME
 
 
-def load():
-    """Return dict(runtime, reason): runtime is None when unset or ignored; reason names why it was ignored."""
+def _read():
+    """Return (value, reason): value is the validated file content, or None with the reason it was ignored."""
     target = path()
     try:
         status = target.lstat()
     except OSError:
-        return dict(runtime=None, reason=None)
-    if not stat.S_ISREG(status.st_mode): return dict(runtime=None, reason='not_a_regular_file')
-    if status.st_mode & 0o077 or status.st_uid != os.geteuid(): return dict(runtime=None, reason='not_owner_only')
-    if status.st_size > MAX_BYTES: return dict(runtime=None, reason='too_large')
+        return None, None
+    if not stat.S_ISREG(status.st_mode): return None, 'not_a_regular_file'
+    if status.st_mode & 0o077 or status.st_uid != os.geteuid(): return None, 'not_owner_only'
+    if status.st_size > MAX_BYTES: return None, 'too_large'
     try:
         value = json.loads(target.read_text(encoding='utf-8'))
     except (OSError, ValueError):
-        return dict(runtime=None, reason='corrupt')
-    if not (isinstance(value, dict) and set(value) == {'schema_version', 'runtime'} and value['schema_version'] == 1
-            and value['runtime'] in RUNTIMES):
-        return dict(runtime=None, reason='corrupt')
-    return dict(runtime=value['runtime'], reason=None)
+        return None, 'corrupt'
+    # loop is an optional declaration, checked by the loop resolver, never here.
+    if not (isinstance(value, dict) and set(value) - {'loop'} == {'schema_version', 'runtime'} and value['schema_version'] == 1
+            and value['runtime'] in RUNTIMES and isinstance(value.get('loop', {}), dict)):
+        return None, 'corrupt'
+    return value, None
+
+
+def load():
+    """Return dict(runtime, reason): runtime is None when unset or ignored; reason names why it was ignored."""
+    value, reason = _read()
+    return dict(runtime=value and value['runtime'], reason=reason)
+
+
+def load_loop():
+    """Return dict(loop, reason): the user-declared loop object, unvalidated, or None when unset or the file was ignored."""
+    value, reason = _read()
+    return dict(loop=value and value.get('loop'), reason=reason)
 
 
 def remember(runtime):
     if runtime not in RUNTIMES: raise ValueError('only a supported codex or claude runtime can be remembered')
-    atomic_json(path(), dict(schema_version=1, runtime=runtime))
+    previous, _ = _read()
+    atomic_json(path(), dict(schema_version=1, runtime=runtime, **({'loop': previous['loop']} if previous and 'loop' in previous else {})))
 
 
 def clear():

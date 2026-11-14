@@ -386,6 +386,7 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
 | `area_duplicate` | List each area id once, in the ahl.json areas and in every task areas list, then rerun. |
 | `area_registry_invalid` | Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun. |
+| `areas_not_declared` | Declare capability areas in the ahl.json areas list before giving accept_score as a per-area map, or give one number. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |
@@ -411,6 +412,19 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `evaluation_construction_timeout` | The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun. |
 | `evaluation_task_infeasible` | The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun. |
 | `evaluation_uninformative` | Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun. |
+| `loop_accept_basis_invalid` | Set accept_basis to lower_bound, the only basis this release accepts, or omit it. |
+| `loop_accept_score_invalid` | Set accept_score to a number above 0 and at most 1, or to a non-empty map of declared area ids to such numbers. |
+| `loop_alpha_invalid` | Set alpha to a number above 0 and below 1, or omit it for 0.05. |
+| `loop_area_undeclared` | Use only area ids declared in the ahl.json areas list as accept_score keys. |
+| `loop_authority_refused` | Remove the authority field; a loop declaration sets a bar, never apply, global scope, promotion or certification, and the loop only recommends. |
+| `loop_declaration_invalid` | Write the loop declaration as one JSON object that uses only the documented loop fields. |
+| `loop_field_unknown` | Remove the unknown field; the loop declares accept_score, accept_basis, regression_margin, noise_margin, max_rounds, plateau_rounds, on_regression and alpha. |
+| `loop_limits_invalid` | Pass the project limits as seconds above 0 and a whole number of trials above 0. |
+| `loop_margin_invalid` | Set regression_margin and noise_margin to numbers from 0 up to but not including 1. |
+| `loop_max_rounds_invalid` | Set max_rounds to a whole number from 1 to 10, or omit it for the default of 3. |
+| `loop_on_regression_invalid` | Set on_regression to stop or rollback_continue, or omit it for stop. |
+| `loop_order_violation` | This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event. |
+| `loop_plateau_rounds_invalid` | Set plateau_rounds to a whole number from 1 up to max_rounds, or omit it to use the smaller of 2 and max_rounds. |
 | `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
