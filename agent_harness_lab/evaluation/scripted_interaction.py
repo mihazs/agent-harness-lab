@@ -4,7 +4,6 @@ import json
 from threading import Lock
 from weakref import WeakKeyDictionary
 
-from . import interaction_evidence
 from .regressions import sha256
 
 MAX_BYTES = 65536
@@ -19,11 +18,10 @@ def _bounded_text(value):
         raise ValueError('bounded nonempty fixture text required')
 
 
-def reply(view, oracle_bytes, expected_sha256):
-    """Return the private reply only for an exact declared alternative on the live trial.
+def load(oracle_bytes, expected_sha256):
+    """Return the oracle only when its bytes match the digest and declare the supported shape.
 
     The supplied digest is a caller assertion; it does not authenticate review or custody.
-    This function does not send the reply or establish that an agent received it.
     """
     sha256(expected_sha256)
     if type(oracle_bytes) is not bytes or len(oracle_bytes) > MAX_BYTES:
@@ -45,6 +43,18 @@ def reply(view, oracle_bytes, expected_sha256):
         _bounded_text(choice)
     if len(set(choices)) != len(choices):
         raise ValueError('duplicate alternatives')
+    return oracle
+
+
+def reply(view, oracle_bytes, expected_sha256):
+    """Return the private reply only for an exact declared alternative on the live trial.
+
+    The supplied digest is a caller assertion; it does not authenticate review or custody.
+    This function does not send the reply or establish that an agent received it.
+    """
+    from . import interaction_evidence  # loaded here so bank validation can import `load` alone
+    oracle = load(oracle_bytes, expected_sha256)
+    choices = oracle['alternatives']
     state = interaction_evidence._state(view)
     comparison = state[1]()
     task = comparison.active['scheduled']['task']

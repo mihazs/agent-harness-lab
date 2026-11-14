@@ -4,11 +4,14 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 from agent_harness_lab.monitoring.state import atomic_json
 from .areas import check_declared, parse_registry, task_areas
 from .integrity import contained, digest, read_regular
 
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
+OPTIONAL_IDENTITIES = {'interaction_contract_sha256', 'interaction_oracle_sha256'}
+OPTIONAL = OPTIONAL_IDENTITIES | {'areas'}
 
 
 def identifier(value, maximum=128):
@@ -39,12 +42,20 @@ class TaskSpec:
     safety: tuple
     artifacts: tuple
     areas: tuple = ()  # optional capability tags; absent means untagged
+    # Optional identities of the interaction contract and scripted-reply oracle in the grader bundle; '' is undeclared.
+    interaction_contract_sha256: str = ''
+    interaction_oracle_sha256: str = ''
 
     @classmethod
     def parse(cls, value, *, analysis_only=False, areas_at=None):
         if type(analysis_only) is not bool: raise ValueError('explicit task parsing mode required')
-        if not isinstance(value, dict) or set(value) | {'areas'} != set(cls.__dataclass_fields__):
+        if not isinstance(value, dict) or set(value) | OPTIONAL != set(cls.__dataclass_fields__):
             raise ValueError('task fields must match the versioned schema')
+        for key in sorted(OPTIONAL_IDENTITIES & set(value)):
+            if not isinstance(value[key], str) or not re.fullmatch('[0-9a-f]{64}', value[key]):
+                raise ValueError(f'{key} must be a lowercase SHA-256')
+        if 'interaction_oracle_sha256' in value and 'interaction_contract_sha256' not in value:
+            raise ValueError('a scripted-reply oracle requires a declared contract')
         if any(not isinstance(value[k], list) or not all(isinstance(v, str) and v for v in value[k]) for k in ('safety', 'artifacts')):
             raise ValueError('safety/artifact lists required')
         tags = task_areas(value['areas'], **(areas_at or {})) if 'areas' in value else ()
@@ -63,6 +74,8 @@ class TaskSpec:
         """The JSON task declaration this spec parses back from; an untagged task has no areas field."""
         value = json.loads(json.dumps(asdict(self)))
         if not self.areas: del value['areas']
+        for key in OPTIONAL_IDENTITIES:
+            if not value[key]: del value[key]
         return value
 
 
@@ -94,6 +107,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
             raise ValueError('grader and fixture overlap')
         if verify_contents and (digest(fixture, **limits) != task.fixture_digest or digest(grader, **limits) != task.grader_digest):
             raise ValueError('task/grader integrity changed; comparisons must be invalidated')
+        if verify_contents and task.interaction_contract_sha256:
+            from .interaction_binding import check
+            check(task, fixture, grader, analysis_only=analysis_only)
         for name in task.artifacts:
             from .integrity import relative
             relative(name)
@@ -130,6 +146,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
     tagged = Counter(area for task in tasks for area in task.areas)
     if tagged:  # a task counts once in each of its areas; an untagged bank keeps its published shape
         result['areas'] = dict(sorted(tagged.items()))
+    if any(t.interaction_contract_sha256 for t in tasks):  # an unbound bank keeps its published shape
+        from .interaction_binding import counts
+        result['interaction'] = counts(tasks)
     if analysis_only:
         result['task_index'] = [{key: getattr(task, key) for key in
             ('task_id', 'root_id', 'family', 'partition', 'review_status')} for task in tasks]
