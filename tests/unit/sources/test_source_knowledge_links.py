@@ -71,6 +71,47 @@ def test_markdown_targets_that_are_not_bundle_pages_stay_observable(target, expe
     assert (edge.status, edge.reason, edge.resolved) == (*expected, None)
 
 
+@pytest.mark.parametrize('target, expected', [
+    pytest.param('/tables/orders.md', ('resolved', 'bundle_root_path', 'tables/orders.md'), id='rooted-page'),
+    pytest.param('/tables/orders.md#schema', ('resolved', 'bundle_root_path', 'tables/orders.md'), id='rooted-page-with-anchor'),
+    pytest.param('/tables/../tables/orders.md', ('resolved', 'bundle_root_path', 'tables/orders.md'), id='rooted-normalized'),
+    pytest.param('/top.md', ('resolved', 'bundle_root_path', 'top.md'), id='rooted-top-level-page'),
+    pytest.param('/tables/absent.md', ('missing', 'no_page', None), id='rooted-missing'),
+    pytest.param('/Tables/orders.md', ('missing', 'case_only_match', None), id='rooted-case-only'),
+    pytest.param('/../outside.md', ('outside_bundle', 'parent_traversal', None), id='rooted-parent-escape'),
+    pytest.param('/tables/', ('unknown', 'non_page_target', None), id='rooted-directory'),
+    pytest.param('/', ('unknown', 'non_page_target', None), id='rooted-bare-slash'),
+    pytest.param('/image.png', ('unknown', 'non_page_target', None), id='rooted-non-page'),
+    pytest.param('//example.invalid/orders.md', ('remote', 'network_path', None), id='network-path-stays-remote'),
+])
+def test_okf_root_relative_links_resolve_against_the_bundle_root_only_when_requested(target, expected):
+    pages = [('top.md', f'[x]({target})'), ('tables/orders.md', ''), ('tables/deep/page.md', '')]
+    edge = next(e for e in links(pages, root_relative=True) if e.source == 'top.md')
+    assert (edge.status, edge.reason, edge.resolved) == expected
+
+
+def test_root_relative_links_resolve_from_a_nested_page_against_the_bundle_root_not_its_directory():
+    pages = [('tables/deep/page.md', '[x](/tables/orders.md)'), ('tables/orders.md', '')]
+    edge, = (e for e in links(pages, root_relative=True) if e.source == 'tables/deep/page.md')
+    assert (edge.status, edge.resolved) == ('resolved', 'tables/orders.md')
+
+
+def test_root_relative_links_stay_unknown_by_default():
+    edge, = links([('top.md', '[x](/tables/orders.md)'), ('tables/orders.md', '')])[:1]
+    assert (edge.status, edge.reason, edge.resolved) == ('unknown', 'root_relative_path', None)
+
+
+def test_root_relative_option_does_not_change_wikilinks_or_relative_links():
+    pages = [('a/b.md', '[[c]] [r](d.md) [r2](../a/d.md)'), ('a/c.md', ''), ('a/d.md', '')]
+    assert links(pages) == links(pages, root_relative=True)
+
+
+def test_summary_stops_listing_site_root_paths_as_unsupported_only_when_they_were_read():
+    edges = links([('a.md', '[x](/a.md)')], root_relative=True)
+    assert 'site_root_paths' not in summary(edges, root_relative=True)['unsupported']
+    assert 'site_root_paths' in summary(edges)['unsupported']
+
+
 def test_remote_links_are_opaque_and_never_fetched(monkeypatch):
     import socket, urllib.request
     def forbidden(*args, **kwargs): raise AssertionError('network access')
