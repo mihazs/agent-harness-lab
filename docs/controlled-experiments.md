@@ -9,7 +9,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, live utility and compiler evaluation |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only | A live run proving the bridge hook executes in the supported runtime, an isolated non-identity transform, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
@@ -196,6 +196,20 @@ filters on activation. Activation counts as observed only for `activated: true`
 with an evidence reference; `activated: false`, an injected hash or a bare label
 stays unknown. Observed activations on controls are reported as false activations.
 Success among observed activations is reported as descriptive, not causal.
+`evaluation.skills.procedure_compliance(spec, events=..., artifacts=...)` grades one
+case against externally checkable requirements instead of phrasing. The spec declares
+exactly `alternatives` (at most 16 named lists of at most 32 requirements, so another
+correct procedure passes) and `safety` (requirements that stay independent of the
+procedure). A requirement is `tool_call` (observed), `no_tool_call` (not observed) or
+`artifact` (a named check from an executable grader passed). Each resolves to `met`,
+`unmet` or `unknown`. An absent tool call is `unmet` only when every row of a nonempty
+capture declares `capture_complete`; a partial or empty capture leaves it `unknown`,
+and so does an artifact check that is missing, not boolean or not from an executable
+grader. A skill-activation signal or a keyword never satisfies a requirement. The case
+is `compliant` when one alternative is fully met, `noncompliant` when every alternative
+has an unmet requirement, and `unknown` otherwise; `safety_state` is `satisfied`,
+`violated`, `unknown` or `none_declared`. The private report carries the spec SHA-256
+and `publication_allowed: false`, and it is neither task success nor a causal effect.
 The procedure compiler returns a bounded project hypothesis and never
 installs globally. The typed adapter preserves an exact original tool envelope and
 adds presentation metadata only. It cannot call a tool, retry an action, expand
