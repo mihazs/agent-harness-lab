@@ -37,6 +37,7 @@ def test_a_declared_plan_adds_the_block_beside_the_unchanged_fixed_analysis(tmp_
     case, plain = bank('clear_win'), bank('clear_win', bayes=False)
     result, baseline = analyzed(tmp_path, case), analyzed(tmp_path, plain)
     block = result.pop('bayesian_decision')
+    assert result.pop('descriptive_report')['descriptive_only'] is True  # a sibling key, also outside the unchanged analysis
     assert (block['verdict'], block['reason']) == ('better', 'all_gate_stages_passed')
     assert block['oracle_validity'] == 'current' and all(block[name] is False for name in AUTHORITY)
     assert result == baseline and 'bayesian_decision' not in baseline

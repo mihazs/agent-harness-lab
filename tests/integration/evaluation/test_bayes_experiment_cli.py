@@ -57,6 +57,7 @@ def test_the_hoeffding_analysis_and_promotion_of_a_declared_plan_are_unchanged(t
     case = golden_case(kind, declared=True)
     result = reported(tmp_path, case)
     block = result.pop('bayesian_decision')
+    assert result.pop('descriptive_report')['descriptive_only'] is True  # a sibling key, also outside the unchanged analysis
     plain = json.loads(json.loads(GOLDEN.read_text())[kind]['stdout'])
     assert result == plain and block['plan_sha256'] == case['spec'].digest
 
