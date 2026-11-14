@@ -51,6 +51,9 @@ It remains inconclusive until the applicable certification prerequisites are met
 After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
+The receipt also carries a `before_after` block; a candidate worse than its baseline ends
+`blocked` with reason `candidate_regressed` and an `investigation.json`, see the
+[before/after guard](before-after-guard.md).
 
 No manual analyze/manifest/evaluate sequence is required. Authentication remains
 the runtime's responsibility; AHL does not inspect credential contents.
