@@ -180,8 +180,9 @@ staged skill, never lists the folder, never writes to it and records hashes, not
 `ambient_same_name` (a same-name bundle exists beside the staged one, with `bundle_match` true, false or
 `null` when a hash comparison is impossible), `none_found` or `unknown`. `none_found` covers only
 `layers_scanned`: managed, plugin and enterprise layers are not scanned. A skills folder that is not a
-readable directory, a name that could not be checked, or a trial of a non-native executor is `unknown`,
-never `none_found`. A same-name copy beside an `absent` (removed) skill means the removal arm still has the
+directory, any folder or `SKILL.md` on the way to a staged name that cannot be inspected (a permission or
+other `stat` error; only a missing path is absent), a name that could not be checked, or a trial of a
+non-native executor is `unknown`, never `none_found`. A same-name copy beside an `absent` (removed) skill means the removal arm still has the
 skill. `effective_layer` is always `unknown`: the row says a shadow is possible, not which copy the runtime
 used. A bundle over 512 files or 8 MiB is reported with unknown content rather than truncated. The Codex
 runner asks for same-name user skills to be disabled on the `skills` route; that request is never observed,

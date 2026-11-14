@@ -1,6 +1,8 @@
 """Keep injection, observable activation and independently graded utility separate."""
 import hashlib
 import json
+import os
+import stat
 from pathlib import Path
 
 
@@ -31,14 +33,32 @@ MAX_AMBIENT_FILES = 512
 MAX_AMBIENT_BYTES = 8 * 1024 * 1024
 
 
+def _kind(path):
+    """'dir', 'file', 'other', False (absent) or None (could not be determined).
+
+    os.stat is used directly: Path.exists, is_dir and is_file swallow every OSError on newer Pythons and raise it on
+    older ones, so a permission error would read as absent on one and as an error on the other."""
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return None
+    return 'dir' if stat.S_ISDIR(mode) else 'file' if stat.S_ISREG(mode) else 'other'
+
+
 def _ambient_bundle(root, name, max_files, max_bytes):
     """A bundle hash, UNREADABLE, None (existence undetermined) or False (no same-name skill) for one name."""
     if name in ('', '.', '..') or Path(name).name != name:
         return None
     folder = root / name
-    try:
-        if not folder.is_dir() or not (folder / 'SKILL.md').is_file():
+    for path, wanted in ((folder, 'dir'), (folder / 'SKILL.md', 'file')):
+        kind = _kind(path)
+        if kind is None:
+            return None
+        if kind != wanted:
             return False
+    try:
         files, size = {}, 0
         for path in sorted(folder.rglob('*')):
             if path.is_file():
@@ -55,23 +75,19 @@ def ambient_skill_copies(roots, names, *, max_files=MAX_AMBIENT_FILES, max_bytes
     """Read-only look for same-name bundles in user-level skill folders; it never lists a folder or returns other skills.
 
     roots maps a layer label to a skills folder. Each layer gives {name: bundle sha256 | UNREADABLE | None} for the
-    names whose folder holds a SKILL.md (None: existence could not be determined), or is None when the folder
-    is not a readable directory. A missing folder is a scanned layer with no copies. A bundle over max_files files
-    or max_bytes bytes is UNREADABLE rather than truncated."""
+    names whose folder holds a SKILL.md (None: existence could not be determined, for example a permission error),
+    or is None when the folder is not a directory or could not be inspected. A missing folder is a scanned layer with
+    no copies. A bundle over max_files files or max_bytes bytes is UNREADABLE rather than truncated."""
     found = {}
     for layer, root in roots.items():
         root = Path(root)
-        try:
-            if not root.exists():
-                found[layer] = {}
-                continue
-            if not root.is_dir():
-                found[layer] = None
-                continue
-        except OSError:
+        kind = _kind(root)
+        if kind is False:
+            found[layer] = {}
+        elif kind != 'dir':
             found[layer] = None
-            continue
-        found[layer] = {name: copy for name in names if (copy := _ambient_bundle(root, name, max_files, max_bytes)) is not False}
+        else:
+            found[layer] = {name: copy for name in names if (copy := _ambient_bundle(root, name, max_files, max_bytes)) is not False}
     return found
 
 
