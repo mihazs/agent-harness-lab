@@ -47,7 +47,7 @@ enforce filesystem/network boundaries.
 
 - [Execution identity and coverage](#execution-identity-and-declared-coverage) · [Private checkpoint journal](#private-checkpoint-journal) · [Local exports](#explicit-local-export-operations)
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
-- [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
+- [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [Knowledge facets](#knowledge-page-temporal-facets) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
 - [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
@@ -2754,13 +2754,11 @@ the author's declarations agree at that instant. It does not mean the statement 
 true or reviewed, that an agent retrieved it, or that it helps with a task.
 Synthetic fixtures establish this contract, not factual accuracy.
 
-Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
-fields to facets, bind their [link edges](#knowledge-bundle-link-edges) to
-`RecordRef`s, or store facets (the [bundle reader](#portable-knowledge-bundle-reader)
-supplies the pages and their claimed `status`, `verified` and `stale_after` values). Claim
-identity across sources, project-scope compatibility checks, review provenance and
-`stale_after` handling in the resolver, contradiction detection between statements,
-a CLI and the #43/#58/#11 integrations are also still open.
+Still open in #47: the [facet mapper](#knowledge-page-temporal-facets) reads declared
+fields from bundle pages, but the resolver does not yet use `stale_after`, claim identity
+across sources, project-scope compatibility or review provenance, link edges are not yet
+bound to `RecordRef`s, and facets are not stored. Contradiction detection between
+statements, a CLI and the #43/#58/#11 integrations are also still open.
 
 ### Knowledge-bundle link edges
 
@@ -2932,6 +2930,47 @@ is evaluated only through `okf.Page.freshness`. Synthetic bundles establish this
 contract
 (`tests/unit/sources/test_source_knowledge_bundle.py`,
 `tests/integration/sources/test_source_knowledge_bundle.py`).
+
+### Knowledge-page temporal facets
+
+`sources.knowledge_facets.facets(pages, source_sha256, recorded_at=None)` maps the
+declared lifecycle fields of pages an authorized caller already holds, such as
+`knowledge_bundle.read(...).pages`, to the `TemporalFacet`s that
+[`temporal.resolve`](#declared-validity-as-of-an-instant) takes. It is an offline Python API
+with no CLI exposure and reads no file. `ref(source_sha256, page)` is the exact
+`RecordRef` of one page revision: the path digest and the SHA-256 of its bytes, which
+`OKFExport.read` stores as the record's native id and revision.
+
+| Page field | Facet |
+| --- | --- |
+| `status` | `proposed` and `draft` give `proposed`; `accepted` and `stable` give `accepted`; `rejected`, `deprecated` and `superseded` map to themselves; absent is `unspecified` |
+| `valid_from`, `valid_until` | Text, or a YAML timestamp as ISO text; a bare date or a time without an offset stays unknown in the resolver |
+| `open_ended` | `true` declares no end; absent is `false` |
+| `supersedes`, `superseded_by` | One bundle path or a list of up to 100. A path is relative to the page, or to the bundle root with a leading `/` |
+
+Knowledge time (`recorded_at`) is never read from a page, not even `generated.at`: the
+caller passes one instant for every page or a `{path: instant}` mapping, normally the
+collection time. A page without one blocks a historical replay in the resolver.
+
+A field that cannot be read (a status outside the table or in another letter case, a
+time that is not text or a timestamp, a non-boolean `open_ended`, a malformed or
+oversized reference list) leaves the page without a facet and adds a finding such as
+`status_unrecognized` or `valid_from_unreadable`. A page without a facet is never
+reported in force, and a predecessor that names it stays unknown. A reference to a path the
+bundle does not hold (absent, different letter case, above the root, with a backslash,
+or a remote URL) is kept as a placeholder reference without a facet and reported as
+`supersedes_unresolved` or `superseded_by_unresolved`, so a page whose successor is
+missing resolves as `unknown` rather than in force. Unknown keys, `executor`, `attester`
+and bodies are ignored; nothing runs.
+
+`summary(result)` reports counts only under profile `knowledge-facets-v1`: pages, facets,
+withheld pages, findings by reason and decision statuses. It leaves out paths and text and sets `executed`,
+`files_read`, `remote_fetched`, `content_included`, `truth_established` and
+`publication_allowed` to false with `authority: none`; `public_export_allowed` rejects it.
+A facet is an author claim. It does not make a page true, reviewed or current. Synthetic
+bundles establish this contract
+(`tests/unit/sources/test_source_knowledge_facets.py`,
+`tests/integration/sources/test_source_knowledge_facets.py`).
 
 ## Shared HTTPS transport
 
