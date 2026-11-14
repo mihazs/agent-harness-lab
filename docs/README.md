@@ -13,7 +13,7 @@ reader purpose.
 - [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
 - [Audit a long-lived checkout whose inventory is blocked](audit-long-lived-checkout.md), [repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
-- [Annotate pull requests with the static audit](audit-pull-requests.md).
+- [Annotate pull requests with the static audit](audit-pull-requests.md) or [find where agents ignored instructions](detect-ignored-instructions.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), or [declare capability areas and tag bank tasks](declare-capability-areas.md).
 - [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
@@ -28,6 +28,7 @@ reader purpose.
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Repeat reliability profile](repeat-reliability.md), [controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), and [audit sampling](audit-sampling.md).
+- [Instruction adherence](instruction-adherence.md): the sessions file, checkable sentence shapes, three-valued judging, the report and its calibration.
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
 - [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
@@ -42,6 +43,7 @@ reader purpose.
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
+- [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md).
 - [Where a tool-result adapter may attach to a runtime](adapter-runtime-decision.md): the evidence, decision and open blockers for the identity bridge.
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 

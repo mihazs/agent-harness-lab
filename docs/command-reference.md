@@ -11,6 +11,7 @@
 | `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
+| `ahl instruction-adherence SESSIONS [--rules LAYER=FILE]` | Report where captured sessions ignored harness rules or user-prompt instructions; offline, redacted by default, see [find where agents ignored instructions](detect-ignored-instructions.md) |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
 | `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions (`--reject-leakage` fails on [shared projects or texts](validation.md#benchmark-leakage-disclosure)); optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |
