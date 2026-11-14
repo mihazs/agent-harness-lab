@@ -59,6 +59,9 @@ def _improve_summary(result, elapsed, budget=None):
     artifact = json.dumps(str(output), ensure_ascii=True) if isinstance(output, (str, Path)) else 'unavailable'
     category, coverage, action = guidance(result)
     spent, remaining = (f'{budget[0]:.1f}', f'{budget[1]:.1f}') if budget is not None else ('unknown', 'unknown')
+    if isinstance(result.get('preparation'), dict):
+        from . import preparation
+        print(preparation.line(result['preparation']), file=sys.stderr, flush=True)
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
