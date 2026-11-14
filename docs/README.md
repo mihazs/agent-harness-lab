@@ -37,6 +37,7 @@ reader purpose.
 - [Private memory store](memory-store.md): create, verify, rebuild and clean the opt-in evidence store.
 - [Stage reuse planner](stage-reuse-planner.md): node keys, the stage graph, reuse rules and the `ahl-stage-reuse-v1` receipt.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
+- [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
 
 ## Understand the context
 
