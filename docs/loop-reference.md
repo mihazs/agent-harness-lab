@@ -181,6 +181,59 @@ this round reached `plateau_rounds` (an improvement resets it to 0);
 
 The state machine enforces both and raises `loop_order_violation` otherwise.
 
+## Simulation test-bed
+
+`tests/support/loop_sim.py` is a deterministic fake runtime and fake graders for
+testing the whole loop with no model, subprocess, sleep, network or real clock.
+It is test support, not product code: it adds no command and changes no receipt.
+
+A `Script` is a table of scripted evaluations keyed by round (round 0 is the
+baseline), the mechanisms the scripted proposer offers (each once, in order), a
+declaration, the `trials` and `seconds` limits and a `seed`. Each `Evaluation`
+holds a point score with its interval, an evidence state (`scored`,
+`provisional`, `no_evidence` or `blocked`), an optional vacuity label, per-area
+lower bounds, a critical flag, a regression `cause`, its usage and the digest of
+the frozen inputs it ran on. A `Meter` is the injected clock and trial counter,
+so a budget is exact. `ScriptedEvaluator` and `ScriptedProposer` implement the
+`Evaluator` and `Proposer` protocols a controller consumes, and the bed does
+not import `workflow.py`.
+
+`play(script)` runs the script and drives `loop.machine.step` for every event,
+so an illegal order raises `loop_order_violation`. It returns a trace, and
+`canonical(trace)` is sorted compact JSON that `replay(spec, text)` feeds back
+through the machine. The same script and seed give byte-identical traces. `play`
+stands in for the controller and `classify` for the validity gate: an evaluation
+is `valid` only when it is `scored` and has no vacuity label, and any other
+evidence state or label is `vacuous` or `incomplete`, never `valid`. Per-area
+and relative acceptance bars are not simulated and resolve to unknown, so a
+script that declares one stops `evidence_insufficient` rather than accepting.
+
+To write a scenario, build the script and assert its trace:
+
+```python
+script = build('plateau_after_gain', [0.5, 0.65, 0.65, 0.65], declaration=dict(max_rounds=5))
+trace = play(script)  # outcome, stop, rounds, best, trials, seconds, calls and the event list
+assert (trace['stop'], trace['best']) == ('plateau', 'cand-1')
+```
+
+A number in `build` is a point score with a half-width of 0.05; pass `score(...)`
+for any other field. Give a vacuous evaluation a score that would meet the bar,
+so that only the vacuity branch can stop it. These presets are in `PRESETS`:
+
+| Preset | Scenario | Outcome and stop |
+| --- | --- | --- |
+| `baseline_already_accepted` | The baseline meets the bar | `accepted`, `accepted_without_change` |
+| `converges_in_k_rounds` | Each round improves until round `k` meets the bar | `accepted`, `acceptance_score_reached` |
+| `regresses_on_round_n` | Round `n` falls below the best; `on_regression` may roll back | `regressed`, `regression` |
+| `regresses_critical_area` | A met bar with a critical flag or a fallen area | `regressed`, `regression` |
+| `plateaus` | Rounds equal to the baseline | `inconclusive`, `plateau` |
+| `noisy_tie` | Seeded noise inside the noise margin | `inconclusive`, `plateau`, never `improved` |
+| `vacuous_baseline`, `vacuous_candidate` | One of the five vacuity labels on a score that meets the bar | `inconclusive`, `evidence_insufficient` |
+| `budget_exhausted_before_reeval` | The budget cannot cover another evaluation | `budget_exhausted` |
+| `no_mechanism_left` | The proposer has no mechanism left | `no_actionable_mechanism` |
+| `grader_changed_between_arms` | The candidate ran on other frozen inputs | `inconclusive`, `comparison_invalid` |
+| `interrupted_after_each_event` | The run is interrupted after `after` events | `interrupted`, with the last recorded outcome |
+
 ## Typed reasons
 
 Each reason has one remediation in the [exit reason table](analysis.md#exit-reasons-and-next-actions). The errors name the reason, the field and the source and never repeat the value.

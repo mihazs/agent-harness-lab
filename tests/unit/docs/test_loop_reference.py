@@ -7,6 +7,7 @@ import pytest
 from agent_harness_lab.loop import machine
 from agent_harness_lab.loop.errors import REASONS
 from agent_harness_lab.loop.spec import AUTHORITY, DECLARED, DEFAULTS, MAX_ROUNDS_CAP
+from tests.support import loop_sim
 
 ROOT = Path(__file__).resolve().parents[3]
 REFERENCE = (ROOT/'docs/loop-reference.md').read_text()
@@ -52,3 +53,8 @@ def test_each_stop_criterion_row_lists_exactly_the_states_it_may_be_recorded_fro
     cell = row(stop, 'Outcomes and stop criteria').split('|')[2]
     if len(machine.STOP_FROM[stop]) == len(machine.LIVE): assert 'any state before `stopped`' in cell
     else: assert sorted(state for state in machine.STATES if f'`{state}`' in cell) == sorted(machine.STOP_FROM[stop])
+
+
+@pytest.mark.parametrize('preset', sorted(loop_sim.PRESETS))
+def test_every_simulation_preset_is_named_in_the_reference(preset):
+    assert f'`{preset}`' in section('Simulation test-bed')
