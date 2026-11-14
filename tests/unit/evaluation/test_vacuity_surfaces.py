@@ -1,4 +1,5 @@
 """A vacuous evaluation never produces an improvement, a pass or a decision on any verdict surface (#805); synthetic data only."""
+from dataclasses import asdict
 import json
 
 import pytest
@@ -8,7 +9,7 @@ from agent_harness_lab.evaluation import side_by_side as sbs
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
 from agent_harness_lab.evidence_label import evidence_strength
-from agent_harness_lab.promotion.policy import legacy_coverage, single_run_decision
+from agent_harness_lab.promotion.policy import decide, legacy_coverage, single_run_decision
 from tests.unit.evaluation.test_side_by_side_report import BASE, CAND, ab, experiment, verdicts
 from tests.unit.workflow.test_evidence_label import WIN, fixture
 
@@ -37,25 +38,31 @@ class TestLegacyCoverage:
 
 
 class TestIdenticalArms:
-    def test_the_fixed_analysis_refuses_arms_with_the_same_harness_hash(self):
-        with pytest.raises(ValueError, match='arms_identical'):
-            analyze(spec(candidate_hash='b' * 64), [])
+    def test_the_fixed_analysis_blocks_arms_with_the_same_harness_hash_instead_of_supporting_a_difference(self):
+        plan = spec(candidate_hash='b' * 64)
+        result = analyze(plan, candidate_wins(plan))
+        assert (result['status'], result['reason']) == ('blocked', 'arms_identical')
+        assert result['vacuity']['labels'] == ['arms_identical'] and result['vacuity']['improvement_allowed'] is False
+
+    def test_the_promotion_decision_of_a_blocked_identical_arms_analysis_is_blocked(self):
+        plan = spec(candidate_hash='b' * 64)
+        decision = decide(plan, analyze(plan, candidate_wins(plan)))
+        assert (decision.status, decision.reason) == ('blocked', 'arms_identical')
 
     def test_a_plan_with_distinct_harness_hashes_still_reaches_a_supported_analysis(self):
         plan = spec()
         assert analyze(plan, candidate_wins(plan))['status'] == 'supported'
 
-    def test_validation_names_the_label_for_arms_with_the_same_hash(self):
-        with pytest.raises(ValueError, match='arms_identical'):
-            spec(candidate_hash='b' * 64).validate()
+    def test_a_plan_with_equal_hashes_still_schedules_so_mechanics_checks_can_run_one_harness_against_itself(self):
+        assert len(schedule(spec(candidate_hash='b' * 64))) == 60
 
-    def test_the_experiment_command_exits_2_and_names_the_label_for_identical_arms(self, tmp_path, capsys):
+    def test_the_experiment_command_reports_blocked_arms_identical_for_equal_hashes(self, tmp_path, capsys):
         plan = spec(candidate_hash='b' * 64)
-        path = tmp_path / 'spec.json'
-        path.write_text(json.dumps(plan.to_dict()))
-        with pytest.raises(SystemExit) as stopped:
-            main(['experiment', '--spec', str(path), '--preflight'])
-        assert stopped.value.code == 2 and 'arms_identical' in capsys.readouterr().err
+        (tmp_path / 'spec.json').write_text(json.dumps(plan.to_dict()))
+        (tmp_path / 'records.json').write_text(json.dumps([asdict(row) for row in candidate_wins(plan)]))
+        code = main(['experiment', '--spec', str(tmp_path / 'spec.json'), '--records', str(tmp_path / 'records.json')])
+        result = json.loads(capsys.readouterr().out)
+        assert (code, result['status'], result['reason'], result['promotion']['status']) == (3, 'blocked', 'arms_identical', 'blocked')
 
     def test_side_by_side_never_calls_a_pair_improved_when_both_arms_share_a_harness_hash(self):
         trials = ab('fixed', False, True)

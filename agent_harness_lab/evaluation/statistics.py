@@ -6,7 +6,7 @@ root are never treated as independent. Not a bootstrap or a power guarantee.
 from collections import defaultdict
 from dataclasses import dataclass
 import math
-from . import reliability
+from . import reliability, vacuity
 from .plan import schedule
 
 
@@ -90,6 +90,8 @@ def incomplete_bounds(spec, expected, records, groups):
 def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None,
             include_empty_bounds=False, include_reliability=False):
     from .root_similarity import binding
+    if (identical := vacuity.identical_arms(spec)) is not None:  # one harness against itself: any difference is noise (#805)
+        return identical
     try:
         groups = binding(spec, root_similarity_evidence, root_similarity_bank)
     except (ValueError, TypeError, KeyError, OSError, RecursionError):
