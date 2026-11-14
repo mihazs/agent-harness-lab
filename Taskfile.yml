@@ -1135,11 +1135,14 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_pins.py'
   test:isolated:
-    desc: Run a command in a temporary worktree of REPO and fail when REPO changed (opt-in, not part of task test); see docs/isolated-project-check.md
-    requires:
-      vars: [REPO]
+    desc: Opt-in. With REPO, run a command in a temporary worktree of REPO and fail when REPO changed (docs/isolated-project-check.md); without REPO, run the synthetic equivalent of the real-project acceptance protocol (docs/real-project-acceptance.md)
     cmds:
-      - '{{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{.REPO | shellQuote}} {{.CLI_ARGS}}'
+      - |
+        if [ -n {{default "" .REPO | shellQuote}} ]; then
+          {{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{default "" .REPO | shellQuote}} {{.CLI_ARGS}}
+        else
+          {{.PYTHON | shellQuote}} -m pytest tests/integration/tools/test_acceptance_protocol.py -v -rs
+        fi
   test:runtime-contracts:
     desc: Opt-in probes of the real claude and codex CLIs (flags and exit codes, zero model calls); skipped runtimes are listed
     env:

@@ -18,7 +18,7 @@ reader purpose.
 - [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), or [declare capability areas and tag bank tasks](declare-capability-areas.md).
 - [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
-- [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), or [try AHL on a real project without changing it](isolated-project-check.md).
+- [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), [try AHL on a real project without changing it](isolated-project-check.md), or [validate AHL on a real project](real-project-acceptance.md) with a first-use run, a before/after evaluation and incremental runs.
 
 ## Look up behavior and contracts
 
