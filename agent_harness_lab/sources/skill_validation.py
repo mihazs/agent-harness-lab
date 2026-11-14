@@ -5,7 +5,8 @@ being adoptable (surfaces.classify) never makes the bundle valid. A bundle is a 
 folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills). Its candidate membership must:
 
 - keep SKILL.md (missing_entry_point): deleting only the entry point would orphan the remaining files; deleting
-  every file is a valid removal.
+  every file is a removal that needs no membership check, but a remaining file that names the bundle blocks it
+  (removed_bundle_referenced).
 - open SKILL.md with a frontmatter fence on line 1 that the bounded reader parses (missing_frontmatter,
   bad_frontmatter) and give a text description (missing_description). A name is required outside .claude/skills,
   where Codex rejects a skill without one (missing_name); any name must be the directory name in lowercase

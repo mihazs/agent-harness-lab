@@ -694,7 +694,8 @@ one unit before evaluation, because an adoptable path does not make a bundle
 valid. A bundle is a folder directly below a `skills/` folder
 (`.claude/skills`, `.agents/skills`, an owned root `skills/` or a nested
 `<dir>/.claude/skills`). Each change is a `create` (no baseline file), `remove`
-(no candidate file) or `update`, and a complete removal is always valid. Any
+(no candidate file) or `update`. A complete removal needs no membership check but
+is blocked (`removed_bundle_referenced`) while a remaining file names the bundle. Any
 other candidate membership must keep `SKILL.md` (`missing_entry_point`, so
 deleting only the entry point cannot orphan the assets), open it with a
 frontmatter fence on line 1 that parses (`missing_frontmatter`,
