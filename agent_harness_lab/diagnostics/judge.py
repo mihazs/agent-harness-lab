@@ -63,7 +63,10 @@ def _responses(row, policy):
         order = item.get('presented')
         if not isinstance(order, str) or order not in ORDERS or order in by_order:
             raise ValueError('response presentation order is missing, unknown or repeated')
-        if not _ids(item.get('citations', []), _CITED):
+        for key, meaning in (('verdict', 'abstention'), ('citations', 'an uncited claim')):
+            if key not in item:  # an omitted key is unknown capture, never an abstention or an uncited claim
+                raise ValueError(f'a recorded response must state its {key}; omission is not {meaning}')
+        if not _ids(item['citations'], _CITED):
             raise ValueError('invalid response citations')
         if item.get('confidence') is not None and not _rate(item['confidence']):
             raise ValueError('invalid self-reported confidence')
@@ -73,7 +76,7 @@ def _responses(row, policy):
 
 def _decision(by_order):
     """(state, arm) for one root; only a verdict that survives the order swap is decided."""
-    verdicts = {order: item.get('verdict') for order, item in by_order.items()}
+    verdicts = {order: item['verdict'] for order, item in by_order.items()}
     if len(verdicts) < len(ORDERS):
         return 'order_unchecked', None
     if any(v is not None and v not in POSITIONS for v in verdicts.values()):
@@ -114,7 +117,8 @@ def evaluate(policy, observations):
 
     A row has ``root_case_id``, ``split: heldout``, ``label`` (``first``, ``second``, ``tie`` or None for
     unknown), ``responses`` (one per presentation order: ``judge_ref``, ``rubric_revision``, ``presented``,
-    ``verdict`` of ``A``, ``B``, ``tie`` or None for abstention, optional ``citations`` and an unused
+    ``verdict`` of ``A``, ``B``, ``tie`` or None for abstention, ``citations`` (``[]`` when it cited
+    nothing; both keys are required, since omission is unknown capture) and an optional unused
     ``confidence``) and optionally ``spans`` (the case's evidence identifiers), ``supporting_spans``
     (reviewed as supporting the label) and ``violating_arm`` (an arm an executable check flagged). A row
     with ``control`` set to a factor from ``CONTROL_FACTORS`` is a matched control whose label must be
@@ -143,8 +147,8 @@ def evaluate(policy, observations):
         spans, support = _spans(row)
         state, arm = _decision(by_order)
         for item in by_order.values():
-            picks_a += item.get('verdict') == 'A'
-            picks_b += item.get('verdict') == 'B'
+            picks_a += item['verdict'] == 'A'
+            picks_b += item['verdict'] == 'B'
         if factor is not None:
             controls['rows'] += 1
             controls['states'][state] += 1
@@ -163,7 +167,7 @@ def evaluate(policy, observations):
             correct += arm == label
             wrong += arm != label
         if arm != 'tie':
-            union = sorted({c for item in by_order.values() for c in item.get('citations', [])})
+            union = sorted({c for item in by_order.values() for c in item['citations']})
             cited[_citation(union, arm, label, spans, support)] += 1
     roots = sum(cases.values())
     if not roots:
