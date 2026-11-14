@@ -10,6 +10,7 @@ import uuid
 import stat
 from .evaluation.areas import parse_registry
 from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
+from .loop.spec import parse_declaration
 from . import surfaces
 
 RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
@@ -53,10 +54,11 @@ def validate(value):
     if isinstance(value, dict) and {'scope', 'global', 'global_root', 'harness_scope'} & set(value):
         raise ValueError('a project configuration cannot select a harness scope; only the --scope option on the command line can include the user-level harness')
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) - {'plugin_checkouts', 'areas'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) - {'plugin_checkouts', 'areas', 'loop'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
     if 'plugin_checkouts' in value: plugin_checkouts(value['plugin_checkouts'])
-    if 'areas' in value: parse_registry(value['areas'])
+    areas = parse_registry(value['areas']) if 'areas' in value else ()
+    if 'loop' in value: parse_declaration(value['loop'], 'project', areas)  # a declared bar, never an authority
     if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
         raise ValueError('invalid profile or recommendation policy')
     runtime = value['runtime']

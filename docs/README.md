@@ -24,6 +24,7 @@ reader purpose.
 
 - [Global instruction region markers and typed reasons](global-instructions-reference.md), [command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md), including its [capability area declarations](evaluation-manifest-contract.md#capability-area-declarations).
 - [Campaign specification and planned records](campaign-specification.md).
+- [Loop declaration and state machine](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants.
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Repeat reliability profile](repeat-reliability.md), [controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
