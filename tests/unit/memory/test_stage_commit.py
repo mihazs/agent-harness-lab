@@ -153,13 +153,33 @@ def test_corrupt_record_is_refused_never_returned_and_never_overwritten(store):
     assert record_file.read_bytes() == b'{}'
 
 
-def test_forged_record_with_a_valid_hash_but_the_wrong_key_is_refused(store):
-    p = parts()
-    key = reuse.node_key(p)
-    forged = reuse.canonical_json({'schema': commit.RECORD_SCHEMA, 'node_key': key, 'components': parts(version='2'),
-                                   'output': h('x'), 'status': 'complete'})
+def forged_record(key, **change):
+    record = {'schema': commit.RECORD_SCHEMA, 'node_key': key, 'components': parts(), 'output': h('x'), 'status': 'complete'}
+    return reuse.canonical_json({**record, **change})
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param({'components': parts(version='2')}, id='components-hash-to-another-key'),
+    pytest.param({'node_key': h('other')}, id='record-names-another-key'),
+    pytest.param({'status': 'incomplete'}, id='incomplete-status'),
+    pytest.param({'output': None}, id='no-output'),
+    pytest.param({'output': 'not-a-digest'}, id='malformed-output'),
+    pytest.param({'schema': 'ahl-stage-record-v2'}, id='unknown-schema'),
+])
+def test_forged_record_with_a_valid_hash_is_refused_instead_of_returned(store, change):
+    key = reuse.node_key(parts())
+    forged = forged_record(key, **change)
     store.publish('p1', 'manifest', forged, records=[
         {'table': 'snapshots', 'row': {'snapshot_id': key, 'manifest': hashlib.sha256(forged).hexdigest()}}])
+    with pytest.raises(MemoryStoreError, match='verification'):
+        commit.lookup(store, 'p1', key)
+
+
+def test_record_that_is_not_canonical_json_is_refused_even_when_its_content_is_valid(store):
+    key = reuse.node_key(parts())
+    loose = json.dumps(json.loads(forged_record(key)), indent=1).encode()
+    store.publish('p1', 'manifest', loose, records=[
+        {'table': 'snapshots', 'row': {'snapshot_id': key, 'manifest': hashlib.sha256(loose).hexdigest()}}])
     with pytest.raises(MemoryStoreError, match='verification'):
         commit.lookup(store, 'p1', key)
 
