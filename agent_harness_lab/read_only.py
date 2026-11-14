@@ -35,7 +35,7 @@ def require_external_output(project, output):
 def require_safe_cli_destinations(argv):
     # These options select mutable outputs or stores across the CLI dispatchers.
     options = {'--output', '--destination', '--export', '--store', '--cache', '--history-store',
-               '--evaluation-store', '--backup-root'}
+               '--evaluation-store', '--backup-root', '--memory-store'}
     for index, argument in enumerate(argv):
         if argument == '--': break
         option, separator, value = argument.partition('=')

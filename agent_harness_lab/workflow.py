@@ -142,6 +142,10 @@ def evidence(args, output, source_context=None, *, progress=None):
                 temporary.write(serialize(record)+'\n')
             temporary.flush()
             selected, source_format = temporary.name, 'normalized'
+        reuse = getattr(args, '_incremental', None)
+        if reuse is not None:  # a failure before the stage is verified and committed leaves a non-reusable diagnostic record
+            captures.push(lambda kind, error, trace: reuse.interrupted() if kind is not None else None)
+        started = time.monotonic()
         data = collect(args.project, events=selected, source_format=source_format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
@@ -151,7 +155,10 @@ def evidence(args, output, source_context=None, *, progress=None):
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None),
             history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None,
-            history_from=getattr(args, 'history_from', None), **source_identity)
+            history_from=getattr(args, 'history_from', None),
+            reused_process_mining=None if reuse is None else reuse.cached, **source_identity)
+        if reuse is not None:
+            args._reuse = reuse.finish(data, time.monotonic()-started)
         events.seek(0)
         store = {}
         # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
@@ -197,7 +204,12 @@ def analyze_project(args):
     from .telemetry.claude_cwd import from_sources
     from .sources.context import load
     context = load(getattr(args, 'source_cache', None), getattr(args, 'source_project_sha256', None), getattr(args, 'source_scope_sha256', None))
+    if getattr(args, 'incremental', False):  # decide reuse before any output exists; no import cost without the flag
+        from .memory.incremental import Incremental
+        args._incremental = Incremental(args)
     output = output_dir(args)
+    if getattr(args, '_incremental', None) is not None:
+        args._incremental.bind_output(output)
     data = evidence(args, output, source_context=context)
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']),
@@ -206,6 +218,7 @@ def analyze_project(args):
     if 'memory_source' in data: result['memory_source'] = data['memory_source']
     if data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     if (drift := from_sources(data.get('sources', []))) is not None: result['cwd_drift'] = drift
+    if getattr(args, '_reuse', None) is not None: result['reuse'] = args._reuse
     write_json(output / 'workflow.json', result)
     return result
 
