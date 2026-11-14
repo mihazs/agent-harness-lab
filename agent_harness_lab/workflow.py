@@ -953,13 +953,14 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             made = []
             args._evaluation_repairs = made
             authoring_started = now()
+            box = stages.allotted('construction')  # each agent pass is stopped at the box; an overrun ends the run (no second pass: the client is closed)
             dropped = []; seen = access.ignored_digests() if access is not None else 0
             try:
                 if access is None:
                     manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped)
+                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped,box=box)
                 else:
-                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
+                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True,box=box)
                     finally: made[:] = access.repair_log(); dropped[:] = [access.ignored_digests() - seen]
             finally:
                 args._authored_digest_ignored += sum(dropped)
@@ -1351,6 +1352,7 @@ def _run_improvement(args, *, parent_started=None):
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise
         from .evaluation.responses import InferenceError
+        from .evaluation.construction import ConstructionTimeout
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
@@ -1371,6 +1373,9 @@ def _run_improvement(args, *, parent_started=None):
         if isinstance(exc, typed_exit.TypedExit): result['reason'] = exc.reason
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
+        if isinstance(exc, ConstructionTimeout):  # the controlled author overran its time box: the same typed stop as the cooperative path
+            timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
+            result.update(reason=timed_out.reason, contract_violation=timed_out.receipt())
         construction_receipt(result, args)
         from .scope import interrupted
         result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed

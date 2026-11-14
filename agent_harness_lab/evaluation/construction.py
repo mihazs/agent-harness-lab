@@ -91,7 +91,11 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True,ignored=None):
+class ConstructionTimeout(TimeoutError):
+    """The evaluation author overran its construction time box while the whole improvement budget still had seconds left (#739)."""
+
+
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True,ignored=None,box=None):
     if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
@@ -152,9 +156,17 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
     if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    if box is not None:  # seconds each agent pass may take; the controller work after it keeps the whole-run deadline
+        prompt += (f'\nTime box: this construction pass is stopped after {max(0,int(box))} seconds; write manifest.json early, '
+                   'then refine. An overrun ends the pass as evaluation_construction_timeout.')
+    def run_pass(folder, text):
+        stop = deadline if box is None else min(deadline, time.monotonic()+box)
+        try: return run_role(client,backend,folder,inputs,'evaluator_author',instructions,text,stop)
+        except TimeoutError as error:
+            if stop < deadline and time.monotonic() >= stop: raise ConstructionTimeout('evaluation_construction_timeout') from error
+            raise
     started=time.monotonic()
-    state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
-        instructions,prompt,deadline)
+    state,commands = run_pass(workspace,prompt)
     check_deadline(deadline)
     if repairs is not None: _drop_authored_digests(state,ignored)  # before the shape check, publication and any seal; bank conversion stays strict
     try:
@@ -164,8 +176,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         # One bounded repair pass in the same workspace and budget; the typed reason is recorded in the receipt.
         repairs.append(dict(error.receipt(),attempt=1,outcome='requested',elapsed_seconds=round(time.monotonic()-started,1)))
         workspace=state.publish(workspace.with_name(workspace.name+'-repair'),deadline)  # seed the repair with the rejected output
-        state,more = run_role(client,backend,workspace,inputs,'evaluator_author',
-            instructions,prompt+'\n'+error.repair_instruction(),deadline)
+        state,more = run_pass(workspace,prompt+'\n'+error.repair_instruction())
         commands=[*commands,*more]; check_deadline(deadline)
         _drop_authored_digests(state,ignored)
         _check_shape(state); repairs[-1]['outcome']='repaired'

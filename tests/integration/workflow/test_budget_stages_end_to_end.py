@@ -218,6 +218,26 @@ def test_the_construction_fraction_option_moves_the_time_box_and_rejects_values_
     assert stub.improve(capsys, '{}', '--construction-fraction', '1')[0] == 2
 
 
+def configure_fraction(stub, fraction):
+    """A cooperative ahl.json that pins the stub runtime and, when given, the construction share of the budget."""
+    from agent_harness_lab import config
+    limits = dict(seconds=120, trials=20, **({} if fraction is None else dict(construction_fraction=fraction)))
+    config.create(stub.project, config.prepare(dict(profile='cooperative', limits=limits,
+                                                     runtime=dict(name=stub.runtime, executable=str(stub.bin / stub.runtime)))))
+
+
+@pytest.mark.parametrize('configured, flag, expected', [
+    pytest.param(0.5, [], 0.5, id='configured-share-is-used'),
+    pytest.param(0.5, ['--construction-fraction', '0.4'], 0.4, id='explicit-option-wins'),
+    pytest.param(None, [], budget_stages.DEFAULT_CONSTRUCTION_FRACTION, id='absent-keeps-the-default'),
+])
+def test_the_construction_share_in_ahl_json_limits_sets_the_time_box_unless_the_option_names_one(stub, capsys, configured, flag, expected):
+    configure_fraction(stub, configured)
+    _, receipt, _, _ = stub.run(capsys, {}, *flag)
+    assert receipt['budget_stages']['construction_fraction'] == expected
+    assert receipt['budget_stages']['stages']['construction']['allotted_seconds'] == round(120 * expected, 1)
+
+
 def test_the_toolkit_copy_leaves_bytecode_caches_out_so_two_routes_start_from_identical_skills(stub, capsys, tmp_path, monkeypatch):
     from agent_harness_lab import cli
     root = tmp_path / 'assets'
