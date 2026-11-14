@@ -11,8 +11,6 @@ import pytest
 from agent_harness_lab import cli
 from tests.support.first_use_history import Home
 
-NEEDS_332 = pytest.mark.xfail(strict=True, reason='needs #332')
-
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
@@ -151,9 +149,13 @@ def test_mixed_runtimes_with_failures_end_typed_and_spend_nothing(home):
     assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
 
 
-@NEEDS_332
-def test_failures_with_static_convention_findings_yield_a_labelled_evidenced_candidate(home):
+def test_failures_with_static_convention_findings_stage_a_labelled_hypothesis_and_spend_one_preparation_call(home):
     (home.project/'AGENTS.md').write_text('synthetic line\n'*2000)  # an over-long instruction file is a static convention finding
+    (home.project/'.git').mkdir()  # a Git project root settles the Codex instruction totals the line convention needs
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home)
-    assert receipt['candidates'] and all(row['hypothesis_source'] == 'static_convention' and row['evidence'] for row in receipt['candidates'])
+    hypothesis = receipt['audit_hypothesis']
+    assert hypothesis['hypothesis_source'] == 'static_convention' and hypothesis['authority'] == 'none' and hypothesis['finding_id']
+    assert receipt['reason'] != 'no_outcome_evidence' and home.model_calls == 1
+    assert receipt['provenance']['agent_supplied_hypothesis'][0]['source'] == 'static_audit'
+    assert receipt['spend_label'] == 'spent_without_evaluation'  # the fake proposer declines, so no trial was evaluated
