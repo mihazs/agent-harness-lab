@@ -28,7 +28,7 @@ def withheld_activities(summary, analysis):
     names = {name for name in (*(analysis.get('activities') or {}), *((analysis.get('process_mining') or {}).get('activities') or {}))
              if not LABEL.match(name)}
     if not names: return summary
-    alias = {name: 'withheld-activity-' + hashlib.sha256(name.encode()).hexdigest()[:16] for name in names}
+    alias = {name: 'withheld-activity-' + hashlib.sha256(name.encode('utf-8', 'surrogatepass')).hexdigest()[:16] for name in names}
     def swap(value):
         if isinstance(value, dict): return {alias.get(key, key): swap(item) for key, item in value.items()}
         if isinstance(value, list): return [swap(item) for item in value]
