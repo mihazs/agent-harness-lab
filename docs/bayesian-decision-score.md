@@ -1,14 +1,16 @@
 # A paired Bayesian decision score with a ROPE
 
-This page is a design with four implemented slices: the optional frozen `bayes_decision`
+This page is a design with five implemented slices: the optional frozen `bayes_decision`
 spec field, with validation and a JSON schema (issue a, see the [Spec field](#spec-field)
 reference); the pure posterior and decision function (issue b, see
 [Decision function](#decision-function)); the exact sign-permutation cross-check as a
 pure module (issue c, see [Frequentist cross-check](#frequentist-cross-check-option-1-role));
-and the wiring (issue d, see [Wiring](#wiring)): `ahl experiment --records`, the
+the wiring (issue d, see [Wiring](#wiring)): `ahl experiment --records`, the
 history-store analysis that `ahl improve` carries and its decision receipt report the
 `bayesian_decision` block for a plan that declares `bayes_decision`, and `ahl compare`
-displays a supplied block. A plan without the declaration prints byte-identical output.
+displays a supplied block; and the calibration of the decision with the seeded power
+simulator (issue e, see [Calibration](#calibration-issue-e)). A plan without the
+declaration prints byte-identical output.
 The page explains what a numeric, non-LLM decision score should be, why it takes this
 shape, and which choices the operator must confirm. The reference section at the end
 fixes names and fields so the remaining implementation issues can be written against
@@ -173,7 +175,7 @@ With `delta` drawn from the Stage 1 posterior (default 20,000 draws, seeded), de
 | `S_equiv >= p_cut`                       | `equivalent`            |
 | otherwise                                | `insufficient_evidence` |
 
-`p_cut` must be greater than .5 so at most one row can hold; the default is .95.
+`p_cut` must be greater than .5 so at most one row can hold; the default is .99, raised from .95 by the [calibration](#calibration-issue-e).
 Because the Monte Carlo estimate of a probability has its own error, a verdict is
 withheld (`insufficient_evidence`, reason `monte_carlo_margin`) when a score is within
 four binomial standard errors of `p_cut`. The report carries `draws`, `seed` and that
@@ -184,7 +186,8 @@ Two floors apply before any verdict other than `insufficient_evidence` is allowe
 - Root floor: at least `max(spec.min_roots, 8)` independent roots. The constant 8 is
   the smallest root count where an exact sign-permutation one-sided p-value can fall
   to .004 or below, so a unanimous win does not sit exactly on the cross-check's own
-  boundary. It is a design choice to revisit during calibration.
+  boundary. The calibration kept it at 8: no cell at the floor failed the acceptance rule
+  (see [Calibration](#calibration-issue-e)).
 - Precision floor: the central posterior interval at level `p_cut` must have a
   half-width at or below the frozen `precision_half_width`. The Bayesian block
   requires that existing field to be set. It is model-based and looser than the
@@ -290,11 +293,11 @@ plan hash, and the run no longer matches its plan; there is no per-run override.
 |-----------|---------|-----|
 | `rope_epsilon` | the frozen `effect_margin`; explicit and in (0, 1) when `effect_margin` is 0 | Reuses the practical-difference threshold the plan already froze, so the two paths agree on what "meaningful" means. Open decision. |
 | `prior` | Dirichlet pseudo-root at difference 0, `a0 = 1` per family | One tie-valued pseudo-root pulls toward no difference and is weak against a real bank. A stronger pull is more conservative. Open decision. |
-| `p_cut` | .95 (must be > .5) | Matches the 95% convention of the existing Wilson intervals and `alpha` .05. Calibration may only raise it. |
+| `p_cut` | .99 (must be > .5) | Started at .95, the convention of the existing Wilson intervals and `alpha` .05. The calibration failed one required cell on the tuning seeds at .95 and raised it once to .99, which held on the held-out seeds (see [Calibration](#calibration-issue-e)). |
 | `regression_margin` | the frozen `family_margin` | Same reason as `rope_epsilon`. |
-| `posterior_draws` | 20,000, at most 200,000 | Keeps the Monte Carlo error of a probability near .003 at S near .95. |
+| `posterior_draws` | 20,000, at most 200,000 | Keeps the Monte Carlo error of a probability near .0007 at S near .99. At `p_cut` .99 fewer than about 1,600 draws can never clear the four-standard-error margin, so such a plan returns only `insufficient_evidence` with reason `monte_carlo_margin`. |
 | `allow_bound_resolved_verdict` | `false` | Conservative: unknowns never produce a verdict. Open decision. |
-| `cross_check_alpha` | `1 - p_cut` | One-sided level that matches the posterior cut. |
+| `cross_check_alpha` | `1 - p_cut` (.01 at the default) | One-sided level that matches the posterior cut. |
 
 The seed is not a parameter: it is derived from the plan digest and a fixed profile
 label so a rerun gives the same numbers and nobody can search seeds.
@@ -430,6 +433,10 @@ supplied analysis already contains it.
   effect differs by root type is better described by the families the plan freezes.
 - The score is calibrated only under declared synthetic models. It is not observed
   improvement, certification, oracle validity or native-model identity.
+- The acceptance rule of the calibration bounds the `better` rate only. Under the null
+  at the 8-root floor the calibration also observed false `worse` verdicts (the family
+  regression control), with Wilson upper bounds above .05 in two cells; see
+  [Calibration](#calibration-issue-e).
 - The score is recommendation-only. It never promotes, never sets
   `automatic_promotion`, never edits the plan or the bank, and `better` does not reach
   `recommended` in `promotion.policy.decide`. Publication stays disallowed.
@@ -443,7 +450,7 @@ supplied analysis already contains it.
 | b | Stage 1 posterior, floors, unknown bounds and the decision function, in a new module beside `statistics.py` (implemented, not wired) | a |
 | c | exact and Monte Carlo sign-permutation cross-check (implemented as a pure module) | a |
 | d | the `bayesian_decision` analysis block in `ahl experiment` and the history-store analysis (so `ahl improve` carries it); display-only rendering in `ahl compare`; no change to `promotion.policy.decide` (implemented, see [Wiring](#wiring)) | b, c |
-| e | calibration with `power.simulate` on declared null, in-ROPE and beneficial models; held-out seeds fixed before the run | b, c |
+| e | calibration with the power simulator's generator on declared null, in-ROPE, beneficial and dependent-root models; held-out seeds fixed before the run (implemented, see [Calibration](#calibration-issue-e)) | b, c |
 | f | docs and the six fixtures listed below | d |
 | g | optional descriptive desirability and Pareto epsilon-indicator report | d |
 
@@ -454,17 +461,147 @@ merges.
 
 ### Calibration (issue e)
 
-Declare and freeze, before running: the models, the seeds, the simulation count, and
-the acceptance rule. The rule extends the existing one: under a null model and under a
-model with a true effect at half of `epsilon`, the Wilson 95% upper bound of the
-`better` rate must be at most .05, the same bound `test_experiment_power` already holds
-the Hoeffding path to. Under a beneficial model the Wilson lower bound of the `better`
-rate is reported as power, with no pass or fail requirement because the Bayesian path
-is meant to be less conservative. `p_cut` may be raised and the root floor may be raised
-if the rule fails, and each change is made once on a tuning seed set and confirmed on
-a separate held-out set. If the held-out set fails, the issue stops and reports; it
-does not search for parameters that pass. Dependent-root models (the nominal bound
-fails there, as the existing precision page records) are reported, not required to pass.
+Implemented in `evaluation/bayes_calibration.py`. The numbers below describe the declared
+synthetic models and nothing else: they are not observed error control for real tasks,
+real task dependence or real roots, as `power.py` says of its own rates.
+
+**What was declared before any run.** The protocol (`bayes_calibration.PROTOCOL`, SHA-256
+`00b16f5deccbd21d638c228466a40b08f900643eef69be8a6e4b2048fae700c0`) was committed before
+the first simulation, and the recorded results carry its digest so a later edit is caught
+(see the guards below).
+
+- Records are drawn by the power simulator's own generator with the same seed handling as
+  `power.simulate`, then judged twice: by the unchanged `statistics.analyze` (its
+  `supported` count is reported beside, never used) and by the `bayesian_decision` block
+  that `bayes_analysis.attach` adds. Nothing is run, observed or graded, and no model is
+  called.
+- The plan: one family, `effect_margin` .1 (so `rope_epsilon` .1), `family_margin` .05,
+  `alpha` .05, `min_roots` 3 (root floor 8), the default 20,000 posterior draws and a
+  `precision_half_width` of 1. The precision floor can only withhold a verdict, so
+  setting it so wide that it never does gives the highest `better` rate a plan can have;
+  a tighter floor can only lower it.
+- The outcome model: baseline success .5 and root spread .3, as in
+  `test_experiment_power`, in the same two layouts: repeats 1 with repeat correlation 0
+  and repeats 5 with repeat correlation 1.
+- 300 simulations per cell. The tuning seeds are 3100 plus the cell index and the held-out
+  seeds 4100 plus the cell index; the fast guard uses 5150 and up.
+
+| Model | Role | True effect | Roots | Layouts |
+|-------|------|-------------|-------|---------|
+| `null` | required | 0 | 8 (the floor) and 40 | both |
+| `half_epsilon` | required | .05, half of `rope_epsilon` | 8 and 40 | both |
+| `beneficial` | power, reported | .3, three times `rope_epsilon` | 40 | both |
+| `clusters_of_4` | dependent, reported | 0, each run of four consecutive roots shares one outcome | 40 | repeats 1 |
+| `one_cluster` | dependent, reported | 0, every root shares one outcome | 40 | repeats 1 |
+
+**Acceptance rule.** In every required cell the Wilson 95% upper bound of the `better`
+rate is at most .05, the bound `test_experiment_power` holds the Hoeffding path to. Power
+under the beneficial model is the Wilson lower bound of the `better` rate, with no pass or
+fail. Dependent-root models are reported, not required (the nominal bound fails there, as
+the [precision page](experiment-precision.md#simulated-power-under-a-declared-outcome-model)
+records). The tuning seeds run the required cells only; the held-out seeds run all cells.
+The only adjustment the protocol allows is one raise of `p_cut` to .99 (and of the root
+floor to 12), taken only if a required tuning cell fails and then confirmed once on the
+held-out seeds; if the held-out seeds fail, the work stops and reports.
+
+**What happened.**
+
+1. At the default `p_cut` .95 the tuning seeds failed one required cell: 9 of 300 in
+   `half_epsilon/roots40/repeats5-corr1`, Wilson upper bound .056. The other seven passed.
+2. The single raise was applied: the default `p_cut` is now .99, and `cross_check_alpha`
+   follows its default of `1 - p_cut`, .01. The root floor was not raised: every cell at
+   the floor passed (upper bound at most .029), and the floor cannot affect a 40-root
+   bank. This applies the registered raise of `p_cut` only, not the registered root floor
+   of 12, because no evidence called for it.
+3. The held-out seeds confirmed the raise: every required cell has an upper bound of
+   at most .024. The tuning seeds at .99 also pass, with a largest upper bound of .029.
+
+Tuning seeds at the first default, `p_cut` .95 (failed):
+
+| Cell | `better` | Rate | Wilson 95% interval |
+|------|---------:|-----:|---------------------|
+| `null/roots8/repeats1-corr0` | 2 of 300 | 0.007 | 0.002 to 0.024 |
+| `null/roots8/repeats5-corr1` | 2 of 300 | 0.007 | 0.002 to 0.024 |
+| `null/roots40/repeats1-corr0` | 0 of 300 | 0.000 | 0.000 to 0.013 |
+| `null/roots40/repeats5-corr1` | 1 of 300 | 0.003 | 0.001 to 0.019 |
+| `half_epsilon/roots8/repeats1-corr0` | 3 of 300 | 0.010 | 0.003 to 0.029 |
+| `half_epsilon/roots8/repeats5-corr1` | 3 of 300 | 0.010 | 0.003 to 0.029 |
+| `half_epsilon/roots40/repeats1-corr0` | 6 of 300 | 0.020 | 0.009 to 0.043 |
+| `half_epsilon/roots40/repeats5-corr1` | 9 of 300 | 0.030 | 0.016 to 0.056 |
+
+Held-out seeds at `p_cut` .99, required cells (passed):
+
+| Cell | `better` | Rate | Wilson 95% interval | Hoeffding `supported` |
+|------|---------:|-----:|---------------------|---------------------:|
+| `null/roots8/repeats1-corr0` | 0 of 300 | 0.000 | 0.000 to 0.013 | 0 of 300 |
+| `null/roots8/repeats5-corr1` | 0 of 300 | 0.000 | 0.000 to 0.013 | 0 of 300 |
+| `null/roots40/repeats1-corr0` | 0 of 300 | 0.000 | 0.000 to 0.013 | 0 of 300 |
+| `null/roots40/repeats5-corr1` | 1 of 300 | 0.003 | 0.001 to 0.019 | 0 of 300 |
+| `half_epsilon/roots8/repeats1-corr0` | 1 of 300 | 0.003 | 0.001 to 0.019 | 0 of 300 |
+| `half_epsilon/roots8/repeats5-corr1` | 0 of 300 | 0.000 | 0.000 to 0.013 | 0 of 300 |
+| `half_epsilon/roots40/repeats1-corr0` | 2 of 300 | 0.007 | 0.002 to 0.024 | 0 of 300 |
+| `half_epsilon/roots40/repeats5-corr1` | 0 of 300 | 0.000 | 0.000 to 0.013 | 0 of 300 |
+
+Tuning seeds at `p_cut` .99, required cells (passed): the largest count is 3 of 300 in
+`half_epsilon/roots40/repeats5-corr1`; the full table is in the recorded results.
+
+Power on the held-out seeds, reported with no pass or fail:
+
+| Cell | `better` | Rate | Wilson 95% interval | Hoeffding `supported` |
+|------|---------:|-----:|---------------------|---------------------:|
+| `beneficial/roots40/repeats1-corr0` | 97 of 300 | 0.323 | 0.273 to 0.378 | 1 of 300 |
+| `beneficial/roots40/repeats5-corr1` | 113 of 300 | 0.377 | 0.324 to 0.433 | 0 of 300 |
+
+At three times `rope_epsilon` with 40 roots the Bayesian rule at `p_cut` .99 recommends
+`better` in roughly a third of simulations, and the Hoeffding path in none or one of 300.
+The Bayesian path is less conservative than the Hoeffding path on the same records and is
+still far from powerful at this bank size; both are conditional on the model.
+
+Dependent roots on the held-out seeds, reported with no pass or fail (the true effect is
+zero, so every `better` is a false recommendation):
+
+| Cell | `better` | Rate | Wilson 95% interval | Hoeffding `supported` |
+|------|---------:|-----:|---------------------|---------------------:|
+| `clusters_of_4/roots40/repeats1-corr0` | 20 of 300 | 0.067 | 0.044 to 0.101 | 2 of 300 |
+| `one_cluster/roots40/repeats1-corr0` | 70 of 300 | 0.233 | 0.189 to 0.284 | 70 of 300 |
+
+Roots that share an outcome break the independence the posterior assumes. With every root
+in one cluster the false `better` rate is 70 of 300, the same count as the Hoeffding
+path's `supported`, so the Bayesian block is no safer than the existing analysis under
+full dependence; with clusters of four it is 20 of 300. The block does not detect
+dependence.
+
+**Not covered by the rule.** The rule bounds `better`. At the 8-root floor the held-out
+seeds also show false `worse` verdicts under the null, from the family regression control:
+10 of 300 (Wilson upper bound .060) at repeats 1 and 7 of 300 (.047) at repeats 5, and 13
+of 300 (.073) and 7 of 300 (.047) under the half-epsilon model, where the true effect is
+positive. Those rates were not part of the declared rule and nothing was changed in
+response. They are listed under the open decisions.
+
+**Reproduce.** `task calibrate:bayes-decision SPLIT=tuning PYTHON=.venv/bin/python` or
+`SPLIT=held_out` prints one split's JSON report, about ten and twenty minutes on one core.
+On a shared machine run it under the shared test lock and a memory cap. The recorded
+reports (the failed tuning run at .95, the tuning run at .99 and the held-out run) are
+`tests/fixtures/bayes_calibration/results.json`. The task runs the committed defaults;
+the failed run at .95 is reproduced by `run_cell('tuning', index, bayes=dict(p_cut=.95))`,
+as the replay test does for its first ten simulations.
+
+**Guards in the fast suite** (`tests/unit/evaluation/test_bayes_calibration.py`):
+
+- the protocol digest is pinned twice, in the test and in the recorded results, so a change
+  to the models, seeds, simulation count or rule after results are recorded fails;
+- the recorded counts, Wilson intervals and acceptance flags are recomputed from the
+  recorded per-simulation sequences, the held-out required cells must pass, and the first
+  ten simulations of each held-out required cell are replayed with the current code and
+  must equal the recorded ones, so a change that alters a decision requires a new
+  calibration;
+- a live guard reruns the null cells and the binding half-epsilon cell with 4,000 posterior
+  draws (1,000 draws cannot reach any verdict at `p_cut` .99, which a test records) on
+  seeds that were never part of the calibration, and fails if the Wilson upper bound of
+  the `better` rate exceeds .05;
+- deliberate-mutation tests: lowering `p_cut` and the cross-check level, and weakening the
+  posterior cut to a coin flip with a cross-check that always agrees, must trip the same
+  acceptance rule.
 
 ### Fixtures (issue f)
 
@@ -615,7 +752,9 @@ statuses, `passed`, `failed`, `not_evaluated` or `not_declared`), `floors` and
 
 The standard-library sampler follows the Bayesian bootstrap and so is overconfident
 with few discrete root differences; the floors and the margin limit that, and
-calibration (issue e) is what can show whether they are enough.
+calibration (issue e) shows whether they are enough under the declared synthetic models:
+at the first default they were not for one cell, and the single registered raise of `p_cut`
+fixed it (see [Calibration](#calibration-issue-e)).
 
 ### Wiring
 
@@ -701,8 +840,11 @@ label and the prerequisites, and its decision is identical with and without the 
   smallest correctness difference that matters in practice.
 - The prior: a tie-valued pseudo-root of concentration 1 per family. Confirm, or choose
   a stronger pull toward zero.
-- Whether `p_cut` stays at .95 before calibration, and whether the root floor of 8 and
-  the 20-root exact-enumeration limit are right.
+- The calibrated `p_cut` of .99 and the root floor of 8 stand under the declared models.
+  Confirm them, and decide whether the acceptance rule should also bound the false `worse`
+  rate: at the 8-root floor it exceeded .05 in its Wilson upper bound in two cells, and
+  raising the floor (the other registered lever) was not triggered because the rule as
+  declared covers `better` only. The 20-root exact-enumeration limit was not calibrated.
 - Whether a verdict may ever come from `bound_resolution` when outcomes are unknown.
 - Whether the Bayesian verdict may become an accepted quality status in a new frozen
   resource quality policy. Today only the Hoeffding `supported` is accepted.

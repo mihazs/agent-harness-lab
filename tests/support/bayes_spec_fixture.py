@@ -8,9 +8,9 @@ TASKS = tuple((f'{f}-t{i}', f'{f}-r{i}', f) for f in ('alpha', 'beta') for i in 
 WEIGHTS = (('alpha', .5), ('beta', .5))
 MINIMAL = {'schema_version': 1, 'profile': PROFILE}
 RESOLVED = {'schema_version': 1, 'profile': PROFILE, 'rope_epsilon': .1,
-            'prior': {'kind': 'dirichlet_pseudo_root', 'concentration': 1, 'anchor': 0}, 'p_cut': .95,
+            'prior': {'kind': 'dirichlet_pseudo_root', 'concentration': 1, 'anchor': 0}, 'p_cut': .99,
             'regression_margin': .05, 'posterior_draws': 20000, 'allow_bound_resolved_verdict': False,
-            'cross_check_alpha': .05}
+            'cross_check_alpha': .01}
 
 
 def spec(bayes=MINIMAL, **options):

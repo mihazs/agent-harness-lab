@@ -38,7 +38,7 @@ def resolve(block, effect_margin, family_margin):
         return block
     block = copy.deepcopy(block)
     block.setdefault('prior', {'kind': PRIOR_KIND, 'concentration': 1, 'anchor': 0})
-    block.setdefault('p_cut', .95)
+    block.setdefault('p_cut', .99)  # raised once from .95 by the calibration (docs/bayesian-decision-score.md)
     block.setdefault('posterior_draws', 20000)
     block.setdefault('allow_bound_resolved_verdict', False)
     if number(effect_margin) and effect_margin > 0:

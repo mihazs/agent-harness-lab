@@ -22,7 +22,7 @@ PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',
         'sources/cli.py','sources/claude_mem_tools.py','sources/lineage.py','sources/harness_inventory.py','sources/github_quota.py','telemetry/claude_contract.py','evaluation/cli.py','user_config.py','evaluation/regression_review.py',
         'evaluation/bank_qualification.py','evaluation/oracle_history.py','evaluation/grader_correction.py',
-        'diagnostics/annotation_plan.py','evaluation/compare.py','evaluation/interchange.py','evaluation/image.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py','memory/cli.py')}
+        'diagnostics/annotation_plan.py','evaluation/compare.py','evaluation/interchange.py','evaluation/image.py','evaluation/bayes_calibration.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py','memory/cli.py')}
 PARSER_FILES.update(('tools/diagnose.py','tools/benchmark_models.py','tools/link_skills.py',
     'skills/harness-evaluation/scripts/mine_traces.py','skills/harness-evaluation/scripts/run_evaluation.py',*SCRIPTS))
 
@@ -53,6 +53,8 @@ def parsers():
         yield 'ahl '+' '.join(route),capture(lambda:cli.main(list(route)))
     image=importlib.import_module('agent_harness_lab.evaluation.image')
     yield 'runtime image builder',capture(image.main)
+    calibration=importlib.import_module('agent_harness_lab.evaluation.bayes_calibration')
+    yield 'bayes calibration',capture(lambda:calibration.main([]))
     for relative in SCRIPTS:
         with patch.object(sys,'argv',[relative]):
             yield relative,capture(lambda:runpy.run_path(str(ROOT/relative),run_name='__main__'))
