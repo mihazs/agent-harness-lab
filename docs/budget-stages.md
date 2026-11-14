@@ -28,9 +28,12 @@ configurable; the other stages keep their proportions of what it leaves.
 | `refinement` | 25% | The whole second attempt (proposal, fresh held-out construction, trials) | The attempt starts only when the remaining budget covers this allotment: otherwise `refinement_budget_unavailable` |
 
 `--construction-fraction FRACTION` takes a number strictly between 0 and 1 and is
-available on `ahl improve` and `ahl skills invoke`; `ahl.json` limits do not carry
-it. Raising the whole budget is `--timeout SECONDS`, or `limits.seconds` in
-`ahl.json` for the default.
+available on `ahl improve` and `ahl skills invoke`. `ahl.json` may carry the same
+number as `limits.construction_fraction` (an optional key beside `seconds` and
+`trials`); the option wins when both are given, and a missing key keeps the 25%
+default. A value of 0 or 1, a negative or non-finite number, or anything that is not
+a number is rejected when the configuration is read. Raising the whole budget is
+`--timeout SECONDS`, or `limits.seconds` in `ahl.json` for the default.
 
 The cooperative construction prompt states the pass time box and the seconds that
 remain in the whole budget, so the agent can plan its work.
@@ -43,9 +46,18 @@ A construction pass that ends after its box, or is stopped at it, ends the run a
 more pass only when the remaining budget covers another box plus the whole trials
 allotment; that attempt is recorded in `evaluation_construction_repairs` (reason
 `evaluation_construction_timeout`, outcome `repaired` or `requested`). A second
-overrun ends the run. The time box and the refinement reuse apply to the cooperative
-(Codex and Claude) construction path; controlled Responses construction is only
-accounted in the `construction` stage.
+overrun ends the run. The refinement reuse applies to the cooperative (Codex and
+Claude) construction path only.
+
+Controlled (Responses) construction gets the same box, and the same typed stop, on
+both routes (the direct route and the evaluation-store route). Each agent pass,
+including a manifest-shape repair pass, is stopped at the box or at the whole-run
+deadline, whichever comes first, and its prompt states the box in seconds. A pass
+that ends at the box while the whole budget still has time ends the run as
+`budget_exhausted` with `evaluation_construction_timeout`. The controlled client is
+closed by the overrun, so unlike the cooperative path there is no second pass. A pass
+that ends at the whole-run deadline is the generic `budget_exhausted`, not a
+construction timeout, and any other timeout before the box elapsed stays untyped.
 
 ## Feasibility check
 
