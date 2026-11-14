@@ -12,6 +12,7 @@ docs/adapter-runtime-decision.md). The result is private provenance and never ca
 from pathlib import Path
 import copy
 import json
+import math
 import subprocess
 import tempfile
 
@@ -38,6 +39,13 @@ def _encode(value):
 
 def _refuse_constant(_):
     raise ValueError('non-finite JSON number')
+
+
+def _finite_float(text):
+    value = float(text)
+    if not math.isfinite(value):  # a literal such as 1e999 parses to inf, which the canonical digest refuses
+        raise ValueError('non-finite JSON number')
+    return value
 
 
 def check_presented(original, presented, authorization, spec, transform):
@@ -72,6 +80,8 @@ def _run(backend, adapter_bytes, original, limits):
             return 'timeout', None, None
         except (OSError, ValueError, subprocess.SubprocessError):  # includes KeyringUnavailable and a missing bubblewrap
             return 'sandbox_unavailable', None, None
+    if run['status'] == 'failed' and backend.capability()['status'] != 'available':
+        return 'sandbox_unavailable', None, None  # a sandbox that cannot start exits non-zero too: not the adapter's failure
     attestation = run['attestation']
     worker = dict(status=run['status'], exit_code=run['exit_code'], backend=attestation['backend'],
                   role=attestation['role'], network=attestation['network'], resource_limits=attestation['resource_limits'])
@@ -80,7 +90,7 @@ def _run(backend, adapter_bytes, original, limits):
     if run['inputs_unchanged'] is not True:
         return 'input_modified', None, worker
     try:
-        return None, json.loads(run['stdout'], parse_constant=_refuse_constant), worker
+        return None, json.loads(run['stdout'], parse_constant=_refuse_constant, parse_float=_finite_float), worker
     except (ValueError, RecursionError):
         return 'malformed_output', None, worker
 

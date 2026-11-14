@@ -283,7 +283,10 @@ private result, not an exception: `timeout`, `oversized` (input above the
 declared bound, including a tool result above the shared 64 KiB envelope bound,
 or output above its bound), `resource_limit`, `adapter_error`, `malformed_output`,
 `contract_violation`, `input_modified`, `sandbox_failed` and `sandbox_unavailable`.
-A sandbox that cannot start is a failure, never a pass. Under `required` a failure
+A sandbox that cannot start is a failure, never a pass: a non-zero exit while the
+backend's capability probe is unsupported (for example namespaces denied) is
+`sandbox_unavailable`, not `adapter_error`, and a numeric literal that overflows to
+infinity is `malformed_output`. Under `required` a failure
 stops the call (`presented` is `None`); under `optional-identity` the result falls
 back to the identity envelope, or to `None` with the original kept when the
 original exceeds the shared envelope bound, and records the code. The result

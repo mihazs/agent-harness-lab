@@ -80,8 +80,12 @@ def completed(stdout, **changes):
 
 class FakeBackend:
     """Stands in for SandboxBackend: records what the worker handed over and answers with one scripted result."""
-    def __init__(self, result=None, error=None):
-        self.result, self.error, self.calls = result, error, []
+    def __init__(self, result=None, error=None, capability=dict(status='available', reason=None)):
+        self.result, self.error, self.calls, self.probe, self.probes = result, error, [], capability, 0
+
+    def capability(self):
+        self.probes += 1
+        return self.probe
 
     def run(self, argv, workspace, inputs, role, limits):
         self.calls.append(dict(argv=argv, role=role, limits=limits, workspace=workspace, inputs=dict(inputs),

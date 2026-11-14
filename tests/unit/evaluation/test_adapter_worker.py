@@ -166,6 +166,27 @@ def test_a_run_that_does_not_complete_is_a_failure_with_the_matching_code(status
     assert (result['worker']['status'], result['worker']['network']) == (status, 'none')
 
 
+@pytest.mark.parametrize('reason', [
+    pytest.param('namespace_probe_failed', id='namespaces-denied'),
+    pytest.param('process_limit_exhausted', id='process-limit'),
+    pytest.param('keyring_isolation_unavailable', id='no-keyring-isolation'),
+])
+def test_a_nonzero_exit_on_a_host_whose_sandbox_cannot_start_is_not_blamed_on_the_adapter(reason):
+    backend = FakeBackend(completed('', status='failed', exit_code=1), capability=dict(status='unsupported', reason=reason))
+    result = run(failure_envelope(), backend)
+    assert (result['outcome'], result['code'], result['presented'], result['worker']) == (
+        'failed', 'sandbox_unavailable', None, None)
+    assert backend.probes == 1
+
+
+@pytest.mark.parametrize('policy', [
+    pytest.param('required', id='required'), pytest.param('optional-identity', id='optional-identity')])
+def test_a_nonzero_exit_from_a_working_sandbox_is_an_adapter_error_and_a_completed_run_is_never_probed(policy):
+    failing, finished = FakeBackend(completed('', status='failed', exit_code=1)), scripted(failure_envelope())
+    assert run(failure_envelope(), failing, policy=policy)['code'] == 'adapter_error' and failing.probes == 1
+    assert run(failure_envelope(), finished, policy=policy)['code'] is None and finished.probes == 0
+
+
 @pytest.mark.parametrize(('error', 'code'), [
     pytest.param(TimeoutError('sandbox budget exhausted before launch'), 'timeout', id='budget-exhausted'),
     pytest.param(ValueError('bubblewrap is unavailable'), 'sandbox_unavailable', id='no-bubblewrap'),
@@ -195,6 +216,29 @@ def test_an_answer_is_rejected_when_the_read_only_inputs_changed_during_the_run(
 def test_unparseable_worker_output_is_a_malformed_output_failure(stdout):
     result = run(failure_envelope(), FakeBackend(completed(stdout)))
     assert (result['outcome'], result['code'], result['presented']) == ('failed', 'malformed_output', None)
+
+
+@pytest.mark.parametrize('literal', [
+    pytest.param('1e999', id='positive-overflow'),
+    pytest.param('-1e999', id='negative-overflow'),
+    pytest.param('1E+400', id='uppercase-exponent'),
+    pytest.param('[0, 1e999]', id='inside-a-list'),
+])
+@pytest.mark.parametrize('policy', [
+    pytest.param('required', id='required'), pytest.param('optional-identity', id='optional-identity')])
+def test_a_numeric_literal_that_overflows_to_infinity_is_malformed_output_not_an_exception(literal, policy):
+    envelope = failure_envelope(n='SENTINEL')
+    stdout = json.dumps(answer(envelope), sort_keys=True).replace('"SENTINEL"', literal)
+    result = run(envelope, FakeBackend(completed(stdout)), policy=policy)
+    assert (result['code'], result['outcome']) == ('malformed_output', {'required': 'failed', 'optional-identity': 'fallback'}[policy])
+    assert result['presented'] == (identity(envelope, AUTH, ADAPTER_ID) if policy == 'optional-identity' else None)
+
+
+def test_a_large_but_finite_number_is_still_accepted():
+    envelope = failure_envelope(n='SENTINEL')
+    stdout = json.dumps(answer(envelope), sort_keys=True).replace('"SENTINEL"', '1e300')
+    result = run(envelope, FakeBackend(completed(stdout)))
+    assert result['code'] == 'contract_violation'  # parsed and compared: it differs from the original, not unparseable
 
 
 def test_a_contract_violation_is_a_failure_and_the_altered_answer_is_not_returned():

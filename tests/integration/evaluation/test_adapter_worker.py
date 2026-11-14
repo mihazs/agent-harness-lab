@@ -7,6 +7,7 @@ import pytest
 
 from agent_harness_lab.evaluation.adapter_worker import present
 from agent_harness_lab.evaluation.adapters import identity
+from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from tests.support.adapter_worker import (ADAPTER_ID, IDENTITY, INJECTION, STRUCTURED, adapter_source, authorization,
                                           canary_adapter, failure_envelope, spec_for, success_envelope)
 
@@ -24,8 +25,7 @@ def sandbox_or_skip():
     """Containment that cannot be established is reported as skipped, never counted as a pass."""
     if sys.platform != 'linux' or not os.access('/usr/bin/python3', os.X_OK):
         pytest.skip('requires Linux with /usr/bin/python3')
-    probe = run(IDENTITY, success_envelope(), transform='identity')
-    if probe['code'] == 'sandbox_unavailable':
+    if SandboxBackend().capability()['status'] != 'available':  # also bubblewrap present but namespaces denied
         pytest.skip('requires a usable bubblewrap sandbox')
 
 
@@ -88,6 +88,23 @@ def present(envelope):
 def test_a_misbehaving_adapter_fails_the_call_and_nothing_it_returns_is_delivered(body, limits, codes):
     result = run(present_body(body), failure_envelope(), **limits)
     assert (result['outcome'], result['presented']) == ('failed', None) and result['code'] in codes
+
+
+@pytest.mark.parametrize('policy', [
+    pytest.param('required', id='required'), pytest.param('optional-identity', id='optional-identity')])
+def test_an_adapter_that_writes_an_overflowing_number_to_stdout_and_exits_is_malformed_output(policy):
+    raw = adapter_source('''
+import os, sys
+def present(envelope):
+    answer = dict(original=envelope, adapter_id=ADAPTER_ID, authorization_digest=AUTHORIZATION_DIGEST,
+                  error_metadata=dict(code='unknown', status='error', retry_authorized=False))
+    sys.stdout.write(json.dumps(answer).replace('"SENTINEL"', '1e999'))
+    sys.stdout.flush()
+    os._exit(0)
+''')
+    result = run(raw, failure_envelope(n='SENTINEL'), policy=policy)
+    assert (result['code'], result['worker']['status']) == ('malformed_output', 'completed')
+    assert result['outcome'] == {'required': 'failed', 'optional-identity': 'fallback'}[policy]
 
 
 def test_an_adapter_that_writes_to_stdout_on_import_is_malformed_output():
