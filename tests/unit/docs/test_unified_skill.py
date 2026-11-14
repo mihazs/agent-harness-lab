@@ -130,21 +130,37 @@ def test_entrypoint_links_are_plain_files_an_installed_link_can_open():
     assert targets and [t for t in targets if '://' not in t and not (SKILL / t).is_file()] == []
 
 
-def test_nothing_in_the_repository_points_at_the_retired_skill():
-    skip = {'.git', 'node_modules', 'artifacts', '__pycache__', '.venv', 'dist'}
-    allowed = {'install.py', 'tools/link_skills.py', 'scripts/build_release.py', 'CHANGELOG.md', 'docs/installation.md', 'docs/single-skill-rationale.md',
-               'tests/unit/docs/test_unified_skill.py'}
+ALLOWED_RETIRED = {'install.py', 'tools/link_skills.py', 'scripts/build_release.py', 'CHANGELOG.md', 'docs/installation.md',
+                   'docs/single-skill-rationale.md', 'tests/unit/docs/test_unified_skill.py'}
+# Generated trees (the wheel build copies tools/ into build/lib) are not repository content.
+SKIPPED_FOLDERS = {'.git', 'node_modules', 'artifacts', '__pycache__', '.venv', 'dist', 'build'}
+
+
+def retired_skill_pointers(root):
     found = []
-    for folder, directories, files in os.walk(ROOT):
-        directories[:] = [d for d in directories if d not in skip]
+    for folder, directories, files in os.walk(root):
+        directories[:] = [d for d in directories if d not in SKIPPED_FOLDERS and not d.endswith('.egg-info')]
         for name in files:
             path = Path(folder) / name
-            relative = path.relative_to(ROOT).as_posix()
-            if relative in allowed or relative.startswith('.changeset/') or path.suffix not in ('.py', '.md', '.toml', '.yml', '.yaml', '.json'):
+            relative = path.relative_to(root).as_posix()
+            if relative in ALLOWED_RETIRED or relative.startswith('.changeset/') or path.suffix not in ('.py', '.md', '.toml', '.yml', '.yaml', '.json'):
                 continue
             if RETIRED in path.read_text(errors='ignore'):
                 found.append(relative)
-    assert found == []
+    return found
+
+
+def test_nothing_in_the_repository_points_at_the_retired_skill():
+    assert retired_skill_pointers(ROOT) == []
+
+
+def test_pointer_scan_ignores_generated_build_copies_but_finds_real_pointers(tmp_path):
+    """Regression, fixed in the unified skill: the offline-packaging job builds the wheel first, and the copy of the
+    allowed tools/link_skills.py under build/lib failed the scan."""
+    for relative in ('build/lib/tools/link_skills.py', 'pkg.egg-info/notes.md', 'docs/other.md'):
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(f'links {RETIRED}\n')
+    assert retired_skill_pointers(tmp_path) == ['docs/other.md']
 
 
 # Scope mapping: the user's words choose the `--scope` value. The cues are the ones the skill text lists; a prompt that
