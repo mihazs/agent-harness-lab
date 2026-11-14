@@ -794,6 +794,12 @@ def _evaluate(args):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
         record['skill_availability'] = availability
+        application_modules()
+        from agent_harness_lab.evaluation.skills import ambient_skill_copies, skill_shadowing
+        from agent_harness_lab.evaluation.trial_surfaces import ambient_skill_roots
+        roots = ambient_skill_roots(agent, environment) if environment is not None else None
+        record['skill_shadowing'] = skill_shadowing(availability, ambient_skill_copies(
+            roots, [row['name'] for row in availability]) if roots else None)
         record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
         remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
                      else budget - (time.monotonic() - started))
