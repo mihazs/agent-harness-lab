@@ -73,7 +73,7 @@ class LocalizationTests(unittest.TestCase):
         self.assertEqual(entry['localization'], 'bounded_candidates')
         self.assertEqual([(c['event_id'], c['basis'], c['relation']) for c in entry['candidates']],
                          [('e0', 'declared_mutation', 'upstream'), ('e1', 'call_result_link', 'upstream'),
-                          ('e3', 'call_result_link', 'upstream')])
+                          ('e3', 'call_result_link', 'unordered')])
         self.assertEqual(ids(entry['earliest_visible']), ['e2'])
         self.assertIn('undeclared_external_state_change', entry['competing_causes'])
 
@@ -92,6 +92,49 @@ class LocalizationTests(unittest.TestCase):
         unordered = {k: v for k, v in later.items() if k != 'capture_order'}
         entry = only(locate(['authorization_scope'], [row(0, tool_name='Deploy'), unordered]))
         self.assertEqual(entry['candidates'], [])
+
+
+    def test_a_symptoms_own_producing_call_is_not_upstream_cause_evidence(self):
+        reads = [row(0, tool_name='Read', call_id='k1', input_fingerprint='a' * 16, tool_effect='read_only'),
+                 row(1, 'tool_result', call_id='k1', state_revision='r1', result_fingerprint='x' * 16, execution_status='returned'),
+                 row(2, tool_name='Read', call_id='k2', input_fingerprint='a' * 16, tool_effect='read_only'),
+                 row(3, 'tool_result', call_id='k2', state_revision='r1', result_fingerprint='y' * 16, execution_status='returned')]
+        entry = only(locate(['state_consistency'], reads))
+        self.assertEqual((entry['status'], entry['localization'], entry['upstream']), ('violated', 'symptom_only', 'not_established'))
+        self.assertIn('call_result_link', [c['basis'] for c in entry['candidates']])
+        self.assertIn('upstream_cause_not_captured', entry['competing_causes'])
+
+    def test_a_call_result_link_takes_its_direction_from_the_declared_order_only(self):
+        call = row(1, tool_name='Edit', call_id='k0', contract_violation=True)
+        relation = lambda rows: [(c['basis'], c['relation']) for c in only(locate(['tool_contract'], rows))['candidates']]
+        self.assertEqual(relation([call, row(2, 'tool_result', call_id='k0')]), [('call_result_link', 'downstream')])
+        self.assertEqual(relation([call, row(0, 'tool_result', call_id='k0')]), [('call_result_link', 'upstream')])
+        undeclared = [{k: v for k, v in r.items() if k != 'capture_order'} for r in (call, row(2, 'tool_result', call_id='k0'))]
+        self.assertEqual(relation(undeclared), [('call_result_link', 'unordered')])
+
+    def test_only_a_verified_later_outcome_is_a_downstream_candidate(self):
+        deploy = row(0, tool_name='Deploy')
+        for claimed in ('failure', 'success'):
+            self_claimed = row(1, 'grade', outcome=claimed, outcome_provenance='unknown')
+            self.assertEqual(only(locate(['authorization_scope'], [deploy, self_claimed]))['candidates'], [], claimed)
+        broken = row(1, 'grade', **dict(GRADED, grader_status='broken'))
+        self.assertEqual(only(locate(['authorization_scope'], [deploy, broken]))['candidates'], [])
+        for outcome in ('failure', 'success'):
+            graded = row(1, 'grade', **dict(GRADED, outcome=outcome))
+            entry = only(locate(['authorization_scope'], [deploy, graded]))
+            self.assertEqual([(c['basis'], c['relation']) for c in entry['candidates']], [('declared_later_outcome', 'downstream')])
+
+    def test_a_capped_symptom_sample_claims_neither_a_unique_earliest_nor_a_definite_relation(self):
+        edits = [dict(row(i + 1, tool_name='Edit'), event_id=f'a{i:02d}') for i in range(constraints.MAX_REFS + 8)]
+        earliest = dict(row(0, tool_name='Edit'), event_id='zz')  # sorts after every sampled id, so it is the omitted symptom
+        rows = edits + [earliest, row(100, tool_name='Read'), row(101, 'grade', **GRADED)]
+        entry = only(locate(['temporal_prerequisite'], rows))
+        self.assertEqual((entry['status'], entry['evidence_omitted']), ('violated', 9))
+        self.assertNotIn('zz', ids(entry['evidence']))
+        self.assertFalse(entry['earliest_is_unique'])
+        self.assertEqual([(c['basis'], c['relation']) for c in entry['candidates']], [('required_event', 'unordered')])
+        self.assertEqual(entry['upstream'], 'not_established')
+        self.assertIn('upstream_cause_not_captured', entry['competing_causes'])
 
 
 class NegativeControlTests(unittest.TestCase):

@@ -158,12 +158,18 @@ none. For a `violated` result it names the symptom events, the earliest visible
 ones (several when the capture declares no order between them; `earliest_is_unique`
 is true only when the rest are declared after one), and a bounded candidate set.
 A candidate is an event that carries an enumerated `basis` and a `relation` to every
-symptom: `call_result_link` (the call is upstream of its result and the result is
-downstream of its call), `declared_mutation` (state consistency), `required_event`
-(a prerequisite call, which is `downstream` when it follows its dependent) and
-`declared_later_outcome` (a later graded outcome, the downstream failure). A relation
+symptom: `call_result_link` (the call and the result of a symptom share a call id; the
+link names the pair, the declared order gives the direction, and a symptom's own
+producing call never counts as upstream cause evidence), `declared_mutation` (state
+consistency), `required_event` (a prerequisite call, which is `downstream` when it
+follows its dependent) and `declared_later_outcome` (a later outcome with a valid
+executable grader or a reviewed annotation, whether it succeeded or failed; a
+self-claimed or unknown-provenance outcome is never listed). A relation
 is `upstream` or `downstream` only when the capture declared that order on every
-symptom; otherwise it is `unordered`. No total order is built from timestamps and no
+symptom; otherwise it is `unordered`. When the constraint capped its evidence
+(`evidence_omitted` above zero) the listed symptoms are a sample, so
+`earliest_is_unique` is false, every relation is `unordered` and no later outcome is
+listed: an order over the omitted violations was not checked. No total order is built from timestamps and no
 transitive order is inferred. When nothing upstream was captured (`upstream:
 not_established`, localization `symptom_only`) the report says so and adds
 `upstream_cause_not_captured` to the competing causes; a prerequisite that never

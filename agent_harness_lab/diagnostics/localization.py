@@ -10,6 +10,7 @@ import hashlib
 
 from agent_harness_lab.diagnostics.constraints import MAX_REFS, _before, _digest, _events, report as constraint_report, validate
 from agent_harness_lab.diagnostics.mechanisms import MechanismRecord
+from agent_harness_lab.telemetry.schema import verified_outcome
 
 PROFILE = 'constraint-localization-v1'
 LOCALIZATIONS = ('bounded_candidates', 'symptom_only', 'unresolved', 'not_applicable')
@@ -34,26 +35,29 @@ def _ref(row):
     return dict(case_id=row['case_id'], event_id=row['event_id'])
 
 
-def _relation(row, symptoms):
-    """Where an event sits against every symptom: only a declared order on all of them counts."""
+def _relation(row, symptoms, sampled=False):
+    """Where an event sits against every symptom: only a declared order on all of them counts.
+
+    A ``sampled`` list (the constraint capped its evidence) is not every violation, so no order is claimed over it.
+    """
+    if sampled:
+        return 'unordered'
     if all(_before(row, s) is True for s in symptoms):
         return 'upstream'
     return 'downstream' if all(_before(s, row) is True for s in symptoms) else 'unordered'
 
 
-def _candidates(kind, params, rows, symptoms):
+def _candidates(kind, params, rows, symptoms, sampled):
     found, ids = [], {s['event_id'] for s in symptoms}
-    def add(row, basis, relation=None):
-        found.append(dict(event_id=row['event_id'], basis=basis, relation=relation or _relation(row, symptoms)))
+    def add(row, basis):
+        found.append(dict(event_id=row['event_id'], basis=basis, relation=_relation(row, symptoms, sampled)))
     for symptom in symptoms:
         for row in rows:
             if row['event_id'] in ids or not symptom.get('call_id') or row.get('call_id') != symptom['call_id']:
                 continue
-            # A call produces its result; two results or two calls sharing an id say nothing about direction.
-            if (row['activity'], symptom['activity']) == ('tool_call', 'tool_result'):
-                add(row, 'call_result_link', 'upstream')
-            elif (row['activity'], symptom['activity']) == ('tool_result', 'tool_call'):
-                add(row, 'call_result_link', 'downstream')
+            # Linkage names the pair; direction still needs the declared order. Two results or two calls sharing an id are no link.
+            if {row['activity'], symptom['activity']} == {'tool_call', 'tool_result'}:
+                add(row, 'call_result_link')
     for row in rows:
         if row['event_id'] in ids:
             continue
@@ -61,7 +65,7 @@ def _candidates(kind, params, rows, symptoms):
             add(row, 'declared_mutation')
         if kind == 'temporal_prerequisite' and row['activity'] == 'tool_call' and row.get('tool_name') == params['requires']:
             add(row, 'required_event')
-        if row.get('outcome') in ('success', 'failure') and _relation(row, symptoms) == 'downstream':
+        if verified_outcome(row) is not None and _relation(row, symptoms, sampled) == 'downstream':
             add(row, 'declared_later_outcome')
     unique = {(c['event_id'], c['basis']): c for c in found}
     ordered = [unique[key] for key in sorted(unique)]
@@ -103,13 +107,15 @@ def _locate(result, definition, rows):
     by_id = {r['event_id']: r for r in rows}
     symptoms = [by_id[e['event_id']] for e in result['evidence']]
     earliest = [s for s in symptoms if not any(_before(o, s) is True for o in symptoms)]
-    candidates, absent = _candidates(result['kind'], definition['params'], rows, symptoms)
-    upstream = bool(absent) or any(c['relation'] == 'upstream' for c in candidates)
+    sampled = result['evidence_omitted'] > 0
+    candidates, absent = _candidates(result['kind'], definition['params'], rows, symptoms, sampled)
+    # A symptom's own producing call is its context, not captured cause evidence, so a link never counts as upstream.
+    upstream = bool(absent) or any(c['relation'] == 'upstream' and c['basis'] != 'call_result_link' for c in candidates)
     causes, intervention = KINDS[result['kind']]
     entry.update(
         localization='bounded_candidates' if upstream else 'symptom_only',
         earliest_visible=[_ref(s) for s in earliest],
-        earliest_is_unique=len(earliest) == 1 and all(_before(earliest[0], s) is True for s in symptoms if s is not earliest[0]),
+        earliest_is_unique=not sampled and len(earliest) == 1 and all(_before(earliest[0], s) is True for s in symptoms if s is not earliest[0]),
         upstream='candidates_present' if upstream else 'not_established', absent_upstream=absent,
         candidates=candidates[:MAX_REFS], candidates_omitted=max(0, len(candidates) - MAX_REFS),
         competing_causes=list(causes) + ([] if upstream else ['upstream_cause_not_captured']), intervention=intervention,
