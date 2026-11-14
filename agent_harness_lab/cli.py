@@ -166,6 +166,9 @@ def main(argv=None):
     if argv and argv[0] == 'annotation-plan':
         from agent_harness_lab.diagnostics.annotation_plan import main as plan_main
         return plan_main(argv[1:])
+    if argv and argv[0] == 'instruction-adherence':
+        from agent_harness_lab.diagnostics.instruction_adherence import main as adherence_main
+        return adherence_main(argv[1:])
     if argv and argv[0] in ('doctor', 'init'):
         from agent_harness_lab.onboarding import main as onboarding_main
         return onboarding_main(argv)
@@ -221,6 +224,7 @@ def main(argv=None):
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
         'apply':'Review one run\'s saved change plan; write the project only for an exactly authorized plan the policy permits',
         'annotation-plan':'Report additional annotation needs from a frozen per-class precision/recall interval plan',
+        'instruction-adherence':'Report where captured sessions ignored harness rules or user-prompt instructions; offline, read-only, redacted by default',
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',

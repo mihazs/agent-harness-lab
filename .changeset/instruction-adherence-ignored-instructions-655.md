@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `ahl instruction-adherence` (part of #655): from explicit captured sessions and harness instruction files it reports where an agent ignored a harness rule or a user-prompt instruction. Checkable sentences (a backticked command or tool, or a path) become forbidden, required, ordered, approval-gated, scope or stop rules judged three-valued against tool calls; a rule that was never loaded is reported as `not_loaded`, supersession and clarification are no findings, conflicting instructions are reported as a `conflict`, and unknown capture, loading or lineage never becomes a violation, a pass or an independent root. The report is deterministic, redacted by default and descriptive only, with precision, recall and abstention intervals on a fixed synthetic sample; findings below the calibrated threshold are abstentions. Not yet wired into `ahl improve`, and no native session adapter or model judge.
