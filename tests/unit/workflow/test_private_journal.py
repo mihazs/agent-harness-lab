@@ -1,4 +1,5 @@
 """Optional unlimited journal sizes preserve strict storage and default policies."""
+from datetime import datetime,timedelta
 import hashlib
 import json
 
@@ -56,6 +57,15 @@ def test_unlimited_metadata_roundtrips_large_event_without_expanding_default(roo
     with pytest.raises(ValueError):limited.history(case)
     with pytest.raises(ValueError):limited.append(case,events,'observed','observed',payload)
     assert len(list((case/'events').iterdir()))==1
+
+
+def test_an_explicit_recorded_time_is_stored_as_given_and_the_default_stays_a_utc_timestamp(root):
+    store=journal(root);case=make_case(store);events=[]
+    store.append(case,events,'observed','observed',{},recorded_at='12.500000')
+    store.append(case,events,'observed','observed',{})
+    assert events[0][0]['recorded_at']=='12.500000'
+    assert datetime.fromisoformat(events[1][0]['recorded_at']).utcoffset()==timedelta(0)
+    assert [event['recorded_at'] for event,_ in store.history(case)]==[events[0][0]['recorded_at'],events[1][0]['recorded_at']]
 
 
 def test_default_operation_count_remains_limited_and_optin_allows_next_event(root):
