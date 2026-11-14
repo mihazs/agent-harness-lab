@@ -1,7 +1,7 @@
 """Private local monitoring join over synthetic, unauthenticated review evidence."""
 import pytest
 
-from agent_harness_lab.diagnostics import audit_corpus, audit_fixed, audit_sampling as audit, audit_stratified, triage_policy
+from agent_harness_lab.diagnostics import audit_corpus, audit_fixed, audit_sampling as audit, audit_stratified, audit_summary, triage_policy
 from agent_harness_lab.diagnostics.corpus import CorpusStore
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.monitor import triage_audit_observation
@@ -34,6 +34,8 @@ def test_triage_audit_monitor_replays_local_review_without_authority(tmp_path,de
     binding=audit_corpus.prepare(receipt,value,store.root,mapping,rubric,**options)
     result=triage_audit_observation(triage,receipt,value,store.root,binding,rubric,**options)
     assert result['audit_report']['status']=='inconclusive'
+    waiting=audit_summary.summarize(result)
+    assert waiting['status']=='inconclusive' and waiting['estimates'] is None and (waiting['reviewed'],waiting['unreviewed'])==(0,1) and audit_summary.check(waiting,triage) is waiting
     assert result['identity_binding']=='caller_declared_identifiers_only' and result['source_execution']=='unverified'
     assert result['policy_application']=='not_observed' and result['alert_decisions']=='caller_declared_unverified'
     assert result['action']=='observe_only' and result['promotion_authority']=='none'
@@ -69,6 +71,11 @@ def test_triage_audit_monitor_replays_local_review_without_authority(tmp_path,de
     observed=triage_audit_observation(triage,receipt,value,store.root,binding,rubric,include_composition=True,**options)
     view=observed['audit_report'];composition=view['review_composition']
     assert view['audit_report']==result['audit_report']
+    summary=audit_summary.summarize(result)
+    assert (summary['reviewed'],summary['unreviewed'],summary['review_status'] is None)==(1,0,design!='grid')
+    assert summary['status']=='estimated' and summary['policy_sha256']==policy_sha and summary['model_sha256']==triage['model_sha256']
+    assert summary['audit_receipt_sha256']==receipt['receipt_sha256'] and audit_summary.check(summary,triage) is summary
+    assert audit_summary.summarize(observed)==summary and not public_export_allowed([summary])
     assert composition['observed_missed_by_class']=={'tool_misuse':1}
     assert composition['interpretation']=='unweighted_review_composition_not_population_estimate'
     assert view['reviewer_labels']=='unauthenticated' and not public_export_allowed([observed])
