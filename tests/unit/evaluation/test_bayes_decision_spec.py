@@ -80,7 +80,7 @@ def test_caller_mutating_its_input_cannot_change_the_frozen_spec():
     declared = copy.deepcopy(RESOLVED)
     value = spec(declared)
     before = value.digest
-    declared['p_cut'] = .99
+    declared['p_cut'] = .9
     declared['prior']['concentration'] = 9
     assert value.digest == before and value.bayes_decision == RESOLVED
 

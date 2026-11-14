@@ -110,13 +110,13 @@ def accepted(report):
     return report['verdicts']['better']['wilson_95'][1] <= PROTOCOL['bound']
 
 
-def run_cell(split, index, simulations=None):
+def run_cell(split, index, simulations=None, bayes=None):
     """One protocol cell on one split's seed; ``simulations`` shortens it to a prefix of the same simulation stream."""
     cell = PROTOCOL['cells'][index]
     declared = dict(schema=power.MODEL_SCHEMA, **PROTOCOL['outcome'], candidate_effect=cell['candidate_effect'],
                     repeat_correlation=cell['repeat_correlation'])
     return simulate(declared, roots=cell['roots'], repeats=cell['repeats'], simulations=simulations or PROTOCOL['simulations'],
-                    seed=cell_seed(split, index), cluster=cell['cluster'])
+                    seed=cell_seed(split, index), cluster=cell['cluster'], bayes=bayes)
 
 
 def calibrate(split):
