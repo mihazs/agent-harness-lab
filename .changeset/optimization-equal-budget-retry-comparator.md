@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add an equal-budget retry comparator to `compare_strategies` (part of #12). With `retry_comparator=True`, each strategy that selected a finalist also gets the unchanged baseline re-evaluated once per non-final stage unit it charged, under its own `Budget(ceiling, reserve)` with each retry charged before dispatch and saved so a repeat reports it without re-evaluating and an unfinished run stays `interrupted` instead of being redispatched. The count is fixed before the first retry and every retry runs, so retrying only failures or stopping early cannot bias it. The row reports every retry plus `exceeds_best_retry`: `True` only when the selected candidate dominates every feasible retry, `False` when one ties or beats it and `None` when retries are incomplete or any metric is missing, never a guess. The estimand is labelled as selection-inflated development observations, and `advantage_claim` stays `False`. The flag is off by default, leaves the default report unchanged and is refused before any state exists on the guarded controller route or when it is not a boolean. See `docs/optimization-strategies.md`.
