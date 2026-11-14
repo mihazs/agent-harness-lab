@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add the opt-in `api/hindsight-rest/v1` source, an explicit read-only listing of one selected Hindsight v1.1.0 bank over HTTPS. It requests only `GET /version` (the server must report the pinned release before any bank is read) and the bank's `memories/list` for the live and the curated-out state, never `retain`, `recall`, `reflect`, an export, a per-memory read or the bank listing, so no other bank is discovered. Rows become the same hash-only `extracted_fact`, `consolidated_observation` and `invalidated_fact` claims as the offline archive, with recorded, mentioned, validity and invalidation times kept apart and the creation time left unknown because the pinned list view has none. A denied, rate-limited, truncated, moving or unsupported-release read is blocked or incomplete coverage that never checkpoints, scores and counts never become outcomes, and the profile is not public-exportable. The route eligibility rests on the pinned upstream source, not a live server, so the profile stays `unverified`. The shared validity-window judgement is now one helper used by both Hindsight readers, with unchanged offline results.
