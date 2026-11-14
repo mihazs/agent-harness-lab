@@ -202,6 +202,15 @@ def test_weights_move_the_summary_and_must_name_known_objectives_with_positive_f
             of(.05, weights=bad)
 
 
+def test_weights_too_large_to_add_do_not_overflow_the_summary():
+    # regression: two weights of 1e308 summed to infinity, every exponent became 0 and the summary read 1 whatever the gains
+    huge = {'quality': 1e308, 'resource.tokens': 1e308}
+    out = of(.05, tokens=(100, 200), pinned=True, weights=huge)['desirability']  # quality .75, cost gain -.1 -> 0
+    assert out['value'] == 0 and out['weights'] == huge
+    equal = of(.05, tokens=(150, 50), pinned=True, weights=huge)['desirability']['value']
+    assert equal == pytest.approx(of(.05, tokens=(150, 50), pinned=True)['desirability']['value'])
+
+
 def test_unknown_objectives_give_bounds_for_the_summary_and_no_point():
     out = of(.4, tokens=(100, None), pinned=True)['desirability']
     assert out['value'] is None and (out['low'], out['high']) == (0, 1)  # the unknown cost may be anywhere on the ramp

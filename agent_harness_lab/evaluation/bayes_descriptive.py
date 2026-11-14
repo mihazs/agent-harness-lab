@@ -96,8 +96,10 @@ def _weights(weights, names):
 def _desirability(entries, ranges, epsilon, weights):
     """Weighted geometric mean of per-objective ramps (0 at a loss of epsilon, 1 at a gain of epsilon); monotone in each gain."""
     weights = _weights(weights, [entry['name'] for entry in entries])
-    total, ramp = sum(weights[entry['name']] for entry in entries), lambda gain: min(1, max(0, (gain + epsilon) / (2 * epsilon)))
-    ends = [math.prod(ramp(r[end]) ** (weights[e['name']] / total) for e, r in zip(entries, ranges)) for end in (0, 1)]
+    top = max(weights.values())  # shares are taken against the largest weight so that huge weights cannot sum to infinity
+    shares = [weights[entry['name']] / top for entry in entries]
+    ramp = lambda gain: min(1, max(0, (gain + epsilon) / (2 * epsilon)))
+    ends = [math.prod(ramp(r[end]) ** (share / sum(shares)) for share, r in zip(shares, ranges)) for end in (0, 1)]
     return dict(value=ends[0] if ends[0] == ends[1] else None, low=ends[0], high=ends[1], weights=weights, function=FUNCTION,
                 combination='weighted_geometric_mean')
 
