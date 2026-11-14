@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; step localization and competing hypotheses over constraint results; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only | A live run proving the bridge hook executes in the supported runtime, an isolated non-identity transform, and independently graded adapter effectiveness; no runtime flags are invented |
@@ -123,6 +123,28 @@ reopened (`prediction_contradicted`) and cannot complete coverage; a prediction
 naming an unrecorded mechanism is flagged `mechanism_not_recorded`. Without a
 table the report says `no_predictions_reconciled`. The table is bookkeeping, not
 diagnostic accuracy or certification.
+
+`diagnostics/constraints.py` evaluates reviewed `constraint-definition-v1` records
+over the normalized events of one case: `tool_contract`, `temporal_prerequisite`,
+`authorization_scope`, `state_consistency` and `outcome_integrity`. A definition
+needs a trusted origin (`reviewed`, `project_contract` or `controller`; a
+model-written constraint has none) and a scope (`any` or the evidence scope the
+caller passes). `evaluate` and `report` return `constraint-evaluation-v1` and
+`constraint-report-v1` rows with status `satisfied`, `violated` or `unknown`, an
+enumerated reason, the required and missing inputs, and bounded event references.
+A violation the events show holds under any capture; `satisfied` needs a capture
+the controller declared `complete` (a row reporting `capture_complete: false`
+lowers it) and at least one exercised event, except that no call to a forbidden
+tool is itself the claim. Missing order, fields, names or a final outcome give
+`unknown`; order is read only from a capture ordinal (or a declared subordinal
+inside one segment), never from timestamps, and a tie or a cross-file pair stays
+unordered. `outcome_integrity` is violated by a success or failure label that lacks a valid
+grader or a reviewer's reference. A result is an observation: it names no cause, component or route,
+carries no model-written text, never validates a mechanism and is not publishable.
+The earliest visible violation is not the root cause; localization, competing
+hypotheses and routing remain separate steps, and a reviewed constraint is
+evidence a `MechanismRecord` may cite, not a replacement for its boundary,
+competing explanation and falsifier.
 
 `run_queue` treats a record's component as its reviewed route and checks it
 through `route()` with the same held dispositions as `dispositions`. A

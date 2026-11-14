@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `agent_harness_lab.diagnostics.constraints`, versioned deterministic constraint definitions (`constraint-definition-v1`) evaluated over one case's normalized events into private `constraint-evaluation-v1` and `constraint-report-v1` observations (part of #10). Five reviewed kinds are supported: tool contract, temporal prerequisite, authorization scope, state consistency and outcome integrity. Each result is `satisfied`, `violated` or `unknown` with an enumerated reason, required and missing inputs and bounded event references. A violation holds under any capture, `satisfied` needs a declared-complete capture, and missing order, fields, tool names or a final outcome stay `unknown`; order is never inferred from timestamps. A result names no cause, component or route, so the earliest visible violation is never reported as the root cause.
