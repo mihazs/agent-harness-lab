@@ -1,4 +1,5 @@
 """Strategy registry and built-ins through the shared search contracts, using fake proposers."""
+# fixed-in: e940cc1143 -k smaller_budget_than_the_saved_spend
 import json
 
 import pytest
@@ -112,6 +113,14 @@ def test_budget_ceiling_holds_and_resume_does_not_repeat_charged_work(tmp_path):
     assert result['status'] == 'budget_exhausted' and budget.spent <= 2
     again = run('reflective-gepa-inspired', tmp_path, proposer, evaluate, Budget(3, 1))
     assert again['resumed_without_execution'] and calls == ['base']
+
+
+def test_resume_under_a_smaller_budget_than_the_saved_spend_is_refused(tmp_path):
+    proposer = lambda r: candidate(f'p{r["index"]}', f'text {r["index"]}')
+    first = run('reflective-gepa-inspired', tmp_path, proposer, budget=Budget(12, 1))
+    assert sum(e['amount'] for e in first['budget_events']) > 4
+    with pytest.raises(ValueError, match='ceiling'):
+        run('reflective-gepa-inspired', tmp_path, proposer, budget=Budget(4, 1))
 
 
 def test_changed_configuration_is_a_new_run_identity(tmp_path):

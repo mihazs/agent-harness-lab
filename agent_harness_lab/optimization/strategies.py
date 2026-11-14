@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+from .budget import Budget
 from .search import CandidateRecord, search
 
 CONFIG_KEYS = {'seed', 'variants'}
@@ -107,5 +108,61 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
 
     result = search(path, baseline, propose, evaluate, certify, budget, allowed_files, enabled=True,
                     variants=config['variants'])
+    if result.get('resumed_without_execution'):  # A saved state ignores the new budget, so check its spend against it.
+        events = result.get('budget_events')
+        if not isinstance(events, list):
+            raise ValueError('saved search state has no recorded budget')
+        spent = sum(event['amount'] for event in events)
+        non_final = sum(event['amount'] for event in events if not event['final'])
+        if spent > budget.ceiling or non_final > budget.ceiling - budget.reserve:
+            raise ValueError(f'saved search state spent {spent} ({non_final} before the final reserve), '
+                             f'more than the requested ceiling {budget.ceiling} and reserve {budget.reserve} allow')
     return dict(result, strategy=dict(id=spec.strategy_id, version=version, config=config, identity=identity,
                                       state_path=str(path)))
+
+
+DEFAULT_COMPARISON = (('no-op', 1), ('single-revision', 1), ('reflective-gepa-inspired', 1))
+# A comparison never reaches final evaluation: several finalists must not reuse one untouched set.
+_DEFERRED = dict(status='deferred_to_protected_evaluation')
+
+
+def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve, allowed_files, evidence,
+                       strategies=DEFAULT_COMPARISON, seed=0):
+    """Run strategies under one matched stage ceiling and report every executed attempt, not only winners.
+
+    Each strategy gets the same baseline, proposer, evaluator, development evidence, authorized files and a
+    fresh `Budget(ceiling, reserve)`. The report lists actual stage charges, every evaluated candidate, every
+    retained rejection and the finalists left for a protected evaluation whose access and multiplicity
+    handling are declared elsewhere. Charges are stage units on the callback route: tokens and currency are
+    unmeasured, so `measured_usage` stays None. Development points are heuristics, never an advantage claim.
+    """
+    strategies = list(strategies)
+    if not strategies or len(set(strategies)) != len(strategies) or any(
+            type(key) is not tuple or len(key) != 2 for key in strategies):
+        raise ValueError('comparison needs distinct (strategy, version) pairs')
+    specs = [get(*key) for key in strategies]
+    for spec in specs:
+        spec.config(seed=seed)
+    evidence = _development_only(evidence)
+    budgets = [Budget(ceiling, reserve) for _ in specs]  # Validated together before any state exists.
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    rows, finalists = [], []
+    for spec, budget in zip(specs, budgets):
+        result = run_strategy(spec.strategy_id, spec.version, directory/f'{spec.strategy_id}.json', baseline, proposer,
+                              evaluate, lambda candidate: _DEFERRED, budget, allowed_files, evidence, seed=seed)
+        by_kind = {}
+        for event in result.get('budget_events', []):
+            by_kind[event['kind']] = by_kind.get(event['kind'], 0) + event['amount']
+        deferred = result.get('certification') == _DEFERRED
+        if deferred:
+            finalists.append(dict(strategy=spec.strategy_id, candidate_id=result['finalist']))
+        rows.append(dict(strategy=result['strategy'], disposition='finalist_deferred_to_protected_evaluation' if deferred else result['status'],
+            selected=result['finalist'] if deferred else None,
+            charges=dict(ceiling=ceiling, reserve=reserve, spent=sum(by_kind.values()), by_kind=by_kind),
+            measured_usage=None, resumed_without_execution=result.get('resumed_without_execution', False),
+            attempts=[dict(candidate_id=c['candidate_id'], digest=c['digest'], safe=c['safe'], metrics=c['metrics'])
+                      for c in result.get('candidates', [])],
+            rejections=result.get('rejections', [])))
+    return dict(matched=dict(ceiling=ceiling, reserve=reserve, seed=seed), strategies=rows, finalists=finalists,
+                advantage_claim=False, evidence_source='unverified_callback')
