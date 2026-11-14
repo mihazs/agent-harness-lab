@@ -1167,3 +1167,10 @@ tasks:
     desc: Run the same measurements and exit 1 when a result exceeds tools/perf_budgets.json (extra flags after --)
     cmds:
       - '{{.PYTHON | shellQuote}} tools/perf_bench.py --check tools/perf_budgets.json {{.CLI_ARGS}}'
+  # Bayesian decision calibration (issue #832). Opt-in and heavy (about ten minutes of one core): never part of `task test`.
+  calibrate:bayes-decision:
+    desc: Run one split of the seeded Bayesian decision calibration (SPLIT=tuning or held_out) and print the JSON report; see docs/bayesian-decision-score.md
+    requires:
+      vars: [SPLIT]
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m agent_harness_lab.evaluation.bayes_calibration --split {{.SPLIT | shellQuote}}'

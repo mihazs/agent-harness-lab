@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
 from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
+from .bayes_analysis import attach
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
@@ -553,6 +554,7 @@ class HistoryStore(PrivateJournal):
             membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
         effects = behavior.report(spec,result['trials'],inputs['behavior_policies'],
             sampling=record(case/'sequential/binding.json',1024*1024)[0] if spec.sequential is not None else None) if result is not None and inputs.get('behavior_policies') else None
+        records = similarity = similarity_path = None
         if validity != 'current':
             value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
         elif spec.sequential is not None:value=dict(result['sequential_analysis'])
@@ -566,7 +568,8 @@ class HistoryStore(PrivateJournal):
             except (ValueError, TypeError, KeyError, OSError, RecursionError):
                 value = dict(status='blocked', reason='root_similarity_binding_missing_or_invalid')
             else:
-                value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership,
+                records = self.trials(inputs,spec,result)
+                value = analyze(spec,records,cohort_binding=membership,
                     root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
         retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
         if validity=='current' and effects is not None:
@@ -585,7 +588,7 @@ class HistoryStore(PrivateJournal):
         if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
-        return result
+        return attach(spec,records,result,root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
 
     def decision(self, run_id):
         """Persist private recomputed analysis evidence, never adoption authority."""

@@ -107,6 +107,7 @@ def main(argv):
                 result = validate_regression(args.proposal)
                 code = 0
         elif args.command == 'experiment':
+            from .bayes_analysis import attach
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
             from agent_harness_lab.promotion.policy import decide
@@ -161,6 +162,7 @@ def main(argv):
                     result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank, include_reliability=True)
                 result['oracle_validity'] = 'unverified'
                 result['promotion'] = asdict(decide(spec, result))
+                result = attach(spec, records, result, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
                 code = 3
         else:
             from .sandbox import SandboxBackend
