@@ -14,6 +14,7 @@ import pytest
 
 from agent_harness_lab import scope as scopes
 from agent_harness_lab.cli import main
+from agent_harness_lab.sources import frontmatter
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILL = ROOT / 'skills/harness-self-improvement'
@@ -75,6 +76,14 @@ def description():
     return re.search(r'^description: (.+)$', text, re.M).group(1)
 
 
+def test_the_frontmatter_parses_with_the_readers_the_hosts_and_the_audit_use():
+    """Regression, fixed in the unified skill: an unquoted ': ' inside the merged description made the header invalid YAML
+    (the static audit reported parse_failed), so a host would have dropped the skill."""
+    fields = frontmatter.texts((SKILL / 'SKILL.md').read_bytes())
+    assert sorted(fields) == ['description', 'name'] and fields['name'] == 'harness-self-improvement'
+    assert fields['description'] == description()
+
+
 def test_exactly_one_skill_directory_remains():
     assert sorted(p.name for p in (ROOT / 'skills').iterdir() if p.is_dir()) == ['harness-self-improvement']
     assert re.search(r'^name: harness-self-improvement$', (SKILL / 'SKILL.md').read_text(), re.M)
@@ -112,6 +121,13 @@ def test_relative_links_in_the_skill_resolve():
             if '://' not in target and not (path.parent / target).resolve().exists():
                 broken.append(f'{path.relative_to(ROOT)} -> {target}')
     assert broken == []
+
+
+def test_entrypoint_links_are_plain_files_an_installed_link_can_open():
+    """Regression, fixed in the unified skill: a '#fragment' link in SKILL.md is not a file under the installed skill
+    link, which the installed-skill contract (test_skill_invocation) opens one by one."""
+    targets = re.findall(r'\]\(([^)\s]+)\)', (SKILL / 'SKILL.md').read_text())
+    assert targets and [t for t in targets if '://' not in t and not (SKILL / t).is_file()] == []
 
 
 def test_nothing_in_the_repository_points_at_the_retired_skill():

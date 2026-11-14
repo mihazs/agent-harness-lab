@@ -1,6 +1,6 @@
 ---
 name: harness-self-improvement
-description: Evaluate and improve agent instructions and skills when the user explicitly asks to improve, fix, or maintain a harness: build and run baseline/candidate evaluations, diagnose evaluation failures, and measure supported improvements. Handles natural-language requests and named invocation. Use for harness maintenance, not ordinary coding or application testing; never runs unsolicited.
+description: Evaluate and improve agent instructions and skills when the user explicitly asks to improve, fix, or maintain a harness. Also build and run baseline/candidate evaluations for agent instructions and skills, diagnose evaluation failures, and measure supported improvements. Handles natural-language requests and named invocation. Use for harness maintenance, not ordinary coding or application testing; never runs unsolicited.
 ---
 
 # Harness self-improvement
@@ -19,26 +19,26 @@ Choose the mode before following the manual steps below. Read
   project. The parent owns execution and application. The presence of
   `AHL_MANAGED_PREPARATION` denies recursive entry; it grants no authority.
 - For an explicit standalone invocation, map the request to a scope (below) and run
-  `ahl skills invoke [PROJECT] [--scope SCOPE]` once using that project's existing
-  configuration, authentication and shared budget. PROJECT defaults to the current
-  directory. Preserve the command's stdout, stderr and exit status, then report its
-  actual result. After dispatch, do not start a manual loop or repeat the invocation
-  to bypass a blocked, failed, exhausted or ambiguous result. The one exception is a
-  zero-spend `blocked` preflight whose `remediation` is a user choice: ask that one
-  question and re-dispatch once as the reference describes. An explicit invocation
-  authorizes the bounded default run. To use past sessions as evidence, pass
-  `--history [--since DATE|first]`.
+  `ahl skills invoke [PROJECT] [--scope SCOPE]` once using that project's existing configuration,
+  authentication and shared budget. PROJECT defaults to the current directory. Preserve the command's
+  stdout, stderr and exit status, then report its actual result. After dispatch, do not start a manual loop
+  or repeat the invocation to bypass a blocked, failed, exhausted or ambiguous result. One exception: a
+  `blocked` preflight that spent nothing and whose `remediation` is a user choice (for example
+  `select_one_runtime_with_agent`) is not a failed run. Ask the user that one question (offer to remember it;
+  add `--remember-runtime` only on a yes), then re-dispatch once with the answer using the exact command in
+  `remediation`; a second block is final. Say that an explicit invocation authorizes the bounded default run
+  and that `execution_authority: false` on a blocked plan means only that nothing was dispatched. To use the
+  user's past sessions as evidence, pass `--history [--since DATE|first]`; relay a `history_*` block's
+  `remediation` verbatim and never assert recurrence it does not report.
 - If the CLI is unavailable before any attempt, use the assisted manual fallback
   in the reference and state its verification limits.
 
-Complete the improvement loop: diagnose from evidence, construct an evaluation,
-execute baseline and candidate, repair failures, and apply supported improvements.
-A failure description or proposed candidate is optional. Discover improvement
-candidates from available traces, evaluation failures, current instructions and
-source contracts yourself. Do not require the user to identify what went wrong
-before beginning. An optional focus hint does not replace coverage of other
-material mechanisms. When capture is missing, investigate current behavior and
-mark historical recurrence unknown rather than inventing it.
+Complete the improvement loop: diagnose from evidence, construct an evaluation, execute baseline and
+candidate, repair failures, and apply supported improvements. A failure description or proposed candidate
+is optional. Discover improvement candidates from available traces, evaluation failures, current
+instructions and source contracts yourself. Do not require the user to identify what went wrong before
+beginning. An optional focus hint does not replace coverage of other material mechanisms. When capture
+is missing, investigate current behavior and mark historical recurrence unknown rather than inventing it.
 
 A request to improve the harness authorizes this reversible work within its named
 scope. Do not ask again to build tests, run local evaluations, refine a candidate,
@@ -47,14 +47,13 @@ reason to return a proposal. Follow the [evaluation methodology](references/eval
 
 ## Scope mapping
 
-The user's words choose the scope; nothing widens it ([rules](references/invocation.md#scope-mapping)).
+The user's words choose the scope; nothing widens it (rules: "Scope mapping" in [invocation routing](references/invocation.md)).
 With the CLI available, never edit a global file by hand instead of its `--scope` path.
 
 - No scope word, "this project", "my repo": omit `--scope` (`project`, no user-level files).
 - "global", "my user-level harness": `--scope global --agent codex|claude`.
 - "both", "global and project": `--scope project+global --agent codex|claude`.
-- Either layer could be meant ("my skills", "my setup"): ask one question or run
-  `project`; never guess toward global.
+- Either layer could be meant ("my skills", "my setup"): ask one question or run `project`; never guess toward global.
 
 ## Scope and evidence
 
