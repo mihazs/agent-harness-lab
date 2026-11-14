@@ -138,7 +138,12 @@ lowers it) and at least one exercised event, except that no call to a forbidden
 tool is itself the claim. Missing order, fields, names or a final outcome give
 `unknown`; order is read only from a capture ordinal (or a declared subordinal
 inside one segment), never from timestamps, and a tie or a cross-file pair stays
-unordered. `outcome_integrity` is violated by a success or failure label that lacks a valid
+unordered. A call or result whose tool name was not captured could be the constrained
+one, so it also gives `unknown`. `state_consistency` compares only `returned`
+results of one input and state revision: an `error` result is an expected negative
+and is skipped, a result of unknown status is `unknown`, a declared mutation between
+two results explains a difference, and a call of undeclared effect between them
+leaves it `unknown` (the rule of the repeated-observation matcher). `outcome_integrity` is violated by a success or failure label that lacks a valid
 grader or a reviewer's reference. A result is an observation: it names no cause, component or route,
 carries no model-written text, never validates a mechanism and is not publishable.
 The earliest visible violation is not the root cause; localization, competing

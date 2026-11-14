@@ -145,13 +145,23 @@ class TemporalPrerequisiteTests(unittest.TestCase):
     def test_an_unnamed_earlier_call_may_be_the_prerequisite(self):
         rows = [row(0), row(1, tool_name='Edit')]
         self.assertEqual(verdict('temporal_prerequisite', rows), ('unknown', 'required_field_missing'))
-        # A named prerequisite settles the call regardless of unnamed neighbours.
-        self.assertEqual(verdict('temporal_prerequisite', [row(0), row(1, tool_name='Read'), row(2, tool_name='Edit')])[0], 'satisfied')
+        # A named prerequisite settles a named call, but a nameless call could itself be an Edit that nothing preceded.
+        self.assertEqual(verdict('temporal_prerequisite', [row(0), row(1, tool_name='Read'), row(2, tool_name='Edit')]),
+                         ('unknown', 'required_field_missing'))
+        self.assertEqual(verdict('temporal_prerequisite', [row(0, tool_name='Read'), row(1), row(2, tool_name='Edit')])[0],
+                         'satisfied')
+
+    def test_a_nameless_call_that_may_be_the_constrained_one_blocks_a_complete_violation_free_verdict(self):
+        result = check('temporal_prerequisite', [row(0), row(1, tool_name='Read'), row(2, tool_name='Edit')])
+        self.assertEqual([e['event_id'] for e in result['evidence']], ['e0'])
+        self.assertEqual(verdict('temporal_prerequisite', [row(0), row(1, tool_name='Read')]),
+                         ('unknown', 'required_field_missing'))
 
 
 class StateConsistencyTests(unittest.TestCase):
     def read(self, index, result, revision='r1', call='k1', **fields):
-        return [row(index, tool_name='Read', call_id=call, input_fingerprint='a' * 16),
+        fields = dict(dict(execution_status='returned'), **fields)
+        return [row(index, tool_name='Read', call_id=call, input_fingerprint='a' * 16, tool_effect='read_only'),
                 row(index + 1, 'tool_result', call_id=call, state_revision=revision, result_fingerprint=result, **fields)]
 
     def test_same_input_and_revision_with_different_results_is_inconsistent(self):
@@ -167,10 +177,57 @@ class StateConsistencyTests(unittest.TestCase):
         self.assertEqual(verdict('state_consistency', equal)[0], 'satisfied')
 
     def test_missing_state_signatures_are_unknown_never_satisfied(self):
-        rows = [row(0, tool_name='Read', call_id='k1'), row(1, 'tool_result', call_id='k1', result_fingerprint='x' * 16)]
+        rows = [row(0, tool_name='Read', call_id='k1'),
+                row(1, 'tool_result', call_id='k1', result_fingerprint='x' * 16, execution_status='returned')]
         result = check('state_consistency', rows)
         self.assertEqual((result['status'], result['reason']), ('unknown', 'required_field_missing'))
         self.assertEqual(result['missing_inputs'], ['input_fingerprint', 'state_revision'])
+        # A result whose success is not captured could be an error, so it is never compared.
+        unsure = self.read(0, 'x' * 16) + self.read(2, 'y' * 16, call='k2', execution_status='unknown')
+        self.assertEqual(verdict('state_consistency', unsure), ('unknown', 'required_field_missing'))
+
+    def test_a_result_no_named_call_explains_could_be_a_result_of_the_tool(self):
+        nameless = row(2, 'tool_result', input_fingerprint='a' * 16, state_revision='r1', result_fingerprint='y' * 16,
+                       execution_status='returned')
+        rows = self.read(0, 'x' * 16) + [nameless]
+        result = check('state_consistency', rows)
+        self.assertEqual((result['status'], result['reason']), ('unknown', 'required_field_missing'))
+        self.assertEqual([e['event_id'] for e in result['evidence']], ['e2'])
+        # Linked to a named call of another tool, the same result is explained and ignored.
+        other = rows[:2] + [row(2, tool_name='Grep', call_id='k9'), dict(nameless, event_id='e3', call_id='k9')]
+        self.assertEqual(verdict('state_consistency', other)[0], 'satisfied')
+
+    def test_an_error_result_is_an_expected_negative_not_a_second_observation(self):
+        rows = self.read(0, 'e' * 16, execution_status='error') + self.read(2, 'x' * 16, call='k2')
+        self.assertEqual(verdict('state_consistency', rows)[0], 'satisfied')
+        self.assertEqual(verdict('state_consistency', self.read(0, 'e' * 16, execution_status='error')),
+                         ('unknown', 'constraint_not_exercised'))
+
+    def test_a_declared_mutation_between_two_reads_explains_a_different_result(self):
+        edit = row(2, tool_name='Edit', call_id='k5', mutation=True)
+        rows = self.read(0, 'x' * 16) + [edit] + self.read(3, 'y' * 16, call='k2')
+        self.assertEqual(verdict('state_consistency', rows)[0], 'satisfied')
+        # The same label with no mutation between the reads stays an inconsistency, and a mutation after both does not hide it.
+        after = self.read(0, 'x' * 16) + self.read(2, 'y' * 16, call='k2') + [dict(edit, event_id='e9', capture_order=9)]
+        self.assertEqual(verdict('state_consistency', after), ('violated', 'violation_observed'))
+        flagged = self.read(0, 'x' * 16) + [dict(edit, mutation=None, tool_effect='mutation')] + self.read(3, 'y' * 16, call='k2')
+        self.assertEqual(verdict('state_consistency', flagged)[0], 'satisfied')
+
+    def test_a_call_of_unknown_effect_between_two_reads_leaves_a_difference_unknown(self):
+        shell = row(2, tool_name='Bash', call_id='k5')
+        rows = self.read(0, 'x' * 16) + [shell] + self.read(3, 'y' * 16, call='k2')
+        self.assertEqual(verdict('state_consistency', rows), ('unknown', 'intervening_effect_not_established'))
+        # A read call that does not declare itself read-only is itself an unknown effect.
+        undeclared = [dict(r, tool_effect=None) for r in self.read(0, 'x' * 16) + self.read(2, 'y' * 16, call='k2')]
+        self.assertEqual(verdict('state_consistency', undeclared), ('unknown', 'intervening_effect_not_established'))
+        # Equal results need no ruling on the call between them.
+        self.assertEqual(verdict('state_consistency', self.read(0, 'x' * 16) + [shell] + self.read(3, 'x' * 16, call='k2'))[0],
+                         'satisfied')
+
+    def test_an_unordered_state_changing_event_leaves_a_difference_unknown(self):
+        edit = {k: v for k, v in row(2, tool_name='Edit', call_id='k5', mutation=True).items() if k != 'capture_order'}
+        rows = self.read(0, 'x' * 16) + [edit] + self.read(3, 'y' * 16, call='k2')
+        self.assertEqual(verdict('state_consistency', rows), ('unknown', 'order_not_established'))
 
 
 class OutcomeIntegrityTests(unittest.TestCase):
@@ -236,12 +293,16 @@ class ReportTests(unittest.TestCase):
         self.assertEqual((len(result['evidence']), result['evidence_omitted']), (constraints.MAX_REFS, 5))
 
     def test_expected_negative_polling_and_recovery_are_not_violations(self):
-        rows = [row(0, tool_name='Read', call_id='k1', input_fingerprint='a' * 16),
-                row(1, 'tool_result', call_id='k1', state_revision='r1', result_fingerprint='x' * 16, execution_status='error'),
-                row(2, tool_name='Read', call_id='k2', input_fingerprint='a' * 16),
-                row(3, 'tool_result', call_id='k2', state_revision='r1', result_fingerprint='x' * 16)]
+        rows = [row(0, tool_name='Read', call_id='k1', input_fingerprint='a' * 16, tool_effect='read_only'),
+                row(1, 'tool_result', call_id='k1', state_revision='r1', result_fingerprint='e' * 16, execution_status='error'),
+                row(2, tool_name='Read', call_id='k2', input_fingerprint='a' * 16, tool_effect='read_only'),
+                row(3, 'tool_result', call_id='k2', state_revision='r1', result_fingerprint='x' * 16, execution_status='returned')]
         self.assertEqual(verdict('state_consistency', rows)[0], 'satisfied')
+        # The same rows are not exempt by accident: the scope check does see these calls, and an unfailed pair is a violation.
         self.assertEqual(verdict('authorization_scope', rows)[0], 'satisfied')
+        self.assertEqual(verdict('authorization_scope', rows, params=dict(forbidden_tools=['Read']))[0], 'violated')
+        failed = [dict(r, execution_status='returned') if r['event_id'] == 'e1' else r for r in rows]
+        self.assertEqual(verdict('state_consistency', failed)[0], 'violated')
 
 
 if __name__ == '__main__':

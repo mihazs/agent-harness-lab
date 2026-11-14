@@ -27,7 +27,7 @@ KINDS = dict(
     temporal_prerequisite=dict(params=('requires', 'then'), inputs=('tool_name', 'capture_order')),
     authorization_scope=dict(params=('forbidden_tools',), inputs=('tool_name',)),
     state_consistency=dict(params=('tool',), inputs=('tool_name', 'input_fingerprint', 'state_revision',
-                                                      'result_fingerprint')),
+                                                      'result_fingerprint', 'execution_status')),
     outcome_integrity=dict(params=(), inputs=('outcome', 'outcome_provenance')))
 
 
@@ -109,25 +109,66 @@ def _prerequisite(params, rows, complete):
             violating.append(call)
         else:
             unresolved.append((call, 'prerequisite_may_be_outside_capture'))
+    # An unnamed call could itself be the constrained one, so it needs a named prerequisite before it too.
+    unresolved += [_missing(c) for c in nameless if True not in [_before(r, c) for r in named]]
     return needed, violating, unresolved
+
+
+# Activities that never change the observed state; any other event leaves the effect unknown (see tools/observations.py).
+_INERT = frozenset(('tool_call', 'tool_result', 'metadata', 'turn_stop', 'assistant', 'user_message'))
+
+
+def _mutates(row):
+    return row.get('mutation') is True or row.get('tool_effect') == 'mutation'
+
+
+def _may_change_state(row):
+    call = row['activity'] == 'tool_call' and row.get('tool_effect') != 'read_only'
+    return _mutates(row) or call or row['activity'] not in _INERT
+
+
+def _disagree(rows):
+    return len({r['result_fingerprint'] for r in rows}) > 1
 
 
 def _state(params, rows, complete):
     calls = {r['call_id']: r for r in rows if r['activity'] == 'tool_call' and 'call_id' in r}
-    applicable, unresolved, groups = [], [], {}
+    barriers = [r for r in rows if _may_change_state(r)]
+    applicable, violating, unresolved, groups = [], [], [], {}
     for result in (r for r in rows if r['activity'] == 'tool_result'):
         linked = calls.get(result.get('call_id'), {})
         # The input and the tool name live on the linked call when the result does not repeat them.
         row = {**{k: linked[k] for k in ('tool_name', 'input_fingerprint') if k in linked}, **result}
-        if row.get('tool_name') != params['tool']:
+        if 'tool_name' not in row:
+            unresolved.append(_missing(row))  # a result no named call explains could be a result of this tool
+            continue
+        # An error is an expected negative (polling, recovery), not a second observation of the state.
+        if row['tool_name'] != params['tool'] or row.get('execution_status') == 'error':
             continue
         applicable.append(row)
-        if 'input_fingerprint' not in row or 'state_revision' not in row or 'result_fingerprint' not in row:
+        if row.get('execution_status') != 'returned' or any(
+                k not in row for k in ('input_fingerprint', 'state_revision', 'result_fingerprint')):
             unresolved.append(_missing(row))
-        else:
-            groups.setdefault((row['input_fingerprint'], row['state_revision']), []).append(row)
-    # One read, one input, one observed state revision: two different results are an inconsistency.
-    violating = [r for group in groups.values() if len({r['result_fingerprint'] for r in group}) > 1 for r in group]
+            continue
+        sides = [(_before(m, row), _mutates(m)) for m in barriers if m['event_id'] != row['event_id']]
+        if any(side is None for side, _ in sides):
+            unresolved.append((row, 'order_not_established'))
+            continue
+        # Two results share an epoch only when no event that may change state lies between them.
+        epoch = (sum(side for side, _ in sides), sum(side and mutation for side, mutation in sides))
+        groups.setdefault((row['input_fingerprint'], row['state_revision']), []).append((epoch, row))
+    # One read, one input, one observed state revision, no state change between: two results are an inconsistency.
+    for group in groups.values():
+        by_mutation = {}
+        for (any_change, mutation), row in group:
+            by_mutation.setdefault(mutation, {}).setdefault(any_change, []).append(row)
+        for epochs in by_mutation.values():
+            hits = [r for same in epochs.values() if _disagree(same) for r in same]
+            violating += hits
+            everyone = [r for same in epochs.values() for r in same]
+            # A call or event of unknown effect between them may explain the difference; a declared mutation does.
+            if not hits and _disagree(everyone):
+                unresolved += [(r, 'intervening_effect_not_established') for r in everyone]
     return applicable, violating, unresolved
 
 
