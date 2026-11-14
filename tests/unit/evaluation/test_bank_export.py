@@ -1,4 +1,5 @@
 """Relative bank exports retain frozen oracles and reject unsafe destinations."""
+# fixed-in: e8ded782 -k quarantine
 from contextlib import chdir
 import json
 from pathlib import Path
@@ -168,3 +169,36 @@ def test_quarantine_isolates_a_broken_grader_from_the_audit(root):
     assert audited['status'] == 'controls_passed' and audited['quarantined_skipped'] == ['regression']
     assert 'regression' not in {c['task'] for c in audited['checks']}
     assert len(audited['checks']) == len(healthy) - len(own)
+
+
+@pytest.mark.parametrize('status', ['Quarantined', 'rejected', ''], ids=['wrong-case', 'unknown-name', 'empty'])
+def test_a_review_status_outside_the_closed_vocabulary_never_reaches_an_executable_manifest(root, status):
+    bank = root/'input/bank.json'
+    value = json.loads(bank.read_text())
+    value['tasks'][0]['review_status'] = status
+    bank.write_text(json.dumps(value))
+    with pytest.raises(ValueError):
+        export_manifest(bank, root/'export')
+    assert not (root/'export').exists()
+
+
+def test_cli_export_with_no_quarantined_task_reports_an_empty_exclusion(root):
+    with chdir(root), patch('builtins.print') as printed:
+        main(['bank', '--manifest', 'input/bank.json', '--export', 'export'])
+    assert json.loads(printed.call_args.args[0])['export']['quarantined_excluded'] == []
+
+
+def test_cli_grader_audit_reports_the_quarantined_skip_and_never_audits_that_task(root):
+    bank = _quarantine(root, 'localization')
+    with chdir(root), patch('builtins.print') as printed:
+        main(['bank', '--manifest', str(bank), '--audit', '--cooperative-controls'])
+    audit = json.loads(printed.call_args.args[0])['grader_audit']
+    assert audit['quarantined_skipped'] == ['localization']
+    assert 'localization' not in {check['task'] for check in audit['checks']}
+
+
+def test_cli_refuses_to_export_a_bank_whose_every_task_is_quarantined(root):
+    bank = _quarantine(root, *(task['task_id'] for task in json.loads((root/'input/bank.json').read_text())['tasks']))
+    with chdir(root), patch('builtins.print'), pytest.raises(SystemExit) as refused:
+        main(['bank', '--manifest', str(bank), '--export', 'export'])
+    assert refused.value.code == 2 and not (root/'export').exists()

@@ -74,3 +74,13 @@ def test_every_existing_pin_file_declares_where_it_was_fixed():
     marked = {row[0] for row in check_pins.markers(ROOT)}
     assert {'tests/integration/workflow/test_reported_zero_config_runtime.py',
             'tests/integration/diagnostics/test_reported_actionable_analysis.py'} <= marked
+
+
+def test_every_pin_names_a_commit_in_the_history_of_head():
+    """A pin to a feature-branch commit works only while that branch exists; after the squash merge it is inconclusive and stops the release gate."""
+    shallow = subprocess.run(['git', 'rev-parse', '--is-shallow-repository'], cwd=ROOT, capture_output=True, text=True)
+    if shallow.returncode != 0 or shallow.stdout.strip() != 'false':
+        pytest.skip('the Git history is shallow or absent, so whether a pinned commit is reachable is unknown')
+    stray = [(relative, commit) for relative, commit, _ in check_pins.markers(ROOT)
+             if subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'HEAD'], cwd=ROOT, capture_output=True).returncode != 0]
+    assert not stray, f'pins naming a commit that HEAD does not contain: {stray}'

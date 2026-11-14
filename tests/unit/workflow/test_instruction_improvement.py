@@ -1,4 +1,5 @@
 """Synthetic scoped instruction rewrites and pruning (#285); every verdict is a declaration, never loading proof."""
+# fixed-in: c0944a6c -k oversized_project_blocks_validation
 import argparse
 import hashlib
 import json
