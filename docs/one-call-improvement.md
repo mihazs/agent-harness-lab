@@ -877,13 +877,21 @@ already holds the reviewed bytes, so the command reports `stale` and writes noth
 transaction with `ahl promotion PROJECT --deployment ID --action recover` or undo it with `ahl rollback ID
 --project PROJECT`. These apply-stage cases are covered by `tests/integration/workflow/test_plan_review.py`.
 
+Ctrl-C is handled the same way. A review prints that it wrote nothing and exits 1. An interrupted authorization
+exits 1 with the command to repeat and, when a transaction for that plan had begun writing, the unfinished
+deployment IDs to pass to `ahl promotion PROJECT --deployment ID --action recover`; no traceback is printed. A
+repair run interrupted before its target write (while journaling or just before writing) leaves the project
+unchanged and keeps its saved plan, so the same review and authorized apply then write the target once; a run
+interrupted while planning has no plan, and `ahl apply` rejects it with exit 2. These stage cases are covered by
+`tests/integration/workflow/test_stage_interruptions.py`.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. `ahl apply` reviews every saved plan but applies only the
-independently reproduced skill-header repair; interruption tests cover only its
-application stage (planning, evaluation and review interruptions, Codex hook
-application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
+independently reproduced skill-header repair; interruption tests cover the planning,
+journaling, review and application stages of that repair (interruption during a behavioral evaluation, Codex
+hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation and operation-level review are described above; actual loading evidence and
 the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
