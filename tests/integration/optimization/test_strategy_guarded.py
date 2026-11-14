@@ -1,4 +1,5 @@
 """Registered strategies through the guarded controller route; the controller core is a synthetic double."""
+# fixed-in: 4e7d4a62
 from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import asdict
