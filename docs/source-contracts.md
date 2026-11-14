@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -4238,7 +4238,8 @@ No real export has been read; the tests use invented fixtures only.
 | Observations, summaries, prompts, sessions in that file | separate claim types |
 | Search `query` and per-row `rank`/`score` | separate `search_hit` claims |
 | `tool_uses` rows, advisor calls, pending queue | not in the export; not read (the `get_tool_uses` MCP tool is only checked for presence and shape) |
-| Worker HTTP API (`/api/search`, `/api/sdk-sessions/batch`) | not contacted |
+| Worker HTTP API: `/api/version`, `/api/observations`, `/api/summaries`, `/api/prompts` | not contacted by the export reader; read by the separate [worker source](#explicit-claude-mem-worker-reads) |
+| Worker HTTP API: `/api/search`, `/api/timeline`, `/api/observations/batch`, `/api/tool-uses`, `/api/sdk-sessions/batch` | not contacted by either source |
 | MCP `search`, `timeline`, `get_observations`, `get_tool_uses` | not called; a saved `tools/list` result can be [checked offline](#saved-mcp-tool-listing-check-claude-mem) |
 | SQLite `~/.claude-mem/claude-mem.db` (WAL) | not opened |
 | Chroma vector projection | not read; never authoritative |
@@ -4352,10 +4353,11 @@ synthetic controls: each claim type, summary/observation separation, search-hit
 targets, unknown and mismatched versions, duplicate IDs, unknown fields, missing
 and conflicting timestamps, malformed JSON, bounds, path containment, capture
 changes, repeat import, edits and CLI output with no body, ID or path. Still open
-in #48: reading a configured worker or MCP server (bounded `search`/`timeline`,
-batched `get_observations`; only the tool-schema check exists, see below), an
-authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
-rows, verifying the shape against a real export, and further releases.
+in #48: the worker's `search`/`timeline` and batched `get_observations` (the
+[worker source](#explicit-claude-mem-worker-reads) reads the paged list routes
+only), an authorized read-only SQLite snapshot mode with a verified schema,
+`tool_uses` rows, verifying the shape against a real export or a real worker,
+and further releases.
 
 ### Native session correlation (Claude-Mem)
 
@@ -4453,6 +4455,129 @@ covers the check with synthetic listings only: a matching listing, an older tool
 set, a partial page, changed and added properties, a missing, duplicated or
 unhinted tool, a mismatched version, a server-runtime listing, malformed,
 hostile and linked files, and no process or connection.
+
+### Explicit Claude-Mem worker reads
+
+`claude-mem-worker` (`api/claude-mem-worker/v1`, profile `claude-mem-worker-v1`)
+reads one project from a Claude-Mem worker you already run, through the paged
+list routes of the pinned release, so the claims mean what the
+[offline export](#claims) claims mean. It is opt-in: no manifest, no read. It
+never starts a worker, calls an MCP tool, opens the SQLite database or the Chroma
+store, or discovers a port. The shared transport is HTTPS only, so the worker's
+default plain `http://127.0.0.1` listener needs a TLS proxy in front of it, or
+the [offline export](#offline-claude-mem-exports) is the path (the same limit as
+the [Mem0 OSS server](#explicit-mem0-oss-rest-and-platform-v3-reads)).
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "claude-mem-worker", "version": "v1", "...": "..."},
+ "endpoint": "https://claude-mem.example.test",
+ "selection": {"base_url": "https://claude-mem.example.test", "instance": "laptop-a", "release": "15.9.0",
+               "project": "my-project", "platform_source": null, "max_rows": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+The manifest has the Mem0 configuration shape. `source.project_sha256` must be
+`selection.project_sha256`, a digest of `instance`, host, path, the project (the
+worker compares it without regard to ASCII case, so `A` and `a` are one scope) and
+`platform_source`; `scope_sha256` is `selection.sha256`. `endpoint` must equal
+`base_url`, a canonical HTTPS origin without a trailing slash or `/api` suffix.
+`project` is required: the unfiltered list would also return every other
+project's memory, so there is no all-projects mode. `platform_source`, when set,
+is one of the pinned labels (`claude`, `codex`, `cursor`, `kimi`, `pi`,
+`antigravity-cli`) and is sent as `platformSource`. `max_rows` (1 to 10,000,
+default 1,000) bounds each list. A worker behind an authenticating proxy takes its
+complete `Authorization` header value from `--authorization-file PRIVATE_FILE` or
+`--authorization-env NAME` with `auth_mode: "configured"`; only that named file or
+variable is read, never by `probe` or `status`, and `auth_mode: "none"` sends no
+header.
+
+| Request | Route at the pin | Used for |
+| --- | --- | --- |
+| `GET /api/version` | [`src/services/server/Server.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/server/Server.ts) | the reported release, `{"version": "15.9.0"}` |
+| `GET /api/observations?project=P&limit=N&offset=K` | [`DataRoutes.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) and [`PaginationHelper.getObservations`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/PaginationHelper.ts) | `observation` claims |
+| `GET /api/summaries?...` | `PaginationHelper.getSummaries` | `generated_summary` claims |
+| `GET /api/prompts?...` | `PaginationHelper.getPrompts` | `user_prompt` claims |
+
+Nothing else is requested. The reader never sends a save, import, delete, project
+merge, corpus or Chroma request, and never calls `/api/search`, `/api/timeline`,
+`/api/observations/batch` or `/api/tool-uses`. Those routes and the MCP tools wrap
+their results in text meant for a model (`mcp-text-format.ts`), so reading them
+needs a parser verified against real output, which is still missing. The list
+routes answer structured JSON: `{items, hasMore, offset, limit}` with at most 100
+rows, ordered by creation time, newest first.
+
+Pages are requested 100 rows at a time (fewer for the last part of a bounded
+list). A page must echo the exact `offset` and `limit` that were requested, carry
+only those four envelope fields and a boolean `hasMore`, hold at most `limit`
+rows, and be full when `hasMore` is true, otherwise the capture fails with no
+snapshot. A list ends only when the worker says `hasMore: false`
+(`captured`); one that reaches `max_rows` while the worker still reports more is
+`pagination_incomplete: max_rows_reached`. A row ID seen twice in one list also
+fails the capture: offset paging over a live database can shift between
+requests, so a moved listing is never repaired by guessing. The summary warns
+`reads_non_atomic`.
+
+`/api/version` is read first. A worker that reports the selected release is
+`version_attestation: worker_reported`; any other value (including a `v` prefix)
+refuses the capture before any list is read. A worker without the route, or an
+answer that is not a plain version string, leaves the release
+`caller_declared` and warns `worker_version_unreported` or
+`worker_version_unrecognized`. Like the export, the profile stays
+`upstream_shape: source_inferred` and `compatibility: unverified`: the row fields
+come from `PaginationHelper.ts` at the pinned commit, and no real worker has been
+read.
+
+Rows become the same `MemoryClaim` objects as in the export, with the same
+native-ID namespace (`digest(['claude-mem', instance, claim_type, id, 0])`), so
+the two paths deduplicate by ID, but the sources stay separate and the claims differ in four ways:
+
+- No `search_hit` claim exists, because a list is not a query.
+- No `memory_session` claim exists, because sessions are not listed (`sessions_not_read`). An observation carries
+  `memory_session_id`, which is fingerprinted as `memory_session_sha256`; a
+  summary's `session_id` is its content session and goes to
+  `content_session_sha256`.
+- Body fingerprints are not comparable with an export's. The worker projects
+  list rows (file paths are made project-relative and `metadata` is replaced by
+  `media`), so the same observation can have another `body_sha256`
+  (`worker_list_projection`).
+- A row the filter would not return is not kept. A row whose `project` and
+  `merged_into_project` both differ from the selected project, whose project is
+  missing, or whose `platform_source` differs from a selected platform is excluded and counted in
+  `excluded.rows_outside_selection` (`row_outside_selection`).
+
+A row without a positive integer `id` or its session field (`memory_session_id`
+for observations, `session_id` for summaries, `content_session_id` for prompts)
+is counted in `rows_rejected` (`row_without_native_identity`). A field outside the
+pinned list shape is counted in `rows_with_unknown_fields`; names are not printed.
+Missing, naive, unparseable or disagreeing timestamps are `missing`, `invalid` or
+`conflicting`, never guessed. A row object over 128 fields, a non-object row, a
+`NaN` or `Infinity` value or a duplicate JSON key fails the capture. Text bodies are
+fingerprinted together and never stored or printed; the capture record
+`claude_mem_capture` hashes every row digest, so a change to any unmodelled field or body is
+still a new capture. The snapshot is partial, the summary reports `network_used`,
+`server_contacted`, `read_methods: ["GET"]`, `worker_started`, `database_opened`
+and `bodies_stored` (the last three `false`), and `public_export_allowed` rejects
+the profile. `ahl sources preview` prints it as `claude_mem_summary`.
+
+Limits and stops follow the [Mem0 reader](#explicit-mem0-oss-rest-and-platform-v3-reads):
+`max_pages` (default 1,000), `max_bytes` (256 MiB), `seconds` (900) and `timeout`
+bound the whole capture, each response is limited to 8 MiB, and a spent budget is
+`budget_exhausted` partial coverage. There is no retry. HTTP 401, 403, 404 and 429
+become coverage states (`unauthorized`, `forbidden`, `not_found`, `rate_limited`);
+other statuses, malformed JSON and non-JSON content fail the capture. A 404 on one
+list is only that list's gap and the next list is still read; a 401, 403, 429 or
+spent budget ends every later request. A denied first page is blocked coverage
+with no data, and a denied later page is `pagination_incomplete`. Any coverage
+other than `captured` makes the snapshot `checkpoint_ready: false`, so the registry
+refuses to commit it and `ahl sources import` prints `status: "blocked"`, commits
+nothing and exits 3. The rate-limit state is the shared one described in the
+[forge rate-limit guide](forge-rate-limits.md).
+
+`task test:sources:claude-mem` runs the synthetic controls against a fake HTTPS
+wire: the request allowlist, scope and platform exclusion, paging, `max_rows`,
+malformed pages and responses, denials and budget stops, release checks, edits as
+new revisions, idempotent import and the CLI flow. Compatibility with a real
+worker is not established by these fixtures.
 
 ## Offline Mem0 OSS memory and history exports
 

@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Read one project from a Claude-Mem worker you already run, with `ahl sources preview|import` and a new `claude-mem-worker` API source (profile `claude-mem-worker-v1`, release 15.9.0). It sends only GET requests to an explicit HTTPS origin: `/api/version` and the paged `/api/observations`, `/api/summaries` and `/api/prompts` lists for the named project (and optional platform), at most 100 rows a request and `max_rows` per list. Rows become the same separate `observation`, `generated_summary` and `user_prompt` claims as the offline export, with the same native IDs, hash-only bodies and no task outcome, independence or use label; no `search_hit` or session claim is made, a row outside the project or platform is excluded and counted, and an unreported or unrecognized release stays caller-declared. A worker that reports another release, a malformed or repeated page, a spent budget or a denied list never commits a checkpoint. It never starts a worker, calls an MCP tool or opens the database, and the row shape is source-inferred from the pinned release, not verified against a real worker.
