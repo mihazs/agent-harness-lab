@@ -99,6 +99,48 @@ class PowerSimulationTests(unittest.TestCase):
         self.assertEqual(report['dispositions']['rejected']['count'], 40)
         self.assertEqual(report['reasons'], {'critical_regression': 40})
 
+    def test_lost_grades_withhold_the_decision_and_are_reported_not_imputed(self):
+        # Predeclared invariants, not tuned rates: with no critical regression, a simulation that
+        # lost any grade is exactly an incomplete one, and the rest keep their full-grade decision.
+        spec = plan(100)
+        report = simulate(spec, outcome(.1, .8, candidate_ungraded_probability=.005), simulations=100, seed=7)
+        completion, dispositions = report['completion'], report['dispositions']
+        whole = completion['fully_graded']['count']
+        self.assertEqual(dispositions['incomplete']['count'], 100 - whole)
+        self.assertEqual(report['reasons'].get('unknown_or_invalid_grade', 0), 100 - whole)
+        self.assertEqual(dispositions['supported']['count'], whole)  # a large benefit is supported whenever fully graded
+        self.assertEqual(completion['declared'], dict(candidate_ungraded_probability=.005))
+        self.assertEqual((completion['planned_trials'], completion['loss_model']), (200, 'independent_per_trial_by_arm'))
+        self.assertTrue(0 < whole < 100 and 0 < completion['mean_ungraded_trials'] < 3)
+        self.assertEqual(report, simulate(spec, outcome(.1, .8, candidate_ungraded_probability=.005), simulations=100, seed=7))
+
+    def test_total_or_one_sided_grade_loss_never_supports_a_candidate(self):
+        spec = plan(20)
+        everything = simulate(spec, outcome(.1, .8, baseline_ungraded_probability=1), simulations=20, seed=7)
+        self.assertEqual(everything['reasons'], {'unknown_or_invalid_grade': 20})
+        self.assertEqual(everything['completion']['mean_ungraded_trials'], 20)
+        self.assertEqual(everything['completion']['fully_graded']['count'], 0)
+        # Candidate trials that vanish while a harmful candidate runs cannot hide the harm as support.
+        hidden = simulate(spec, outcome(.9, -.8, candidate_ungraded_probability=.3), simulations=60, seed=9)
+        self.assertEqual(hidden['dispositions']['supported']['count'], 0)
+        # An unknown trial carries no grader verdict, so a critical flag on it is not observed.
+        critical = simulate(spec, outcome(.1, .8, critical_regression_probability=1, candidate_ungraded_probability=1),
+                            simulations=10, seed=9)
+        self.assertEqual(critical['reasons'], {'unknown_or_invalid_grade': 10})
+
+    def test_models_without_declared_grade_loss_keep_their_reports(self):
+        spec, plain = plan(10), outcome(.4, .3, repeat_correlation=.5)
+        legacy = simulate(spec, plain, simulations=20, seed=3)
+        self.assertNotIn('completion', legacy)
+        zero = simulate(spec, dict(plain, baseline_ungraded_probability=0), simulations=20, seed=3)
+        self.assertNotIn('completion', zero)
+        self.assertEqual(zero['dispositions'], legacy['dispositions'])
+        self.assertEqual(power.model(plain, ['family']).keys() & set(power.UNGRADED), set())
+        for bad in (dict(plain, baseline_ungraded_probability=-.1), dict(plain, candidate_ungraded_probability=1.5),
+                    dict(plain, candidate_ungraded_probability=True), dict(plain, candidate_ungraded_probability=float('nan'))):
+            with self.subTest(model=bad), self.assertRaises(ValueError):
+                simulate(spec, bad, simulations=1)
+
     def test_invalid_models_specs_and_budgets_fail_closed(self):
         spec = plan(10)
         for bad in ({}, dict(outcome(.5, 0), schema='other'), dict(outcome(.5, 0), extra=1), {'schema': MODEL_SCHEMA},
