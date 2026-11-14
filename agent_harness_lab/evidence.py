@@ -418,8 +418,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
 
     # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
     attribution = dict(source_order_declared_by='native_adapter') if native_order or events is None else {}
+    # The seam is named only when a verified result is supplied, so other analyze implementations see the unchanged call.
+    reuse = {} if reused_process_mining is None else dict(reused_process_mining=reused_process_mining)
     analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True,
-                       reused_process_mining=reused_process_mining, **attribution)
+                       **attribution, **reuse)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(checkout, max_files, sources, fingerprint, caveats)
