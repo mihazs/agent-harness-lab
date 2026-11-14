@@ -41,11 +41,11 @@ form is:
   "profile": "bayesian-rope-decision-v1",
   "rope_epsilon": 0.1,
   "prior": {"kind": "dirichlet_pseudo_root", "concentration": 1, "anchor": 0},
-  "p_cut": 0.95,
+  "p_cut": 0.99,
   "regression_margin": 0.05,
   "posterior_draws": 20000,
   "allow_bound_resolved_verdict": false,
-  "cross_check_alpha": 0.05
+  "cross_check_alpha": 0.01
 }
 ```
 
@@ -90,7 +90,7 @@ Read it in this order. An abridged block for the `clear_win` fixture below:
   "unknown_arms": 0,
   "score": {"estimate": 1.0, "S_worse": 0.0, "S_equiv": 0.0},
   "floors": {"roots": {"required": 8, "actual": 60, "met": true}},
-  "cross_check": {"status": "evaluated", "method": "monte_carlo", "basis": "point", "alpha": 0.05, "agrees": true},
+  "cross_check": {"status": "evaluated", "method": "monte_carlo", "basis": "point", "alpha": 0.01, "agrees": true},
   "recommendation_authority": false,
   "automatic_promotion": false,
   "publication_allowed": false
@@ -170,8 +170,10 @@ floor: its posterior alone would clear `p_cut`, and six roots still give no verd
 - Repeated looks at one bank are not corrected, and the score is not a sequential test.
 - Roots are assumed independent. Similar tasks that share a cause behave like one root;
   root-similarity evidence is heuristic.
-- The score is calibrated only under declared synthetic models, and calibration is not
-  yet done. It is not observed improvement, certification or oracle validity.
+- The score is calibrated only under declared synthetic models (see
+  [Calibration](bayesian-decision-score.md#calibration-issue-e)), which bound its false
+  `better` rate there and show it is no safer than the Hoeffding path when roots share an
+  outcome. It is not observed improvement, certification or oracle validity.
 - The score is recommendation-only: `automatic_promotion` and `publication_allowed` stay
   `false`, and no model call appears anywhere in it.
 

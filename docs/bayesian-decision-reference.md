@@ -21,7 +21,7 @@ is recommendation-only and has [limits](bayesian-decision-score.md#limits).
 | `profile` | str | `bayesian-rope-decision-v1` |
 | `rope_epsilon` | float | finite, 0 < value < 1; default the frozen `effect_margin` |
 | `prior` | object | `kind` `dirichlet_pseudo_root`, `concentration` > 0, `anchor` 0; default one pseudo-root, concentration 1 |
-| `p_cut` | float | .5 < value < 1; default .95 |
+| `p_cut` | float | .5 < value < 1; default .99 |
 | `regression_margin` | float | finite, 0 <= value < 1; default the frozen `family_margin` |
 | `posterior_draws` | int | 1,000 to 200,000; default 20,000 |
 | `allow_bound_resolved_verdict` | bool | default `false` |
@@ -205,8 +205,9 @@ calls it once per analysis. It returns the block of the previous section.
 
 The standard-library sampler follows the Bayesian bootstrap and so is overconfident
 with few discrete root differences; the floors and the margin limit that, and
-calibration (planned, see the [explanation](bayesian-decision-score.md#calibration-planned))
-is what can show whether they are enough.
+calibration (see the [explanation](bayesian-decision-score.md#calibration-issue-e)) shows
+whether they are enough under declared synthetic models: at the first default they were not
+for one cell, and the single registered raise of `p_cut` to .99 fixed it.
 
 ## Wiring
 

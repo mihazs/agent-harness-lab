@@ -58,7 +58,7 @@ def test_records_do_not_fit_across_a_plan_with_and_without_the_declaration():
 def test_editing_a_frozen_declaration_in_place_breaks_the_plan_digest_check():
     frozen = spec()
     rows = records(frozen)
-    frozen.bayes_decision['p_cut'] = .99
+    frozen.bayes_decision['p_cut'] = .9
     assert analyze(frozen, rows) == UNFIT
 
 

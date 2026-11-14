@@ -104,7 +104,8 @@ def test_the_starter_bank_is_withheld_by_the_root_floor_although_its_posterior_a
     block = judge(built(tmp_path, 'starter_bank'))[2]
     assert block['roots'] == dict(selected=6, independent=6) and block['floors']['roots']['met'] is False
     assert block['score']['estimate'] >= block['parameters']['p_cut']  # the score is still reported
-    assert block['cross_check']['p_better'] <= block['parameters']['cross_check_alpha']  # so is a unanimous cross-check
+    # six roots cannot clear the calibrated cross-check level either (alpha .01): their smallest exact p-value is 2 ** -6
+    assert block['cross_check']['p_better'] == 2 ** -6 > block['parameters']['cross_check_alpha']
     assert block['verdict'] == 'insufficient_evidence'
 
 
