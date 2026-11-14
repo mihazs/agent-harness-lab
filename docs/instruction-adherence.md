@@ -57,7 +57,14 @@ is missing or does not parse is undecidable.
 
 - A prohibited call, an out-of-scope edit or a call after `stop` is a violation even in a partial capture.
 - A skipped required step, an ordering failure or an unapproved gated call is a violation only on a
-  `complete` capture; on a partial one it stays unknown. A `satisfied` result also needs a complete capture.
+  `complete` capture; on a partial one it stays unknown. A required step that was seen is `satisfied` even in
+  a partial capture, because an observed call is evidence; every other `satisfied` result rests on absence and
+  needs a complete capture.
+- A required step is judged only when the rule's window holds a state-changing call (`Edit`, `Write`,
+  `MultiEdit`, `NotebookEdit` or `apply_patch`). A question-only, read-only, search-only or shell-only session
+  may owe the step nothing, so whether the rule applied is unknown and the decision is `undecided_no_trigger`.
+- A directory operand matches itself and every path under it, whether or not it is written with a
+  trailing slash; a file operand matches only that file.
 - A user instruction ends at a later user turn that names the same operand with a supersession cue
   (`actually`, `go ahead`, `you can`, `never mind`); a violation before that turn still counts.
 - A later user turn that repeats the instruction, or names it with `I told you`, `as I said` or `again`,
@@ -77,9 +84,11 @@ is missing or does not parse is undecidable.
 | `inventory` | Per source: counts of machine-checkable, reviewable and unverifiable instructions |
 | `calibration` | The measurements below |
 
-One finding is kept per instruction, mechanism and session; further violations raise `occurrences`. Counts of
-independence use `root` only: sessions sharing a root are one independent root, and sessions without one are
-reported under `unknown_lineage_sessions` and never added to `independent_roots`.
+One finding is kept per instruction, mechanism and session; each further violating call raises `occurrences`
+and is listed in `turns` (at most five). A skipped required step, a `conflict` and a restated instruction are
+one occurrence each, with no `turns`: their `span` bounds the window, the two instruction turns or the prompt
+and its repeat. Counts of independence use `root` only: sessions sharing a root are one independent root, and
+sessions without one are reported under `unknown_lineage_sessions` and never added to `independent_roots`.
 
 The report states `authority: descriptive_only`, `causal_diagnosis: false` and `publication_allowed: false`.
 It is redacted by default (`redaction: digest_only`): every reference is a digest and spans are turn

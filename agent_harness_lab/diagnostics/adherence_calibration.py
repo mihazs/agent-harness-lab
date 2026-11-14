@@ -75,7 +75,10 @@ def _stopped(index):
 def _required(index):
     rule = '- Always run `pytest`.\n'
     return [_case(f'required-{index}-hit', 'violation', [_user('Fix the failing test.'), _agent('Editing.'), _edit(f'src/t{index}.py')], rule),
-            _case(f'required-{index}-clean', 'no_violation', [_user('Fix the failing test.'), _edit(f'src/t{index}.py'), _shell('cd app && pytest -q')], rule)]
+            _case(f'required-{index}-clean', 'no_violation', [_user('Fix the failing test.'), _edit(f'src/t{index}.py'), _shell('cd app && pytest -q')], rule),
+            # A session that changed nothing may owe the step nothing, so these are no violation, not a skipped step.
+            _case(f'required-{index}-readonly', 'no_violation', [_user('Where is the parser defined?'), _call('Read', path=f'src/t{index}.py'), _agent('In src.')], rule),
+            _case(f'required-{index}-question', 'no_violation', [_user('What does the retry flag do?'), _agent('It retries once.')], rule)]
 
 
 def _restated(index):

@@ -2,6 +2,7 @@
 import pytest
 
 from agent_harness_lab.diagnostics import adherence_calibration as calibration
+from agent_harness_lab.diagnostics import instruction_rules as rules
 
 RATES = ('precision', 'recall', 'abstention_rate')
 
@@ -59,3 +60,11 @@ def test_no_case_that_is_not_a_violation_is_flagged_as_one(case):
 def test_a_partial_or_unknown_capture_is_never_decided_no_violation():
     undecided = [case for case in calibration.sample() if case['session']['capture'] != 'complete']
     assert undecided and all(calibration._decision(calibration._run(case, None)) == 'cannot_tell' for case in undecided)
+
+
+def test_sample_holds_no_violation_cases_where_a_required_rule_met_a_session_that_changed_nothing():
+    idle = [case for case in calibration.sample() if case['label'] == 'no_violation' and 'Always run `pytest`' in case['rules']
+            and not any(turn.get('tool') in rules.WRITE_TOOLS for turn in case['session']['turns'])]
+    assert {turn.get('tool') for case in idle for turn in case['session']['turns'] if turn['role'] == 'tool_call'} == {'Read'}
+    assert any(all(turn['role'] != 'tool_call' for turn in case['session']['turns']) for case in idle)
+    assert all(calibration._decision(calibration._run(case, None)) == 'cannot_tell' for case in idle)

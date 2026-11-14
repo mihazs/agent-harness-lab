@@ -34,6 +34,8 @@ MAX_TURNS = 20000
 MAX_TEXT = 65536
 MAX_FINDINGS = 5000
 MAX_TURN_REFS = 5
+# The turns of these mechanisms bound one absence, pairing or repetition (the span); no call broke the rule, so they count once.
+ONCE = ('required_step_skipped', 'conflicting_instructions', 'instruction_restated')
 MAX_USER_ITEMS = 200
 _SEPARATORS = re.compile(r'\s*(?:&&|\|\||;|\||\n)\s*')
 _WRAPPERS = ('sudo', 'time', 'nohup', 'command', 'exec')
@@ -139,7 +141,8 @@ def _within(path, target, project):
     path, goal = _norm(path, project), _norm(target, project)
     if path.startswith('/') != goal.startswith('/'):
         return False if project else None
-    return path == goal or target.endswith('/') and path.startswith(goal + '/')
+    # A file has no children, so a path under goal/ is inside whether or not the operand was written with a trailing slash.
+    return path == goal or path.startswith(goal.rstrip('/') + '/')
 
 
 def _hit(call, match, project):
@@ -179,6 +182,9 @@ def _verdict(rule, session, lo, hi):
         unsure = None in hits
         if hi <= lo:
             return 'unknown', [], 'empty_window'
+        # Whether the rule applied is known only from a state-changing call; a session that changed nothing may owe the step nothing.
+        if not any(call['tool'] in rules.WRITE_TOOLS for call in calls):
+            return 'unknown', [], 'no_trigger'
         bad = [lo, hi - 1] if complete and not unsure else []
     else:
         firsts = scan(rule['first']) if kind == 'before' else []
@@ -275,7 +281,7 @@ def _finding(session, item, status, mechanism, turns, evidence, detail, **extra)
     record = dict(direction=extra.pop('direction', item['direction']), status=status, mechanism=mechanism, instruction_ref=refs[0],
                   source_layer=extra.pop('layer', item['layer']), loading=item['loading'], session_ref=session['ref'], root_ref=session['root_ref'],
                   lineage='declared' if session['root_ref'] else 'unknown', span=dict(first_turn=min(turns), last_turn=max(turns)),
-                  occurrences=len(turns), turns=turns[:MAX_TURN_REFS], corroboration=extra.pop('corroboration', []),
+                  occurrences=1 if mechanism in ONCE else len(turns), turns=[] if mechanism in ONCE else turns[:MAX_TURN_REFS], corroboration=extra.pop('corroboration', []),
                   evidence_sha256=rules.digest('evidence', *evidence))
     if len(refs) > 1:
         record['instruction_refs'] = refs

@@ -21,7 +21,9 @@ before the rule arrived is not an ignored rule.
 ## Unknown stays unknown
 
 A prohibited call is observed evidence even in a partial capture. The absence of a call is not:
-the missing part may hold it, and a skipped required step needs the whole session. A session
+the missing part may hold it, and a skipped required step needs the whole session. Even then it
+is judged only after a state-changing call: a session that only answered or read may owe an
+"always run X" rule nothing, so whether the rule applied is unknown. A session
 whose capture state is unknown decides nothing, and a session with no declared lineage is
 never counted as an independent root. Collapsing an unknown into a pass would make a harness
 look better than the evidence allows, and collapsing it into a failure would invent work.

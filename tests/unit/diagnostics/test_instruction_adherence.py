@@ -71,6 +71,22 @@ def test_two_conflicting_instructions_are_reported_as_a_conflict_and_not_as_a_vi
     assert (finding['status'], finding['direction'], finding['source_layer'], len(finding['instruction_refs'])) == ('conflict', 'mixed', 'mixed', 2)
 
 
+@pytest.mark.parametrize('rules,turns', [
+    ('- Always run `task test`.\n', [user('Do not run `task test`.'), agent('Understood.')]),
+    ('- Always run `task test`.\n- Never run `task test`.\n', [user('Fix it.'), agent('Understood.')])], ids=['harness-and-prompt', 'two-harness-rules'])
+def test_conflict_is_one_occurrence_whose_span_holds_the_two_instruction_turns(rules, turns):
+    report = analyze([session('s', turns)], rules, loading='loaded')
+    finding = only(report)
+    assert (finding['status'], finding['occurrences'], finding['turns']) == ('conflict', 1, [])
+    assert [row['occurrences'] for row in report['recurrence']] == [1]
+
+
+def test_restated_instruction_is_one_occurrence_whose_span_holds_the_prompt_and_its_repeat():
+    said = 'Always answer in formal English prose.'
+    finding = only(analyze([session('s', [user(said), agent('sure lol'), user(said), agent('ok')])]))
+    assert (finding['occurrences'], finding['turns'], finding['span']) == (1, [], dict(first_turn=0, last_turn=2))
+
+
 def test_unknown_capture_session_is_reported_unknown_and_decides_nothing():
     report = analyze([session('s', [user('Tidy up.'), shell('git push --force')], capture='unknown')], NEVER_PUSH, loading='loaded')
     assert report['findings'] == []
@@ -123,6 +139,48 @@ def test_skipped_required_step_on_a_partial_capture_stays_unknown():
     assert report['findings'] == [] and report['decisions'] == dict(undecided_capture_partial=1)
 
 
+@pytest.mark.parametrize('turns', [
+    [user('What does the retry flag do?'), agent('It retries once.')],
+    [user('Where is the parser defined?'), call('Read', path='src/parser.py'), agent('In src.')],
+    [user('List the open work.'), call('Grep'), call('Glob'), agent('Two items.')],
+    [user('Show the history.'), shell('git log --oneline'), agent('Here it is.')],
+    []], ids=['question-only', 'read-only', 'search-only', 'shell-only', 'empty'])
+def test_required_step_is_unknown_when_the_session_made_no_state_changing_call(turns):
+    report = analyze([session('s', turns)], '- Always run `pytest`.\n', loading='loaded')
+    assert report['findings'] == [] and report['abstentions'] == []
+    assert report['decisions'] == (dict(undecided_no_trigger=1) if turns else dict(undecided_empty_window=1))
+
+
+@pytest.mark.parametrize('tool', ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch'])
+def test_each_state_changing_tool_arms_a_required_step(tool):
+    report = analyze([session('s', [user('Fix it.'), call(tool, path='src/a.py')])], '- Always run `pytest`.\n', loading='loaded')
+    assert (statuses(report), only(report)['mechanism']) == (['observed_violation'], 'required_step_skipped')
+
+
+def test_required_user_instruction_is_unknown_when_nothing_was_changed_afterwards():
+    report = analyze([session('s', [user('You must run `pytest`.'), agent('Noted.')])])
+    assert report['findings'] == [] and report['decisions'] == dict(undecided_no_trigger=1)
+
+
+def test_required_step_seen_in_a_partial_capture_is_satisfied_because_an_observed_call_is_evidence():
+    report = analyze([session('s', [user('Fix it.'), edit('src/a.py'), shell('pytest -q')], capture='partial')], '- Always run `pytest`.\n', loading='loaded')
+    assert report['findings'] == [] and report['decisions'] == dict(satisfied=1)
+
+
+@pytest.mark.parametrize('turns,span', [([edit('src/a.py')], (0, 0)), ([user('Fix it.'), edit('src/a.py'), agent('Done.'), edit('src/b.py')], (0, 3))],
+                         ids=['one-turn-session', 'long-session'])
+def test_skipped_required_step_is_one_occurrence_and_its_span_bounds_the_session(turns, span):
+    report = analyze([session('s', turns)], '- Always run `pytest`.\n', loading='loaded')
+    finding = only(report)
+    assert (finding['occurrences'], finding['turns'], (finding['span']['first_turn'], finding['span']['last_turn'])) == (1, [], span)
+    assert report['recurrence'][0]['occurrences'] == 1
+
+
+def test_recurrence_of_a_skipped_required_step_counts_one_occurrence_per_session():
+    report = analyze([session(name, [user('Fix it.'), edit('src/a.py')]) for name in 'abc'], '- Always run `pytest`.\n', loading='loaded')
+    assert [(row['sessions'], row['occurrences']) for row in report['recurrence']] == [(3, 3)]
+
+
 def test_required_step_in_a_later_compound_command_is_satisfied():
     report = analyze([session('s', [user('Fix it.'), edit('src/a.py'), shell('cd app && pytest -q')])], '- Always run `pytest`.\n', loading='loaded')
     assert report['findings'] == [] and report['decisions'] == dict(satisfied=1)
@@ -167,6 +225,27 @@ def test_absolute_paths_resolve_against_the_declared_project_directory():
 def test_absolute_path_without_a_project_directory_is_undecidable():
     report = analyze([session('s', [user('Do not edit `src/app.py`.'), edit('/work/p/src/app.py')])])
     assert report['findings'] == [] and report['decisions'] == dict(undecided_undecidable_call=1)
+
+
+DIRECTORY_SPELLINGS = pytest.mark.parametrize('operand', ['src', 'src/', './src'], ids=['bare', 'trailing-slash', 'dot-slash'])
+
+
+@DIRECTORY_SPELLINGS
+@pytest.mark.parametrize('path,inside', [('src/a.py', True), ('src/deep/a.py', True), ('src', True), ('src-copy/a.py', False), ('docs/a.md', False)],
+                         ids=['child', 'nested-child', 'directory-itself', 'sibling-prefix', 'elsewhere'])
+def test_only_edit_scope_reads_a_directory_the_same_with_or_without_a_trailing_slash(operand, path, inside):
+    report = analyze([session('s', [user(f'Only edit `{operand}`.'), edit(path)])])
+    assert [f['mechanism'] for f in report['findings']] == ([] if inside else ['scope_exceeded'])
+    assert report['decisions'] == (dict(satisfied=1) if inside else dict(violated=1))
+
+
+@DIRECTORY_SPELLINGS
+@pytest.mark.parametrize('path,hit', [('src/a.py', True), ('src/deep/a.py', True), ('src', True), ('src-copy/a.py', False), ('src.bak', False)],
+                         ids=['child', 'nested-child', 'directory-itself', 'sibling-prefix', 'dotted-sibling'])
+def test_directory_prohibition_without_a_trailing_slash_still_covers_the_files_inside(operand, path, hit):
+    report = analyze([session('s', [user(f'Do not edit `{operand}`.'), edit(path)])])
+    assert [f['status'] for f in report['findings']] == (['observed_violation'] if hit else [])
+    assert report['decisions'] == (dict(violated=1) if hit else dict(satisfied=1))
 
 
 def test_edit_outside_the_only_allowed_directory_is_a_scope_violation():
