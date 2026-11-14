@@ -710,6 +710,21 @@ the listed `SKILL.md` frontmatter, name and escaping links are judged.
 References from other bundles to a removed one, name collisions across kinds of folder, and runtime activation are not checked or
 claimed.
 
+Each reviewed bundle, adoptable or blocked, is one typed row: `bundle`, `action`, `reasons`, `placement`,
+`before_sha256` and `after_sha256`. `placement` names the runtime whose documented skills root holds the bundle
+(`claude-code` for `.claude/skills`, `codex` for `.agents/skills`, at the project root or nested) and is
+`unverified_location` for a bare `skills/` folder, which neither runtime documents as a discovery root; it says
+where the files sit, never that anything loads them. The identity is the SHA-256 of the bundle's sorted
+`[relative path, content SHA-256, mode]` rows, so an edit to any file or mode inside the bundle changes it. It is
+null for a side with no file (the `before` of a `create`, the `after` of a `remove`) and for both sides of a
+`scoped` review, where the membership is unknown. A blocked run lists the rows in `skill_review.findings`; a
+behavioral candidate that stays `inconclusive` lists them as `skill_bundles` in `change-plan.json`, beside the
+per-file operations of the plan. The rows grant no authority and the plan hash does not cover them.
+
+`ahl skills` links AHL's own skills into a runtime's skill directory. It does not create, update or remove the
+skills of a target project; those lifecycles run only through the staged-candidate path above, which stays
+recommendation-only until a candidate is independently certified (`skill_lifecycle` remains deferred).
+
 ## Independently verified format repair
 
 See [repair a supported skill header](repair-skill-header.md) for the commands.

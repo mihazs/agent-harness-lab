@@ -19,6 +19,13 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
   the text as a whole name; ambiguous basenames require a bundle-relative path.
 
+Each finding also names the bundle's operation, its placement and its before/after identity: placement is the
+runtime whose documented skills root holds the bundle (.claude/skills: claude-code, .agents/skills: codex, either at
+the project root or nested) or unverified_location for a bare skills/ folder, which no runtime documents as a
+discovery root; it states where the files sit and never that anything loads them. The identity is the SHA-256 of the
+bundle's sorted [relative path, content SHA-256, mode] rows, None for a side with no file and for a scoped snapshot
+whose membership is unknown, so an edit to any file or mode inside the bundle changes it.
+
 Findings carry fixed labels and bundle paths only, never file text. With configured harness_paths the
 snapshot holds only the listed files, so the membership checks (missing_entry_point, dangling_reference,
 orphan_asset and the create/remove action) are skipped. References from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
@@ -26,6 +33,7 @@ orphan_asset and the create/remove action) are skipped. References from other bu
 from collections import Counter
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 import posixpath
 from pathlib import PurePosixPath
 import re
@@ -34,6 +42,7 @@ from agent_harness_lab import surfaces
 from . import frontmatter
 
 PROFILE = 'ahl-skill-bundle-validation-v1'
+DOCUMENTED_ROOTS = {('.claude', 'skills'): 'claude-code', ('.agents', 'skills'): 'codex'}
 NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
 _FENCE = re.compile(r'[ \t]*(`{3,}|~{3,})(.*)$')
 _SPAN = re.compile(r'`[^`\n]*`')
@@ -49,6 +58,9 @@ class Finding:
     bundle: str
     action: str
     reasons: tuple = ()
+    placement: str = 'unverified_location'
+    before_sha256: str | None = None
+    after_sha256: str | None = None
 
     @property
     def verdict(self): return 'blocked' if self.reasons else 'adoptable'
@@ -61,11 +73,15 @@ class Review:
     @property
     def verdict(self): return 'blocked' if any(row.reasons for row in self.findings) else 'adoptable'
 
+    def bundles(self):
+        """One typed row per reviewed bundle (operation, placement, identity, reasons), adoptable or blocked."""
+        return [asdict(row) for row in self.findings]
+
     def outcome(self):
         """Workflow result fields that stop a blocked candidate before evaluation; None when it is adoptable."""
         if self.verdict == 'adoptable': return None
         return dict(status='blocked', reason='skill_bundle_validation_failed',
-                    skill_review=dict(profile=PROFILE, findings=[asdict(row) for row in self.findings],
+                    skill_review=dict(profile=PROFILE, findings=self.bundles(),
                                       adoption_authority=False, loading_evidence=False))
 
 
@@ -75,6 +91,18 @@ def bundle_of(path):
     if surfaces.classify(path, None, None, root_skills=True, in_checkout=True).kind != 'skill': return None
     index = parts.index('skills') if 'skills' in parts else None
     return None if index is None or len(parts) < index + 3 else '/'.join(parts[:index + 2])
+
+
+def _placement(bundle):
+    """The runtime whose documented skills root holds the bundle, else 'unverified_location' (no activation claim)."""
+    return DOCUMENTED_ROOTS.get(PurePosixPath(bundle).parts[-3:-1], 'unverified_location')
+
+
+def _identity(states, bundle):
+    """SHA-256 of the bundle's sorted [relative path, content SHA-256, mode] rows; None when it holds no file."""
+    prefix = bundle + '/'
+    rows = sorted([name[len(prefix):], *state] for name, state in states.items() if name.startswith(prefix))
+    return hashlib.sha256(json.dumps(rows).encode()).hexdigest() if rows else None
 
 
 def _unfenced(text):
@@ -187,5 +215,7 @@ def review_tree(baseline, candidate, original, proposed, scoped=False):
         added = [name[len(prefix):] for name in proposed if name.startswith(prefix) and name not in original]
         reasons = [] if action == 'remove' or not files else _reasons(bundle, files, added, not scoped)
         if action == 'create' and _shadowed(bundle, existing): reasons = sorted({*reasons, 'shadowed_name'})
-        rows.append(Finding(bundle, action, tuple(reasons)))
+        known = action != 'scoped'
+        rows.append(Finding(bundle, action, tuple(reasons), _placement(bundle),
+                            _identity(original, bundle) if known else None, _identity(proposed, bundle) if known else None))
     return Review(tuple(rows))

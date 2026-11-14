@@ -22,7 +22,7 @@
 | `ahl sources claude-mem tool-check --tools FILE` | Compare one saved Claude-Mem MCP `tools/list` result with the pinned v15.9.0 read tools by input-schema structure; offline, no worker contact, see [Claude-Mem tool listing check](source-contracts.md#saved-mcp-tool-listing-check-claude-mem) |
 | `ahl sources mempalace capabilities [--tools-list FILE]` | Print the offline MemPalace profile and tool capability report, optionally comparing a saved `tools/list` result by name only; no server, network or model, see [MemPalace capability report](source-contracts.md#mempalace-capability-report) |
 | `ahl doctor [project] --profile offline --json` | Check readiness without running an agent; checks and boundaries are in [offline readiness](onboarding.md). Its non-required `claude_runtime_lag` warning reads dotted version strings from at most 200 Claude session transcript headers, under every profile |
-| `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
+| `ahl skills --agent claude` | Link AHL's own installed skills into a selected runtime's skill directory; it does not create, update or remove a target project's skills ([bundle review](one-call-improvement.md#validating-staged-skill-bundles)) |
 
 Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
 `--agent claude` or `--agent codex`; preparation and evaluation never mix runtimes
