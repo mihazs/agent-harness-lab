@@ -1,9 +1,11 @@
 """Versioned reviewed tasks, deterministic leakage checks and final-access ledger."""
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
 from agent_harness_lab.monitoring.state import atomic_json
+from .areas import check_declared, parse_registry, task_areas
 from .integrity import contained, digest, read_regular
 
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
@@ -36,15 +38,17 @@ class TaskSpec:
     independence: str
     safety: tuple
     artifacts: tuple
+    areas: tuple = ()  # optional capability tags; absent means untagged
 
     @classmethod
-    def parse(cls, value, *, analysis_only=False):
+    def parse(cls, value, *, analysis_only=False, areas_at=None):
         if type(analysis_only) is not bool: raise ValueError('explicit task parsing mode required')
-        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
+        if not isinstance(value, dict) or set(value) | {'areas'} != set(cls.__dataclass_fields__):
             raise ValueError('task fields must match the versioned schema')
         if any(not isinstance(value[k], list) or not all(isinstance(v, str) and v for v in value[k]) for k in ('safety', 'artifacts')):
             raise ValueError('safety/artifact lists required')
-        obj = cls(**{**value, 'safety': tuple(value['safety']), 'artifacts': tuple(value['artifacts'])})
+        tags = task_areas(value['areas'], **(areas_at or {})) if 'areas' in value else ()
+        obj = cls(**{**value, 'safety': tuple(value['safety']), 'artifacts': tuple(value['artifacts']), 'areas': tags})
         for key in ('task_id', 'root_id', 'family', 'project_group', 'time_group', 'grader_version', 'reviewer'):
             identifier(getattr(obj, key), None if analysis_only else 128)
         if obj.partition not in PARTITIONS or obj.source_kind not in ('synthetic', 'public', 'private'):
@@ -55,10 +59,17 @@ class TaskSpec:
             raise ValueError('missing task provenance/safety boundary')
         return obj
 
+    def declaration(self):
+        """The JSON task declaration this spec parses back from; an untagged task has no areas field."""
+        value = json.loads(json.dumps(asdict(self)))
+        if not self.areas: del value['areas']
+        return value
 
-def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None):
+
+def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None, registry=None):
     if type(verify_contents) is not bool or type(analysis_only) is not bool:
         raise ValueError('content verification mode must be explicit')
+    declared = None if registry is None else parse_registry(registry)
     path = Path(path)
     raw = read_regular(path, None if analysis_only else 1024 * 1024)
     value = json.loads(raw.decode('utf-8'))
@@ -67,7 +78,11 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
     dimensions = value.get('separate_by', ['root_id'])
     if not dimensions or any(k not in ('root_id', 'family', 'project_group', 'time_group') for k in dimensions) or 'root_id' not in dimensions:
         raise ValueError('invalid independence policy')
-    tasks = [TaskSpec.parse(t, analysis_only=analysis_only) for t in value['tasks']]
+    tasks = [TaskSpec.parse(t, analysis_only=analysis_only, areas_at=dict(field=f'tasks[{i}].areas', file=path.name))
+             for i, t in enumerate(value['tasks'])]
+    if declared is not None:
+        for index, task in enumerate(tasks):
+            check_declared(task.areas, declared, field=f'tasks[{index}].areas', file=path.name)
     limits = dict(max_files=None, max_bytes=None, max_entries=None, max_depth=None) if analysis_only else {}
     if len({t.task_id for t in tasks}) != len(tasks):
         raise ValueError('duplicate task ID')
@@ -112,6 +127,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
                 certification_reason='controller_qualification_unavailable', issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
+    tagged = Counter(area for task in tasks for area in task.areas)
+    if tagged:  # a task counts once in each of its areas; an untagged bank keeps its published shape
+        result['areas'] = dict(sorted(tagged.items()))
     if analysis_only:
         result['task_index'] = [{key: getattr(task, key) for key in
             ('task_id', 'root_id', 'family', 'partition', 'review_status')} for task in tasks]
@@ -134,8 +152,9 @@ def inspect(path, *, similarity_algorithm=None):
     return result
 
 
-def validate(path, *, verify_contents=True):
-    result = _validate(path, verify_contents=verify_contents)
+def validate(path, *, verify_contents=True, registry=None):
+    """With the project's ahl.json areas as registry, a task tagged with an area it does not declare is rejected."""
+    result = _validate(path, verify_contents=verify_contents, registry=registry)
     profile = result.pop('_controller_profile',None)
     if profile is not None:
         from .bank_revisions import PROFILE, validate_admission

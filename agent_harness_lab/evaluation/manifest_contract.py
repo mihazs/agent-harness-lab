@@ -8,7 +8,7 @@ from contextlib import contextmanager
 SPLITS = ('development', 'regression', 'heldout')
 STATES = ('broken', 'partial', 'complete')
 FILE = 'manifest.json'
-AGENT, AHL = 'agent_output_defect', 'ahl_contract_mismatch'
+AGENT, AHL, PROJECT = 'agent_output_defect', 'ahl_contract_mismatch', 'project_declaration_defect'
 
 # Fields the construction prompt asks the author to write, and the fields the controller writes itself.
 AUTHOR_FIELDS = dict(manifest=('skills', 'harness_paths', 'tasks', 'grader_self_tests', 'grader_bundles'),
@@ -31,6 +31,17 @@ REASONS = {
     'internal_contract_error': (AHL, False, 'This is an AHL contract defect, not an input defect; report it with the named stage and field.'),
 }
 
+# Declarations the project writes (ahl.json, a bank's bank.json), not agent output: never repaired by an authoring pass.
+DECLARATION_REASONS = {
+    'area_registry_invalid': (PROJECT, False, 'Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun.'),
+    'area_duplicate': (PROJECT, False, 'List each area id once, in the ahl.json areas and in every task areas list, then rerun.'),
+    'task_areas_empty': (PROJECT, False, 'Give a tagged task one to three area ids, or remove its areas field to leave it untagged, then rerun.'),
+    'task_areas_too_many': (PROJECT, False, 'Tag a task with at most three areas and keep the ones it genuinely exercises, then rerun.'),
+    'task_areas_invalid': (PROJECT, False, 'Write the task areas field as a list of one to three lowercase kebab-case area ids, then rerun.'),
+    'task_area_undeclared': (PROJECT, False, 'Declare the area in the ahl.json areas with an id, a label and a description, or correct the tag on the task, then rerun.'),
+}
+ALL_REASONS = {**REASONS, **DECLARATION_REASONS}
+
 
 def contract_text(controller_grader=True):
     """The prompt sentence derived from the shared tables, so prompt and validators cannot drift apart."""
@@ -49,7 +60,7 @@ class ContractError(ValueError):
 
     def __init__(self, reason, stage, field=None, file=FILE):
         self.reason, self.stage, self.field, self.file = reason, stage, field, file
-        self.origin, self.repairable, self.remediation = REASONS[reason]
+        self.origin, self.repairable, self.remediation = ALL_REASONS[reason]
         super().__init__(self.render())
 
     @property

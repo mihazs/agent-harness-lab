@@ -90,6 +90,13 @@ def test_reviewed_case_enters_a_new_private_immutable_development_bank(admission
     assert bank.stat().st_mode & 0o777 == 0o600
 
 
+def test_admitting_an_untagged_regression_writes_a_task_without_an_areas_field(admission):
+    result = admission.accept()
+    added = next(t for t in json.loads(admission.bank(result).read_text())['tasks'] if t['task_id'].startswith('regression-'))
+    assert 'areas' not in added
+    assert validate(admission.bank(result))['tasks'] == 2
+
+
 @pytest.mark.parametrize('field',[pytest.param(field,id=field)
                                    for field in ('expected_event_sha256','parent_bank_sha256','evidence_sha256')])
 def test_stale_case_parent_or_evidence_reject_before_any_revision(admission,field):
