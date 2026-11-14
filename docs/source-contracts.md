@@ -3770,7 +3770,8 @@ Select `local_file/test-results/v1` in the existing local source declaration, wi
 ```json
 {"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
  "reports": [{"path": "reports/junit.xml", "format": "junit-xml"},
-             {"path": "reports/pytest.json", "format": "pytest-json"}],
+             {"path": "reports/pytest.json", "format": "pytest-json"},
+             {"path": "reports/results.tap", "format": "tap"}],
  "limits": {"max_cases": 5000}}
 ```
 
@@ -3787,7 +3788,8 @@ Each test case becomes one `test_case_result` development-artifact record and ea
 report one `test_report` record. The record identity binds the declared commit, the
 report path fingerprint, the case identity and an occurrence index. The case identity
 is the report's own declaration: JUnit's nested `testsuite` names plus `classname`
-and `name`, or pytest's `nodeid`. Journals and preview output keep only
+and `name`, pytest's `nodeid`, or a TAP test point's description (`#N` for its
+position when it has none). Journals and preview output keep only
 fingerprints. Raw suite and case names stay in memory as `declared_cases` for
 in-process callers. The same test at another commit or in another report is a
 different record. A repeated identity within one report is kept as a further
@@ -3816,14 +3818,38 @@ and `reported_outcome` keeps the native label:
 | pytest `passed` with a setup, call or teardown phase whose outcome is not `passed` | `unknown` (`conflicting`) |
 | pytest `xfailed`, `xpassed`, `rerun` | `unknown` with that label |
 | any other pytest outcome | `unknown` (`unrecognized`) |
+| TAP `ok` / `not ok` with no directive | `passed` (`ok`) / `failed` (`not_ok`) |
+| TAP `ok # SKIP` | `skipped` (`skip`) |
+| TAP `not ok # SKIP` | `unknown` (`conflicting`) |
+| TAP `# TODO` on `ok` or `not ok` | `unknown` (`todo`) |
+| TAP directive that starts with `skip` or `todo` but continues the word (`# skipped`, `# todos`) | `unknown` (`unrecognized_directive`) |
 
 Suite-level JUnit `failure`/`error` elements name no case; they are never
 attributed to one and add `suite_level_status_unattributed`. `duration_seconds`
-is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations.
-It is `null` when absent, and also when a value is malformed, negative or
-non-finite, or when finite pytest phases sum to a non-finite total (with
-`invalid_duration`). pytest collector failures add
+is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations;
+a TAP test point has none. It is `null` when absent, and also when a value is
+malformed, negative or non-finite, or when finite pytest phases sum to a non-finite
+total (with `invalid_duration`). pytest collector failures add
 `collection_failures_reported`; they create no case.
+
+A TAP 13 or 14 stream (the `TAP version` line is optional; any other version is
+refused) yields one case per top-level test point, in lowercase `ok` / `not ok`
+form with an optional number and `- description`. A `#` ends the description
+unless it is escaped as `\#`, and only a `SKIP` or `TODO` word after it is a
+directive; other comments are ignored. Indented lines (YAML diagnostic blocks and
+TAP 14 subtests) are never cases: an indented test point adds
+`tap_subtest_lines_not_imported` and the parent's own result is the case. Comments,
+`pragma` lines and blank lines are skipped; any other line is ignored with
+`tap_unrecognized_line`. A `Bail out!` line ends the read with
+`tap_bail_out_reported`, and the tests after it are neither imported nor invented.
+The plan (`1..N`, before or after the tests, starting at 1, at most once) is
+checked against the test points but never fills them in: a disagreement adds
+`tap_plan_mismatch`, no plan adds `tap_plan_absent`, `1..0` adds `tap_plan_skipped`,
+and a test number that differs from the point's position adds
+`tap_test_number_out_of_sequence`. A stream with neither a plan, a test point nor
+a bail out is refused, a second plan or one that does not start at 1 raises, and a
+plan larger than `max_cases` is a `HostileReport` before any case is read.
+Diagnostic text, messages and YAML are neither stored nor summarized.
 
 These results are CI evidence about the declared commit only. Every result carries
 `commit_binding: caller_declared`, `commit_verified: false` and
@@ -3888,9 +3914,14 @@ these bounds.
 | `max_depth` (XML) | 32 |
 | `max_attributes` | 64 |
 | `max_attribute_length` | 4,096 characters |
+| `max_line_length` (TAP) | 4,096 bytes, excluding the line break |
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 (100,000 tests of about 25 values) |
+
+TAP is read one line at a time with no tree or element state: NUL bytes, invalid
+UTF-8 and an over-long line are `HostileReport`, and the read ends at the first test
+point past `max_cases`.
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
@@ -3905,10 +3936,10 @@ byte bound.
 `task test:sources:test-results` runs the synthetic controls: status mapping,
 billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
-numbers, deep nesting, duplicate case names, commit-identity validation and CLI
-journals that hold hashes only. Still open in #53: artifact download or zip
-handling; TAP, coverage and lint reports; and expired-artifact coverage warnings
-from a live read.
+numbers, deep nesting, duplicate case names, TAP directives, plans, bail outs,
+subtests and line bounds, commit-identity validation and CLI journals that hold
+hashes only. Still open in #53: artifact download or zip handling; coverage and
+lint reports; and expired-artifact coverage warnings from a live read.
 
 ### Joining test results to Actions jobs
 
