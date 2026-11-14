@@ -229,12 +229,17 @@ class MemoryStore:
     def read(self, digest):
         return self._read_object(digest)
 
+    def project_lock(self, project_id):
+        """Bounded exclusive lock serializing the committers of one project. Projects hash into 256 lock files, so
+        two projects may share one (over-serialized, never under); always taken before the writer lock."""
+        return self._writer('project-' + hashlib.sha256(str(project_id).encode()).hexdigest()[:2] + '.lock')
+
     @contextmanager
-    def _writer(self):
+    def _writer(self, name='writer.lock'):
         if self.read_only_reason:
             raise ReadOnlyStore(self.read_only_reason)
         require_writable(self.root)
-        descriptor = open_beneath(self.root / 'locks/writer.lock', os.O_RDWR | os.O_CREAT, 0o600)
+        descriptor = open_beneath(self.root / 'locks' / name, os.O_RDWR | os.O_CREAT, 0o600)
         deadline = time.monotonic() + self.busy_seconds
         try:
             while True:
