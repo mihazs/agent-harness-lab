@@ -52,14 +52,17 @@ cannot establish a recurring sequence under the implemented threshold.
 
 ## Analysis brief and mechanism summaries
 
-Each analysis run writes two additional private artifacts beside `analysis.json`.
-Both are descriptive observed patterns; neither is a diagnosis, an outcome label or
+Each analysis run writes two additional private artifacts beside `analysis.json`, and a third
+when it read a native capture it could attribute to the project (see
+[instruction adherence](instruction-adherence.md#analysis-and-improve)).
+All are descriptive observed patterns; none is a diagnosis, an outcome label or
 an independence claim.
 
 | Artifact | Purpose | Bound |
 | --- | --- | --- |
 | `analysis-brief.json` | What the cooperative preparation stage reads instead of `analysis.json` | Hard cap of 32 KiB on the file, independent of history size |
 | `mechanism-summaries.json` | Ranked groups with at most five evidence references each | At most 200 groups; omitted groups are counted in `truncated` |
+| `instruction-adherence.json` | Where the read Claude Code or Codex sessions ignored a project rule or a prompt instruction; digests only | At most 5,000 findings; written only when at least one native session was read; the brief's `instruction_adherence` section holds its counts |
 
 Structured tool errors are grouped by tool class and a fixed error category. A tool
 class is a documented built-in tool name or a stable opaque label; free-text error

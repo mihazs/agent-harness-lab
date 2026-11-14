@@ -9,6 +9,7 @@ import pytest
 
 from agent_harness_lab.diagnostics import instruction_adherence as adherence
 from tests.support.adherence_fixture import edit, session, shell, user
+from tests.support.native_session_fixture import claude, write
 
 ROOT = Path(__file__).resolve().parents[3]
 SECRET = 'zz-private-token'
@@ -73,3 +74,37 @@ def test_invalid_sessions_exit_two_without_a_report(files, content):
 
 def test_missing_rule_file_exits_two(files):
     assert run(files, 'sessions.json', '--rules', 'project=MISSING.md').returncode == 2
+
+
+@pytest.fixture
+def native_files(tmp_path):
+    """A project holding AGENTS.md plus a Claude capture that loaded it and then ran the forbidden command."""
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'AGENTS.md').write_text('- Never run `git push --force`.\n')
+    write(tmp_path / 'one.jsonl', claude(project, [('memory', str(project / 'AGENTS.md')), ('user', f'Push {SECRET}.'),
+                                                    ('call', 'Bash', dict(command='git push --force origin main'))], session=f'id-{SECRET}'))
+    write(tmp_path / 'two.jsonl', claude(project, [('user', 'status'), ('call', 'Bash', dict(command='git status'))], session='second'))
+    return project, tmp_path
+
+
+def test_native_sessions_are_read_for_the_project_and_reported_redacted(native_files):
+    project, folder = native_files
+    result = run(project, '--native', 'claude', '--project', '.', str(folder / 'one.jsonl'), str(folder / 'two.jsonl'), '--rules', 'project=AGENTS.md')
+    report = json.loads(result.stdout)
+    assert result.returncode == 0, result.stderr
+    assert report['counts'] == dict(observed_violation=1) and report['sessions']['total'] == 2 and report['sessions']['unknown_lineage'] == 2
+    assert SECRET not in result.stdout and 'git push' not in result.stdout
+
+
+def test_native_capture_of_another_project_is_refused_not_skipped(native_files):
+    project, folder = native_files
+    (folder / 'elsewhere').mkdir()
+    result = run(folder / 'elsewhere', '--native', 'claude', str(folder / 'one.jsonl'))
+    assert result.returncode == 2 and result.stdout == '' and 'foreign_project=1' in result.stderr
+
+
+def test_native_flag_and_sessions_file_inputs_do_not_mix(files):
+    assert run(files, 'sessions.json', 'sessions.json').returncode == 2
+    assert run(files, 'sessions.json', '--project', '.').returncode == 2
+    assert run(files, '--native', 'codex', 'sessions.json').returncode == 2

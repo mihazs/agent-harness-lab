@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Wire `ahl instruction-adherence` to real sessions and to every analysis (part of #655). `--native claude|codex --project DIR FILE...` reads Claude Code and Codex session files of one project in memory, only for releases the telemetry adapters verify and only for user sessions of that project; a capture that cannot be attributed is refused by typed reason. Native sessions are partial with unknown lineage, Claude's memory attachment marks a root `AGENTS.md` or `CLAUDE.md` as loaded, and Codex records no loading so its harness-rule violations stay abstentions. `ahl analyze` and `ahl improve` now run the report over the native sessions they selected, write the redacted `instruction-adherence.json` and add a counts-only `instruction_adherence` section to the analysis brief, which says `not_run` with a reason when no native session could be read. Not yet done: a model-judge supplement, revert and reopened-task signals, user-level rule files, and a calibration sample drawn from reviewed real sessions.

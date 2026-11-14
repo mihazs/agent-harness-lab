@@ -315,7 +315,7 @@ def _size(value):
     return len(rendered(value))
 
 
-def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=None):
+def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=None, adherence=None):
     """Return (brief, next_steps). The brief is deterministic and capped regardless of history size."""
     analysis, execution = data['analysis'], data.get('execution', {})
     ranked = sorted(result['groups'].items(), key=_rank)
@@ -338,6 +338,10 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
                                             event_store_truncated=bool((artifact_bounds or {}).get('event_store', {}).get('truncated', {}).get('applied')))))
     if (classes := _error_classes(result['groups'])) is not None:
         brief['tool_error_classes'] = classes
+    if adherence is not None:
+        # Counts only: the digest-only findings stay in the private instruction-adherence.json the section names.
+        brief['instruction_adherence'] = adherence
+        if adherence.get('artifact'): brief['sources']['instruction_adherence'] = adherence['artifact']
     for section in ('mechanisms', 'weak_outcome_signals', 'missing_evidence'):
         while _size(brief) > MAX_BRIEF_BYTES and brief[section]:
             brief[section].pop()

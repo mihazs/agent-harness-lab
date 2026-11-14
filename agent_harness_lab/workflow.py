@@ -182,7 +182,10 @@ def evidence(args, output, source_context=None, *, progress=None):
     write_json(output / 'analysis.json', data_view)
     scanned = observed.result()
     write_json(output / 'mechanism-summaries.json', brief.mechanism_summaries(scanned))
-    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store))
+    from .diagnostics import adherence_native
+    adherence_section, adherence_report = adherence_native.for_analysis(args, data)
+    if adherence_report is not None: write_json(output / adherence_native.ARTIFACT, adherence_report)
+    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store), adherence=adherence_section)
     write_json(output / 'analysis-brief.json', data_brief)
     args._analysis_next_steps, args._analysis_brief = next_steps, data_brief
     report_text = report(data_view['analysis'], source_context=source_context) + execution_report(data['execution'])
