@@ -93,6 +93,7 @@ def _trial(raw, experiment):
 def _verdict(key, arms, planned, experiment, duplicate_ids):
     reasons = []
     if key not in planned: reasons.append('unplanned_pair')
+    if experiment['baseline_hash'] == experiment['candidate_hash']: reasons.append('arms_identical')  # one harness against itself proves nothing (#805)
     for arm in ARMS:
         if len(arms[arm]) > 1: reasons.append('duplicate_' + arm)
     records = [record for records in arms.values() for record in records]

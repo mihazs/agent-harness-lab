@@ -411,6 +411,7 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `evaluation_construction_timeout` | The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun. |
 | `evaluation_task_infeasible` | The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun. |
 | `evaluation_uninformative` | Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun. |
+| `evaluation_vacuous` | The evaluation proved nothing: it had no eligible case, no trial, only unknown outcomes, no executed grader or two identical arms (see vacuity.labels in the receipt, and docs/vacuity-labels.md); fix the named cause, then rerun. No improvement is reported for it. |
 | `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |

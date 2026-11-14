@@ -33,8 +33,11 @@ def seeded_provenance(hint, source):
 
 
 def evidence_strength(manifest, trials, *, inputs_unchanged, grader_changed=False, final_attempt=True,
-                      minimum=MIN_BASELINE_FAILURES):
-    """Label one proposed change from paired trial outcomes alone; ``manifest`` and ``trials`` may be None."""
+                      minimum=MIN_BASELINE_FAILURES, vacuity=()):
+    """Label one proposed change from paired trial outcomes alone; ``manifest`` and ``trials`` may be None.
+
+    ``vacuity`` holds the closed-set labels of a run that proves nothing; such a run is never better than ``insufficient``.
+    """
     splits = {task['id']: task.get('split') for task in (manifest or {}).get('tasks', [])}
     outcome = {(trial.get('version'), trial.get('task')): trial.get('status')
                for trial in trials or []
@@ -54,7 +57,7 @@ def evidence_strength(manifest, trials, *, inputs_unchanged, grader_changed=Fals
     candidate_unsupported = bool(everything) and any(cand != 'passed' for _, cand in everything)
     regressed = any(pair == ('passed', 'failed') for pair in everything)
     paired_win = (not candidate_unsupported and any(pair == ('failed', 'passed') for pair in development))
-    reasons = []
+    reasons = ['evaluation_vacuous', *vacuity] if vacuity else []
     if grader_changed: reasons.append('grader_changed_after_trials')
     if not inputs_unchanged: reasons.append('frozen_inputs_changed')
     if not final_attempt: reasons.append('evaluation_not_for_final_attempt')

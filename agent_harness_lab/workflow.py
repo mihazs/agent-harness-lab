@@ -18,7 +18,7 @@ from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces,
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
-from agent_harness_lab.evaluation import manifest_contract
+from agent_harness_lab.evaluation import manifest_contract, vacuity
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -1134,6 +1134,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.pop('instruction_removal',None)
             result.update(status='incomplete',reason='evaluation_manifest_changed')
             break
+        labels = vacuity.classify(manifest['tasks'], trials, baseline_sha256=baseline_hash, candidate_sha256=frozen_hash)
+        if labels: result['vacuity'] = vacuity.receipt(labels)  # recorded facts only; the gate below stops an evaluation that proves nothing
         if not legacy_coverage(manifest, trials):
             result.pop('instruction_removal',None)
             result['status'] = 'incomplete'
@@ -1148,6 +1150,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
         single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            vacuity=labels,
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
@@ -1163,6 +1166,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if quiet is not None:  # no pass anywhere and both arms alike: another attempt would spend the budget to learn nothing
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
+            break
+        if labels:  # no improvement, pass or recommendation can come from an evaluation that proves nothing
+            result.pop('instruction_removal',None)
+            result.update(status='inconclusive',reason=vacuity.REASON)
             break
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
@@ -1233,7 +1240,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         try:
             result['decision']=single_run_decision(single_run['manifest'],single_run['trials'],
                 inputs_unchanged=single_run['inputs_unchanged'],prerequisites=result['implementation_prerequisites'],
-                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings)
+                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings,vacuity=single_run['vacuity'])
         except Exception as exc:  # An explanation failure never changes the run result.
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
@@ -1246,7 +1253,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         changed = sorted(name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name))
         result['pre_edit_check'] = pre_edit_check(args.project, changed)
         result['evidence_strength'] = evidence_strength(**(dict(manifest=None, trials=None, inputs_unchanged=True) if single_run is None
-            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged')}),
+            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged', 'vacuity')}),
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis

@@ -34,7 +34,9 @@ pair gets one verdict:
   not graded (`ungraded_*`, for example an infrastructure error or cancellation).
   Missing data is never a failure.
 - `not_comparable` for unplanned pairs, duplicate arm records or trial IDs,
-  invalid records, and harness, grader or runtime mismatches. A lone arm is still
+  invalid records, harness, grader or runtime mismatches, and an experiment whose
+  baseline and candidate hashes are the same (`arms_identical`, one harness
+  against itself, see [vacuity labels](vacuity-labels.md)). A lone arm is still
   checked against the experiment's hashes. These pairs stay in the report for
   investigation, with every record, and are excluded from the comparable count
   and usage totals.

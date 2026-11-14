@@ -1,6 +1,8 @@
 """Fail-closed behavioral promotion. Implemented statistics are not certification."""
 from dataclasses import dataclass, field
 
+from agent_harness_lab.evaluation.vacuity import receipt as vacuity_receipt
+
 
 @dataclass(frozen=True)
 class PromotionDecision:
@@ -51,14 +53,15 @@ def decide(spec, analysis, *, prerequisite_scope=None, isolation_verified=None, 
 def legacy_coverage(manifest, trials):
     expected = {(version, task['id']) for version in ('baseline', 'candidate') for task in manifest['tasks']}
     observed = [(trial.get('version'), trial.get('task')) for trial in trials if isinstance(trial, dict)]
-    return len(observed) == len(trials) == len(expected) and set(observed) == expected
+    # No declared case and no trial is no_eligible_cases and zero_trials, never complete coverage (#805).
+    return bool(expected) and len(observed) == len(trials) == len(expected) and set(observed) == expected
 
 
 SINGLE_RUN_PROFILE = 'ahl-single-run-decision-disposition-v1'
 PAIR_KINDS = ('candidate_only_passed', 'baseline_only_passed', 'both_passed', 'both_failed', 'unknown')
 
 
-def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, prerequisite_scope=None, bindings=None):
+def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, prerequisite_scope=None, bindings=None, vacuity=()):
     """Explain why one legacy paired run cannot support a recommendation.
 
     Counts are observed patterns only. The disposition never grants recommendation,
@@ -86,7 +89,8 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
     declared_roots = len(set(roots)) if roots and all(isinstance(root, str) and root for root in roots) else None
     def failed(version, split=None):
         return any(outcome[version, task['id']] == 'failed' and (split is None or task.get('split') == split) for task in tasks)
-    if not inputs_unchanged: pattern = 'frozen_inputs_changed'
+    if vacuity: pattern = 'vacuous_evaluation'
+    elif not inputs_unchanged: pattern = 'frozen_inputs_changed'
     elif pairs['unknown']: pattern = 'unknown_trial_outcomes'
     elif failed('candidate'): pattern = 'candidate_failures_observed'
     elif failed('baseline', 'regression'): pattern = 'baseline_control_failures_observed'
@@ -98,6 +102,7 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
              if value.get('status') != 'verified'}
     reasons = ['single_run_per_task_arm', 'no_frozen_experiment_plan', 'descriptive_smoke_cannot_certify',
                'independent_roots_undeclared' if declared_roots is None else 'independent_roots_unverified']
+    if vacuity: reasons.append('vacuous_evaluation')
     if pairs['unknown']: reasons.append('unknown_trial_outcomes')
     if mismatched: reasons.append('trial_split_mismatch')
     if not inputs_unchanged: reasons.append('frozen_inputs_changed')
@@ -106,7 +111,7 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
     promotion = (PromotionDecision('blocked', 'frozen_inputs_changed', isolation=isolation) if not inputs_unchanged
                  else PromotionDecision('inconclusive', 'descriptive_smoke_cannot_certify', isolation=isolation))
     return dict(schema_version=1, profile=SINGLE_RUN_PROFILE, evidence_scope='single_run_descriptive_only',
-        disposition='insufficient_evidence' if inputs_unchanged else 'invalid_evidence',
+        disposition='insufficient_evidence' if inputs_unchanged and not vacuity else 'invalid_evidence',
         next_evidence='requires_repeated_paired_experiment', observed_pattern=pattern, reasons=reasons,
         unmet_prerequisites=unmet,
         observed=dict(tasks=len(tasks), trials=len(trials), repeats_per_task_arm=1, split_mismatched_trials=mismatched,
@@ -115,7 +120,7 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
                        isolation=promotion.isolation),
         bindings=dict(bindings or {}), independence='unverified', native_identity='unverified',
         recommendation_authority=False, application_eligible=False, publication_allowed=False,
-        automatic_promotion=False, adoption_authority=False)
+        automatic_promotion=False, adoption_authority=False, **(dict(vacuity=vacuity_receipt(vacuity)) if vacuity else {}))
 
 
 def implementation_prerequisites(scope=None, *, declarations=None):
