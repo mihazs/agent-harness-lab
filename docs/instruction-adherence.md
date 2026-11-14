@@ -7,6 +7,7 @@ how a rule is judged against a session, and the report. For the steps see
 ```text
 ahl instruction-adherence SESSIONS [--rules LAYER=FILE]... [--scope project|global|project+global]
                           [--output FILE] [--private-detail]
+ahl instruction-adherence --native claude|codex [--project DIR] SESSION_FILE... [same options]
 ```
 
 Exit: 0 report produced; 2 invalid input. The command is offline, read-only toward its inputs, uses
@@ -27,6 +28,40 @@ Profile `ahl-instruction-sessions-v1`: at most 5,000 sessions and 16 MiB. Unknow
 
 A turn is `{"role": "user"|"agent", "text": ...}` or `{"role": "tool_call", "tool": ..., "command": ..., "path": ...}`
 where `command` and `path` are optional; each text is at most 64 KiB.
+
+## Native session files
+
+With `--native RUNTIME`, each path is a native session file (JSONL) of `--project` (default: the current
+directory) and is projected into one session in memory; nothing but the turns below is kept.
+
+| Rule | Behavior |
+| --- | --- |
+| Release | Claude Code: a release in the verified range of the telemetry adapter. Codex: the pinned `0.166.0` rollout. Anything else is skipped as `unsupported_version` |
+| Project | The first recorded directory must be the project or inside it, else `foreign_project`. A subagent transcript is `subagent_transcript`; two sessions in one file are `mixed_sessions`; no session record is `no_session` |
+| Files | A missing, linked, multi-linked or changed file is `unavailable`; over 128 MiB or a line over 8 MiB is `oversized`; invalid or duplicate-key JSON is `malformed`; at most 200 files, the rest `over_file_limit`, and about 512 MiB in all, the rest `over_byte_budget`; a second file of one session is `duplicate_session` |
+| Turns | User prompts, agent replies and tool calls. Injected meta rows, compaction summaries and tool results are not turns. A prompt is clipped to its first 64 KiB, a reply to its last 64 KiB (where a question sits), and a command or path over 64 KiB is dropped so the call is undecidable |
+| Claude calls | `command` from the tool input, and `path` from `file_path`, `notebook_path` or `path` |
+| Codex calls | `exec_command` `cmd`; `shell` and `shell_command` `command` (a `bash -lc` wrapper is read as its script); `apply_patch` one call per file named in the patch; arguments that do not parse leave the call without a command |
+| Capture | Always `partial`; lineage (`root`) is always unknown |
+| Loading | Claude: a memory attachment for the project-root `AGENTS.md` or `CLAUDE.md` marks that file `loaded` from that turn. Codex: none recorded, so every rule stays unknown. Any other file is not recorded |
+
+The Codex call fields and the Claude memory attachment are assumptions checked against synthetic fixtures,
+like the telemetry adapters; a call whose shape differs is undecidable, never a violation.
+
+`ahl instruction-adherence --native` refuses the run (exit 2) when any named file is skipped.
+
+## Analysis and improve
+
+`ahl analyze` and `ahl improve` read the native sessions they selected (default discovery or `--events`
+with a pinned `--format`; a `--source-root` discovery is not read) and write `instruction-adherence.json`
+(the report above, redacted, byte-identical for the same inputs) when at least one session was read. Rules
+are the project-root `AGENTS.md` and `CLAUDE.md`, never a linked file; with `--scope` naming `global` the
+user-level rule files are not read and the section lists `rule_layers_not_read: ["global"]`.
+
+The brief's `instruction_adherence` section is counts only: `status` (`completed` or `not_run`), for
+`not_run` a `reason` (`no_native_capture_path`, `no_readable_native_session`, `adherence_input_rejected`)
+with `skipped` reason counts, and for `completed` the sessions read, `findings` by status, `abstentions`,
+findings by `mechanisms`, the number of rule files read and the artifact name. `not_run` is never zero findings.
 
 ## Instructions it can check
 
