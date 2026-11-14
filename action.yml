@@ -1,0 +1,13 @@
+name: Harness audit
+description: Read-only static audit of agent harness files, reported as pull-request annotations. No model call, no secrets, no project writes.
+inputs:
+  runtime:
+    description: Runtime profile to audit against, codex or claude-code
+    default: codex
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INPUT_RUNTIME: ${{ inputs.runtime }}
+      run: bash "$GITHUB_ACTION_PATH/scripts/audit_action.sh"

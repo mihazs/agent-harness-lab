@@ -11,6 +11,8 @@ directory); the command refuses state storage inside the project. The report
 path is printed to stderr. Exit 0 means completed, 3 means blocked or unsupported,
 and 2 means invalid input or a storage error. `next_action` suggests a behavioral
 evaluation when applicable; it is not an instruction to apply a change.
+The repository's composite Action reports these findings as pull-request annotations;
+see [annotate pull requests](audit-pull-requests.md).
 The CLI's `coverage` rows summarize six audit areas. Instructions, skills, and
 enforcement use the corresponding inventory evidence; sensors, memory and state,
 and the improvement loop remain `not_checked`. An absent skill is `unknown`,
