@@ -183,7 +183,9 @@ def read_session(path, runtime, project):
     if runtime not in RUNTIMES:
         raise ValueError('runtime must be claude or codex')
     capture = (_Claude if runtime == 'claude' else _Codex)(Path(project).resolve())
+    # The directory the caller named may hold `..` or links; the file itself must be a plain regular file (checked below).
     path = Path(path).absolute()
+    path = path.parent.resolve() / path.name
     try:
         info = os.lstat(path)
     except OSError:

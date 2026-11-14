@@ -92,6 +92,13 @@ def test_missing_and_linked_capture_files_are_skipped_as_unavailable(project, tm
         assert error.value.reason == 'unavailable'
 
 
+def test_capture_named_through_a_parent_reference_or_a_linked_directory_is_read(project, tmp_path):
+    write(tmp_path / 'real' / 's.jsonl', claude(project, [('user', 'hi')], session='named'))
+    (tmp_path / 'link').symlink_to(tmp_path / 'real')
+    for named in (tmp_path / 'real' / '..' / 'real' / 's.jsonl', tmp_path / 'link' / 's.jsonl'):
+        assert native.read_session(named, 'claude', project)['session'] == 'named'
+
+
 def test_claude_capture_with_an_unfinished_last_line_keeps_the_complete_prefix(project, tmp_path):
     path = write(tmp_path / 's.jsonl', claude(project, [('user', 'hi')]), tail='{"type": "assistant", "mess')
     assert turns(native.read_session(path, 'claude', project)) == [dict(role='user', text='hi')]
