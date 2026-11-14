@@ -99,7 +99,7 @@ def evaluate(bank_path, submissions):
     judged = [_submission(path, pin, aliases, reviewers) for path in submissions]
     if len({name for name, _, _ in judged}) != len(judged): raise ValueError('adjudicators must be distinct')
     unsure = set().union(*(u for _, _, u in judged))
-    votes = Counter(pair for _, pairs, _ in judged for pair in pairs if not pair & unsure)
+    votes = Counter(pair for _, pairs, _ in judged for pair in pairs)  # a partner's unsure mark never hides a relation vote
     status = {alias: 'adjudicated_independent' for alias in aliases}
     for alias in unsure: status[alias] = 'unsure'
     for pair, count in votes.items():

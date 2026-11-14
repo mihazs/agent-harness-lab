@@ -80,8 +80,8 @@ From most to least severe:
 
 1. `cross_partition_relation`: all adjudicators related it to a task in another partition.
 2. `undeclared_relation`: all adjudicators related it to a task in the same partition that has a different declared root.
-3. `disputed`: some, but not all, adjudicators related it to another task.
-4. `unsure`: an adjudicator could not judge it. Pairs that involve an unsure task are ignored.
+3. `disputed`: some, but not all, adjudicators related it to another task, including when another adjudicator marked either task unsure.
+4. `unsure`: an adjudicator could not judge it and no adjudicator related it to another task.
 5. `adjudicated_independent`: no adjudicator related it to a task outside its declared root.
 
 A pair inside one declared root and partition is the declared grouping and is not

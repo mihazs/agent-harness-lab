@@ -115,12 +115,21 @@ def test_a_relation_inside_one_declared_root_is_the_declared_grouping(tmp_path, 
     assert judge(tmp_path, bank, verdict, {})['outcome'] == 'no_relation_found'
 
 
-def test_unsure_tasks_stay_unproven_and_hide_their_pairs(tmp_path, bank):
+def test_unsure_tasks_stay_unproven_and_never_hide_a_relation_vote(tmp_path, bank):
     report = judge(tmp_path, bank, dict(related=[('tool-recovery', 'skill-routing')], unsure=['instruction-conflict']),
                    dict(unsure=['tool-recovery']))
     assert report['outcome'] == 'inconclusive'
-    assert report['tasks']['tool-recovery'] == report['tasks']['instruction-conflict'] == 'unsure'
-    assert report['tasks']['skill-routing'] == 'adjudicated_independent'
+    assert report['tasks']['instruction-conflict'] == 'unsure'
+    assert report['tasks']['tool-recovery'] == report['tasks']['skill-routing'] == 'disputed'
+
+
+def test_partner_unsure_mark_does_not_make_the_other_task_independent(tmp_path, bank):
+    edit(bank, **{t: dict(independence='reviewed') for t in ('tool-recovery', 'skill-routing')})
+    report = judge(tmp_path, bank, dict(related=[('tool-recovery', 'skill-routing')]),
+                   dict(related=[('tool-recovery', 'skill-routing')]), dict(unsure=['tool-recovery']))
+    assert report['outcome'] == 'inconclusive'
+    assert report['tasks']['tool-recovery'] == report['tasks']['skill-routing'] == 'disputed'
+    assert report['declared_reviewed_without_adjudicated_independence'] == ['skill-routing', 'tool-recovery']
 
 
 @pytest.mark.parametrize('case', ['reviewer', 'duplicate', 'unknown', 'overlap', 'schema', 'stale'])
