@@ -208,3 +208,23 @@ def test_a_grouping_bound_before_any_incident_still_holds_a_later_pair_apart(lin
     reviewed(store, lineage.incident(0, 'fitting')); reviewed(store, lineage.incident(1, 'development'))
     with pytest.raises(ValueError, match='lineage group'):
         export(store)
+
+
+def test_many_components_cannot_exceed_the_total_revision_bound(lineage, store):
+    lineage.link(0, 1); grouping = deepcopy(lineage.grouping())
+    member = grouping['components'][0]['members'][0]
+    grouping['components'] = [dict(component_sha256=digest(rows), members=rows) for rows in
+        ([dict(member, revision_sha256=sha256(f'{part}-{i}'.encode()).hexdigest()) for i in range(3000)] for part in 'xy')]
+    with pytest.raises(ValueError, match='bound'):
+        store.bind_lineage(grouping)
+
+
+def test_a_changed_recorded_grouping_changes_the_corpus_revision(lineage, store):
+    lineage.link(0, 1)
+    reviewed(store, lineage.incident(0, 'fitting'))
+    store.bind_lineage(lineage.grouping())
+    before = store.snapshot()['revision_sha256']
+    path, = (store.root/'lineage_groupings').iterdir()
+    value = json.loads(path.read_text()); value['components'][0]['revisions'].pop()
+    path.write_text(json.dumps(value))
+    assert store.snapshot()['revision_sha256'] != before

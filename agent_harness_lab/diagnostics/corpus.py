@@ -215,10 +215,11 @@ def grouping(value):
     if value['conflicts']!=[] or value['stale_cases']!=[]: raise ValueError('lineage grouping with conflicts or stale cases cannot be recorded')
     rows=value['components']
     if not isinstance(rows,list): raise ValueError('lineage components must be a list')
-    components=[]
+    components=[]; total=0
     for row in rows:
         _fields(row,'component_sha256 members'); members=row['members']
-        if not isinstance(members,list) or not members or len(members)>MAX_GROUP_REVISIONS: raise ValueError('lineage grouping bound exceeded')
+        total+=len(members) if isinstance(members,list) else 0
+        if not isinstance(members,list) or not members or total>MAX_GROUP_REVISIONS: raise ValueError('lineage grouping bound exceeded')
         refs=[RecordRef.parse(member) for member in members]
         if row['component_sha256']!=digest(members): raise ValueError('lineage component digest differs')
         components.append(dict(component_sha256=row['component_sha256'],revisions=sorted({ref.revision_sha256 for ref in refs})))
@@ -446,7 +447,7 @@ class CorpusStore(PrivateJournal):
             raise ValueError('ambiguous competing incident revisions')
         current=[row for row in rows if row[0] not in superseded]
         summaries=[self._summary(key,*opened[1:]) for key,opened in current]
-        groupings=sorted(self._groupings())
+        groupings=sorted(_digest(v) for v in self._groupings().values())
         revision=_digest(dict(engine=engine(),preprocessing='whitespace-casefold-v1',near_duplicate=NEAR_RULE,
             decisions=sorted(_digest(v) for v in self._decisions().values()),cases=[(key,opened[2][-1][1]) for key,opened in rows],
             **(dict(lineage=groupings) if groupings else {})))
