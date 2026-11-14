@@ -38,6 +38,8 @@ TOKEN = re.compile(r'(?<!\S)@((?:\\ |\S)+)')
 COMMENTED, UNCERTAIN = 'import_inside_html_comment', 'import_markdown_context_uncertain'
 TRUNCATED, TRUNCATION = 'import_beyond_on_demand_truncation_unverified', 'on_demand_truncation_unverified'
 UNREADABLE = 'instruction_file_unreadable'
+INFLUENCES = {'claude_managed': 'declared_managed_policy', 'claude_user': 'declared_user_instructions'}
+IMPORTS_NOT_FOLLOWED = 'influence_imports_not_followed'
 # probe() statuses that fail the launch chain closed but only mark an on-demand import unresolved.
 CROSSING = {'link': 'instruction imports cannot cross a link or non-directory',
             'nested_repository': 'instruction imports cannot cross a nested repository',
@@ -231,8 +233,39 @@ def excluded(path, patterns):
     return any(fnmatch.fnmatchcase('/'+path, pattern) or fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
-def capture(profile, scopes, selected, folder, checkout, *, audit_facts=None):
+def influence(folder, origin, root, mode, known, patterns):
+    """One caller-declared managed-policy or user CLAUDE.md as (node, import marker, readable).
+
+    Public memory documentation, checked 2026-11-14: the managed file loads before the user file, which loads before
+    the project files; claudeMdExcludes cannot exclude the managed file; the `managed-only` Project instructions
+    value leaves the user file out. The file is hashed, never followed or expanded; imports are only noticed."""
+    name, scope = str(Path(root)/'CLAUDE.md'), digest([origin])
+    def node(sha, permissions, presence, applicability, reason):
+        return InstructionNode(digest([origin, 'CLAUDE.md']), scope, sha, permissions, presence, applicability, reason, origin=origin)
+    try: scanned = scan(folder, name)
+    except PermissionError: return node(None, None, 'unknown', 'unknown', UNREADABLE), None, False
+    if scanned is None: return node(None, None, 'missing', 'unknown', 'missing'), None, True
+    sha, permissions, (size, utf8, blank) = scanned
+    reason = 'non_utf8_instruction' if not utf8 else 'empty' if blank else 'runtime_size_limit_unverified' if size > SKIPPED_BYTES else None
+    state = ('unknown', reason) if reason else ('declared_applicable', INFLUENCES[origin])
+    if not reason and origin == 'claude_user':
+        if not known: state = ('unknown', 'instruction_files_setting_unknown')
+        elif mode == 'managed-only': state = ('out_of_scope', MODE_EXCLUDED)
+        elif patterns: state = ('unknown', EXCLUDES)  # the runtime matches absolute paths, which are not declared here
+    marker = None
+    if not reason and state[0] != 'out_of_scope':
+        data = folder.read(name, SKIPPED_BYTES, prefix=True)
+        if data is None or hashlib.sha256(data).hexdigest() != sha: raise ValueError('Git input changed during reading')
+        if imports(data.decode('utf-8')):
+            marker = InstructionNode(digest(['unresolved_imports', origin, IMPORTS_NOT_FOLLOWED]), scope, None, None, 'unknown',
+                                     'unknown', IMPORTS_NOT_FOLLOWED, origin='external_reference')
+    return node(sha, permissions, 'present', *state), marker, True
+
+
+def capture(profile, scopes, selected, folder, checkout, *, audit_facts=None, influence_roots=None):
     """Declared Claude memory graph of the whole checkout; returns (nodes, edges, resolution status).
+
+    influence_roots maps claude_managed and claude_user, in that load order, to caller-declared folders.
 
     Files are hashed while streamed and never kept; an expanded file is re-read, at most SKIPPED_BYTES of it."""
     cwd, mode = profile['task_cwd'], profile.get('instruction_files')
@@ -321,7 +354,16 @@ def capture(profile, scopes, selected, folder, checkout, *, audit_facts=None):
                 elif current.reason in ('import_pending', 'outside_task_scope'):
                     nodes[key] = replace(current, applicability='unknown', reason=blocked)
     found, complete, unreadable = tree(folder, checkout)
-    previous, claude_files, agent_files, launch = [], [], [], []
+    chain = []  # applicable influences in load order: each precedes the next, the last precedes the first project file
+    for origin, root in (influence_roots or {}).items():
+        value, marker, readable = influence(folder, origin, root, mode, known, patterns)
+        keep(value, None, None)
+        if not readable: hidden.append(origin)
+        if value.applicability == 'declared_applicable':
+            edges.extend(InstructionEdge('parent', source, value.path_sha256) for source in chain[-1:]); chain.append(value.path_sha256)
+        if marker is not None:
+            keep(marker, None, None); edges.append(InstructionEdge('imports', value.path_sha256, marker.path_sha256))
+    previous, claude_files, agent_files, launch = chain[-1:], [], [], []
     for scope in scopes:
         current = []
         for name in LAUNCH+AGENTS:
