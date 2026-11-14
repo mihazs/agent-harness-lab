@@ -214,12 +214,14 @@ def test_read_only_analysis_rejects_advanced_profiles_before_transitive_validati
     run, _ = history.run_history()
     path = history.store.case(run['run_id'])/'inputs.json'
     original = json.loads(path.read_text())
-    for version in (2, 3, 4, 5, 6):
-        path.write_text(json.dumps(dict(original, schema_version=version)))
+    variants = [dict(original, schema_version=version) for version in (3, 4, 5, 6, 7, 8)]
+    variants += [dict(original, **{key: 'a'*64}) for key in ('protected_access_sha256', 'derivation_binding_sha256')]
+    for variant in variants:
+        path.write_text(json.dumps(variant))
         before = tree(history)
         with patch('agent_harness_lab.evaluation.oracle_history.bank_authority', side_effect=AssertionError('no bank validation scratch')), \
                 patch('agent_harness_lab.evaluation.certification_access.historical', side_effect=AssertionError('no dependency lock creation')), \
-                pytest.raises(ValueError, match='supports only unbound fixed history'):
+                pytest.raises(ValueError, match='supports only fixed history'):
             history.store.analyze(run['run_id'], read_only=True)
         assert tree(history) == before
 

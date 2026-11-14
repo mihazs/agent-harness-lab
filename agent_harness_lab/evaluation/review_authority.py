@@ -10,7 +10,7 @@ import tempfile
 import time
 
 from agent_harness_lab.monitoring.state import atomic_json
-from agent_harness_lab.private_journal import encoded, record, record_bytes, sync_directory, write_bytes
+from agent_harness_lab.private_journal import encoded, record, record_bytes, scratch_dir, sync_directory, write_bytes
 from .integrity import contained, read_regular
 from .regressions import fields, sha256
 
@@ -152,7 +152,7 @@ def verify(store,value,signature,*,require_current=True,deadline=None,purpose=PU
     deadline=time.monotonic()+10 if deadline is None else deadline
     remaining=min(10,deadline-time.monotonic())
     if remaining<=0:raise TimeoutError('review verification deadline exhausted')
-    with tempfile.TemporaryDirectory(dir=store.root,prefix='.review-verify-') as temporary:
+    with tempfile.TemporaryDirectory(dir=scratch_dir(store.root),prefix='.review-verify-') as temporary:
         folder=Path(temporary);allowed=folder/'signers';detached=folder/'signature'
         write_bytes(allowed,(identity+' '+key+'\n').encode());write_bytes(detached,signature.encode())
         try:

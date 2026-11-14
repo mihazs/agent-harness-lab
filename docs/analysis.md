@@ -315,17 +315,25 @@ behavior.
 
 Supported contract, which fails closed:
 
-- Only schema-1 unbound fixed histories are read. Bank-bound, protected, derived,
-  sequential and preservation/cohort histories fail explicitly before their
+- Only fixed histories are read: schema 1 (unbound) and schema 2 (bound to a
+  bank revision). A bound history re-checks that the bank revision is still
+  current and eligible, and a revoked, retired or changed bank fails explicitly
+  instead of reporting current authority. Protected, derived, behavior-policy,
+  cohort, sequential and responses-bound histories fail explicitly before their
   transitive validators run, because those validators may create dependency locks
-  or signature-verification scratch inside the store. Their standalone commands
-  keep their own contracts.
+  inside the store. Their standalone commands keep their own contracts.
+- Validation scratch, such as the temporary directory used to verify an
+  authenticated bank review signature, is created inside the private analysis
+  output and never inside the history or the bank store.
 - The store must already be initialized, owner-only and hold its existing lock
   file; a missing lock fails without being recreated.
 - The resolved `--output`, the default run directory and the lock directory under
-  the state root must not equal, contain or sit inside the store. Symlink aliases
-  are resolved first. The check runs before any lock, directory or scratch exists,
-  for both `analyze` and `improve`.
+  the state root must not equal, contain or sit inside the store, or inside the
+  bank store a bound history declares; the temporary directory must not sit inside
+  either. Symlink aliases are resolved first. The check runs before any lock,
+  directory or scratch exists, for both `analyze` and `improve`. The declared bank
+  location is only a claim used to widen this refusal; bank validation still
+  decides authority.
 - The check is a path comparison at start. Output and state paths must stay stable
   and trusted; a concurrent replacement of a directory ancestor, or a concurrent
   writer to the store, is outside this contract and is not prevented.

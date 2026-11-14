@@ -48,17 +48,22 @@ def write_json(path, value):
 
 
 def reject_history_overlap(args):
-    """Refuse before any lock, directory or scratch exists when a write destination touches the selected history."""
+    """Refuse before any lock, directory or scratch exists when a write destination touches the selected history
+    or the bank store a bound run declares. The declared path is a claim; validation still decides authority."""
     store, run = getattr(args, 'history_store', None), getattr(args, 'history_run', None)
     if (store is None) != (run is None):
         raise ValueError('--history-store and --history-run must be supplied together')
     if store is None: return
-    history = Path(store).resolve()
+    from .evaluation.oracle_history import HistoryStore
+    declared = HistoryStore(store).declared_bank_store(run)
+    protected = [Path(store).resolve(), *([declared.resolve()] if declared is not None else [])]
     output = None if getattr(args, 'output', None) is None else Path(args.output).resolve()
     state = state_root().resolve()
     for destination in (state / 'locks', state / 'runs' / identity(args.project), *([output] if output else [])):
-        if destination.is_relative_to(history) or history.is_relative_to(destination):
-            raise ValueError('analysis output and state must not overlap the selected history store')
+        if any(destination.is_relative_to(p) or p.is_relative_to(destination) for p in protected):
+            raise ValueError('analysis output and state must not overlap the selected history or its bank store')
+    if any(Path(tempfile.gettempdir()).resolve().is_relative_to(p) for p in protected):
+        raise ValueError('the temporary directory must not sit inside the selected history or its bank store')
 
 
 def output_dir(args, *, deadline=None):
@@ -127,8 +132,10 @@ def evidence(args, output, source_context=None, *, progress=None):
         reject_history_overlap(args)
         from .evaluation.oracle_history import HistoryStore
         progress('saved_history_analysis')
-        paired_history = dict(HistoryStore(args.history_store).analyze(args.history_run, read_only=True),
-            profile='ahl-analysis-execution-v1', publication_allowed=False)
+        from .private_journal import scratch_in
+        with scratch_in(output):  # validator scratch stays in the private output, never inside an input store
+            paired_history = dict(HistoryStore(args.history_store).analyze(args.history_run, read_only=True),
+                profile='ahl-analysis-execution-v1', publication_allowed=False)
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8', dir=output) as events, contextlib.ExitStack() as captures:
         selected, source_format, memory_summary = args.events, args.format, None
         source_identity = {}

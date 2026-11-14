@@ -11,7 +11,7 @@ import time
 from copy import deepcopy
 from types import SimpleNamespace
 
-from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
+from agent_harness_lab.private_journal import PrivateJournal, encoded, record, scratch_dir, sync_directory, write_bytes
 from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
@@ -106,7 +106,7 @@ def bank_authority(source, *, export_root=None, expected=None):
         files_total += len(entries)
         bytes_total += sum(regular_size(contained(fixture,p),MAX_BYTES) for p in entries)
         if files_total>4096 or bytes_total>MAX_BYTES: raise ValueError('bank selection bound exceeded')
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=scratch_dir(None)) as temporary:
             prepared = Path(temporary)/'fixture'; copy_frozen(fixture,prepared,original['fixture_digest'])
             materialize_sources(prepared)
             declaration,_ = record(prepared/'task.json',1024*1024)
@@ -179,6 +179,11 @@ class HistoryStore(PrivateJournal):
             return dict(bundle_sha256=bundle,state='quarantined',event_sha256=events[-1][1],
                 historical_comparisons_invalidated=True,corrected_oracle_approved=False,publication_allowed=False)
 
+    def declared_bank_store(self, run_id):
+        """The review store a bound run claims, read with no lock or validation; None when absent or unreadable."""
+        try: return Path(record(self.case(run_id)/'manifest.json', 1024*1024)[0]['bank_authority']['bank_path']).parents[2]
+        except (ValueError, OSError, KeyError, TypeError, IndexError): return None
+
     def opened(self, run_id, *, read_only=False):
         return self._opened(run_id,current_bank=True,read_only=read_only)
 
@@ -186,9 +191,9 @@ class HistoryStore(PrivateJournal):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
-        if read_only and (type(version) is not int or version != 1
+        if read_only and (type(version) is not int or version not in (1, 2)
                 or any(key in inputs for key in ('protected_access_sha256', 'derivation_binding_sha256'))):
-            raise ValueError('read-only saved analysis supports only unbound fixed history without protected access or derivation')
+            raise ValueError('read-only saved analysis supports only fixed history, optionally bound to its bank, without protected access or derivation')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6,7,8) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4,5,6,7,8) else '')

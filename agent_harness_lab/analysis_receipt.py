@@ -83,7 +83,7 @@ def summarize(data):
         methods.append(dict(id='paired_history_analysis', algorithm='controller-checked fixed paired-root analysis',
             profile='ahl-analysis-execution-v1', publication_allowed=False,
             status='completed', selected=True, execution='completed',
-            selection_reason='Explicit unbound fixed store/run passed existing history checks; sealed evidence is analyzed under its frozen policy, and unqualified history retains its disposition.',
+            selection_reason='Explicit fixed store/run passed existing history checks, including current bank authority when bound; sealed evidence is analyzed under its frozen policy, and unqualified history retains its disposition.',
             dependency_group='explicit_controller_history', authority='conditional_analysis_only',
             outputs=dict(primary_estimates=int(isinstance(history.get('primary'), dict)),
                          family_estimates=len(history.get('families', {}))),
