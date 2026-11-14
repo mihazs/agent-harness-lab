@@ -35,7 +35,7 @@ reads a recorded paired run.
 | `ahl improve` receipt | `status: inconclusive`, `reason: evaluation_vacuous` and a `vacuity` block with `labels`, `vacuous: true` and `improvement_allowed: false`. No recommendation or change plan is written. A receipt that already ends for another reason (`evaluation_uninformative`, `missing_or_duplicate_trials`) also carries the `vacuity` block. |
 | `decision` block of the receipt | `disposition: invalid_evidence`, `observed_pattern: vacuous_evaluation`, the reason `vacuous_evaluation` and the same `vacuity` block. |
 | `evidence_strength` block | `label: insufficient`, `adoption_support: false`, reasons `evaluation_vacuous` followed by the labels. |
-| `ahl experiment` and every plan consumer | A plan whose baseline and candidate hashes are equal is rejected as `arms_identical` before any trial is scheduled or analyzed (exit 2). |
+| `ahl experiment` analyses (fixed, preservation and sequential) | A plan whose baseline and candidate hashes are equal is analyzed as `status: blocked`, `reason: arms_identical` with the `vacuity` block, and its promotion decision is blocked. The plan still schedules and executes, so mechanics checks can run one harness against itself; only a reported difference is refused. |
 | `ahl compare` and the side-by-side report | An experiment whose arm hashes are equal marks every pair `not_comparable` with the reason `arms_identical`; no pair is `improved`. |
 | Trial coverage (`legacy_coverage`) | A manifest with no declared task is never covered, even by zero trials. |
 
@@ -53,7 +53,7 @@ either derives from recorded trial rows (or declared manifest rows) or is absent
 | `evidence_strength.criteria` counts | recorded baseline development rows | a count over zero rows reads zero and the label is `insufficient` with `no_covered_evaluation` |
 | `spend_label` seconds | the stage clock, not a trial | not a result |
 | `results.json` trial records | one row per executed trial; no aggregate score | empty list, never a summary |
-| experiment `status: supported` | the exact planned trial set with executable-grader provenance | `incomplete`, never `supported` |
+| experiment `status: supported` | the exact planned trial set with executable-grader provenance, and arms with different hashes | `incomplete` or `blocked`, never `supported` |
 | side-by-side pair verdicts | one valid graded record per arm | `unknown` or `not_comparable` |
 | history report pair `improved` | executable-grader provenance and equal runtime and grader identity | `unknown` or `not comparable` |
 | workflow `outcome` `improved` | graded baseline `failed` and candidate `passed` in separate trial workspaces | `recommendation_only` or `inconclusive` |

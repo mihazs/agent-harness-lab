@@ -78,3 +78,14 @@ def validate(labels):
 def receipt(labels):
     """The receipt block of a vacuous evaluation; it grants no authority and names the labels only."""
     return dict(profile=PROFILE, vacuous=True, labels=validate(labels), improvement_allowed=False)
+
+
+def identical_arms(spec):
+    """A blocked analysis for a plan whose baseline and candidate hashes are equal, else None.
+
+    The plan still schedules and executes (mechanics checks run one harness against itself); only an analysis that could
+    report a difference between the arms is refused, because that difference would be noise.
+    """
+    if RULES[ARMS_IDENTICAL](None, None, spec.baseline_hash, spec.candidate_hash):
+        return dict(status='blocked', reason=ARMS_IDENTICAL, vacuity=receipt([ARMS_IDENTICAL]), automatic_promotion=False)
+    return None

@@ -7,6 +7,7 @@ import math
 import secrets
 
 from agent_harness_lab.private_journal import encoded, record_bytes
+from . import vacuity
 from .regressions import fields, sha256
 
 PROFILE = 'conditional-finite-bank-sequential-v1'
@@ -258,6 +259,7 @@ def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False
         sampling_sha256=hashed(binding),sampling_authority='unverified_numeric_declaration',power='not_estimated',future_expected_quality='unknown',
         root_independence='unverified',automatic_promotion=False,publication_allowed=False)
     def finish(status,reason,**extra):return dict(base,status=status,reason=reason,**extra)
+    if (identical:=vacuity.identical_arms(spec)) is not None:return finish('blocked',identical['reason'],vacuity=identical['vacuity'])
     if len({r.trial_id for r in records})!=len(records) or any(r.trial_id not in byid for r in records):
         return finish('incomplete','duplicate_or_foreign_trial')
     for r in records:
