@@ -1,5 +1,4 @@
 """Same-name skill copies outside the staged bundle; synthetic skill folders under tmp_path only."""
-# fixed-in: a3ab7d2b -k cannot_be_inspected or uninspectable
 import hashlib
 import os
 
