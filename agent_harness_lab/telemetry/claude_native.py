@@ -4,6 +4,7 @@ from collections import Counter
 import re
 from pathlib import Path, PurePosixPath
 from .claude_cwd import Places
+from .error_catalog import classify
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import BODY_DERIVED, SOURCE_ORDER, event, input_fingerprint, message_fingerprint
 from ..sources.config_inventory import telemetry_server_sha256
@@ -237,6 +238,7 @@ class Projection:
                     if 'is_error' in block:
                         if type(block['is_error']) is not bool: raise ValueError('invalid native Claude tool status')
                         metadata['execution_status'] = 'error' if block['is_error'] else 'returned'
+                        if block['is_error']: metadata['tool_error_class'] = classify(block.get('content'), row['version'])
                     emit('tool_result', index, **metadata)
                 else:
                     self.unsupported += 1; emit('capture_coverage', index, missing_reason='unsupported_native_block')
