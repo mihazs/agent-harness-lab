@@ -1,14 +1,16 @@
 """Harness layers selected by `ahl improve --scope`: the project by default, user-level skills only on request.
 
-Selecting a layer is not authorization. Only an explicit command-line --scope adds the user-level layer; a project
-ahl.json can never name one (config.validate). A user-level layer is a runtime's documented skill directory, named
-explicitly with --agent and never inferred from a project file or the environment. Nothing here reads a credential,
-a managed location or a file body.
+Selecting a layer is not authorization. Only an explicit command-line --scope or the user's own saved default
+(user_config, an owner-only file outside every project) adds the user-level layer; a project ahl.json can never name
+one (config.validate). A user-level layer is a runtime's documented skill directory, named explicitly with --agent or
+the saved default's own runtime and never inferred from a project file or the environment. Nothing here reads a
+credential, a managed location or a file body.
 """
 from dataclasses import dataclass
 import os
 from pathlib import Path
 
+from . import user_config
 from .audit.precedence import CLAUDE, CODEX, LOAD_ORDER
 from .read_only import require_writable
 
@@ -36,6 +38,17 @@ def selected(args):
     return name
 
 
+def apply_user_default(args, explicit):
+    """Take the scope from the user's saved default only when the command line names none, and record where it came from."""
+    if '--scope' in explicit:
+        args._scope_source = 'command_line'
+        return
+    args._scope_source = 'default'
+    saved = user_config.load_scope()
+    if saved['scope'] is not None:
+        args.scope, args._scope_source, args._user_scope_agent = saved['scope'], 'user_configuration', saved['agent']
+
+
 def global_root(runtime):
     """The user-level location whose skills/ directory is the runtime's documented user skill directory."""
     if runtime == 'claude':
@@ -50,12 +63,14 @@ def overlaps(first, second):
 
 
 def runtime_of(args):
-    """The runtime named on the command line. A configured, remembered or detected runtime is not a choice of a
-    user-level location, so it never selects one."""
+    """The runtime named on the command line, else the one saved beside the user's default scope. A project-configured,
+    remembered or detected runtime is not a choice of a user-level location, so it never selects one."""
     explicit = getattr(args, '_configuration_explicit', None)
     agent, named = getattr(args, 'agent', 'auto'), explicit is None or '--agent' in explicit
     if agent in RUNTIMES and named:
         return agent
+    if not named and getattr(args, '_user_scope_agent', None):
+        return args._user_scope_agent
     why = 'the responses runtime has no user-level harness' if agent == 'responses' and named else 'the runtime was not named'
     raise ValueError(f'--scope {selected(args)} edits the user-level harness of one runtime and {why}; '
                      'pass --agent codex or --agent claude (a project file or the environment is never used to choose)')
@@ -135,7 +150,7 @@ def combine(args, results, base=None, roots=None):
         value.update(status=worst['status'])
         if worst['reason'] is not None:
             value['reason'] = worst['reason']
-    value.update(scope=selected(args), layers=rows, layers_evaluated=[item['layer'] for item in rows if item['evaluated']],
+    value.update(scope=selected(args), scope_source=getattr(args, '_scope_source', 'default'), layers=rows, layers_evaluated=[item['layer'] for item in rows if item['evaluated']],
                  layers_changed=[item['layer'] for item in rows if item['changed_files']],
                  changed_files=flat(rows, 'changed_files'), recommended_files=flat(rows, 'recommended_files'),
                  blocked=[dict(layer=item['layer'], status=item['status'], reason=item['reason'])
@@ -171,6 +186,8 @@ def interrupted(args, result):
 def blocked_result(args, output, remediation):
     """Model-driven evaluation of a user-level layer is not available: report every selected layer as not attempted."""
     selection = [layer.label for layer in layers(args)]
+    if getattr(args, '_scope_source', None) == 'user_configuration':
+        remediation += ' This scope came from your saved default: pass --scope project for one run, or run ahl config clear-scope to remove it.'
     pending = [(label, dict(status=NOT_ATTEMPTED, reason=BLOCKED_REASON, changed_files=[])) for label in selection]
     base = dict(status='blocked', reason=BLOCKED_REASON, output=str(output), changed_files=[], remediation=remediation)
     return combine(args, pending, base=base)

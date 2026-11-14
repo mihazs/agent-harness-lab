@@ -90,7 +90,7 @@ preflight. Without the flag nothing is written, and the flag without an explicit
 
 ```sh
 ahl improve . --agent codex --remember-runtime
-ahl config show     # {"path": ..., "runtime": "codex", "reason": null}
+ahl config show     # {"path": ..., "runtime": "codex", "reason": null, "default_scope": {...}}
 ahl config clear    # deletes the file
 ```
 
@@ -102,7 +102,9 @@ credential or token, and is never read from or written to a project, so a projec
 file cannot override it. A corrupt, oversized, non-regular or not owner-only file
 is ignored (`ahl config show` names the `reason`). The remembered runtime only
 chooses among installed runtimes: it never overrides `--agent` or a project
-`ahl.json` and grants no execution authority.
+`ahl.json` and grants no execution authority. It never chooses a user-level harness
+location either; a [saved default scope](improve-scope.md#save-a-default-scope) is a
+separate file with its own runtime.
 
 To evaluate from sessions already recorded, add `--history`; see
 [improve from past sessions](improve-from-past-sessions.md).
@@ -760,11 +762,16 @@ are all verified is reported as the actual committed result.
 of `ahl improve` and `ahl skills invoke`; [the how-to](improve-scope.md) shows the
 workflow. This section is the contract.
 
-**Selection.** Only the command line selects a scope. A project `ahl.json` that
-carries a `scope` key is rejected as invalid input before any run state exists, so an
-untrusted checkout cannot escalate to the user-level layer. `global` and `project+global`
-need an explicit `--agent codex|claude`; `auto`, `responses`, a configured runtime, a
-remembered runtime and host markers never choose a user-level location. The location is
+**Selection.** Only the command line, or the user's own saved default, selects a scope.
+`--scope` on the command line always wins; without it, a valid `user-scope.json`
+(`ahl config set-scope global|project+global --agent codex|claude`, an owner-only file of
+at most 1 KiB beside `user-config.json` and never read from a project) supplies the scope
+and, unless the run passes `--agent`, its runtime; an absent or ignored file leaves the
+default `project`. A project `ahl.json` that carries a `scope` key is rejected as invalid
+input before any run state exists, so an untrusted checkout cannot escalate to the
+user-level layer. `global` and `project+global` need an explicit `--agent codex|claude`
+or the saved default's runtime; `auto`, `responses`, a configured runtime, a remembered
+runtime and host markers never choose a user-level location. The location is
 the runtime's user skill directory: `$CLAUDE_CONFIG_DIR/skills` (else `~/.claude/skills`)
 for `claude` and `~/.agents/skills` for `codex`.
 
@@ -787,6 +794,7 @@ layer committed is reported beside that layer, never instead of it.
 | Key | Meaning |
 | --- | --- |
 | `scope` | The selected scope. |
+| `scope_source` | Where the scope came from: `command_line` (`--scope`), `user_configuration` (the saved default) or `default` (the project). |
 | `layers` | One row per selected layer in evaluation order: `layer` (`global` or `project`), `evaluated`, `status`, `changed_files` (relative to the layer's `root`), `recommended_files` (planned but not applied), `reason`, `root` and, when present, `plan`, `plan_sha256`, `deployment`, `journal`, `rollback` and `error`. |
 | `layers_evaluated`, `layers_changed` | Layer names that were examined, and that changed at least one file. |
 | `changed_files`, `recommended_files` | All layers combined; user-level entries carry a `global:` prefix, project entries stay unprefixed. |
@@ -804,9 +812,8 @@ authorization digest, so its identity differs from a project plan's. It carries 
 
 **Not yet available.** Model-driven evaluation of a user-level layer (it returns
 `blocked` with `global_scope_model_evaluation_unavailable`), user-level instruction,
-settings and hook layers, choosing the responsible layer for a conflict between layers,
-user-level configuration of a default scope, and a deprecation notice on
-`ahl skills invoke` are not implemented.
+settings and hook layers, choosing the responsible layer for a conflict between layers
+and a deprecation notice on `ahl skills invoke` are not implemented.
 
 ## Change matrix coverage
 

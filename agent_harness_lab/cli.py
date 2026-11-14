@@ -310,7 +310,7 @@ def main(argv=None):
             command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
             command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
-            command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
+            command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line or your saved default (ahl config set-scope) selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
@@ -369,6 +369,8 @@ def main(argv=None):
                 return exit_code(result['status'])
             from .one_call import resolve
             if args.command == 'improve':
+                from .scope import apply_user_default
+                apply_user_default(args, explicit)
                 from .history import prepare
                 prepare(args)
                 if args.remember_runtime and (args.agent not in ('codex', 'claude') or '--agent' not in explicit):
