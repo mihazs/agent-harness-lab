@@ -91,13 +91,18 @@ preflight. Without the flag nothing is written, and the flag without an explicit
 ```sh
 ahl improve . --agent codex --remember-runtime
 ahl config show     # {"path": ..., "runtime": "codex", "reason": null}
-ahl config clear    # deletes the file
+ahl config clear    # deletes the whole file: the runtime and any loop object
 ```
 
-The file is a versioned `{schema_version, runtime}` document of at most 1 KiB at
+The file is a versioned `{schema_version, runtime}` document at
 `$XDG_CONFIG_HOME/agent-harness-lab/user-config.json` (`~/.config` when unset), or
-`$AHL_STATE_HOME/user-config.json` when that run-state override is set. It is
-written atomically with owner-only permissions, holds no executable path,
+`$AHL_STATE_HOME/user-config.json` when that run-state override is set. It may
+also hold an optional `loop` object that declares the acceptance bar (see the
+[loop reference](loop-reference.md#sources-and-precedence)); the 1 KiB cap applies
+to the whole file, and a larger file is ignored. Remembering a runtime keeps an
+existing `loop` object, `ahl config clear` deletes it with the runtime, and
+`ahl config show` reports only the runtime and why a file was ignored, not the
+`loop` object. The file is written atomically with owner-only permissions, holds no executable path,
 credential or token, and is never read from or written to a project, so a project
 file cannot override it. A corrupt, oversized, non-regular or not owner-only file
 is ignored (`ahl config show` names the `reason`). The remembered runtime only

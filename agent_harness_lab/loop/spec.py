@@ -20,7 +20,8 @@ AUTHORITY = frozenset({'recommendation_only', 'automatic_promotion', 'apply', 'g
 
 
 def _number(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    try: return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError: return False  # an integer too large for a float is as unusable as an infinite one
 
 
 def _score(value):

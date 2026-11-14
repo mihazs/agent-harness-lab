@@ -1,6 +1,9 @@
-"""Optional user-level remembered runtime choice; it selects among installed runtimes and grants nothing.
+"""Optional user-level file: the remembered runtime choice and an optional loop declaration; it grants nothing.
 
-The file is never read from or written to a project. An unreadable, unsafe or foreign file is ignored.
+The file is a versioned {schema_version, runtime} object plus an optional loop object, at most MAX_BYTES in total.
+The runtime selects among installed runtimes; the loop object declares an acceptance bar and is checked by the loop resolver.
+remember() keeps an existing loop object and clear() deletes the whole file. The file is never read from or written
+to a project. An unreadable, unsafe or foreign file is ignored.
 """
 import json
 import os
@@ -65,9 +68,11 @@ def clear():
 
 def main(argv):
     import argparse
-    parser = argparse.ArgumentParser(prog='ahl config', description='Show or delete the remembered runtime (user-level; never a project file). '
-        'Remember one with ahl improve --agent codex|claude --remember-runtime.')
-    parser.add_argument('action', choices=('show', 'clear'), help='show prints the file path, runtime and why a file was ignored; clear deletes the file')
+    parser = argparse.ArgumentParser(prog='ahl config', description='Show the remembered runtime, or delete the user-level file (never a project file). '
+        'Remember a runtime with ahl improve --agent codex|claude --remember-runtime. The file may also hold an optional loop object '
+        'that declares the acceptance bar; the 1 KiB cap applies to the whole file.')
+    parser.add_argument('action', choices=('show', 'clear'), help='show prints the file path, runtime and why a file was ignored, not the loop object; '
+                        'clear deletes the whole file, runtime and loop object')
     action = parser.parse_args(argv).action
     if action == 'clear': clear()
     print(json.dumps(dict(path=str(path()), **load()), indent=2))

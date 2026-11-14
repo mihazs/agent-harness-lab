@@ -77,7 +77,9 @@ def test_the_project_limits_are_referenced_and_their_source_recorded():
 
 @pytest.mark.parametrize('limits', [pytest.param(None, id='missing'), pytest.param(dict(seconds=0, trials=5), id='zero-seconds'),
                                     pytest.param(dict(seconds=5, trials=0), id='zero-trials'), pytest.param(dict(seconds=5, trials=True), id='boolean-trials'),
-                                    pytest.param(dict(seconds=5), id='missing-trials'), pytest.param(dict(seconds=5, trials=5, extra=1), id='extra-key')])
+                                    pytest.param(dict(seconds=5), id='missing-trials'), pytest.param(dict(seconds=5, trials=5, extra=1), id='extra-key'),
+                                    pytest.param(dict(seconds=10**400, trials=5), id='huge-integer-seconds'),
+                                    pytest.param(dict(seconds=-10**400, trials=5), id='huge-negative-integer-seconds')])
 def test_limits_outside_the_project_contract_are_rejected(limits):
     assert rejected(lambda: resolve(limits=limits)).reason == 'loop_limits_invalid'
 
@@ -105,6 +107,9 @@ def test_project_configuration_accepts_a_valid_loop_object_and_it_changes_the_co
     pytest.param(dict(bogus=1), 'loop_field_unknown', id='unknown-field'),
     pytest.param(dict(accept_score=1.2), 'loop_accept_score_invalid', id='score-above-one'),
     pytest.param(dict(accept_score=True), 'loop_accept_score_invalid', id='boolean-score'),
+    pytest.param(dict(accept_score=10**400), 'loop_accept_score_invalid', id='huge-integer-score'),
+    pytest.param(dict(regression_margin=10**400), 'loop_margin_invalid', id='huge-integer-margin'),
+    pytest.param(dict(alpha=10**400), 'loop_alpha_invalid', id='huge-integer-alpha'),
     pytest.param(dict(max_rounds=11), 'loop_max_rounds_invalid', id='rounds-above-the-cap'),
     pytest.param(dict(recommendation_only=True), 'loop_authority_refused', id='recommendation-only-restated'),
     pytest.param(dict(automatic_promotion=True), 'loop_authority_refused', id='promotion-enabled'),
