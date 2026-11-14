@@ -23,3 +23,27 @@ ahl rollback DEPLOYMENT_ID --project /path/to/project
 Rollback reports a conflict rather than overwriting intervening edits. Runtime
 activation remains unknown. To repair your user-level skills instead of, or together
 with, the project's, see [choose the project or user-level scope](improve-scope.md).
+
+## Review a saved plan, or apply it again after a rollback
+
+Every repair run keeps its change plan, baseline and candidate in the run directory
+that `ahl improve` printed. To see exactly what that plan would change, and whether
+it still matches the project, run:
+
+```sh
+ahl apply RUN_DIRECTORY --project /path/to/project
+```
+
+This prints a review packet and writes nothing. When the packet says
+`awaiting_review`, copy its `plan_sha256` to authorize that exact plan:
+
+```sh
+ahl apply RUN_DIRECTORY --project /path/to/project --authorize-plan PLAN_SHA256
+```
+
+Use this after `ahl rollback`, or after a repair run stopped before writing (for
+example when its time budget ran out). A project `ahl.json` keeps the plan
+recommendation-only: the packet is `blocked`, or `stale` if the file was added or
+removed after the plan. A `stale` packet means the project, configuration, baseline,
+candidate or policy changed since the plan; rerun `ahl improve . --repair-contracts`
+to make a new plan. See the [packet and binding contract](one-call-improvement.md#review-and-apply-a-saved-plan).

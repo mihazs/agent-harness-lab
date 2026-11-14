@@ -14,6 +14,7 @@
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
 | `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions (`--reject-leakage` fails on [shared projects or texts](validation.md#benchmark-leakage-disclosure)); optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |
+| `ahl apply RUN [--project DIR] [--authorize-plan SHA256]` | Review the saved change plan of an improvement run (read-only); with the exact plan hash, apply only an independently reproduced skill-header repair ([details](one-call-improvement.md#review-and-apply-a-saved-plan)) |
 | `ahl compare --experiment FILE --output DIR` | Render a private baseline/candidate experiment record as a static offline HTML review page ([details](side-by-side-reports.md#static-viewer-ahl-compare)) |
 | `ahl memory init\|status\|verify\|reindex\|gc --store DIR` | Create and maintain an opt-in private evidence store; offline, see [private memory store](memory-store.md) |
 | `ahl memory history --history-store DIR` | Read-only list of existing evaluation histories by reference with live authority checks; see [history index](memory-store.md#list-existing-evaluation-histories) |
