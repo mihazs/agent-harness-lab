@@ -260,7 +260,7 @@ def skill_roots(project):
 
 def harness_files(project, allowed_paths=None):
     if allowed_paths is None:
-        files = [project / name for name in surfaces.ROOT_INSTRUCTIONS if (project / name).exists()]
+        files = [project / name for name in surfaces.ROOT_INSTRUCTIONS if os.path.lexists(project / name)]  # a broken or looping symlink is listed so the snapshot refuses it
         for skill in skill_roots(project):
             # A bundle's installed dependencies (node_modules, .venv) are vendored, never candidate files.
             files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts
@@ -287,6 +287,24 @@ def snapshot(project, target, *, allowed_paths=None):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, destination)
     return states
+
+
+@contextlib.contextmanager
+def writable_candidate(folder):
+    """Let the proposer edit a staged copy of a read-only harness file, then put back every mode it left as staged."""
+    opened = {}
+    for path in [folder, *folder.rglob('*')]:
+        mode = stat.S_IMODE(path.lstat().st_mode)
+        need = 0o200 if path.is_file() else 0o300  # a directory takes new entries only with write and search permission
+        if not path.is_symlink() and mode & need != need:
+            opened[path] = mode, mode | need
+            path.chmod(mode | need)
+    try:
+        yield
+    finally:
+        for path, (mode, staged) in reversed(opened.items()):
+            if path.exists() and stat.S_IMODE(path.stat().st_mode) == staged:
+                path.chmod(mode)
 
 
 def candidate_states(folder, original):
@@ -855,7 +873,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
             write_json(output / f'preparation-{attempt}.environment.json',
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
-            run = runner.execute(command, prepare, remaining(), prompt, env=environment)
+            with writable_candidate(candidate):
+                run = runner.execute(command, prepare, remaining(), prompt, env=environment)
             prepared = True
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
