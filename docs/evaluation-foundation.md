@@ -468,7 +468,8 @@ agent did at a declared decision boundary, separately from the optimizer's
 `no_change` routing. It is opt-in: a task with no contract keeps its artifact-only
 semantics, and the module changes no existing grader. This increment is the
 contract and a pure grader over synthetic evidence; it is not yet wired into
-`run_evaluation.py`, and no runtime is claimed to produce the evidence.
+`run_evaluation.py`, and no runtime is claimed to produce the evidence. A task can
+store the contract's identity (see [task-bank identity](#task-bank-identity-for-the-contract-and-oracle)).
 
 A contract (`profile: "interaction-contract-v1"`, `schema_version: 1`) declares the
 `task_id`, an explicit `endpoint` (`whole_task` or `interaction_boundary`, which
@@ -547,8 +548,29 @@ The digest is a caller assertion, not proof of a reviewed task-bank oracle or
 independence; same-process code can access inputs. Exact matching is a fixture
 rule, not semantic adjudication of other valid questions. This fixture does not
 grade interaction or establish user-reply receipt, completion, or authority.
-Replay, frozen task-bank custody, scripted delivery and evaluator integration
-remain future work.
+Replay, scripted delivery and evaluator integration remain future work.
+
+### Task-bank identity for the contract and oracle
+
+A bank task may declare `interaction_contract_sha256` and, only with it,
+`interaction_oracle_sha256`, each a lowercase SHA-256. An undeclared task keeps its
+declaration and its published bank result unchanged; a declaration without the
+contract identity is rejected. The contract is `interaction-contract.json` and the
+oracle is `interaction-oracle.json`, both inside the task's private grader bundle,
+so the existing `grader_digest` already invalidates a comparison when either file
+changes and the new identities name which files that digest covers.
+
+When contents are verified, validation reads each declared file and rejects a
+contract whose canonical `contract_sha256` differs from the declaration or that
+names another `task_id`, oracle bytes whose SHA-256 differs from the declaration,
+an oracle whose `task_id` or `root_id` is not the task's (so a scripted reply
+cannot move to another root or partition), and a hidden `reply` that appears
+verbatim in any file of the agent-visible fixture. A bank with bound tasks reports
+`interaction` with the counts of declared `contracts` and `oracles`. Without content
+verification the declarations are checked for shape only and the files are not read.
+
+This binds identity and separation; it does not run `run_evaluation.py`, deliver the
+reply, grade an episode, or establish that a declared oracle was reviewed.
 
 ## Offline validation and limits
 
