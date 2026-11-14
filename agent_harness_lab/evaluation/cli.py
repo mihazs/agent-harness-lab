@@ -76,7 +76,7 @@ def main(argv):
                 result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
             if args.export:
                 from .bank_tools import export_manifest
-                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke')
+                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke',quarantined_excluded=result['quarantined_tasks'])
             if inspection_only and not args.list:
                 result.pop('task_index')
             if args.list and not inspection_only:

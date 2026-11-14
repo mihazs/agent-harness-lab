@@ -91,6 +91,8 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
             raise ValueError('fixture copy leaks across partitions')
         if task.independence != 'reviewed' or task.review_status != 'accepted' or task.permission != 'approved':
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
+        if task.review_status == 'quarantined':
+            issues.append(dict(task=task.task_id, status='task_quarantined'))
     bank_sha256 = hashlib.sha256(raw).hexdigest()
     content_grouping = None
     if verify_contents:
@@ -100,7 +102,8 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
         issues.extend(overlaps)
     result = dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
                 content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
-                tasks=len(tasks), roots=len({t.root_id for t in tasks}),
+                tasks=len(tasks), quarantined_tasks=sorted(t.task_id for t in tasks if t.review_status == 'quarantined'),
+                roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
                 review_declarations_complete=all(t.independence == 'reviewed' and t.review_status == 'accepted'
                     and t.permission == 'approved' for t in tasks),
