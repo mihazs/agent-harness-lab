@@ -34,7 +34,7 @@ MAX_RECORDS = 1000
 MAX_FILES = 200_000
 MAX_TOTAL_BYTES = 4 * 1024 ** 3
 MAX_RESULTS = 1000
-RECORD_TABLES = ('snapshots', 'stages', 'evaluations', 'metrics', 'comparisons', 'findings', 'finding_links')
+RECORD_TABLES = ('snapshots', 'stages', 'stage_records', 'evaluations', 'metrics', 'comparisons', 'findings', 'finding_links')
 
 
 class MemoryStoreError(ValueError):
@@ -377,6 +377,21 @@ class MemoryStore:
             rows = db.execute('SELECT digest, kind, size FROM artifacts WHERE project_id=? ORDER BY digest LIMIT ?',
                               (project_id, limit + 1)).fetchall()
         return {'artifacts': [dict(digest=d, kind=k, size=s) for d, k, s in rows[:limit]], 'truncated': len(rows) > limit}
+
+    def stage_rows(self, project_id, stage, *, node_key=None, status=None, limit=100):
+        """Index rows of one stage, newest first. A derived hint: the caller reads and verifies the record object."""
+        limit = min(max(int(limit), 1), MAX_RESULTS)
+        where, values = ['project_id=?', 'stage=?'], [project_id, stage]
+        for column, value in (('node_key', node_key), ('status', status)):
+            if value is not None:
+                where.append(f'{column}=?')
+                values.append(value)
+        with self._db() as db:
+            if db.execute('PRAGMA user_version').fetchone()[0] < 2:  # an index from before stage records holds none
+                return []
+            rows = db.execute('SELECT record, node_key, status, output, sequence FROM stage_records WHERE ' + ' AND '.join(where)
+                              + ' ORDER BY sequence DESC, record DESC LIMIT ?', (*values, limit)).fetchall()
+        return [dict(zip(('record', 'node_key', 'status', 'output', 'sequence'), row)) for row in rows]
 
     def backup(self, destination):
         """Consistent copy of the index with SQLite's online backup; objects are immutable and copied by the caller."""

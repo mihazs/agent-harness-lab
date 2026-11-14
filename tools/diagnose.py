@@ -160,7 +160,8 @@ def recurring_sequences(cases, roots, maximum=None):
 
 
 def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False,
-            source_order_declared_by='caller'):
+            source_order_declared_by='caller', reused_process_mining=None):
+    """reused_process_mining: a verified earlier `process_mining` result that replaces the miner for these exact rows."""
     from agent_harness_lab.diagnostics.process_mining import ProcessMiner
     # Versioned producer subordinals that may break capture-order ties as declared capture order.
     from agent_harness_lab.telemetry.schema import SOURCE_ORDER_PROFILES
@@ -192,7 +193,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if identity in seen:
             raise ValueError('duplicate event id')
         seen.add(identity)
-        process.observe(event)
+        if reused_process_mining is None:
+            process.observe(event)
         order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
                                                source=True, last_source=None, tied=False, crossed=False))
         ordinal = event.get('capture_order')
@@ -316,7 +318,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 observation_coverage=dict(observations.coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
-                process_mining=dict(process.result(), profile='ahl-analysis-process-graph-v1'),
+                process_mining=reused_process_mining if reused_process_mining is not None else dict(process.result(), profile='ahl-analysis-process-graph-v1'),
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
