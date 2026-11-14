@@ -18,7 +18,7 @@ reader purpose.
 - [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), or [declare capability areas and tag bank tasks](declare-capability-areas.md).
 - [Preflight experiment precision](experiment-precision.md), [add a Bayesian decision score to a plan and read it](bayesian-decision-how-to.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
-- [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), or [try AHL on a real project without changing it](isolated-project-check.md).
+- [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), [try AHL on a real project without changing it](isolated-project-check.md), or [validate AHL on a real project](real-project-acceptance.md) with a first-use run, a before/after evaluation and incremental runs.
 
 ## Look up behavior and contracts
 
@@ -33,6 +33,7 @@ reader purpose.
 - [Instruction adherence](instruction-adherence.md): the sessions file, checkable sentence shapes, three-valued judging, the report and its calibration.
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
+- [Vacuity labels](vacuity-labels.md): the closed set of five labels for an evaluation that proves nothing, where each surface applies them, and the audit of reported numbers.
 - [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
 - [Stage budgets and early stops](budget-stages.md): the construction time box, feasibility check, uninformative stop, refinement reuse and per-stage receipt.
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).

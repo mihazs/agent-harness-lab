@@ -1,5 +1,8 @@
 # Try AHL on a real project without changing it
 
+To run the full acceptance protocol (first use, before and after, incremental runs and stress scenarios) with this check, follow
+[validate AHL on a real project](real-project-acceptance.md).
+
 Use this when you want to run `ahl` (or any command that edits harness files) against a real repository and check that the
 repository is left as it was (within the limits below). The check runs your command in a temporary detached worktree,
 removes the worktree, and compares a fingerprint of the real checkout before and after.
