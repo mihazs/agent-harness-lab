@@ -137,6 +137,75 @@ def test_a_staged_name_that_could_leave_the_folder_is_undetermined_and_never_fol
     assert ambient_skill_copies({'user': root}, [name]) == {'user': {name: None}}
 
 
+def refuse_stat(monkeypatch, target, error):
+    """Make os.stat fail for one path, so the result does not depend on file modes, the interpreter or running as root."""
+    real = os.stat
+
+    def stat(path, *args, **kwargs):
+        if os.fspath(path) == str(target):
+            raise error
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(os, 'stat', stat)
+
+
+UNINSPECTABLE = [PermissionError(13, 'denied'), OSError(5, 'input/output error'), OSError(40, 'too many symbolic links')]
+UNINSPECTABLE_IDS = ['permission_denied', 'io_error', 'symlink_loop']
+ABSENT = [FileNotFoundError(2, 'missing'), NotADirectoryError(20, 'parent is a file')]
+ABSENT_IDS = ['missing', 'parent_is_a_file']
+
+
+@pytest.fixture
+def skills_root(tmp_path):
+    make_skill(tmp_path / 'skills', 'example')
+    return tmp_path / 'skills'
+
+
+def inspected(root, level):
+    """The path of one level that the scan inspects, outermost first: the skills root, the name folder, SKILL.md."""
+    return {'root': root, 'folder': root / 'example', 'entry': root / 'example' / 'SKILL.md'}[level]
+
+
+@pytest.mark.parametrize('error', UNINSPECTABLE, ids=UNINSPECTABLE_IDS)
+def test_a_skills_root_that_cannot_be_inspected_is_an_unreadable_layer_not_an_empty_one(monkeypatch, skills_root, error):
+    refuse_stat(monkeypatch, skills_root, error)
+    assert ambient_skill_copies({'user': skills_root}, ['example']) == {'user': None}
+
+
+@pytest.mark.parametrize('level', ['folder', 'entry'])
+@pytest.mark.parametrize('error', UNINSPECTABLE, ids=UNINSPECTABLE_IDS)
+def test_a_same_name_folder_or_entry_point_that_cannot_be_inspected_leaves_the_name_undetermined(monkeypatch, skills_root, level, error):
+    refuse_stat(monkeypatch, inspected(skills_root, level), error)
+    assert ambient_skill_copies({'user': skills_root}, ['example']) == {'user': {'example': None}}
+
+
+@pytest.mark.parametrize('level', ['root', 'folder', 'entry'])
+@pytest.mark.parametrize('error', UNINSPECTABLE, ids=UNINSPECTABLE_IDS)
+def test_an_uninspectable_skill_location_never_becomes_none_found_or_a_claimed_copy(monkeypatch, skills_root, level, error):
+    refuse_stat(monkeypatch, inspected(skills_root, level), error)
+    (row,) = skill_shadowing([STAGED], ambient_skill_copies({'user': skills_root}, ['example']))
+    assert (row['state'], row['ambient'], row['layers_scanned']) == ('unknown', [], [])
+    assert shadowing_state([row]) == 'unknown'
+
+
+@pytest.mark.parametrize('level', ['root', 'folder', 'entry'])
+@pytest.mark.parametrize('error', ABSENT, ids=ABSENT_IDS)
+def test_a_location_that_is_absent_is_a_scanned_layer_with_no_copy(monkeypatch, skills_root, level, error):
+    refuse_stat(monkeypatch, inspected(skills_root, level), error)
+    ambient = ambient_skill_copies({'user': skills_root}, ['example'])
+    assert ambient == {'user': {}}
+    assert skill_shadowing([STAGED], ambient)[0]['state'] == 'none_found'
+
+
+def test_a_same_name_entry_point_that_is_a_folder_is_not_a_skill_copy(tmp_path):
+    (tmp_path / 'example' / 'SKILL.md').mkdir(parents=True)
+    assert ambient_skill_copies({'user': tmp_path}, ['example']) == {'user': {}}
+
+
+def test_a_same_name_file_where_a_folder_belongs_is_not_a_skill_copy(tmp_path):
+    (tmp_path / 'example').write_text('not a folder')
+    assert ambient_skill_copies({'user': tmp_path}, ['example']) == {'user': {}}
+
+
 def test_an_ambient_bundle_over_the_file_bound_is_unreadable_not_truncated(tmp_path):
     folder = make_skill(tmp_path, 'example')
     for index in range(3):
