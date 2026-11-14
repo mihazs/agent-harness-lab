@@ -47,7 +47,7 @@ enforce filesystem/network boundaries.
 
 - [Execution identity and coverage](#execution-identity-and-declared-coverage) · [Private checkpoint journal](#private-checkpoint-journal) · [Local exports](#explicit-local-export-operations)
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
-- [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
+- [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
 - [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
@@ -2697,7 +2697,8 @@ Synthetic fixtures establish this contract, not factual accuracy.
 
 Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
 fields to facets, bind their [link edges](#knowledge-bundle-link-edges) to
-`RecordRef`s, or store facets. Claim
+`RecordRef`s, or store facets (the [bundle reader](#portable-knowledge-bundle-reader)
+supplies the pages and their claimed `status`, `verified` and `stale_after` values). Claim
 identity across sources, project-scope compatibility checks, review provenance and
 `stale_after` handling in the resolver, contradiction detection between statements,
 a CLI and the #43/#58/#11 integrations are also still open.
@@ -2706,7 +2707,8 @@ a CLI and the #43/#58/#11 integrations are also still open.
 
 `sources.knowledge_links.links(pages)` reads the links between the Markdown pages of
 one selected bundle: an OKF export (`(p.path, p.body) for p in OKFExport.pages(source)`),
-a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory. It is an
+a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory, for example the
+pages of the [bundle reader](#portable-knowledge-bundle-reader). It is an
 offline Python API with no CLI exposure. The caller supplies `(path, body)` pairs it
 is already authorized to hold; paths must be distinct, normalized, bundle-relative
 POSIX `.md` paths, and bodies are the Markdown text after any frontmatter. The
@@ -2728,7 +2730,7 @@ code blocks, one-line code spans and after a backslash-escaped bracket are not e
 | `ambiguous` | Several pages share the wikilink's page name or path suffix (`several_pages`) |
 | `outside_bundle` | A relative link climbs above the bundle root (`parent_traversal`) |
 | `remote` | A URL scheme or `//host` reference; it stays an opaque reference |
-| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
+| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path` (unless `root_relative=True`), or a `./` or `../` wikilink whose base is not documented |
 | `invalid` | An empty target, malformed percent-encoding, a backslash or NUL, or a target over 2,048 characters |
 
 A wikilink `[[name]]`, `[[name|alias]]` or `[[name#heading]]` matches a page named
@@ -2738,6 +2740,14 @@ percent-decoding, ignoring its `#fragment` and `?query`. Matching is exact and
 case-sensitive. Page order, arrival order and similarity never choose between
 candidates. Destinations accept three levels of balanced parentheses, the CommonMark
 minimum.
+
+OKF v0.2 defines a Markdown link that begins with `/` as relative to the bundle root.
+`links(pages, root_relative=True)` reads such a link that way: the path is normalized
+from the root, resolves with reason `bundle_root_path`, and a `/../` climb above the root
+is still `outside_bundle`. Without the option a site-root path stays `unknown`, because
+the root of a wiki or docs site is not documented. The option changes nothing for
+wikilinks or relative links, and `summary(edges, root_relative=True)` then omits
+`site_root_paths` from `unsupported`.
 
 `summary(edges, pages=None)` reports counts only: links per status, kind and reason,
 pages with links, distinct resolved targets, self links and, given the page paths,
@@ -2786,6 +2796,83 @@ count, not proof that the cited source exists, is true, or that clusters are
 independent. Citations of a different spelling of one resource are not merged.
 Synthetic metadata establishes this contract
 (`tests/unit/sources/test_source_knowledge_origins.py`).
+
+### Portable knowledge-bundle reader
+
+`sources.knowledge_bundle` reads the Markdown pages of one authorized bundle under an
+explicit manifest. It serves the source families in #47 that are plain files: a
+canonical OKF v0.2 bundle, a Git-backed LLM wiki checkout, repository documentation
+(READMEs, `docs/`, ADRs, runbooks, postmortems, agents and skills documentation, which
+are read as claims only), a GitHub Wiki repository and a local Obsidian, MkDocs or
+Docusaurus export, plus a generated DeepWiki export only when the caller already holds
+that file. It is an offline Python API with no CLI exposure. It runs no Git command,
+makes no network call and starts no process, and it never extracts an archive to disk.
+Notion, Confluence and live services are not read.
+
+`read(root, manifest)` walks an extracted directory; `read_zip(archive, manifest)` parses
+one explicitly supplied ZIP in memory. Both return a `Bundle`: `pages` as `okf.Page`
+values (path, SHA-256 of the bytes, preserved metadata, body) sorted by path, `findings`,
+the OKF version state and counts of the files they set aside. Feed the pages to
+[`knowledge_links.links`](#knowledge-bundle-link-edges) with `root_relative=True` for OKF
+and to [`knowledge_origins.clusters`](#knowledge-page-correlated-origins).
+
+| `Manifest` field | Meaning |
+| --- | --- |
+| `roots` | One to 100 distinct, non-overlapping bundle-relative directories or `.md` files, or `.` for the whole bundle; nothing outside them is read |
+| `doc_types` | Optional allowlist of frontmatter `type` values; other pages are reported and not returned |
+| `format` | `markdown` (default) reads every Markdown page; `okf-0.2` sets aside `index.md` and `log.md`, reads `okf_version` from the root index and expects a `type` on every concept |
+| `max_pages`, `max_page_bytes`, `max_bytes` | At most 10,000 pages, 1 MiB per page and 64 MiB in all; a smaller value tightens a bound |
+
+Exceeding a bound raises `BundleLimit` (more than the page, byte, directory-entry or
+depth limit); nothing is truncated. A page over `max_page_bytes` is a finding and is
+never read. The reader refuses the whole directory for a symlink, hardlink or special
+file under an allowed root (hidden entries are counted, not inspected), and the whole archive for a traversal, absolute,
+backslash, `:` or control-character member name, a symlink, encrypted, duplicate or
+unsupported member, a spoofed directory, a forged size or CRC, or a name that repeats
+a local header offset. An archive member's declared size is compared with the manifest
+before decompression, so a compression bomb is a finding and is not inflated. Hidden
+entries (a leading `.`, so `.git` and `.obsidian`) and non-Markdown files are counted
+and never read.
+
+Frontmatter uses the same safe parser as the ai-memory reader, so it needs
+`pip install 'agent-harness-lab[okf]'` only when a page has a frontmatter block; plain
+Markdown needs no dependency. Anchors, aliases, object tags, duplicate or non-text keys
+and malformed YAML are not executed or guessed. Such a page is left out and appears in
+`findings` with a reason such as `frontmatter_unsupported_yaml`,
+`frontmatter_unterminated`, `frontmatter_not_a_mapping`, `frontmatter_fence_padded`
+(`--- ` with trailing blanks), `not_utf8`, `page_too_large` or `path_unsafe`, and the
+other pages are still read. A page without a frontmatter block has empty metadata. In the
+`okf-0.2` format a concept without a usable `type` is kept and reported as
+`frontmatter_missing` or `type_missing`, and an absent, unreadable or non-`"0.2"`
+`okf_version` is reported (`okf_version_missing`, `okf_version_unreadable`,
+`okf_version_unsupported`) while the concepts are still read best-effort. With
+`doc_types`, an untyped or unlisted page is left out. A missing root is a
+`root_missing` finding, never an empty success. Unknown extension keys are preserved in
+`Page.metadata`. Bodies, HTML, scripts, remote media and `executor`/`attester`
+fields are inert text; nothing runs, and no link is followed.
+
+`trust_tier(metadata)` maps the OKF `verified` claim to `unverified`,
+`machine_confirmed_claim`, `human_reviewed_claim` or `unknown` (a malformed claim, never
+a tier), and `lifecycle(metadata)` maps `status` to `unspecified`, `draft`, `stable`,
+`deprecated` or `unknown`. Both are author claims keyed on the actor prefix and a
+declared value. A `human:` actor is a claimed human review, not independent task
+validation, and an absent `status` is `unspecified`, not `stable`.
+
+`summary(bundle)` reports counts only under profile `knowledge-bundle-v1`: pages,
+findings by reason, source form, OKF version state, set-aside counts, and the trust and
+lifecycle claim counts. It leaves out paths, bodies, actors and page text, sets
+`executed`, `remote_fetched`, `archive_extracted`, `content_included`,
+`independently_verified`, `truth_established` and `publication_allowed` to false (and
+`archive_opened` to true only for a ZIP) with `authority: none`, and
+`public_export_allowed` rejects that profile. Pages that summarize one source stay one
+correlated origin only after `knowledge_origins.clusters`; reading them does not make
+them independent. The directory read is not an atomic snapshot of a concurrently edited
+wiki, so extract or supply a static copy. Per-revision Git provenance, page-edit
+histories and the contradiction report are not part of this reader, and `stale_after`
+is evaluated only through `okf.Page.freshness`. Synthetic bundles establish this
+contract
+(`tests/unit/sources/test_source_knowledge_bundle.py`,
+`tests/integration/sources/test_source_knowledge_bundle.py`).
 
 ## Shared HTTPS transport
 
