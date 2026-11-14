@@ -7,7 +7,7 @@ This module selects no threshold, grants no promotion authority and never issues
 """
 import hashlib
 import json
-import math
+import sys
 
 POLICY_PROFILE = 'diagnostic-cascade-policy-v1'
 REPORT_PROFILE = 'diagnostic-cascade-evaluation-v1'
@@ -24,7 +24,7 @@ def _count(value):
 
 
 def _amount(value):
-    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+    return type(value) in (int, float) and 0 <= value <= sys.float_info.max  # false for nan, inf and ints beyond float range
 
 
 def check_policy(policy):
