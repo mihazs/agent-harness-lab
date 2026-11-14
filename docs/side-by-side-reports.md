@@ -19,6 +19,8 @@ The input is one JSON object with profile `ahl-side-by-side-experiment-v1`:
 | `trials` | Arm records: identity, `trial_id`, `arm`, `harness_hash`, `grader_hash`, `runtime_stratum`, `status`, `outcome`, optional `capture`, `usage` and `events` |
 | `event_mappings` | Optional explicit `baseline_event_id` to `candidate_event_id` links per pair identity |
 | `analysis` | Optional backend analysis, such as the `statistics.analyze` result, with a `status` |
+| `resource_decision` | Optional [`resource_decision.decide`](resource-decisions.md) result, shown as supplied |
+| `resource_success_cost` | Optional list of 1 to 64 [`resource_decision.success_cost`](resource-decisions.md#descriptive-cost-per-success) views |
 
 A malformed profile, execution kind, hash, plan or analysis object refuses the
 whole input. Per-trial problems do not: they stay visible in the report.
@@ -78,6 +80,28 @@ and never recomputed. The model sets `pooled_treatment_effect` to `null`,
 `automatic_promotion` to `false`. `public=True` is refused, and the public
 benchmark exporter rejects the report. Synthetic and replay runs carry
 `capability_claim: none`; a real-model run is `unverified`.
+
+## Resource decision and cost per success
+
+A supplied `resource_decision` and `resource_success_cost` list are validated, then copied into the
+report (`resource_source: supplied_verbatim`; `not_supplied` otherwise) and never recomputed. The
+page shows them after the measured usage: per endpoint its role, kind, unit, scope, horizon, practical
+margin, status, mean difference with lower and upper bound, method, independent roots, capped
+observations and unknown reasons, so censored and missing measurements stay visible as counts. An
+endpoint without a result shows `not computed`, never zero. The cost-per-success table lists, per arm,
+assigned trials and successes, the all-assigned mean (failures and timeouts included) beside the
+success-conditional mean and the cost per success. An arm with unknown rows shows `unknown`, and an
+arm with no success shows `undefined`, never zero.
+
+The whole input is refused, as for a malformed `analysis`, when a block is malformed or contradicts
+itself: a favorable decision (`improvement`, `noninferior` or their `conditional_` forms) whose
+`quality_status` is not `supported` or that has an unknown, regressed or imprecise required endpoint;
+an unknown endpoint that carries a mean or bound; `automatic_promotion` or `publication_allowed` set
+to `true`; a cost view marked gate-eligible or passing a gate; a zero-success arm with a cost per
+success; an unknown arm with a mean; or a ratio that does not match its status. The check enforces
+those invariants only; it does not authenticate the measurements or the quality status, and the
+caller-attested labels of the decision are shown as supplied. Not yet shown: total optimization spend
+and sample coverage beyond the per-endpoint roots and the pair counts above.
 
 ## Static viewer: `ahl compare`
 
