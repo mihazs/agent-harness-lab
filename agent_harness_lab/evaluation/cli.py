@@ -29,6 +29,8 @@ def main(argv):
     execution.add_argument('--sandbox-controls',action='store_true',help='With --audit, regrade bounded artifacts offline with bubblewrap; block if unavailable')
     bank.add_argument('--export',type=Path,help='Create a new descriptive manifest directory without running agents')
     bank.add_argument('--max-trials',type=int,default=24,help='Explicit export trial ceiling; default 24')
+    bank.add_argument('--adjudication-packet',type=Path,help='Write a new private blind packet of opaque aliases, prompts and fixture digests for independent lineage adjudicators; executes nothing')
+    bank.add_argument('--adjudications',type=Path,nargs='+',help='Independent adjudicator files for the current packet; reports undeclared or cross-partition relations without certifying independence')
     bank.add_argument('--list', action='store_true',help='Include task IDs, roots, families, partitions and review status in the JSON result; does not execute tasks')
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment',description='Read an ExperimentSpec JSON object plus recorded TrialRecord JSON rows, --preflight or --power-model. Analysis of supplied records remains unverified for oracle validity and automatic promotion.',epilog='Examples: ahl experiment --spec experiment.json --preflight; ahl experiment --spec experiment.json --power-model model.json --simulations 200; ahl experiment --spec experiment.json --records trials.json. --preflight exits 0 only when feasible; a completed power simulation exits 0 and never authorizes promotion; descriptive recorded analysis exits 3.')
     experiment.add_argument('--spec', type=Path, required=True,help='Existing JSON ExperimentSpec containing the frozen design, input hashes, schedule and analysis policy')
@@ -74,6 +76,14 @@ def main(argv):
             if args.audit:
                 from .bank_tools import audit_graders
                 result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
+            if args.adjudication_packet and args.adjudications:
+                raise ValueError('write the adjudication packet and evaluate adjudications in separate commands')
+            if args.adjudication_packet:
+                from .adjudication import write_packet
+                result['adjudication_packet']=write_packet(args.manifest,args.adjudication_packet)
+            if args.adjudications:
+                from .adjudication import evaluate
+                result['blind_adjudication']=evaluate(args.manifest,args.adjudications)
             if args.export:
                 from .bank_tools import export_manifest
                 result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke',quarantined_excluded=result['quarantined_tasks'])

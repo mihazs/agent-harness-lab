@@ -47,7 +47,7 @@ enforce filesystem/network boundaries.
 
 - [Execution identity and coverage](#execution-identity-and-declared-coverage) · [Private checkpoint journal](#private-checkpoint-journal) · [Local exports](#explicit-local-export-operations)
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
-- [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
+- [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
 - [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
@@ -1537,6 +1537,10 @@ nodes themselves are unchanged and still reject any loading claim.
   count, whatever the input order, and `warnings` adds
   `duplicate_event_conflict`. An ignored record never claims an identity, so
   it cannot hide a later pinned copy.
+- `instruction_validation.loading_evidence` reuses this record selection
+  (`harness_inventory.loading_records`) for the changed instruction and rule files of a
+  [scoped instruction validation](one-call-improvement.md#scoped-instruction-rewrites-and-pruning),
+  so the two joins count duplicate, contested and foreign records alike.
 
 `effective`, `outcome` and `independence` are always `unknown`, and
 `publication_allowed` is `false`. The caller pairs the capture with the
@@ -2697,7 +2701,8 @@ Synthetic fixtures establish this contract, not factual accuracy.
 
 Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
 fields to facets, bind their [link edges](#knowledge-bundle-link-edges) to
-`RecordRef`s, or store facets. Claim
+`RecordRef`s, or store facets (the [bundle reader](#portable-knowledge-bundle-reader)
+supplies the pages and their claimed `status`, `verified` and `stale_after` values). Claim
 identity across sources, project-scope compatibility checks, review provenance and
 `stale_after` handling in the resolver, contradiction detection between statements,
 a CLI and the #43/#58/#11 integrations are also still open.
@@ -2706,7 +2711,8 @@ a CLI and the #43/#58/#11 integrations are also still open.
 
 `sources.knowledge_links.links(pages)` reads the links between the Markdown pages of
 one selected bundle: an OKF export (`(p.path, p.body) for p in OKFExport.pages(source)`),
-a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory. It is an
+a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory, for example the
+pages of the [bundle reader](#portable-knowledge-bundle-reader). It is an
 offline Python API with no CLI exposure. The caller supplies `(path, body)` pairs it
 is already authorized to hold; paths must be distinct, normalized, bundle-relative
 POSIX `.md` paths, and bodies are the Markdown text after any frontmatter. The
@@ -2728,7 +2734,7 @@ code blocks, one-line code spans and after a backslash-escaped bracket are not e
 | `ambiguous` | Several pages share the wikilink's page name or path suffix (`several_pages`) |
 | `outside_bundle` | A relative link climbs above the bundle root (`parent_traversal`) |
 | `remote` | A URL scheme or `//host` reference; it stays an opaque reference |
-| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
+| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path` (unless `root_relative=True`), or a `./` or `../` wikilink whose base is not documented |
 | `invalid` | An empty target, malformed percent-encoding, a backslash or NUL, or a target over 2,048 characters |
 
 A wikilink `[[name]]`, `[[name|alias]]` or `[[name#heading]]` matches a page named
@@ -2738,6 +2744,14 @@ percent-decoding, ignoring its `#fragment` and `?query`. Matching is exact and
 case-sensitive. Page order, arrival order and similarity never choose between
 candidates. Destinations accept three levels of balanced parentheses, the CommonMark
 minimum.
+
+OKF v0.2 defines a Markdown link that begins with `/` as relative to the bundle root.
+`links(pages, root_relative=True)` reads such a link that way: the path is normalized
+from the root, resolves with reason `bundle_root_path`, and a `/../` climb above the root
+is still `outside_bundle`. Without the option a site-root path stays `unknown`, because
+the root of a wiki or docs site is not documented. The option changes nothing for
+wikilinks or relative links, and `summary(edges, root_relative=True)` then omits
+`site_root_paths` from `unsupported`.
 
 `summary(edges, pages=None)` reports counts only: links per status, kind and reason,
 pages with links, distinct resolved targets, self links and, given the page paths,
@@ -2786,6 +2800,83 @@ count, not proof that the cited source exists, is true, or that clusters are
 independent. Citations of a different spelling of one resource are not merged.
 Synthetic metadata establishes this contract
 (`tests/unit/sources/test_source_knowledge_origins.py`).
+
+### Portable knowledge-bundle reader
+
+`sources.knowledge_bundle` reads the Markdown pages of one authorized bundle under an
+explicit manifest. It serves the source families in #47 that are plain files: a
+canonical OKF v0.2 bundle, a Git-backed LLM wiki checkout, repository documentation
+(READMEs, `docs/`, ADRs, runbooks, postmortems, agents and skills documentation, which
+are read as claims only), a GitHub Wiki repository and a local Obsidian, MkDocs or
+Docusaurus export, plus a generated DeepWiki export only when the caller already holds
+that file. It is an offline Python API with no CLI exposure. It runs no Git command,
+makes no network call and starts no process, and it never extracts an archive to disk.
+Notion, Confluence and live services are not read.
+
+`read(root, manifest)` walks an extracted directory; `read_zip(archive, manifest)` parses
+one explicitly supplied ZIP in memory. Both return a `Bundle`: `pages` as `okf.Page`
+values (path, SHA-256 of the bytes, preserved metadata, body) sorted by path, `findings`,
+the OKF version state and counts of the files they set aside. Feed the pages to
+[`knowledge_links.links`](#knowledge-bundle-link-edges) with `root_relative=True` for OKF
+and to [`knowledge_origins.clusters`](#knowledge-page-correlated-origins).
+
+| `Manifest` field | Meaning |
+| --- | --- |
+| `roots` | One to 100 distinct, non-overlapping bundle-relative directories or `.md` files, or `.` for the whole bundle; nothing outside them is read |
+| `doc_types` | Optional allowlist of frontmatter `type` values; other pages are reported and not returned |
+| `format` | `markdown` (default) reads every Markdown page; `okf-0.2` sets aside `index.md` and `log.md`, reads `okf_version` from the root index and expects a `type` on every concept |
+| `max_pages`, `max_page_bytes`, `max_bytes` | At most 10,000 pages, 1 MiB per page and 64 MiB in all; a smaller value tightens a bound |
+
+Exceeding a bound raises `BundleLimit` (more than the page, byte, directory-entry or
+depth limit); nothing is truncated. A page over `max_page_bytes` is a finding and is
+never read. The reader refuses the whole directory for a symlink, hardlink or special
+file under an allowed root (hidden entries are counted, not inspected), and the whole archive for a traversal, absolute,
+backslash, `:` or control-character member name, a symlink, encrypted, duplicate or
+unsupported member, a spoofed directory, a forged size or CRC, or a name that repeats
+a local header offset. An archive member's declared size is compared with the manifest
+before decompression, so a compression bomb is a finding and is not inflated. Hidden
+entries (a leading `.`, so `.git` and `.obsidian`) and non-Markdown files are counted
+and never read.
+
+Frontmatter uses the same safe parser as the ai-memory reader, so it needs
+`pip install 'agent-harness-lab[okf]'` only when a page has a frontmatter block; plain
+Markdown needs no dependency. Anchors, aliases, object tags, duplicate or non-text keys
+and malformed YAML are not executed or guessed. Such a page is left out and appears in
+`findings` with a reason such as `frontmatter_unsupported_yaml`,
+`frontmatter_unterminated`, `frontmatter_not_a_mapping`, `frontmatter_fence_padded`
+(`--- ` with trailing blanks), `not_utf8`, `page_too_large` or `path_unsafe`, and the
+other pages are still read. A page without a frontmatter block has empty metadata. In the
+`okf-0.2` format a concept without a usable `type` is kept and reported as
+`frontmatter_missing` or `type_missing`, and an absent, unreadable or non-`"0.2"`
+`okf_version` is reported (`okf_version_missing`, `okf_version_unreadable`,
+`okf_version_unsupported`) while the concepts are still read best-effort. With
+`doc_types`, an untyped or unlisted page is left out. A missing root is a
+`root_missing` finding, never an empty success. Unknown extension keys are preserved in
+`Page.metadata`. Bodies, HTML, scripts, remote media and `executor`/`attester`
+fields are inert text; nothing runs, and no link is followed.
+
+`trust_tier(metadata)` maps the OKF `verified` claim to `unverified`,
+`machine_confirmed_claim`, `human_reviewed_claim` or `unknown` (a malformed claim, never
+a tier), and `lifecycle(metadata)` maps `status` to `unspecified`, `draft`, `stable`,
+`deprecated` or `unknown`. Both are author claims keyed on the actor prefix and a
+declared value. A `human:` actor is a claimed human review, not independent task
+validation, and an absent `status` is `unspecified`, not `stable`.
+
+`summary(bundle)` reports counts only under profile `knowledge-bundle-v1`: pages,
+findings by reason, source form, OKF version state, set-aside counts, and the trust and
+lifecycle claim counts. It leaves out paths, bodies, actors and page text, sets
+`executed`, `remote_fetched`, `archive_extracted`, `content_included`,
+`independently_verified`, `truth_established` and `publication_allowed` to false (and
+`archive_opened` to true only for a ZIP) with `authority: none`, and
+`public_export_allowed` rejects that profile. Pages that summarize one source stay one
+correlated origin only after `knowledge_origins.clusters`; reading them does not make
+them independent. The directory read is not an atomic snapshot of a concurrently edited
+wiki, so extract or supply a static copy. Per-revision Git provenance, page-edit
+histories and the contradiction report are not part of this reader, and `stale_after`
+is evaluated only through `okf.Page.freshness`. Synthetic bundles establish this
+contract
+(`tests/unit/sources/test_source_knowledge_bundle.py`,
+`tests/integration/sources/test_source_knowledge_bundle.py`).
 
 ## Shared HTTPS transport
 
@@ -3770,7 +3861,8 @@ Select `local_file/test-results/v1` in the existing local source declaration, wi
 ```json
 {"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
  "reports": [{"path": "reports/junit.xml", "format": "junit-xml"},
-             {"path": "reports/pytest.json", "format": "pytest-json"}],
+             {"path": "reports/pytest.json", "format": "pytest-json"},
+             {"path": "reports/results.tap", "format": "tap"}],
  "limits": {"max_cases": 5000}}
 ```
 
@@ -3787,7 +3879,8 @@ Each test case becomes one `test_case_result` development-artifact record and ea
 report one `test_report` record. The record identity binds the declared commit, the
 report path fingerprint, the case identity and an occurrence index. The case identity
 is the report's own declaration: JUnit's nested `testsuite` names plus `classname`
-and `name`, or pytest's `nodeid`. Journals and preview output keep only
+and `name`, pytest's `nodeid`, or a TAP test point's description (`#N` for its
+position when it has none). Journals and preview output keep only
 fingerprints. Raw suite and case names stay in memory as `declared_cases` for
 in-process callers. The same test at another commit or in another report is a
 different record. A repeated identity within one report is kept as a further
@@ -3816,14 +3909,38 @@ and `reported_outcome` keeps the native label:
 | pytest `passed` with a setup, call or teardown phase whose outcome is not `passed` | `unknown` (`conflicting`) |
 | pytest `xfailed`, `xpassed`, `rerun` | `unknown` with that label |
 | any other pytest outcome | `unknown` (`unrecognized`) |
+| TAP `ok` / `not ok` with no directive | `passed` (`ok`) / `failed` (`not_ok`) |
+| TAP `ok # SKIP` | `skipped` (`skip`) |
+| TAP `not ok # SKIP` | `unknown` (`conflicting`) |
+| TAP `# TODO` on `ok` or `not ok` | `unknown` (`todo`) |
+| TAP directive that starts with `skip` or `todo` but continues the word (`# skipped`, `# todos`) | `unknown` (`unrecognized_directive`) |
 
 Suite-level JUnit `failure`/`error` elements name no case; they are never
 attributed to one and add `suite_level_status_unattributed`. `duration_seconds`
-is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations.
-It is `null` when absent, and also when a value is malformed, negative or
-non-finite, or when finite pytest phases sum to a non-finite total (with
-`invalid_duration`). pytest collector failures add
+is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations;
+a TAP test point has none. It is `null` when absent, and also when a value is
+malformed, negative or non-finite, or when finite pytest phases sum to a non-finite
+total (with `invalid_duration`). pytest collector failures add
 `collection_failures_reported`; they create no case.
+
+A TAP 13 or 14 stream (the `TAP version` line is optional; any other version is
+refused) yields one case per top-level test point, in lowercase `ok` / `not ok`
+form with an optional number and `- description`. A `#` ends the description
+unless it is escaped as `\#`, and only a `SKIP` or `TODO` word after it is a
+directive; other comments are ignored. Indented lines (YAML diagnostic blocks and
+TAP 14 subtests) are never cases: an indented test point adds
+`tap_subtest_lines_not_imported` and the parent's own result is the case. Comments,
+`pragma` lines and blank lines are skipped; any other line is ignored with
+`tap_unrecognized_line`. A `Bail out!` line ends the read with
+`tap_bail_out_reported`, and the tests after it are neither imported nor invented.
+The plan (`1..N`, before or after the tests, starting at 1, at most once) is
+checked against the test points but never fills them in: a disagreement adds
+`tap_plan_mismatch`, no plan adds `tap_plan_absent`, `1..0` adds `tap_plan_skipped`,
+and a test number that differs from the point's position adds
+`tap_test_number_out_of_sequence`. A stream with neither a plan, a test point nor
+a bail out is refused, a second plan or one that does not start at 1 raises, and a
+plan larger than `max_cases` is a `HostileReport` before any case is read.
+Diagnostic text, messages and YAML are neither stored nor summarized.
 
 These results are CI evidence about the declared commit only. Every result carries
 `commit_binding: caller_declared`, `commit_verified: false` and
@@ -3888,9 +4005,14 @@ these bounds.
 | `max_depth` (XML) | 32 |
 | `max_attributes` | 64 |
 | `max_attribute_length` | 4,096 characters |
+| `max_line_length` (TAP) | 4,096 bytes, excluding the line break |
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 (100,000 tests of about 25 values) |
+
+TAP is read one line at a time with no tree or element state: NUL bytes, invalid
+UTF-8 and an over-long line are `HostileReport`, and the read ends at the first test
+point past `max_cases`.
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
@@ -3905,10 +4027,10 @@ byte bound.
 `task test:sources:test-results` runs the synthetic controls: status mapping,
 billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
-numbers, deep nesting, duplicate case names, commit-identity validation and CLI
-journals that hold hashes only. Still open in #53: artifact download or zip
-handling; TAP, coverage and lint reports; and expired-artifact coverage warnings
-from a live read.
+numbers, deep nesting, duplicate case names, TAP directives, plans, bail outs,
+subtests and line bounds, commit-identity validation and CLI journals that hold
+hashes only. Still open in #53: artifact download or zip handling; coverage and
+lint reports; and expired-artifact coverage warnings from a live read.
 
 ### Joining test results to Actions jobs
 
@@ -5002,12 +5124,13 @@ commit `37f788bd287750e10d7610173e5332b3843f6ebd`. Any other `cognee_version` is
 refused. `cognee.export(dataset, format=...)` in
 [`cognee/api/v1/export/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/api/v1/export/export.py)
 checks read permission on one dataset and writes that dataset's graph. Two of
-its file shapes are accepted:
+its file shapes and one archive directory are accepted:
 
 | `format` | Upstream writer at the pin | Shape |
 | --- | --- | --- |
 | `graph_snapshot` | `format="pydantic"` with a `destination`: `GraphSnapshot.save()` in [`cognee/modules/migration/snapshot.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/snapshot.py) | `dataset_name`, `dataset_id`, `nodes`, and `edges` of `source_id`/`target_id`/`relationship`/`properties` |
 | `nodes_edges` | `format="json"`: `write_json` in [`cognee/modules/migration/formats.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/formats.py) | `nodes`, and `edges` of `source`/`target`/`relationship_name` with properties flattened beside them |
+| `cogx_archive` | `format="cogx"`: `_write_cogx` in [`cognee/modules/migration/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/export.py) and `COGXArchiveWriter` in [`cognee/modules/migration/cogx.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/cogx.py) | a directory of `manifest.json` and the JSONL files `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` (see [COGX archives](#cogx-archives)) |
 
 Node types come from the `DataPoint` subclasses at the pin:
 [`DataPoint`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/infrastructure/engine/models/DataPoint.py),
@@ -5016,8 +5139,8 @@ and its subclasses,
 [`DocumentChunk`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/chunking/models/DocumentChunk.py)
 (`document_id` and the `is_part_of` and `contains` fields), and
 [`Entity`/`EntityType`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/engine/models/Entity.py)
-(`is_a`). The `cogx`, `graphml` and `cypher` formats, an in-memory
-`GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
+(`is_a`). The `graphml` and `cypher` formats, a packed `.cogx.tar.gz` file, an
+in-memory `GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
 selection whose file has no `dataset_id` key is refused, and so is a
 `nodes_edges` selection whose file has one. The shape is read from code, not
 from a published schema, and no real export has been read: the profile reports
@@ -5138,6 +5261,43 @@ references, conflicting chunk documents, edge and version revisions, refused
 releases and formats, bounds, capture changes, and CLI output and cache with no
 body, ID, name or path while Cognee is unimportable.
 
+### COGX archives
+
+`format: "cogx_archive"` reads the directory `cognee.export(dataset, format="cogx",
+destination=...)` writes, selected by `export` as a directory path relative to the
+manifest. Only the files the pinned writer emits are opened: `manifest.json`, then
+whichever of `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` exist.
+Any other entry (another record file such as `memories.jsonl`, a stray file, a
+subdirectory) is never opened; it is counted in `archive.entries_not_read` with
+`archive_entries_not_read`. A directory of more than 64 entries, a symlinked
+directory or file, and a packed `.cogx.tar.gz` (a file, not a directory) are refused.
+Unpacking is the user's own step, so no archive extraction happens here.
+
+| Archive part | Behaviour |
+| --- | --- |
+| `permissions.json` | Present under any letter case or as a symlink: the whole archive is refused before any file is opened. `export(include_permissions=True)` writes owner and grant accounts with emails and password hashes into it, so a directory holding it is a secret and is never imported. |
+| `manifest.json` | `cogx_version` must be `0.1` and `source_system` `cognee`; another release, producer, a non-object or a malformed `counts` is refused. An archive written by a failed export has no manifest and is refused. `migration_revision` (the source store's data-migration revision) is kept only as `archive.migration_revision_sha256`, or `null` when absent. A key the writer does not emit is `unknown_manifest_fields`. |
+| `nodes.jsonl` | Each line is one node's own property dict (`id`, `type`, ...): every node the writer has no typed record for, and each chunk beside its typed copy. Mapped exactly as a graph export's node. |
+| `entities.jsonl` | A named `Entity` the writer wrote as a typed record instead of a raw node; `external_id` is its node ID. Its `created_at` and `updated_at` are ISO instants and are read as native timestamps. |
+| `documents.jsonl` | The text copy of a `DocumentChunk`. A chunk that also has a raw node is that one claim; one without it becomes a chunk claim with no `document_id`, so its origin is `missing`, never guessed. |
+| `facts.jsonl` | One edge each, from `subject_ref` through `predicate` to `object_ref`; the other fields (`fact_text`, `valid_at`, `invalid_at`) are fingerprinted as the edge body. Edge and origin rules are the graph export's. |
+
+Every record file's lines must be objects, typed records must carry their own `kind`
+and `external_system: "cognee"`, and a duplicate key, `NaN`, non-UTF-8 byte or truncated
+line refuses the archive. Counts in the manifest are compared with the records read:
+a difference, or a count for a record kind that was not read, is
+`manifest_counts_mismatch`; the archive is still read so the gap is visible, never
+silently complete. The archive carries no dataset ID (the dataset name appears only
+in a free-text note, which is not read as an identity), so lineage is
+`caller_declared` with the selection's `dataset_id`, or `unknown` without one,
+`cross_source_joins` is `disabled` and `dataset_lineage_unverified` is set; a claim
+is still namespaced by instance, `dataset` label and declared `dataset_id`, so two
+datasets' archives share no claim. `export_sha256` covers the manifest and each record
+file read, in the fixed order above. The limits are the graph export's: `max_export_bytes`
+counts all files together, and `max_rows` counts record lines plus the export record,
+checked before mapping. The shape is read from code and no real archive has been
+read: `compatibility: unverified`, `upstream_shape: source_inferred`.
+
 ### Saved recall results
 
 `format: "recall_results"` reads a JSON list the user saved from their own
@@ -5169,8 +5329,8 @@ Bodies, questions, answers and text are fingerprinted only. `max_rows`,
 `max_fields` and the JSON screens bound the file before mapping; a saved list is
 always `partial` because top-k truncation cannot be seen.
 
-Still open in #52: verifying either shape against a real export or result list;
-`cogx` archives; evidence-reference mapping; an opt-in, explicitly authorized
+Still open in #52: verifying any shape, including COGX archives, against a real
+export or result list; evidence-reference mapping; an opt-in, explicitly authorized
 live `recall` connector with verified read-only API semantics and bounded
 cancellation of result streams; further releases and backends.
 

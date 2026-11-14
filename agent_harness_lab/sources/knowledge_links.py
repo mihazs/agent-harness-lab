@@ -59,8 +59,12 @@ class Edge:
     resolved: str | None = None
 
 
-def links(pages):
-    """Edges of (path, body) pairs; paths are distinct bundle-relative POSIX `.md` paths, bodies Markdown text."""
+def links(pages, *, root_relative=False):
+    """Edges of (path, body) pairs; paths are distinct bundle-relative POSIX `.md` paths, bodies Markdown text.
+
+    `root_relative=True` reads a Markdown link starting with `/` as relative to the bundle root, the OKF v0.2
+    form; otherwise such a link stays `unknown` because the site root of a wiki or docs site is not documented.
+    """
     found, paths = [], set()
     for number, page in enumerate(pages, 1):
         if number > MAX_PAGES: raise LinkLimit('too many pages')
@@ -74,13 +78,16 @@ def links(pages):
         if len(occurrences) > MAX_LINKS_PER_PAGE: raise LinkLimit('too many links on one page')
         if len(found) + len(occurrences) > MAX_LINKS: raise LinkLimit('too many links in the bundle')
         found.extend((path, *occurrence) for occurrence in occurrences)
-    index = _Index(paths)
+    index = _Index(paths, root_relative)
     return tuple(Edge(source, line, kind, target, *index.resolve(source, kind, target))
                  for source, line, kind, target in found)
 
 
-def summary(edges, pages=None):
-    """Counts-only report of edges; pass the page paths to count pages nothing resolves to."""
+def summary(edges, pages=None, *, root_relative=False):
+    """Counts-only report of edges; pass the page paths to count pages nothing resolves to.
+
+    Pass the `root_relative` value given to links() so `unsupported` names only what that read skipped.
+    """
     edges = tuple(edges)
     resolved = {edge.resolved for edge in edges if edge.status == 'resolved' and edge.resolved != edge.source}
     report = dict(profile=PROFILE, links=len(edges), statuses={s: 0 for s in STATUSES}, kinds={k: 0 for k in KINDS},
@@ -88,7 +95,7 @@ def summary(edges, pages=None):
         pages_with_links=len({edge.source for edge in edges}), distinct_resolved_targets=len(resolved),
         self_links=sum(edge.status == 'resolved' and edge.resolved == edge.source for edge in edges),
         pages_without_inbound=None if pages is None else len(set(pages) - resolved),
-        unsupported=list(UNSUPPORTED), files_read=False, remote_fetched=False, link_text_included=False,
+        unsupported=[u for u in UNSUPPORTED if not (root_relative and u == 'site_root_paths')], files_read=False, remote_fetched=False, link_text_included=False,
         truth_established=False, authority='none', publication_allowed=False)
     for edge in edges:
         report['statuses'][edge.status] += 1; report['kinds'][edge.kind] += 1
@@ -202,8 +209,9 @@ class _Suffixes:
 
 
 class _Index:
-    def __init__(self, paths):
+    def __init__(self, paths, root_relative=False):
         self.paths = paths
+        self.root_relative = root_relative
         self.folded = {path.casefold() for path in paths}
         self.suffixes = _Suffixes(paths)
         self.folded_suffixes = _Suffixes(self.folded)
@@ -242,10 +250,11 @@ class _Index:
         except UnicodeDecodeError: return 'invalid', 'bad_percent_encoding', None
         if any(c in path for c in '\\\0\n\r'): return 'invalid', 'unsupported_character', None
         if not path: return ('resolved', 'same_page_query', source) if target else ('invalid', 'empty_target', None)
-        if path.startswith('/'): return 'unknown', 'root_relative_path', None
-        joined = posixpath.normpath(posixpath.join(posixpath.dirname(source), path))
+        rooted = path.startswith('/')
+        if rooted and not self.root_relative: return 'unknown', 'root_relative_path', None
+        joined = posixpath.normpath(path[1:] if rooted else posixpath.join(posixpath.dirname(source), path))
         if joined == '..' or joined.startswith('../'): return 'outside_bundle', 'parent_traversal', None
         if path.endswith('/') or not joined.endswith('.md'): return 'unknown', 'non_page_target', None
-        if joined in self.paths: return 'resolved', 'relative_path', joined
+        if joined in self.paths: return 'resolved', 'bundle_root_path' if rooted else 'relative_path', joined
         if joined.casefold() in self.folded: return 'missing', 'case_only_match', None
         return 'missing', 'no_page', None

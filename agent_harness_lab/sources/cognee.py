@@ -1,6 +1,8 @@
 """Offline, version-pinned Cognee graph exports as dataset-scoped hash-only claims; no recall, inference or mutation."""
+import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
 from .schema import Contract, digest, fingerprint, label
@@ -20,7 +22,15 @@ FORMATS = dict(
     graph_snapshot=dict(envelope=('dataset_name', 'dataset_id', 'nodes', 'edges'), edge=('source_id', 'target_id', 'relationship')),
     nodes_edges=dict(envelope=('nodes', 'edges'), edge=('source', 'target', 'relationship_name')),
     # A user-saved JSON list of cognee.recall() results (RecallResponse); the saved file, never a live call.
-    recall_results=dict(envelope=(), edge=()))
+    recall_results=dict(envelope=(), edge=()),
+    # cognee.export(format="cogx"): an archive directory, read as the nodes and edges its records describe.
+    cogx_archive=dict(envelope=('nodes', 'edges'), edge=('source', 'target', 'relationship_name')))
+# The COGX archive the pinned writer emits (cognee/modules/migration/cogx.py, COGX_VERSION 0.1): a manifest and one JSONL file
+# per record kind. permissions.json (include_permissions=True) holds account credentials and is refused, never read.
+COGX_VERSION = '0.1'
+ARCHIVE_FILES = dict(document='documents.jsonl', entity='entities.jsonl', fact='facts.jsonl', raw_node='nodes.jsonl')
+MANIFEST_FILE, PERMISSIONS_FILE, MAX_ARCHIVE_ENTRIES = 'manifest.json', 'permissions.json', 64
+MANIFEST_FIELDS = {'cogx_version', 'source_system', 'exported_at', 'counts', 'embedding_model', 'migration_revision', 'notes'}
 CLAIMS = ('document', 'chunk', 'entity', 'graph_node', 'relation')
 DERIVATION = dict(document='ingested_source', chunk='document_segment', entity='model_extraction',
                   graph_node='unmodelled_datapoint', relation='graph_edge')
@@ -166,14 +176,105 @@ class CogneeExport(LocalExport):
         label(selection['instance']); label(selection['dataset']); relative(selection['export'])
         if selection.get('session_id') is not None: label(selection['session_id'])
         bounds = limits(selection.get('limits'), LIMITS)
-        decoded = []
-        def consume(position, raw, export_sha256): decoded.append(load_json(raw, bounds, 'Cognee export'))
-        export_sha256, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['export'])],
-            bounds['max_export_bytes'], consume, 'Cognee export changed during capture', read_regular, regular_sha256)
-        self.claims, self.summary = parse(decoded.pop(), selection, bounds)
+        if selection['format'] == 'cogx_archive':
+            value, export_sha256, archive = self.archive(source, descriptor, selection, bounds)
+        else:
+            decoded = []
+            def consume(position, raw, export_sha256): decoded.append(load_json(raw, bounds, 'Cognee export'))
+            export_sha256, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['export'])],
+                bounds['max_export_bytes'], consume, 'Cognee export changed during capture', read_regular, regular_sha256)
+            value, archive = decoded.pop(), None
+        self.claims, self.summary = parse(value, selection, bounds)
+        if archive is not None:
+            self.summary['archive'] = archive['summary']
+            self.summary['warnings'] = sorted(set(self.summary['warnings']) | archive['warnings'])
         return claim_snapshot(source, 'cognee_', self.claims, provenance,
             digest(('cognee_export', selection['instance'], selection['dataset'], selection['dataset_id'], selection['export'])),
             export_sha256, self.summary)
+
+    def archive(self, source, descriptor, selection, bounds):
+        """Read one COGX archive directory: its manifest and the four record files the pinned writer emits, nothing else."""
+        base = contained(self.manifest.parent, selection['export'])
+        if not base.is_dir(): raise ValueError('Cognee cogx archive must be a directory')
+        with os.scandir(base) as entries:
+            names = [entry.name for _, entry in zip(range(MAX_ARCHIVE_ENTRIES+1), entries)]
+        if len(names) > MAX_ARCHIVE_ENTRIES: raise HostileReport('Cognee archive entry bound exceeded')
+        # Refused by name, before any file is opened: the writer puts owner and grant credentials in this file.
+        if any(name.lower() == PERMISSIONS_FILE for name in names): raise ValueError('Cognee archive carries permissions.json')
+        if MANIFEST_FILE not in names: raise ValueError('Cognee cogx archive has no manifest.json')
+        kinds = [kind for kind, name in ARCHIVE_FILES.items() if name in names]
+        paths = [contained(self.manifest.parent, selection['export']+'/'+name) for name in (MANIFEST_FILE, *(ARCHIVE_FILES[k] for k in kinds))]
+        left, manifest, rows, size, total = dict(max_json_containers=bounds['max_json_containers'], max_json_values=bounds['max_json_values']), [], {}, [0], [0]
+        def decode(raw):
+            spent = []
+            result = load_json(raw, dict(bounds, **left), 'Cognee archive', spent=spent)
+            left['max_json_containers'] -= spent[0][0]; left['max_json_values'] -= spent[0][1]
+            return result
+        def consume(position, raw, sha256):
+            size[0] += len(raw)
+            if size[0] > bounds['max_export_bytes']: raise HostileReport('Cognee export byte bound exceeded')
+            if position == 0: return manifest.append(archive_manifest(decode(raw)))
+            lines = [line for line in raw.splitlines() if line.strip()]
+            total[0] += len(lines)
+            if total[0] + 1 > bounds['max_rows']: raise HostileReport('Cognee row bound exceeded')
+            kind = kinds[position-1]
+            rows[kind] = [archive_row(kind, decode(line), bounds) for line in lines]
+        hashes = self.capture(source, descriptor, selection, paths, bounds['max_export_bytes'], consume,
+            'Cognee export changed during capture', read_regular, regular_sha256)
+        manifest, = manifest
+        counts = {kind: len(found) for kind, found in rows.items() if found}
+        extra = len(names) - 1 - len(kinds)
+        warnings = {'manifest_counts_mismatch'} if {k: n for k, n in manifest['counts'].items() if n} != counts else set()
+        if extra: warnings.add('archive_entries_not_read')
+        if set(manifest['fields']) - MANIFEST_FIELDS: warnings.add('unknown_manifest_fields')
+        revision = manifest['migration_revision']
+        summary = dict(cogx_version=COGX_VERSION, records={kind: counts.get(kind, 0) for kind in ARCHIVE_FILES}, entries_not_read=extra,
+            migration_revision_sha256=digest(['cognee_migration_revision', revision]) if revision is not None else None)
+        return archive_value(rows), digest(['cogx_archive', *zip((MANIFEST_FILE, *(ARCHIVE_FILES[k] for k in kinds)), hashes)]), dict(
+            summary=summary, warnings=warnings)
+
+
+def archive_manifest(value):
+    """Validate the manifest the pinned writer emits; any other release, producer or shape is refused."""
+    if not isinstance(value, dict) or value.get('cogx_version') != COGX_VERSION or value.get('source_system') != 'cognee':
+        raise ValueError('unsupported Cognee cogx manifest')
+    counts, revision = value.get('counts', {}), value.get('migration_revision')
+    if not isinstance(counts, dict) or any(type(n) is not int or n < 0 for n in counts.values()):
+        raise ValueError('invalid Cognee cogx manifest counts')
+    if revision is not None and not isinstance(revision, str): raise ValueError('invalid Cognee cogx manifest revision')
+    return dict(counts=counts, migration_revision=revision, fields=list(value))
+
+
+def archive_row(kind, row, bounds):
+    if not isinstance(row, dict): raise ValueError('Cognee cogx records must be objects')
+    if len(row) > bounds['max_fields']: raise HostileReport('Cognee field bound exceeded')
+    # A raw node is the node's own property dict; a typed record names its kind, and its producer.
+    if kind != 'raw_node' and (row.get('kind') != kind or row.get('external_system') != 'cognee'):
+        raise ValueError('Cognee cogx record does not match the pinned writer')
+    return row
+
+
+def epoch_ms(value):
+    """A COGX timestamp is an ISO string; a node's own created_at is epoch milliseconds. Anything else stays as it was."""
+    try: moment = datetime.fromisoformat(value)
+    except (TypeError, ValueError): return value
+    return round(moment.timestamp()*1000) if moment.utcoffset() is not None else value
+
+
+def archive_value(rows):
+    """Describe the archive as the nodes and edges a plain JSON export would hold, so one mapping reads both."""
+    nodes = [dict(row) for row in rows.get('raw_node', [])]
+    known = {text(row.get('id')) for row in nodes} - {None}
+    def present(**fields): return {k: v for k, v in fields.items() if v is not None}
+    # The writer stores each chunk twice (a typed record and a raw node); only a chunk without its raw node is added.
+    nodes += [present(id=row.get('external_id'), type='DocumentChunk', text=row.get('content'), created_at=epoch_ms(row.get('created_at')))
+              for row in rows.get('document', []) if text(row.get('external_id')) not in known]
+    nodes += [present(id=row.get('external_id'), type='Entity', name=row.get('name'), description=row.get('description'),
+                      created_at=epoch_ms(row.get('created_at')), updated_at=epoch_ms(row.get('updated_at'))) for row in rows.get('entity', [])]
+    edges = [dict({k: v for k, v in row.items() if k not in ('kind', 'subject_ref', 'predicate', 'object_ref')},
+                  source=row.get('subject_ref'), target=row.get('object_ref'), relationship_name=row.get('predicate'))
+             for row in rows.get('fact', [])]
+    return dict(nodes=nodes, edges=edges)
 
 
 def canonical_uuid(value):

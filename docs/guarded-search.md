@@ -84,6 +84,10 @@ corrections use a separately reviewed
 [correction-rerun request](grader-corrections.md#requalify-corrected-preservation-cohorts)
 to execute fresh qualification, freeze a new cohort and rerun both comparison arms.
 
+[Registered strategies](optimization-strategies.md#running-through-the-guarded-controller-route)
+(no-op, single revision and reflective GEPA-inspired) can run and be compared
+through this route with a `controller=` argument.
+
 Run `task test:optimization:history` for native controller/search contracts.
 The actual synthetic positive control explicitly predeclares an affordable test
 policy; production defaults are unchanged. A separate default-policy thousand-root

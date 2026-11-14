@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Run a declared presentation adapter's exact bytes in the offline sandbox and verify what it returns (part of #13). `evaluation.adapter_worker.present` rechecks the adapter digest, runs a controller-owned runner with no network, host home, environment, credentials or oracle and bounded time, memory and output, and accepts the answer only when it keeps the original tool envelope exactly, names the declared adapter and authorization, and adds nothing but a bounded `error_metadata` for an error result. Timeouts, output floods, crashes, malformed output, status laundering, payload edits, extra keys such as a nested call and modified inputs are failures with a code; an unavailable sandbox is a failure, never a pass. A `required` policy stops the call and `optional-identity` falls back to the identity envelope with the code recorded. Nothing calls the worker by default and no hook is installed: delivering a non-identity result to the model stays blocked, `runtime_capability` still reports `unsupported`, and no effectiveness claim is made.

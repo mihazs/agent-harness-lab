@@ -1,4 +1,4 @@
-"""Synthetic JUnit XML and pytest JSON reports; CI results describe a declared commit, never a task grade."""
+"""Synthetic JUnit XML, pytest JSON and TAP reports; CI results describe a declared commit, never a task grade."""
 import contextlib
 import io
 import json
@@ -17,6 +17,20 @@ from agent_harness_lab.sources.test_results import HostileReport, TestResultsExp
 from tests.support.fresh_peak import fresh_peak
 
 SHA = '3c'*20
+TAP = b'''TAP version 13
+1..8
+ok 1 - passes
+not ok 2 - fails
+  ---
+  message: SYNTHETIC_SECRET
+  ...
+ok 3 - skip directive # SKIP no network
+not ok 4 - expected failure # TODO not done
+ok 5 - unexpected pass # TODO
+not ok 6 - skip on a failure # SKIP
+ok 7 - odd directive # skipped later
+ok 8 - lower case # skip
+'''
 JUNIT = b'''<?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
   <testsuite name="synthetic-suite" tests="5">
@@ -463,7 +477,7 @@ class TestResultSource:
 
     @pytest.mark.parametrize('reports', [
         pytest.param([], id='empty'), pytest.param([dict(path='../x.xml', format='junit-xml')], id='escaping-path'),
-        pytest.param([dict(path='reports/junit.xml', format='tap')], id='unknown-format'),
+        pytest.param([dict(path='reports/junit.xml', format='subunit')], id='unknown-format'),
         pytest.param([dict(path='reports/junit.xml', format='junit-xml')]*2, id='duplicate'),
         pytest.param([dict(path='/etc/passwd', format='junit-xml')], id='absolute-path'),
         pytest.param([dict(path='reports/junit.xml', format='junit-xml', extra=1)], id='extra-field')])
@@ -480,6 +494,146 @@ class TestResultSource:
         with patch.object(test_results, 'regular_sha256', lambda path, limit: '0'*64):
             with pytest.raises(ValueError): self.connector.read(self.source)
         assert actual is test_results.regular_sha256
+
+    def tap(self, raw, **extra):
+        (self.root/'reports/report.tap').write_bytes(raw)
+        self.declare([dict(path='reports/report.tap', format='tap')], **extra)
+
+    def tap_cases(self):
+        return [(self.connector.declared_cases[r.case_sha256][1], r.status, r.reported_outcome) for r in self.connector.results]
+
+    def test_tap_statuses_follow_directives_and_keep_unknowns_explicit(self):
+        self.tap(TAP)
+        snapshot = self.connector.read(self.source)
+        assert self.tap_cases() == [
+            ('passes', 'passed', 'ok'), ('fails', 'failed', 'not_ok'), ('skip directive', 'skipped', 'skip'),
+            # TODO inverts the meaning of the result, and a SKIP on a failing line contradicts itself: neither is a verdict.
+            ('expected failure', 'unknown', 'todo'), ('unexpected pass', 'unknown', 'todo'),
+            ('skip on a failure', 'unknown', 'conflicting'), ('odd directive', 'unknown', 'unrecognized_directive'),
+            ('lower case', 'skipped', 'skip')]
+        assert {'conflicting_case_status', 'unrecognized_directive'} <= set(self.connector.summary['warnings'])
+        observed = [r.outcome['value'] for r in snapshot.records if r.record_type == 'test_case_result']
+        assert observed == ['success', 'failure', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown', 'unknown']
+
+    def test_tap_diagnostic_blocks_and_messages_are_not_stored(self):
+        self.tap(TAP)
+        snapshot = self.connector.read(self.source)
+        assert 'SYNTHETIC_SECRET' not in repr(self.connector.results) + repr(snapshot.records) + repr(self.connector.summary)
+        assert self.connector.summary['cases'] == 8
+
+    @pytest.mark.parametrize('raw,cases,warnings', [
+        pytest.param(b'1..2\nok 1 - a\nok 2 - b\n', 2, set(), id='plan-first'),
+        pytest.param(b'ok 1 - a\nok 2 - b\n1..2\n', 2, set(), id='plan-last'),
+        pytest.param(b'1..3\nok 1 - a\nok 2 - b\n', 2, {'tap_plan_mismatch'}, id='truncated'),
+        pytest.param(b'1..1\nok 1 - a\nok 2 - b\n', 2, {'tap_plan_mismatch'}, id='more-than-planned'),
+        pytest.param(b'ok 1 - a\n', 1, {'tap_plan_absent'}, id='no-plan'),
+        pytest.param(b'1..0 # SKIP nothing to run\n', 0, {'tap_plan_skipped'}, id='skipped-plan')])
+    def test_tap_plan_that_disagrees_with_the_test_points_is_flagged_never_filled_in(self, raw, cases, warnings):
+        self.tap(raw)
+        self.connector.read(self.source)
+        found = set(self.connector.summary['warnings']) & {'tap_plan_mismatch', 'tap_plan_absent', 'tap_plan_skipped'}
+        assert (len(self.connector.results), found) == (cases, warnings)
+
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'', id='empty'), pytest.param(b'# only a comment\n', id='comment-only'),
+        pytest.param(b'TAP version 13\n', id='version-only'), pytest.param(b'not a tap report\n', id='unrelated-text'),
+        pytest.param(b'1..2\n1..2\nok 1\nok 2\n', id='duplicate-plan'), pytest.param(b'2..3\nok 2\nok 3\n', id='plan-not-from-one'),
+        pytest.param(b'TAP version 99\nok 1 - a\n', id='unsupported-version'),
+        pytest.param(b'TAP version 12\nok 1 - a\n', id='version-twelve-is-versionless')])
+    def test_tap_without_test_points_or_with_a_malformed_header_is_rejected(self, raw):
+        self.tap(raw)
+        with pytest.raises(ValueError): self.connector.read(self.source)
+
+    def test_tap_bail_out_ends_the_import_and_never_invents_the_rest(self):
+        self.tap(b'TAP version 14\n1..3\nok 1 - a\nBail out! database down\nok 2 - b\nnot ok 3 - c\n')
+        self.connector.read(self.source)
+        assert self.tap_cases() == [('a', 'passed', 'ok')]
+        assert {'tap_bail_out_reported', 'tap_plan_mismatch'} <= set(self.connector.summary['warnings'])
+
+    def test_tap_names_cases_by_description_and_falls_back_to_position(self):
+        self.tap(b'ok 1 - a\nok 3 b\nok - c\nok\n1..4\n')
+        self.connector.read(self.source)
+        assert [name for name, _, _ in self.tap_cases()] == ['a', 'b', 'c', '#4']
+        assert 'tap_test_number_out_of_sequence' in self.connector.summary['warnings']
+
+    def test_tap_repeated_descriptions_are_kept_as_flagged_occurrences(self):
+        self.tap(b'1..2\nok 1 - same\nnot ok 2 - same\n')
+        self.connector.read(self.source)
+        assert [(r.occurrence, r.status) for r in self.connector.results] == [(0, 'passed'), (1, 'failed')]
+        assert 'duplicate_case_identity' in self.connector.summary['warnings']
+
+    def test_tap_subtest_lines_are_not_counted_beside_their_parent(self):
+        self.tap(b'TAP version 14\n1..1\n# Subtest: parent\n    1..2\n    ok 1 - inner a\n    not ok 2 - inner b\nnot ok 1 - parent\n')
+        self.connector.read(self.source)
+        assert self.tap_cases() == [('parent', 'failed', 'not_ok')]
+        assert 'tap_subtest_lines_not_imported' in self.connector.summary['warnings']
+
+    @pytest.mark.parametrize('line', [
+        pytest.param(b'okay 1 - a', id='ok-prefix'), pytest.param(b'not okay', id='not-ok-prefix'),
+        pytest.param(b'notok 1 - a', id='run-together'), pytest.param(b'Ok 1 - a', id='capitalized'),
+        pytest.param(b'stray program output', id='stray-output'), pytest.param(b'TAP version 13', id='late-version')])
+    def test_tap_lines_that_are_not_test_points_are_ignored_with_a_warning(self, line):
+        self.tap(b'1..1\n'+line+b'\nok 1 - kept\n')
+        self.connector.read(self.source)
+        assert self.tap_cases() == [('kept', 'passed', 'ok')]
+        assert 'tap_unrecognized_line' in self.connector.summary['warnings']
+
+    def test_tap_comments_and_pragmas_are_not_warnings(self):
+        self.tap(b'# a comment\npragma +strict\n\n1..1\nok 1 - kept\n')
+        self.connector.read(self.source)
+        assert 'tap_unrecognized_line' not in self.connector.summary['warnings']
+
+    def test_tap_escaped_hash_is_part_of_the_description_not_a_directive(self):
+        self.tap(b'1..2\nok 1 - issue \\# 5 # SKIP later\nok 2 - cost 5\\# todo\n')
+        self.connector.read(self.source)
+        assert self.tap_cases() == [('issue \\# 5', 'skipped', 'skip'), ('cost 5\\# todo', 'passed', 'ok')]
+
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'1..1\nok 1 - a\0\n', id='nul'), pytest.param(b'1..1\nok 1 - \xff\n', id='invalid-utf-8'),
+        pytest.param('1..1\nok 1 - a\n'.encode('utf-16'), id='utf-16'),
+        pytest.param(b'1..1\nok 1 - '+b'a'*5000+b'\n', id='long-line')])
+    def test_tap_hidden_encodings_and_oversized_lines_are_refused(self, raw):
+        self.tap(raw)
+        with pytest.raises(HostileReport): self.connector.read(self.source)
+
+    @pytest.mark.parametrize('length,refused', [pytest.param(4096, False, id='at-the-ceiling'), pytest.param(4097, True, id='over-the-ceiling')])
+    def test_tap_line_length_ceiling_is_exact(self, length, refused):
+        self.tap(b'ok 1 - '+b'a'*(length-7)+b'\n')
+        if refused:
+            with pytest.raises(HostileReport): self.connector.read(self.source)
+        else:
+            self.connector.read(self.source)
+            assert len(self.connector.results) == 1
+
+    def test_tap_line_limit_only_lowers_the_ceiling(self):
+        self.tap(b'ok 1 - a\n', limits=dict(max_line_length=4097))
+        with pytest.raises(ValueError, match='only lower'): self.connector.read(self.source)
+        self.tap(b'ok 1 - '+b'a'*20+b'\n', limits=dict(max_line_length=16))
+        with pytest.raises(HostileReport): self.connector.read(self.source)
+
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'1..2\n'+b'ok - a\n'*6, id='more-points-than-the-bound'),
+        pytest.param(b'1..6\n', id='plan-above-the-bound'), pytest.param(b'1..99999999999999999999\n', id='plan-beyond-any-integer-width')])
+    def test_tap_case_count_is_bounded_by_points_and_by_the_declared_plan(self, raw):
+        self.tap(raw, limits=dict(max_cases=5))
+        with pytest.raises(HostileReport): self.connector.read(self.source)
+
+    def test_tap_parsing_stops_at_the_case_bound_before_reading_later_lines(self):
+        # Every later line is itself refusable; the bound is what ends the read, so its message is the one raised.
+        self.tap(b'ok - a\n'*10+b'1..2\n1..2\n\xff\n', limits=dict(max_cases=5))
+        with pytest.raises(HostileReport, match='case bound'): self.connector.read(self.source)
+
+    def test_tap_cli_preview_and_import_keep_hashes_only(self):
+        self.tap(TAP)
+        code, preview = self.invoke('preview')
+        assert code == 0
+        summary = json.loads(preview)['test_results_summary']
+        assert (summary['cases'], summary['statuses']['unknown'], summary['profile']) == (8, 4, 'ci-test-results-v1')
+        code, receipt = self.invoke('import')
+        assert code == 0
+        raw = (self.root/'private/cache.json').read_text()
+        for secret in ('SYNTHETIC_SECRET', 'skip directive', 'expected failure', 'reports/report.tap', SHA):
+            assert secret not in raw
 
     def test_cli_preview_import_and_reimport_keep_hashes_only(self):
         code, preview = self.invoke('preview')

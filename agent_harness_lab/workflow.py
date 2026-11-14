@@ -1199,6 +1199,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                             for name in sorted(original.keys() | proposed.keys())
                             if original.get(name) != proposed.get(name)],
                 evaluation=str(options.output), application_eligible=False)
+            skill_bundles=skill_validation.review_tree(baseline,frozen,original,proposed,allowed_paths(args) is not None).bundles()
+            if skill_bundles:plan_document['skill_bundles']=skill_bundles
             if getattr(args,'_audit_hypothesis',None) is not None:
                 plan_document['audit_hypothesis']=args._audit_hypothesis
             if instruction is not None:

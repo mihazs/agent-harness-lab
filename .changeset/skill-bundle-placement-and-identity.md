@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Every reviewed project skill bundle now carries its operation, an explicit `placement` and a before/after identity. `placement` is `claude-code` or `codex` when the bundle sits in that runtime's documented skills root (`.claude/skills` or `.agents/skills`, at the root or nested) and `unverified_location` for a bare `skills/` folder, so a bundle is never reported as discoverable by location alone and no activation is claimed. `before_sha256` and `after_sha256` digest the bundle's sorted relative path, content hash and mode rows (null for a side with no file and for a scoped review whose membership is unknown), so any file or mode change inside the bundle changes the identity. A blocked run lists the rows in `skill_review.findings`, and a behavioral candidate that stays `inconclusive` lists them as `skill_bundles` in `change-plan.json`. The docs also state that `ahl skills` links AHL's own skills and does not manage a target project's skill lifecycle. Part of #78.

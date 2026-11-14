@@ -80,15 +80,24 @@ def _development_only(evidence):
 
 
 def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify, budget, allowed_files, evidence,
-                 **options):
+                 *, controller=None, parent_deadline=None, **options):
     """Run one strategy through the shared guarded budget/selection contract.
 
     `proposer(request)` returns a CandidateRecord or None. The request carries only development evidence,
     the slot kind, a derived seed and the remaining non-reserved budget; it cannot reach certification.
     A changed strategy, version or configuration writes a new state file, so charges are never reset or reused.
+    With a `HistorySearchContext` as `controller`, every candidate runs and is verified by the actual controller
+    (`evaluate` and `certify` must be None: a raw callback result cannot rank or select there) and the result is
+    controller-verified development evidence; `parent_deadline` bounds that route only.
     """
     spec = get(strategy_id, version)
     config = spec.config(**options)
+    if controller is None and parent_deadline is not None:
+        raise ValueError('a parent deadline bounds the controller route only')
+    if controller is not None and (evaluate is not None or certify is not None):
+        raise ValueError('the controller route verifies candidates itself; raw callbacks are refused')
+    if controller is None and not (callable(evaluate) and callable(certify)):
+        raise ValueError('the callback route needs evaluate and certify')
     evidence = _development_only(evidence)
     identity = spec.identity(config)
     path = Path(path)
@@ -107,8 +116,9 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
             return None
 
     result = search(path, baseline, propose, evaluate, certify, budget, allowed_files, enabled=True,
-                    variants=config['variants'])
-    if result.get('resumed_without_execution'):  # A saved state ignores the new budget, so check its spend against it.
+                    variants=config['variants'], controller=controller, parent_deadline=parent_deadline)
+    # A saved callback state ignores the new budget, so check its spend against it; guarded search compares exactly.
+    if controller is None and result.get('resumed_without_execution'):
         events = result.get('budget_events')
         if not isinstance(events, list):
             raise ValueError('saved search state has no recorded budget')
@@ -126,8 +136,22 @@ DEFAULT_COMPARISON = (('no-op', 1), ('single-revision', 1), ('reflective-gepa-in
 _DEFERRED = dict(status='deferred_to_protected_evaluation')
 
 
+_REJECTIONS = dict(invalid='invalid_or_unauthorized_proposal', duplicate='duplicate_patch')
+
+
+def _events(result):
+    return result['budget']['events'] if 'budget' in result else result.get('budget_events', [])
+
+
+def _rejections(result):
+    if 'attempts' not in result:  # The callback route keeps its rejections; guarded attempts hold them as stages.
+        return result.get('rejections', [])
+    return [dict(index=a['index'], **(dict(candidate_id=a['record']['candidate_id']) if a['record'] else {}),
+                 reason=_REJECTIONS[a['stage']]) for a in result['attempts'] if a['stage'] in _REJECTIONS]
+
+
 def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve, allowed_files, evidence,
-                       strategies=DEFAULT_COMPARISON, seed=0):
+                       strategies=DEFAULT_COMPARISON, seed=0, *, controller=None, parent_deadline=None):
     """Run strategies under one matched stage ceiling and report every executed attempt, not only winners.
 
     Each strategy gets the same baseline, proposer, evaluator, development evidence, authorized files and a
@@ -135,6 +159,9 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
     retained rejection and the finalists left for a protected evaluation whose access and multiplicity
     handling are declared elsewhere. Charges are stage units on the callback route: tokens and currency are
     unmeasured, so `measured_usage` stays None. Development points are heuristics, never an advantage claim.
+    With a `HistorySearchContext` as `controller` (and `evaluate` None) each strategy runs through the guarded
+    controller route; a favorable strategy is then `development_recommended_for_review` after a fresh development
+    confirmation, still deferred to a protected evaluation and never certified here.
     """
     strategies = list(strategies)
     if not strategies or len(set(strategies)) != len(strategies) or any(
@@ -150,19 +177,22 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
     rows, finalists = [], []
     for spec, budget in zip(specs, budgets):
         result = run_strategy(spec.strategy_id, spec.version, directory/f'{spec.strategy_id}.json', baseline, proposer,
-                              evaluate, lambda candidate: _DEFERRED, budget, allowed_files, evidence, seed=seed)
+                              evaluate, None if controller is not None else lambda candidate: _DEFERRED, budget, allowed_files,
+                              evidence, controller=controller, parent_deadline=parent_deadline, seed=seed)
         by_kind = {}
-        for event in result.get('budget_events', []):
+        for event in _events(result):
             by_kind[event['kind']] = by_kind.get(event['kind'], 0) + event['amount']
         deferred = result.get('certification') == _DEFERRED
-        if deferred:
+        finalist = deferred or result['status'] == 'development_recommended_for_review'
+        if finalist:
             finalists.append(dict(strategy=spec.strategy_id, candidate_id=result['finalist']))
         rows.append(dict(strategy=result['strategy'], disposition='finalist_deferred_to_protected_evaluation' if deferred else result['status'],
-            selected=result['finalist'] if deferred else None,
+            selected=result['finalist'] if finalist else None,
             charges=dict(ceiling=ceiling, reserve=reserve, spent=sum(by_kind.values()), by_kind=by_kind),
             measured_usage=None, resumed_without_execution=result.get('resumed_without_execution', False),
             attempts=[dict(candidate_id=c['candidate_id'], digest=c['digest'], safe=c['safe'], metrics=c['metrics'])
                       for c in result.get('candidates', [])],
-            rejections=result.get('rejections', [])))
+            rejections=_rejections(result)))
     return dict(matched=dict(ceiling=ceiling, reserve=reserve, seed=seed), strategies=rows, finalists=finalists,
-                advantage_claim=False, evidence_source='unverified_callback')
+                advantage_claim=False,
+                evidence_source='controller_verified_development_only' if controller is not None else 'unverified_callback')

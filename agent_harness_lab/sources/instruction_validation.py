@@ -35,6 +35,7 @@ from .git_view import Folder
 from .schema import digest, label
 
 PROFILE = 'ahl-instruction-validation-v1'
+LOADING_PROFILE = 'ahl-instruction-loading-v1'
 PLAN_FIELDS = {'schema_version', 'profile', 'task_paths', 'required', 'shadowing_changes', 'removed_task_paths', 'operations'}
 OPERATION_FIELDS = {'path', 'decision', 'mechanism_id', 'evidence_refs', 'expected_change', 'preserved', 'falsifier'}
 DECISIONS = ('add', 'update', 'remove', 'consolidate')
@@ -588,13 +589,66 @@ def removal_disposition(document, trials):
     return dict(removal, disposition=disposition, reason=reason)
 
 
-def review(document, removal=None, composed_with=()):
+def loading_evidence(document, baseline_events=None, candidate_events=None):
+    """Native attachment evidence for each changed instruction or rule file, from one capture of each version (#79).
+
+    A version's file is 'observed_pattern' only when a pinned Claude attachment names its path and the attached text
+    hashes to that version's file, the exact test harness_inventory.join_loading applies. Everything else stays
+    'unknown': no capture, a Codex runtime (its rollout records no load), a file the version lacks, a path-only match,
+    and a file Claude loads at launch without an attachment event, so no event is never evidence of non-loading. The
+    caller pairs each capture with the version it ran against and with the checkout root the paths are relative to;
+    that pairing, effective loading, outcomes and independence stay unknown. The validation document is not changed."""
+    if document.get('status') != 'valid': raise ValueError('only a valid instruction validation can carry loading evidence')
+    from agent_harness_lab.telemetry import claude_native, codex_rollout
+    claude = document['runtime'] == 'claude-code'
+    captures, attached = {}, {}
+    for version, events in (('baseline', baseline_events), ('candidate', candidate_events)):
+        status = codex_rollout.LOADING_SIGNAL if not claude else 'no_capture' if events is None else 'joined'
+        records, ignored, duplicates, contested = harness_inventory.loading_records(events) if status == 'joined' else ([], 0, 0, 0)
+        captures[version] = dict(status=status, ignored_records=ignored, duplicate_events=duplicates, conflicting_events=contested)
+        attached[version] = {}
+        for record in records:
+            if record['loading_signal'] == 'observed_attachment' and 'loading_path_sha256' in record:
+                attached[version].setdefault(record['loading_path_sha256'], []).append(record.get('loading_content_sha256'))
+    rows = []
+    for item in document['operations']:
+        row = dict(path=item['path'])
+        for version, field in (('baseline', 'before_sha256'), ('candidate', 'after_sha256')):
+            named = attached[version].get(digest(item['path']), [])
+            exact = sum(item[field] is not None and content == item[field] for content in named)
+            row[version] = dict(observed_loading='observed_pattern' if exact else 'unknown',
+                                exact_attachments=exact, path_only_attachments=len(named) - exact)
+        rows.append(row)
+    joined = any(capture['status'] == 'joined' for capture in captures.values())
+    observed = any(row[version]['observed_loading'] == 'observed_pattern' for row in rows for version in captures)
+    value = dict(schema_version=1, kind='instruction_loading_observation', profile=LOADING_PROFILE, runtime=document['runtime'],
+                 baseline_closure_sha256=document['baseline']['closure_sha256'],
+                 candidate_closure_sha256=document['candidate']['closure_sha256'], captures=captures,
+                 capture_version=claude_native.VERSION if joined else None, operations=rows,
+                 loading_evidence='observed_pattern' if observed else 'none', effective='unknown', outcome='unknown',
+                 independence='unknown', publication_allowed=False, adoption_authority=False)
+    value['sha256'] = digest(value)
+    return value
+
+
+def review(document, removal=None, composed_with=(), loading=None):
     """Immutable operation-level review record for a valid, bound validation document; hashes only, no file text.
     The evaluation disposition is the candidate-level removal gate's, carried by every operation that can lose
     active guidance (anything but an add). composed_with names the skill or hook paths changed in the same candidate: a composed change has its
     own identity and needs an interaction evaluation that no per-surface result supplies. A record grants no
-    adoption authority: application stays with the journal transaction."""
+    adoption authority: application stays with the journal transaction. loading is a loading_evidence record for this
+    same validation: each operation then carries its per-version observation, and observed_loading stays 'unknown'
+    because that field speaks for the whole closure, which the changed files do not cover."""
     if document.get('status') != 'valid': raise ValueError('only a valid instruction validation can be reviewed')
+    observed = {}
+    if loading is not None:
+        body = {key: value for key, value in loading.items() if key != 'sha256'} if isinstance(loading, dict) else {}
+        observed = {row['path']: row for row in body.get('operations', ())}
+        if (body.get('kind') != 'instruction_loading_observation' or digest(body) != loading.get('sha256')
+                or body.get('baseline_closure_sha256') != document['baseline']['closure_sha256']
+                or body.get('candidate_closure_sha256') != document['candidate']['closure_sha256']
+                or observed.keys() != {item['path'] for item in document['operations']}):
+            raise ValueError('loading evidence does not describe this instruction validation')
     removal = removal or document.get('removal') or {}
     declared = {record['path']: record for record in document.get('decisions') or ()}
     scope = document['scope']
@@ -608,13 +662,15 @@ def review(document, removal=None, composed_with=()):
             before_sha256=item['before_sha256'], after_sha256=item['after_sha256'],
             justification=None if justification is None else {key: justification[key] for key in (
                 'mechanism_id', 'evidence_refs', 'preserved', 'expected_change_sha256', 'falsifier_sha256')},
-            evaluation_disposition=removal.get('disposition') if loses else 'not_applicable'))
+            evaluation_disposition=removal.get('disposition') if loses else 'not_applicable',
+            loading=None if loading is None else {version: observed[name][version] for version in ('baseline', 'candidate')}))
     value = dict(schema_version=1, kind='instruction_operation_review', runtime=document['runtime'], scope_source=scope['source'],
                  baseline_closure_sha256=document['baseline']['closure_sha256'],
                  candidate_closure_sha256=document['candidate']['closure_sha256'],
                  operations=operations, justified=document.get('decisions') is not None,
                  observed_loading='unknown', effective='unknown', certification='required',
-                 blocked=[], staged=[item['path'] for item in operations],
+                 loading_evidence=None if loading is None else loading['loading_evidence'],
+                 loading_sha256=None if loading is None else loading['sha256'], blocked=[], staged=[item['path'] for item in operations],
                  recommended=[item['path'] for item in operations if item['evaluation_disposition'] == 'recommended'], applied=[],
                  composed=None if not composed_with else dict(with_paths=sorted(composed_with), interaction_evaluation='required'),
                  publication_allowed=False, adoption_authority=False)

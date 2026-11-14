@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 from .claude_cwd import Places
 from .error_catalog import classify
 from .native import guarded, jsonl, number, text, timestamp
-from .schema import BODY_DERIVED, SOURCE_ORDER, event, input_fingerprint, message_fingerprint
+from .schema import BODY_DERIVED, SOURCE_ORDER, edit_fingerprints, event, input_fingerprint, message_fingerprint
 from ..sources.config_inventory import telemetry_server_sha256
 from ..sources.schema import digest
 from ..surfaces import skill_prefixes
@@ -228,6 +228,7 @@ class Projection:
                     metadata.update(skill_signal(self.project, name, block.get('input')) or {})
                     metadata.update(invocation_signal(name, block.get('input')) or {})
                     if 'input' in block and (fingerprint := input_fingerprint(block['input'], case)) is not None: metadata['input_fingerprint'] = fingerprint
+                    metadata.update(edit_fingerprints(name, block.get('input'), case))
                     if block.get('id') is not None: metadata['call_id'] = self.scoped(self.session, writer, text(block['id']))
                     else: metadata['missing_reason'] = 'native_call_id_unavailable'
                     emit('tool_call', index, **metadata)
