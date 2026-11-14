@@ -13,6 +13,7 @@ It uses the existing owner-only `PrivateJournal` rather than a second database.
 | `packet(case_id, reviewer)` | Return the frozen review packet without prior labels, predicted summary, author or candidate identity |
 | `update(case_id, expected_event_sha256, kind, ...)` | Claim, submit, adjudicate or record exposure using the exact current event revision |
 | `snapshot()` | List current queue metadata and its revision, without label/evidence bodies |
+| `bind_lineage(receipt)` | Record one reviewed source-lineage grouping; its components must stay inside one effective partition |
 | `export_development(expected_revision_sha256)` | Return eligible fitting/development annotations; protected labels are excluded |
 
 `record` is a schema-version-one object with opaque incident/root/family/project
@@ -76,8 +77,40 @@ fresh store with consistent lineage. Decisions bind exact case IDs, so a requeue
 invalidates them, and they are part of the export revision and travel in the
 manifest's `near_duplicate_decisions`, which `development_export` re-checks for
 the exported pairs. The rule is lexical only: paraphrases below the threshold are
-not detected, and a decision is not evidence of independence. Verified #58 lineage
-receipts are not yet integrated.
+not detected, and a decision is not evidence of independence.
+
+## Reviewed lineage groupings
+
+`CorpusStore.bind_lineage(receipt)` consumes the reviewed-link grouping that
+`ahl sources lineage` produces (the `LineageStore.query` result of issue #58). The
+receipt is refused when it has conflicts or stale cases, claims independent roots,
+verified outcomes, native freshness, execution or publication authority, has a
+component digest that differs from its members, or has overlapping components or
+more than 4096 revisions. Only the grouping revision, cache digest and each
+component's source-revision hashes are kept, in an immutable record named for the
+grouping revision (at most 16 per store).
+
+An incident belongs to a component when its `source_revision_sha256` equals a member's
+revision hash. Every incident of one component has to share one effective partition,
+after exposure retirement, so a session, memory page and pull request that a reviewer
+linked cannot sit in fitting and validation at once, whatever root IDs they carry.
+`bind_lineage` refuses a grouping that already crosses partitions and records nothing.
+A later incident, review or exposure that makes a recorded component cross partitions
+makes `export_development`, `protected_inputs` and `evaluate_protected` fail. Recorded
+groupings change the corpus revision, so earlier export revisions go stale. The export
+manifest carries `lineage_groupings` cut to the exported revisions, and
+`development_export` re-checks them. Protected-only members are omitted, so, as with
+near-duplicate decisions, the complete private store is required to check a group that
+involves a protected record. Older manifests lack the field and no longer validate.
+
+The result names `matched_cases` and `multi_root_components`, the components whose
+matched incidents declare more than one root. Such a group is disclosed, not rejected:
+one reviewed link does not decide whether two incidents share a real-world cause.
+Neither case is evidence of independence. An incident outside every component is
+unbound, not independent, and a requeue with a new source revision leaves the old
+receipt until a new grouping is bound. The links are operator-attested over a frozen
+source cache; they are not verified native lineage, and `independent_roots` stays
+unknown.
 
 An `exposed` event retires a protected item to effective development use. This
 retirement persists through all source/rubric requeues. Export preserves the
@@ -94,9 +127,9 @@ authority.
 All storage and exports remain private, including synthetic-source declarations.
 The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
-No public exporter is included. The next slices still need verified grouping,
-a production review authentication policy, a certification-role evaluation and
-the #74 classifier gate's use of real models. A
+No public exporter is included. The next slices still need verified native lineage
+(the #58 full chain), a production review authentication policy, a certification-role
+evaluation and the #74 classifier gate's use of real models. A
 reviewed diagnostic annotation remains distinct from #8's independently
 reproduced and graded executable regression case.
 
