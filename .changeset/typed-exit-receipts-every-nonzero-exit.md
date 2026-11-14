@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Every non-zero exit of `ahl improve` (and `ahl skills invoke`, `analyze`, `watch`, which share its entry point) now ends with a typed receipt: a closed-vocabulary `status` and `reason`, the `exit_receipt` stage and a content-free next step, plus the per-stage budget when one is known. A preparation cut off by `--timeout` ends `budget_exhausted` and names the stage instead of an unexplained `execution_error`; a symbolic-link instruction file ends `unsupported_instruction_layout`; `--resume` with execution options ends `usage_conflict` with the corrected command shape; a second invocation on one workspace ends `conflict` / `workspace_busy` (exit 1) instead of a usage error. Exit 2 stays reserved for usage and input errors, which carry a typed reason as well, and no path ends with a null status. `ahl watch` seals every result it prints, including a replayed non-zero disposition (`fresh_run: false`), and an operating-system or network error is always `system_error` rather than a free-text reason. See `docs/typed-exit-receipts.md`.
