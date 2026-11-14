@@ -52,11 +52,14 @@ Both claims are documentation reads. None was exercised against a live runtime.
   anywhere an optimizer can edit, are not an acceptable source. Deploying the
   hook configuration is the hook-deployment contract's job, not this bridge's.
 - The identity bridge runs in the controller process and executes no adapter
-  bytes. It still requires the exact declared bytes, so a later isolated worker
-  starts from a hash-checked artifact. A hook command runs with the user's
-  privileges; the isolation boundary for a transforming worker must be a
-  controller-owned relay to the isolated executor, and that relay is not built
-  or verified here.
+  bytes. It still requires the exact declared bytes, so the isolated worker
+  starts from a hash-checked artifact. `evaluation.adapter_worker` runs those
+  bytes in the offline sandbox with no network, host home, credentials or oracle
+  and verifies the answer against the original envelope. A hook command runs
+  with the user's privileges; the isolation boundary for a transforming worker
+  must be a controller-owned relay from the hook to that worker, and the relay is
+  not built or verified. The worker is exercised only directly, never through
+  a hook.
 - A required bridge stops the affected execution (`continue: false`) on any
   malformed, oversized, unauthorized, mismatched or conflicting event. An
   optional bridge may only fall back to identity, the policy is frozen before the
@@ -71,6 +74,8 @@ independent grading for any effectiveness claim:
   equals what the bridge returned, observed through a separate hook.
 - A decision on how failed calls are presented, given that replacement is not
   available there.
-- A containment check for the relay, with secret, oracle and network canaries.
+- A containment check for the relay, with secret, oracle and network canaries
+  (the worker's own sandbox canaries run on a host with bubblewrap and are
+  skipped, never counted as passed, where it is missing).
 - A matched identity, prompt-only and adapter comparison; fewer calls or tidier
   output is not an adoption criterion.

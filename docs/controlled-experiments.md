@@ -11,7 +11,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; step localization and competing hypotheses over constraint results; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only | A live run proving the bridge hook executes in the supported runtime, an isolated non-identity transform, and independently graded adapter effectiveness; no runtime flags are invented |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, not connected to any hook | A live run proving the bridge hook executes in the supported runtime, a controller-owned relay from the hook to the worker, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
@@ -291,7 +291,36 @@ observations the application state stays `unknown`, and the only accepted source
 the test `fake-runtime`, which sets `runtime_verified` to false. `verify_receipt`
 fails after any change to the authorization, spec, adapter bytes, bridge source or
 receipt content, or after an observed mismatch. A hook command, deployment of its
-configuration and the isolated transform worker are not part of this bridge.
+configuration and the relay to the isolated worker are not part of this bridge.
+
+`evaluation.adapter_worker.present(authorization, spec, adapter_bytes, envelope,
+transform=..., policy=...)` runs one declared adapter on one already authorized
+tool envelope. It rechecks the adapter bytes against the declared digest, writes
+the envelope and the bytes to a private directory and runs a controller-owned
+runner in the offline bubblewrap sandbox: no network, host home, environment,
+credentials or oracle, the bytes mounted read-only, and bounded time, memory and
+output from the spec's limits. The answer is accepted only when it carries the
+original envelope exactly, names the declared adapter and authorization, and adds
+nothing except a bounded `error_metadata` (a code, status `error` and
+`retry_authorized: false`) for an error result under `structured-error-v1`. A
+status flipped to success, an edited or dropped payload, an extra key such as a
+nested call, a success result with error metadata and a read-only input that
+changed during the run are failures. Every event-level condition is a code on the
+private result, not an exception: `timeout`, `oversized` (input above the
+declared bound, including a tool result above the shared 64 KiB envelope bound,
+or output above its bound), `resource_limit`, `adapter_error`, `malformed_output`,
+`contract_violation`, `input_modified`, `sandbox_failed` and `sandbox_unavailable`.
+A sandbox that cannot start is a failure, never a pass: a non-zero exit while the
+backend's capability probe is unsupported (for example namespaces denied) is
+`sandbox_unavailable`, not `adapter_error`, and a numeric literal that overflows to
+infinity is `malformed_output`. Under `required` a failure
+stops the call (`presented` is `None`); under `optional-identity` the result falls
+back to the identity envelope, or to `None` with the original kept when the
+original exceeds the shared envelope bound, and records the code. The result
+holds digests and bounded worker metadata, never worker stdout or stderr. A
+valid answer shows only that the contract holds, not that the presentation is
+correct, and nothing calls the worker by default: delivering a non-identity
+result to the model stays blocked as the decision record describes.
 
 Lexical retrieval accepts only approved reviewed summaries, retains sampling
 provenance and returns untrusted evidence, including any injection text. It never
