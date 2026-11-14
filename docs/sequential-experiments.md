@@ -98,8 +98,11 @@ Use guarded history analysis/decision receipts for current private evidence. Raw
 Method: [Waudby-Smith and Ramdas2020, Theorem3.1](https://proceedings.neurips.cc/paper_files/paper/2020/file/e96c7de8f6390b1e6c71556e4e0a4959-Paper.pdf),
 using a frozen predictable tuning table; see
 [Howard et al.2021](https://doi.org/10.1214/20-AOS1991) for time-uniform inference.
-No live provider/pilot or cost-saving measurement is implied. Full issue9 remains
-open for remaining orchestration, validation and certification dependencies.
+No live provider/pilot or cost-saving measurement is implied. For seeded false-support,
+power and expected-stopping-delay estimates of a frozen sequential plan beside its fixed
+comparator under a declared synthetic outcome model, see
+[Sequential profile beside its fixed comparator](experiment-precision.md#sequential-profile-beside-its-fixed-comparator).
+Full issue9 remains open for remaining orchestration, validation and certification dependencies.
 
 Use `task test:evaluation:sequential:kernel` for fresh paired roots, early stopping,
 worker-failure retention and receipt replay with pinned Linux workers and no model.

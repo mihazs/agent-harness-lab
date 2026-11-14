@@ -17,6 +17,7 @@ def verified_outcomes(data):
 
 def hypothesis_sources(args):
     """Declared sources that can seed a candidate without outcome evidence; a static-convention source joins here."""
+    if getattr(args, '_static_automatic', False): return ['static_convention']  # the focus and hypothesis it sets are not the user's
     return [name for name, present in (('audit_recheck', getattr(args, '_audit_hypothesis', None) is not None),
                                        ('user_focus', getattr(args, 'focus', None) is not None)) if present]
 
@@ -42,8 +43,9 @@ def explain(data, args, *, prepared):
         causes['capture_unverified'] = len(findings)
     if prepared:
         causes['proposer_returned_no_change'] = len(findings)
+    audit = getattr(args, '_static_audit', None)
     return dict(reason='findings_not_actionable', findings=len(findings), kinds=dict(Counter(row['kind'] for row in findings)),
-                causes=causes, causes_may_overlap=True, candidates=0)
+                causes=causes, causes_may_overlap=True, candidates=0, **(dict(static_audit=audit) if audit else {}))
 
 
 def attach(result, data, args, *, prepared):

@@ -114,8 +114,7 @@ class Controller:
         self.owned_records+=observed;self.last_analysis=analysis
         if inspection['complete']:self.index+=1
         self.offset=len(rows);self.active=False
-        if analysis['status'] in ('supported','rejected','blocked','incomplete') or analysis['reason']=='empty_running_intersection':
-            self.stop(analysis['status'],analysis['reason'],rows)
+        if math_core.terminal(analysis):self.stop(analysis['status'],analysis['reason'],rows)
 
     def before(self,scheduled,rows):
         self.validate(self.spec)

@@ -85,6 +85,15 @@ def _draw(spec, plan, declared, rng):
     return records
 
 
+def _declare(spec, outcome_model, simulations, seed):
+    """Validate the simulation count and seed, then the outcome model against the plan's families."""
+    if type(simulations) is not int or not 1 <= simulations <= MAX_SIMULATIONS:
+        raise ValueError(f'simulations must be an integer in [1, {MAX_SIMULATIONS}]')
+    if type(seed) is not int: raise ValueError('simulation seed must be an integer')
+    families = sorted({family for _, _, family in spec.tasks})
+    return families, model(outcome_model, families)
+
+
 def simulate(spec, outcome_model, *, simulations=200, seed=0):
     """Estimate disposition rates of the frozen fixed analysis under a declared outcome model."""
     if not isinstance(spec, ExperimentSpec): raise ValueError('a frozen experiment spec is required')
@@ -94,11 +103,7 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     if spec.cohort_manifest_sha256 is not None:
         raise ValueError('cohort-bound preservation analysis is not simulated')
     if len(spec.tasks) > MAX_TASKS: raise ValueError('power simulation exceeds the 1000-task bank cap')
-    if type(simulations) is not int or not 1 <= simulations <= MAX_SIMULATIONS:
-        raise ValueError(f'simulations must be an integer in [1, {MAX_SIMULATIONS}]')
-    if type(seed) is not int: raise ValueError('simulation seed must be an integer')
-    families = sorted({family for _, _, family in spec.tasks})
-    declared = model(outcome_model, families)
+    families, declared = _declare(spec, outcome_model, simulations, seed)
     planned = 2 * len(spec.tasks) * spec.repeats
     if planned > MAX_PLANNED_TRIALS:
         raise ValueError(f'power simulation exceeds {MAX_PLANNED_TRIALS} planned trials per simulation')

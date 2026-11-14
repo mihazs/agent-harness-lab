@@ -72,3 +72,6 @@ one per fix. `python scripts/check_pins.py` (`task test:pins`) copies the file i
 temporary worktree at `COMMIT^` and runs it. Verdicts: `non-vacuous` (tests fail there),
 `VACUOUS` (passes on the unfixed parent, exit 1) and `INCONCLUSIVE` (cannot run: missing
 commit, collection error, no tests selected, timeout; exit 3). Inconclusive is never a pass.
+A pin names a commit in the history of `HEAD`: a feature-branch commit resolves only while its branch
+exists, so the integration test `test_every_pin_names_a_commit_in_the_history_of_head` fails on one (and
+is skipped, never passed, where the history is shallow).

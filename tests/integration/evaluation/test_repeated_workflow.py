@@ -210,6 +210,12 @@ def test_fixed_bank_removal_candidate_withholds_the_recommendation(admission):
     assert not (admission.project/'app/AGENTS.md').exists()
 
 
+def test_a_fixed_bank_comparison_that_ran_is_not_labelled_spent_without_evaluation(admission):
+    code,result=admission.supported_removal()
+    assert admission.compared
+    assert 'spent_without_evaluation' not in result and 'spend_label' not in result, result
+
+
 def test_fixed_bank_plan_for_a_task_cwd_no_bank_task_runs_in_is_refused(admission):
     code,result=admission.supported_removal(task_cwd='app')
     assert (result['status'],result['reason'],result['instruction_reasons']) == ('blocked','instruction_validation_blocked',['task_cwd_not_evaluated']), result

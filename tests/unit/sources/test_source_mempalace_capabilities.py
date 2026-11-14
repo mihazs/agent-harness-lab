@@ -124,6 +124,25 @@ def test_a_complete_looking_page_with_a_cursor_is_flagged_incomplete(tmp_path):
     assert 'listing_incomplete' not in json.loads(run('--tools-list', listing(tmp_path))[1])['tools_list']['warnings']
 
 
+@pytest.mark.parametrize(('cursor', 'complete'), [
+    pytest.param(None, True, id='null-cursor'),
+    pytest.param('', False, id='empty-cursor'),
+    pytest.param(0, False, id='zero-cursor'),
+    pytest.param(False, False, id='false-cursor'),
+    pytest.param({}, False, id='object-cursor'),
+])
+def test_only_a_null_next_cursor_marks_the_listing_complete(tmp_path, cursor, complete):
+    # An absent profile tool is incompatible on a complete listing and inconclusive on any other: unknown never reads as complete.
+    data = json.loads(Path(listing(tmp_path, lambda tools: tools.__delitem__(slice(2, None)))).read_text())
+    data['nextCursor'] = cursor
+    paged = tmp_path/'paged.json'; paged.write_text(json.dumps(data))
+    code, out, _ = run('--tools-list', str(paged))
+    result = json.loads(out)['tools_list']
+    assert (code, result['listing_complete']) == (3, complete)
+    assert result['verdict'] == ('incompatible' if complete else 'inconclusive')
+    assert ('listing_incomplete' in result['warnings']) is not complete
+
+
 @pytest.mark.parametrize('case', ['not_json', 'not_a_listing', 'duplicate_name', 'duplicate_key', 'symlink', 'missing', 'oversized',
     'required_object', 'required_list', 'required_number'])
 def test_invalid_listing_is_refused_without_echoing_it(tmp_path, case):

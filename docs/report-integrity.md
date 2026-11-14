@@ -11,11 +11,12 @@ same values.
 
 | Field | Meaning |
 | --- | --- |
-| `agent_supplied_hypothesis` | One `{source, sha256}` entry per hint passed into the run: `focus` for `--focus`, `from_audit` for `--from-audit`. The digest is of the hint text; the text is never stored. Empty for an unseeded run. |
+| `agent_supplied_hypothesis` | One `{source, sha256}` entry per hint passed into the run: `focus` for `--focus`, `from_audit` for `--from-audit`, `static_audit` for the static convention an `ahl improve --history` run stages by itself when the history has findings but no verified outcome. The digest is of the hint text; the text is never stored. Empty for an unseeded run. |
 | `candidate.independent_corroboration` | Present only for a seeded run, always `false`. |
 
 The proposer saw the hint, so its candidate cannot independently confirm it, whether
-or not the candidate resembles it. A report must not call a match an independent
+or not the candidate resembles it. This holds for the automatic `static_audit` seed too, which is
+a convention check and never a diagnosis. A report must not call a match an independent
 finding. An unseeded run records an empty list and makes no independence claim.
 
 ## `evidence_strength`

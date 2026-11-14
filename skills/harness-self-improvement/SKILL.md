@@ -182,8 +182,8 @@ entire file. Keep sanitized evaluation artifacts outside active skill discovery.
 Quote the controller's fields verbatim; they carry no model judgment. See "Report integrity" in
 [invocation routing](references/invocation.md).
 
-- A hint or `--focus` is an `agent_supplied_hypothesis`: with `independent_corroboration: false`
-  a matching candidate is never an independent finding.
+- A hint, `--focus` or a staged static convention (`static_audit`) is an `agent_supplied_hypothesis`: with
+  `independent_corroboration: false` a matching candidate is never an independent finding.
 - Quote `evidence_strength.label`. Say "regressions not tested" and list `controls_not_run`
   unless a regression control ran. `grader_changed_after_trials` voids the comparison.
 - Copy each number as `N [receipt: field.path]` or write `unknown`; a model trial outside

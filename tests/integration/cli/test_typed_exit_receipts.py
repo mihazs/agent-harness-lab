@@ -3,6 +3,7 @@
 The four field failures are rebuilt from synthetic projects in tmp_path with a stub runtime and a virtual budget clock.
 A catalog test derives the exit paths from the source of the entry point instead of listing them by hand.
 """
+# fixed-in: 8960788f
 import ast
 import json
 from pathlib import Path

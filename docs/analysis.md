@@ -370,7 +370,9 @@ candidate identical to the baseline, `candidate_identical_to_baseline`), while `
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
 never an independence or severity claim. `ahl improve --history` returns `no_outcome_evidence` before any preparation call when no
-verified executable-grader outcome exists and no hypothesis source (`--from-audit` or `--focus`) was supplied;
+verified executable-grader outcome exists and no hypothesis source was supplied (`--from-audit`, `--focus`, or an eligible static convention
+that a Codex or Claude run stages itself, see [static audit](static-audit.md#staging-static-conventions-on-a-first-run)); when that audit ran and
+staged nothing, `findings_not_candidates.static_audit` says why (`no_eligible_convention`, `instruction_totals_unsettled` or `audit_inventory_<reason>`).
 `next_steps` then lists the evidence that would unlock a candidate. Runs with explicit `--events` or `--source-root`
 input (and the closed input profile) never read evaluation results, so no added outcome could unlock them: they are
 not blocked and still reach preparation. A run whose preparation called the model and

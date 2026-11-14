@@ -105,7 +105,8 @@ crash may leave a lock; verify its recorded PID before removing a stale lock.
 The receipt holds the facts a final report may state. Hazards it closes, and the rule for each:
 
 - **Seeded run.** `provenance.agent_supplied_hypothesis` lists the digest (never the text) of every
-  `--focus` or `--from-audit` hint. Because the proposer saw it, `provenance.candidate.independent_corroboration`
+  `--focus` or `--from-audit` hint and of the static convention a first run stages by itself (`source: static_audit`).
+  Because the proposer saw it, `provenance.candidate.independent_corroboration`
   is `false` for every candidate of that run. Never describe a match as an independent finding; say
   the candidate was proposed from a hint you or the user supplied.
 - **Evidence strength.** `evidence_strength.label` is `behavioral_proof`,
