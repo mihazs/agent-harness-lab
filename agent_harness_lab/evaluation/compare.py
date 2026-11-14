@@ -86,6 +86,32 @@ def _bayesian(analysis):
                        for name, row in families]) if families else ''))
 
 
+def _descriptive(analysis):
+    """The supplied descriptive_report as text; display only, never recomputed and never a verdict."""
+    report = _at(analysis, 'descriptive_report')
+    if not isinstance(report, dict): return ''
+    indicator = _at(report, 'epsilon_indicator')
+    rows = [('Relation (Pareto, at epsilon)', _at(report, 'relation')), ('Epsilon (frozen rope epsilon)', _at(report, 'epsilon')),
+            ('Candidate epsilon-dominated by the baseline', _at(report, 'candidate_epsilon_dominated')),
+            ('Baseline epsilon-dominated by the candidate', _at(report, 'baseline_epsilon_dominated'))]
+    for label, key in (('Indicator, baseline against candidate', 'baseline_vs_candidate'), ('Indicator, candidate against baseline', 'candidate_vs_baseline')):
+        rows += [(f'{label}, low', _at(indicator, key, 'low')), (f'{label}, high', _at(indicator, key, 'high'))]
+    rows += [('Desirability summary', _at(report, 'desirability', 'value')), ('Desirability low', _at(report, 'desirability', 'low')),
+             ('Desirability high', _at(report, 'desirability', 'high')), ('Resources', _at(report, 'resources')),
+             ('Descriptive only', _at(report, 'descriptive_only')), ('Decision input', _at(report, 'decision_input')),
+             ('Gate eligible', _at(report, 'gate_eligible')), ('Passes gate', _at(report, 'passes_gate')),
+             ('Automatic promotion', _at(report, 'automatic_promotion'))]
+    objectives = [row for row in report['objectives'] if isinstance(row, dict)] if isinstance(report.get('objectives'), list) else []
+    return ('<h3>Descriptive report (not a verdict)</h3>'
+            '<p>Descriptive only, not a verdict. A Pareto epsilon-indicator and a desirability summary copied from the supplied '
+            'analysis, not recomputed here. They are never an input to the decision above, pass or fail nothing and grant no '
+            'authority; an unknown measurement is shown as unknown, never as zero.</p>'
+            + _table(('Measure', 'Value'), [(name, _cell(value)) for name, value in rows])
+            + (_table(('Objective', 'Status', 'Gain low', 'Gain high', 'Reason'),
+                      [(_cell(_at(row, 'name')), *(_cell(_at(row, *key)) for key in (('status',), ('gain', 'low'), ('gain', 'high'), ('reason',))))
+                       for row in objectives]) if objectives else ''))
+
+
 def render(report):
     """Return one self-contained HTML document for a `side_by_side.build` report."""
     if report.get('profile') != sbs.REPORT_PROFILE or report.get('publication_allowed') is not False:
@@ -132,7 +158,7 @@ def render(report):
             f'<h1>Side-by-side experiment review: {_e(report["experiment_id"])}</h1>'
             f'<p><strong>Private {_e(report["execution_kind"])} report.</strong> Observation only: no causal attribution, '
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
-            f'<h2>Summary</h2>{lead}{_bayesian(analysis)}{_table(("Measure", "Value"), counts)}'
+            f'<h2>Summary</h2>{lead}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'
             f'<h2 id="pairs">Task table</h2>{_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'

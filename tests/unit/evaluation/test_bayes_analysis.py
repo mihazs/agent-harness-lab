@@ -49,7 +49,7 @@ def test_the_block_is_added_beside_the_hoeffding_analysis_which_keeps_every_key_
     before = json.dumps(analysis, sort_keys=True)
     out = attach(case['spec'], case['records'], analysis)
     assert json.dumps(analysis, sort_keys=True) == before  # the supplied analysis is never edited in place
-    assert {k: v for k, v in out.items() if k != 'bayesian_decision'} == analysis
+    assert {k: v for k, v in out.items() if k not in ('bayesian_decision', 'descriptive_report')} == analysis
     assert triple(out['bayesian_decision']) == ('better', 'all_gate_stages_passed', 'resource')
 
 

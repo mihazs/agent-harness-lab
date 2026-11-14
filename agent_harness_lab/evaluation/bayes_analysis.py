@@ -8,7 +8,7 @@ missing or ungraded arm bounded and never counted as a failure) and go with the 
 """
 from collections import defaultdict
 
-from . import sign_permutation as signs
+from . import bayes_descriptive, sign_permutation as signs
 from .bayes_decision import MAX_WORK, decide, independent_units, root_difference
 from .bayes_spec import BayesDecisionError
 from .plan import schedule
@@ -17,8 +17,13 @@ PROVENANCE = ('baseline_hash', 'candidate_hash', 'grader_hash', 'runtime_hash')
 BINDING_ERRORS = (ValueError, TypeError, KeyError, OSError, RecursionError)  # what statistics.analyze maps to blocked
 
 
-def attach(spec, records, analysis, *, root_similarity_evidence=None, root_similarity_bank=None, resource_decision=None):
-    """Return ``analysis`` plus its ``bayesian_decision`` block when the frozen plan declares one, else ``analysis`` itself.
+def attach(spec, records, analysis, *, root_similarity_evidence=None, root_similarity_bank=None, resource_decision=None,
+           descriptive_weights=None):
+    """Return ``analysis`` plus its ``bayesian_decision`` block and ``descriptive_report`` when the frozen plan declares
+    the block, else ``analysis`` itself.
+
+    The descriptive report (issue g) is computed after the block from the analysis and the resource decision only; the
+    block never reads it and ``descriptive_weights`` (a reader's choice for its summary) cannot reach the block.
 
     ``analysis`` is what ``statistics.analyze`` (or the history store, which adds the behavior effects) returned for the same
     plan and records; its blocked reason and critical-regression veto carry into the block and it is never edited in place.
@@ -28,8 +33,9 @@ def attach(spec, records, analysis, *, root_similarity_evidence=None, root_simil
     """
     if spec.bayes_decision is None:
         return analysis
-    return dict(analysis, bayesian_decision=block(spec, records, analysis, root_similarity_evidence, root_similarity_bank,
-                                                  resource_decision))
+    decided = block(spec, records, analysis, root_similarity_evidence, root_similarity_bank, resource_decision)
+    return dict(analysis, bayesian_decision=decided,
+                descriptive_report=bayes_descriptive.report(spec, analysis, resource_decision, descriptive_weights))
 
 
 def block(spec, records, analysis, evidence, bank, resource_decision):
