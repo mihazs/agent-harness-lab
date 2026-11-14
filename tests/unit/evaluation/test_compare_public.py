@@ -98,14 +98,14 @@ def test_one_private_or_mixed_trial_refuses_the_whole_public_export(declared):
         sbs.build(value, public=True)
 
 
-@pytest.mark.parametrize('block', [
-    pytest.param(dict(analysis=dict(status='inconclusive', publication_allowed=False)), id='analysis-labelled-not-publishable'),
-    pytest.param(dict(analysis=dict(status='inconclusive', publication='private')), id='analysis-labelled-private'),
-    pytest.param(dict(resource_decision=favorable()), id='resource-decision'),
-    pytest.param(dict(resource_success_cost=[success_cost(sc_pairs([(10, True)], [(1, False)]), 'elapsed')]), id='cost-per-success-view'),
+@pytest.mark.parametrize('block, message', [
+    pytest.param(dict(analysis=dict(status='inconclusive', publication_allowed=False)), 'analysis is labelled private', id='analysis-labelled-not-publishable'),
+    pytest.param(dict(analysis=dict(status='inconclusive', publication='private')), 'analysis is labelled private', id='analysis-labelled-private'),
+    pytest.param(dict(resource_decision=favorable()), 'resource material', id='resource-decision'),
+    pytest.param(dict(resource_success_cost=[success_cost(sc_pairs([(10, True)], [(1, False)]), 'elapsed')]), 'resource material', id='cost-per-success-view'),
 ])
-def test_a_private_or_resource_block_refuses_public_export_even_with_clean_provenance(block):
-    with pytest.raises(ValueError, match='private'):
+def test_a_private_or_resource_block_refuses_public_export_even_with_clean_provenance(block, message):
+    with pytest.raises(ValueError, match=message):
         sbs.build(public_fixture(**block), public=True)
 
 
@@ -134,7 +134,8 @@ def test_hostile_text_in_the_declared_reference_stays_text():
 
 
 def test_render_refuses_a_report_that_claims_publication_authority():
-    with pytest.raises(ValueError): compare.render(dict(sbs.build(public_fixture(), public=True), publication_allowed=True))
+    report = sbs.build(public_fixture(), public=True)
+    with pytest.raises(ValueError, match='grants no publication authority'): compare.render(dict(report, publication_allowed=True))
 
 
 def test_cli_public_writes_private_modes_leaves_input_unchanged_and_omits_events(tmp_path):
