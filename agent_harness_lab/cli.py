@@ -228,7 +228,7 @@ def main(argv=None):
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
         'memory':'Create and maintain an opt-in private evidence store with a rebuildable index; offline',
-        'config':'Show or clear the remembered runtime choice (user-level, never a project file)',
+        'config':'Show the remembered runtime, or clear the user-level file, which deletes the runtime and any loop object (never a project file)',
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)

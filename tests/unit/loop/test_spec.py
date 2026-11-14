@@ -13,6 +13,7 @@ LIMITS = dict(seconds=2700, trials=20)
 AUTHORITY_KEYS = ('apply', 'automatic_promotion', 'certification', 'global', 'promotion', 'publication_allowed', 'recommendation_only', 'scope')
 AREAS = ('coding', 'docs')
 NAN, INF = float('nan'), float('inf')
+HUGE = 10**400  # an integer too large for a float: math.isfinite raises OverflowError on it
 
 
 def declared(**project):
@@ -30,17 +31,18 @@ REJECTIONS = [
     pytest.param(dict(limits=dict(seconds=1, trials=1)), 'loop_field_unknown', 'limits', id='limits-are-referenced-not-redeclared'),
     *[pytest.param(dict(accept_score=score), 'loop_accept_score_invalid', 'accept_score', id=f'score-{name}')
       for name, score in dict(string='0.9', boolean=True, null=None, zero=0, negative=-0.1, above_one=1.5, nan=NAN, infinite=INF,
-                              empty_map={}, list=[0.9]).items()],
+                              empty_map={}, list=[0.9], huge_integer=HUGE, huge_negative_integer=-HUGE).items()],
     pytest.param(dict(accept_score=dict(coding=True)), 'loop_accept_score_invalid', 'accept_score.coding', id='area-score-boolean'),
     pytest.param(dict(accept_score=dict(coding=0)), 'loop_accept_score_invalid', 'accept_score.coding', id='area-score-zero'),
     pytest.param(dict(accept_score=dict(coding=NAN)), 'loop_accept_score_invalid', 'accept_score.coding', id='area-score-nan'),
+    pytest.param(dict(accept_score=dict(coding=HUGE)), 'loop_accept_score_invalid', 'accept_score.coding', id='area-score-huge-integer'),
     pytest.param(dict(accept_score=dict(elsewhere=0.9)), 'loop_area_undeclared', 'accept_score.elsewhere', id='area-undeclared'),
     pytest.param(dict(accept_score={1: 0.9}), 'loop_area_undeclared', 'accept_score.1', id='area-key-not-a-string'),
     pytest.param(dict(accept_basis='point'), 'loop_accept_basis_invalid', 'accept_basis', id='point-basis'),
     pytest.param(dict(accept_basis=['lower_bound']), 'loop_accept_basis_invalid', 'accept_basis', id='basis-not-a-string'),
     *[pytest.param({field: margin}, 'loop_margin_invalid', field, id=f'{field}-{name}')
       for field in ('regression_margin', 'noise_margin')
-      for name, margin in dict(negative=-0.01, one=1, nan=NAN, string='0.1', boolean=True).items()],
+      for name, margin in dict(negative=-0.01, one=1, nan=NAN, string='0.1', boolean=True, huge_integer=HUGE, huge_negative_integer=-HUGE).items()],
     *[pytest.param(dict(max_rounds=rounds), 'loop_max_rounds_invalid', 'max_rounds', id=f'max-rounds-{name}')
       for name, rounds in dict(zero=0, above_cap=MAX_ROUNDS_CAP + 1, fractional=2.5, boolean=True, string='3').items()],
     *[pytest.param(dict(plateau_rounds=rounds), 'loop_plateau_rounds_invalid', 'plateau_rounds', id=f'plateau-rounds-{name}')
@@ -49,7 +51,7 @@ REJECTIONS = [
     pytest.param(dict(on_regression='ignore'), 'loop_on_regression_invalid', 'on_regression', id='unknown-on-regression'),
     pytest.param(dict(on_regression=1), 'loop_on_regression_invalid', 'on_regression', id='on-regression-not-a-string'),
     *[pytest.param(dict(alpha=alpha), 'loop_alpha_invalid', 'alpha', id=f'alpha-{name}')
-      for name, alpha in dict(zero=0, one=1, negative=-0.05, nan=NAN, string='0.05').items()],
+      for name, alpha in dict(zero=0, one=1, negative=-0.05, nan=NAN, string='0.05', huge_integer=HUGE, huge_negative_integer=-HUGE).items()],
     *[pytest.param({key: safe}, 'loop_authority_refused', key, id=f'authority-{key}-{str(safe).lower()}')
       for key in AUTHORITY_KEYS for safe in (True, False)],
 ]
