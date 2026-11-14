@@ -9,7 +9,7 @@ import html
 import json
 from pathlib import Path
 
-from . import side_by_side as sbs
+from . import resource_report, side_by_side as sbs
 
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 32px;max-width:72rem}'
@@ -39,6 +39,40 @@ def _arm(pair, arm):
 def _event(event):
     if event is None: return ''
     return ' / '.join(str(event.get(name)) for name in ('kind', 'name', 'status', 'error_class') if event.get(name)) + f" [{event['event_id']}]"
+
+
+def _shown(value, missing='not computed'):
+    return missing if value is None else value
+
+
+def _reasons(counts):
+    return '; '.join(f'{name}={count}' for name, count in sorted(counts.items())) or 'none'
+
+
+def _resource(report):
+    """Supplied resource decision and cost-per-success views, as labelled text. Nothing is computed or coloured here."""
+    decision, views = report.get('resource_decision'), report.get('resource_success_cost')
+    page = ''
+    if decision is not None:
+        labels = '; '.join(f'{name}: {decision[name]}' for name in resource_report.LABELS if name in decision)
+        rows = [(e['name'], 'required' if e['required'] else 'advisory', e['kind'], e['unit'], e['scope'], e['horizon'], e['max_increase'], e['status'],
+                 *(_shown(e.get(name)) for name in ('mean_difference', 'low', 'high', 'method', 'roots')), e['capped_observations'], _reasons(e['unknown_reasons']))
+                for e in decision['endpoints']]
+        page += (f"<h3>Resource decision (supplied, not recomputed here)</h3><p>Decision: <strong>{_e(decision['decision'])}</strong> (reason: {_e(decision['reason'])}). "
+                 f"Quality status: {_e(_shown(decision['quality_status'], 'unknown'))}. Profile {_e(decision['profile'])}, contract SHA-256 {_e(decision['contract_sha256'])}."
+                 + (f' Labels: {_e(labels)}.' if labels else '')
+                 + ' Recommendation only: endpoint statuses are per-endpoint results, not a promotion, and an unknown endpoint is not zero.</p>'
+                 + _table(('Endpoint', 'Role', 'Kind', 'Unit', 'Scope', 'Horizon', 'Max increase', 'Status', 'Mean difference', 'Lower', 'Upper', 'Method', 'Roots',
+                           'Capped observations', 'Unknown reasons'), rows))
+    if views is not None:
+        rows = [(view['endpoint'], arm, data['assigned'], data['successes'],
+                 *(_shown(data[name], 'unknown' if data['unknown_reasons'] else 'undefined') for name in ('all_assigned_mean', 'success_conditional_mean', 'cost_per_success')),
+                 _reasons(data['unknown_reasons'])) for view in views for arm, data in (('baseline', view['baseline']), ('candidate', view['candidate']))]
+        page += ('<h3>Cost per success (descriptive; never passes a gate)</h3><p>Assigned spend counts every trial, failures and timeouts included, beside the success-conditional mean. '
+                 'A zero-success arm has no cost per success, and an unknown row leaves its values unknown.</p>'
+                 + _table(('Endpoint', 'Arm', 'Assigned', 'Successes', 'All assigned mean', 'Success conditional mean', 'Cost per success', 'Unknown reasons'), rows)
+                 + '<ul>' + ''.join(f"<li>{_e(view['endpoint'])}: {_e(view['status'])}, cost ratio {_e(_shown(view['cost_ratio'], 'undefined'))}</li>" for view in views) + '</ul>')
+    return page
 
 
 def render(report):
@@ -89,6 +123,7 @@ def render(report):
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
             f'<h2>Summary</h2>{lead}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
+            + _resource(report) +
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'
             f'<h2 id="pairs">Task table</h2>{_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'
             f'<h2>Timelines</h2>{"".join(details)}'
