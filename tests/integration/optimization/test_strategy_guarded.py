@@ -70,8 +70,8 @@ def controller(tmp_path):
         yield fake
 
 
-def compare(tmp_path, controller, propose=proposer, ceiling=12, reserve=1, **options):
-    options.setdefault('controller', controller.context)
+def compare(tmp_path, fake, propose=proposer, ceiling=12, reserve=1, **options):
+    options.setdefault('controller', fake.context)
     return compare_strategies(tmp_path/'state', BASE, propose, None, ceiling, reserve, FILES, EVIDENCE, **options)
 
 
@@ -206,4 +206,15 @@ def test_a_deadline_without_a_controller_is_refused_not_silently_ignored(tmp_pat
     with pytest.raises(ValueError, match='deadline'):
         run_strategy('no-op', 1, tmp_path/'s.json', BASE, proposer, lambda c: dict(safe=True, metrics={}),
                      lambda c: dict(status='recommended'), Budget(8, 1), FILES, EVIDENCE, parent_deadline=10)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('evaluate, certify', [
+    pytest.param(None, lambda c: dict(status='recommended'), id='no-evaluate'),
+    pytest.param(lambda c: dict(safe=True, metrics={}), None, id='no-certify'),
+    pytest.param(None, None, id='neither'),
+])
+def test_callback_route_without_both_callbacks_is_refused_before_any_state_exists(evaluate, certify, tmp_path):
+    with pytest.raises(ValueError, match='callback route'):
+        run_strategy('single-revision', 1, tmp_path/'s.json', BASE, proposer, evaluate, certify, Budget(8, 1), FILES, EVIDENCE)
     assert list(tmp_path.iterdir()) == []
