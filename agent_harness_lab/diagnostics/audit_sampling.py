@@ -31,6 +31,7 @@ caller-supplied trusted head (``commitment_time_unauthenticated`` is then droppe
 import hashlib
 import json
 import math
+import sys
 from collections import Counter
 from datetime import datetime
 
@@ -149,7 +150,7 @@ def freeze(frame):
 
 
 def _rate(value):
-    return type(value) in (int, float) and math.isfinite(value) and 0 < value <= 1
+    return type(value) in (int, float) and 0 < value <= 1  # false for nan, inf and ints beyond float range
 
 
 def _anchor(anchor, covered, window, trusted_heads):
@@ -394,7 +395,7 @@ def _receipt(receipt, trusted_heads=None):
         seen.add(item['unit_sha256']); counts[name]+=1
     expected=sum(s['expected_draws'] for s in strata)
     if (type(receipt['review_budget']) is not int or receipt['review_budget']<1
-            or type(receipt['expected_draws']) not in (int,float) or not math.isfinite(receipt['expected_draws'])
+            or type(receipt['expected_draws']) not in (int,float) or not abs(receipt['expected_draws'])<=sys.float_info.max
             or not math.isclose(receipt['expected_draws'],expected,rel_tol=1e-12,abs_tol=0)
             or receipt['expected_draws']>receipt['review_budget']
             or receipt['weights']!=_weights([item['inclusion_probability'] for item in draws])):

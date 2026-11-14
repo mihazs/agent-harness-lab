@@ -23,6 +23,7 @@ import hashlib
 import json
 import math
 import re
+import sys
 
 from agent_harness_lab.diagnostics.coverage import CAPTURE_STATES
 from agent_harness_lab.diagnostics.triage_policy import _number, _sha, policy_sha256, root_sha256
@@ -66,7 +67,7 @@ def _names(value, what, *, allow_empty=True, allowed=None):
 
 
 def _finite(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    return type(value) in (int, float) and abs(value) <= sys.float_info.max  # false for nan, inf and ints beyond float range
 
 
 def _positive_int(value):
