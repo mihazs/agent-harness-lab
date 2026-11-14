@@ -1,6 +1,8 @@
 """Proposer mechanisms are admitted against the brief the proposer saw, then listed, never closed (#10)."""
 import json
 
+import pytest
+
 from agent_harness_lab.diagnostics import improve_coverage
 
 BRIEF = dict(profile='ahl-analysis-brief-v1',
@@ -41,6 +43,34 @@ def test_controller_fields_and_a_missing_brief_do_not_reject_or_fabricate_eviden
     assert improve_coverage.admit(candidate(mechanism(), instruction_plan={}), BRIEF, 'baseline-1').status == 'admitted'
     unseen = improve_coverage.admit(candidate(mechanism()), None, 'baseline-1')
     assert (unseen.status, unseen.receipt['evidence_version']) == ('rejected', 'brief_unavailable')
+
+
+TYPED_LISTS = dict(reason_codes=['baseline_conforms'], missing_evidence=['verified_outcomes'],
+                   baseline_checks_passed=['skill_routing_collision'])
+
+
+@pytest.mark.parametrize('fields', [
+    pytest.param(TYPED_LISTS, id='all_three_lists'),
+    pytest.param(dict(reason_codes=['baseline_conforms']), id='reason_codes_only'),
+    pytest.param(dict(missing_evidence=['verified_outcomes']), id='missing_evidence_only'),
+    pytest.param(dict(baseline_checks_passed=['skill_routing_collision']), id='baseline_checks_only'),
+    pytest.param(dict.fromkeys(TYPED_LISTS, []), id='empty_lists'),
+    pytest.param(dict.fromkeys(TYPED_LISTS, ['synthetic-unknown-name']), id='unknown_names'),
+    pytest.param(dict.fromkeys(TYPED_LISTS, [f'synthetic-{number}' for number in range(5000)]), id='oversized_lists'),
+    pytest.param(dict.fromkeys(TYPED_LISTS, 'synthetic-not-a-list'), id='not_a_list'),
+])
+def test_a_candidate_carrying_the_typed_preparation_lists_stays_admitted(fields):
+    """The prompt asks the proposer for these lists beside a candidate; the controller reads them, the contract must not refuse them."""
+    admission = improve_coverage.admit(candidate(mechanism(), **fields), BRIEF, 'baseline-1')
+    assert admission.status == 'admitted'
+    assert admission.receipt['rejected'] == []
+    assert [record.mechanism_id for record in admission.records] == ['m1']
+
+
+def test_a_field_the_controller_does_not_own_is_still_refused_beside_the_typed_lists():
+    admission = improve_coverage.admit(candidate(mechanism(), notes='synthetic', **TYPED_LISTS), BRIEF, 'baseline-1')
+    assert admission.status == 'partially_admitted'
+    assert [(row['location'], row['reason']) for row in admission.receipt['rejected']] == [('proposal', 'unknown_field')]
 
 
 def test_attach_lists_every_admitted_mechanism_open_and_writes_private_receipts(tmp_path):

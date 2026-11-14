@@ -7,6 +7,7 @@ PROFILE = 'ahl-preparation-outcome-v1'
 OUTCOMES = ('hypothesis_supplied', 'no_change_supported', 'no_hypothesis', 'invalid_proposal')
 REASON_CODES = ('no_verified_outcome', 'pattern_not_recurring', 'too_few_independent_roots', 'capture_unverified',
                 'cause_outside_harness', 'baseline_conforms', 'evidence_ambiguous')
+FIELDS = ('reason_codes', 'missing_evidence', 'baseline_checks_passed')  # the proposal lists this module reads, beside any status
 MAX_LISTED = 32  # entries read per declared list; the rest count as unrecognized
 
 

@@ -53,8 +53,8 @@ the captured sessions. The object holds counts only, no paths or message bodies.
 When the preparation stage ran, stderr also prints one line before the final `ahl: outcome=` line,
 `ahl: preparation outcome=NAME reasons=... missing_evidence=... baseline_checks_passed=N`, and the receipt and
 `report.md` carry the same account as a `preparation` block. It tells you whether the stage supplied a hypothesis,
-declared no change with typed reasons, supplied no hypothesis, or wrote an unusable proposal, and which missing
-evidence it named. The fields are the preparation agent's own declaration against a fixed vocabulary, not a
+declared no change with typed reasons, supplied no hypothesis, or (native CLI-runtime preparation) wrote an unusable
+proposal, and which missing evidence it named. The fields are the preparation agent's own declaration against a fixed vocabulary, not a
 verified finding; see [analysis](analysis.md#exit-reasons-and-next-actions) for the field list.
 
 ## Try it in a worktree

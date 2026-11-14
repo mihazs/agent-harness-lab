@@ -112,3 +112,7 @@ def test_the_report_section_names_the_outcome_and_states_the_fields_are_unverifi
 def test_the_guidance_lists_every_allowed_name():
     text = preparation.guidance()
     assert all(name in text for name in (*preparation.REASON_CODES, *CLASSES, 'missing_evidence'))
+
+
+def test_every_list_the_guidance_asks_for_is_a_declared_field_the_admission_must_not_refuse():
+    assert all(f'"{name}"' in preparation.guidance() for name in preparation.FIELDS)

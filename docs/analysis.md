@@ -382,9 +382,11 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 A receipt whose preparation stage wrote a proposal, or failed to write a usable one, carries a `preparation` block (profile
 `ahl-preparation-outcome-v1`): `outcome` is `hypothesis_supplied` (a candidate that changes the baseline), `no_change_supported`
 (`no_change` with at least one recognized `reason_codes` entry), `no_hypothesis` (`no_change` without one, or a candidate identical to the
-baseline) or `invalid_proposal` (no proposal file, malformed JSON, not an object, or neither `candidate` nor `no_change`; the run status is
-then `invalid_proposal`). `reason_codes` come from a closed list (`no_verified_outcome`, `pattern_not_recurring`,
-`too_few_independent_roots`, `capture_unverified`, `cause_outside_harness`, `baseline_conforms`, `evidence_ambiguous`), `missing_evidence`
+baseline) or `invalid_proposal` (native CLI-runtime preparation only: no proposal file, malformed JSON, not an object, or neither
+`candidate` nor `no_change`; the run status is then `invalid_proposal`). A controlled or configured-inference preparation stage still
+rejects such a proposal before the workflow reads it, so that run ends `invalid_input` with no `preparation` block. A candidate may carry
+the three lists below beside its mechanisms; they never count as unknown proposal fields in the mechanism admission. `reason_codes`
+come from a closed list (`no_verified_outcome`, `pattern_not_recurring`, `too_few_independent_roots`, `capture_unverified`, `cause_outside_harness`, `baseline_conforms`, `evidence_ambiguous`), `missing_evidence`
 holds only ids listed in the run's `analysis-brief.json`, and `baseline_checks_passed` is a `count` and the `classes` of the static audit
 conventions the proposer reported as conforming. Each list reads at most 32 entries; `unrecognized` counts every entry outside the
 vocabulary, which is discarded, never echoed. The fields are the proposer's declaration (`declared_by: proposer`, `controller_verified: false`):
