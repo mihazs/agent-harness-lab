@@ -129,6 +129,40 @@ def test_any_critical_regression_rejects_at_the_first_critical_trial():
     assert count(report, 'rejected', fixed=True) == 40
 
 
+def test_lost_grades_end_an_inspection_and_never_create_support():
+    # Predeclared invariants: a root with an unknown grade ends the controller with `incomplete`;
+    # the fixed comparator loses the same grades; and neither profile supports a null on the strength of them.
+    spec = plan(16)
+    total = simulate(spec, outcome(.1, .8, candidate_ungraded_probability=1), simulations=20, seed=3)
+    assert total['sequential']['reasons'] == {'unknown_root_outcome': 20}
+    assert total['fixed_comparator']['reasons'] == {'unknown_or_invalid_grade': 20}
+    assert total['sequential']['observed_roots']['max'] == 1 and total['completion']['fully_graded']['count'] == 0
+    assert count(total, 'incomplete') == count(total, 'incomplete', fixed=True) == 20
+    null = simulate(spec, outcome(.5, 0, root_spread=.3, repeat_correlation=.5, baseline_ungraded_probability=.05,
+                                  candidate_ungraded_probability=.05), simulations=300, seed=29)
+    assert null['finite_bank_claims']['false_support']['wilson_95'][1] <= .05
+    assert null['completion']['declared'] == dict(baseline_ungraded_probability=.05, candidate_ungraded_probability=.05)
+
+
+def test_early_stopping_keeps_support_that_a_fixed_final_analysis_loses_to_lost_grades():
+    # Predeclared: 100 simulations, seed 3, 40 roots (enough for the fixed analysis to support a large
+    # benefit whenever every grade is present), a large benefit and a 2% candidate grade loss.
+    report = simulate(plan(40), outcome(.1, .8, candidate_ungraded_probability=.02), simulations=100, seed=3)
+    whole = report['completion']['fully_graded']['count']
+    assert count(report, 'supported', fixed=True) == whole  # every fully graded fixed run is supported
+    assert count(report, 'supported') > count(report, 'supported', fixed=True)
+    assert count(report, 'supported') + count(report, 'incomplete') == 100
+    assert report['finite_bank_claims']['false_support']['count'] == 0
+
+
+def test_models_without_declared_grade_loss_keep_their_sequential_reports():
+    report = simulate(plan(8), outcome(.5, .3), simulations=5, seed=1)
+    assert 'completion' not in report
+    zero = simulate(plan(8), outcome(.5, .3, baseline_ungraded_probability=0), simulations=5, seed=1)
+    assert 'completion' not in zero and zero['sequential'] == report['sequential']
+    assert zero['fixed_comparator'] == report['fixed_comparator']
+
+
 def test_sequential_report_is_private_and_never_public_exportable():
     report = simulate(plan(8), outcome(.5, .3), simulations=5, seed=1)
     public = dict(publication_allowed=True, provenance=dict(source_kind='synthetic', approved_publication=True,
