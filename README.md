@@ -87,8 +87,9 @@ cooperative, not sandboxed):
   skill-header repair, without model calls and with a rollback journal. A project
   `ahl.json` keeps even that repair recommendation-only. The default scope never
   reads or writes user-level files; only an explicit `--scope global` or
-  `--scope project+global` with `--agent codex|claude` includes your user-level
-  skill directory ([scope how-to](docs/improve-scope.md)).
+  `--scope project+global` with `--agent codex|claude`, or a default you saved
+  yourself with `ahl config set-scope`, includes your user-level skill directory
+  ([scope how-to](docs/improve-scope.md)).
 - `ahl apply RUN --project .` is a separate command. It prints a review packet for the
   change plan saved in an improvement run and writes nothing; with the exact
   `--authorize-plan` hash it applies only that same bounded skill-header repair, through the

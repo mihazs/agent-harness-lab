@@ -8,6 +8,7 @@
 | `ahl analyze\|improve [project] --history-from CHECKOUT` | Read the sessions recorded for another checkout of the same repository, read-only and labelled `source_project_path_differs`, when the project is a linked worktree; see [improve from past sessions](improve-from-past-sessions.md#try-it-in-a-worktree) |
 | `ahl improve [project] --history [--since DATE\|first]` | Use captured past project sessions as read-only evidence; see [improve from past sessions](improve-from-past-sessions.md) |
 | `ahl improve [project] --repair-contracts --scope project\|global\|project+global [--agent codex\|claude]` | Repair skill headers in the project (default), the named runtime's user-level skill directory, or both; see [choose the project or user-level scope](improve-scope.md) |
+| `ahl config show\|clear\|set-scope SCOPE --agent codex\|claude\|clear-scope` | Show or change the user-level remembered runtime and the saved default `--scope` (`global` or `project+global`); never a project file, see [save a default scope](improve-scope.md#save-a-default-scope) |
 | `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
