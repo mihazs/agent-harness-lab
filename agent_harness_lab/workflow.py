@@ -920,8 +920,9 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
         incremental.froze(args._incremental, attempt, proposed)
-        if incremental.repeats_regression(args._incremental, proposed, runtime_sha256):
-            incremental.block_repeat(result, args._incremental)  # an earlier run measured this very candidate worse on this baseline
+        finished = incremental.repeats_regression(args._incremental, proposed, runtime_sha256)
+        if finished:
+            incremental.block_repeat(result, args._incremental, finished)  # an earlier run measured this very candidate worse on this baseline
             break
         if repeated is not None:
             repeated.protect([baseline,candidate,frozen,*role_views.values()],settings)

@@ -44,10 +44,14 @@ not prove that `ahl apply` was used.
 candidate did not touch that now differs from the baseline is `edited` and raises the flag
 `harness_edited_outside_candidate` beside an applied, ignored or partially applied disposition.
 
-`previous.candidate_regressed` is read from the previous receipt and never inferred: true only when
-that run ended `candidate_regressed` for the very candidate its record froze. It is `null` when the
-receipt or the candidate is unknown. A regressed candidate that was nevertheless applied raises
-`regressed_candidate_applied`.
+`previous.candidate_regressed` is read from what the previous run measured and never inferred. It is
+`true` for a regression measured on the very candidate the previous record froze, for a cause the
+candidate owns, or one carried forward from an earlier run (see below). It is `false` only when a
+paired evaluation with a non-regressed verdict is bound to that frozen candidate's attempt. It is
+`null` when the candidate was never measured or the measurement is not about it: an interrupted or
+unreadable receipt, a run that stopped before any trial, a guard block that is `unavailable` or has no
+paired outcomes, another attempt, a regression owned by the pipeline or undetermined, or no frozen
+candidate. A regressed candidate that was nevertheless applied raises `regressed_candidate_applied`.
 
 ## Historical and fresh scores
 
@@ -67,7 +71,7 @@ project pins one, so expect `mismatch` for an unpinned bank.
 
 | Stage | Action | Why |
 | --- | --- | --- |
-| `evidence_collection` | `rerun` | No verified earlier output is reused here; reuse of a deterministic analysis stage is opt-in under `ahl analyze --incremental`. |
+| `evidence_collection` | `rerun` | No verified earlier output is reused by `ahl improve`. The [stage reuse planner](stage-reuse-planner.md) decides which deterministic analysis stages could be reused; it has no command in this release. |
 | `candidate_preparation` | `rerun` | A model stage is never replayed. |
 | `evaluation_construction` | `rerun`, or `skipped` | Held-out inputs are always fresh; skipped only for the repeated regression below. |
 | `trials` | `rerun`, or `skipped` | Earlier trials are historical only; skipped only for the repeated regression below. |
@@ -84,6 +88,14 @@ the previous run measured worse for a cause the candidate owns (`investigation.c
 | `reason` | `candidate_already_regressed` |
 | `previous_run` | The run folder name holding the measurement. |
 | Skipped | `evaluation_construction` and `trials`; `incremental.stages` says so. |
+
+The measurement is copied into the record of every later run (`regressions` in `harness-states.json`),
+so a repeat is found however many blocked repeats, runs that proposed nothing, interrupted runs or
+other candidates came in between. The newest 50 regressions are kept; an older one is forgotten and
+its candidate is evaluated again. A previous record that is unreadable ends the memory: that run
+reports `unavailable` and carries nothing forward. A blocked repeat reports `previous_run` as the run
+that measured, not the run just before it. When the previous receipt holds no measurement of its own,
+`incremental.historical` is the carried measurement and names its `run`.
 
 A regression owned by the pipeline or undetermined, a different candidate, a changed baseline,
 scope or runtime, or an unknown runtime is evaluated as usual. To get a different candidate, change

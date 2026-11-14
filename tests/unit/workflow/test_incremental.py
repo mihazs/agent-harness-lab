@@ -11,6 +11,7 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 
 A, B, C, D = ('a' * 64, 0o644), ('b' * 64, 0o644), ('c' * 64, 0o644), ('d' * 64, 0o644)
 EXECUTABLE_A = ('a' * 64, 0o755)
+EVIDENCE = dict(key='e' * 64, run='run-00', cause='candidate_caused', historical=dict(frozen_inputs=None))
 
 
 def plain(**states):
@@ -18,7 +19,8 @@ def plain(**states):
 
 
 def record(baseline, candidate=None, *, scope=None, attempt=0):
-    return dict(scope=scope, baseline=plain(**baseline), candidate=None if candidate is None else dict(attempt=attempt, states=plain(**candidate)))
+    return dict(scope=scope, baseline=plain(**baseline), candidate=None if candidate is None else dict(attempt=attempt, states=plain(**candidate)),
+                regressions=[])
 
 
 @pytest.mark.parametrize('baseline, candidate, current, disposition, applied, ignored, edited', [
@@ -53,9 +55,9 @@ def test_a_record_from_another_scope_is_unknown_and_never_applied_or_ignored():
     assert found == dict(disposition='unknown', reason='scope_changed')
 
 
-def prior_run(*, regressed=True, cause='candidate_caused', attempt=0, runtime='9' * 64, baseline=None, candidate=None, scope=None, receipt='default'):
+def prior_run(*, regressed=True, cause='candidate_caused', attempt=0, runtime='9' * 64, baseline=None, candidate=None, scope=None, receipt='default', verdict=None):
     arm = dict(runtime_sha256=runtime)
-    block = dict(profile=before_after.PROFILE, verdict='candidate_regressed' if regressed else 'inconclusive', bindings=dict(attempt=attempt),
+    block = dict(profile=before_after.PROFILE, verdict=verdict or ('candidate_regressed' if regressed else 'inconclusive'), bindings=dict(attempt=attempt),
                  scores=dict(baseline=dict(mean=1.0), candidate=dict(mean=0.0)), delta=dict(mean=-1.0), frozen_inputs=dict(baseline=arm, candidate=arm))
     full = dict(status='blocked' if regressed else 'inconclusive', reason='candidate_regressed' if regressed else None, before_after=block,
                 investigation=dict(cause=cause))
@@ -64,12 +66,14 @@ def prior_run(*, regressed=True, cause='candidate_caused', attempt=0, runtime='9
 
 
 def current_state(prior, *, baseline=None, scope=None):
-    return dict(prior=prior, scope=scope, baseline=plain(**(baseline or dict(file=A))), skipped=False)
+    return dict(prior=prior, scope=scope, baseline=plain(**(baseline or dict(file=A))), skipped=False,
+                regressions=[] if prior is None else incremental.carried(prior))
 
 
 def test_the_same_candidate_on_the_same_baseline_and_runtime_repeats_the_regression():
     prior = prior_run()
-    assert incremental.repeats_regression(current_state(prior), dict(file=B), '9' * 64) is True
+    found = incremental.repeats_regression(current_state(prior), dict(file=B), '9' * 64)
+    assert found['run'] == 'run-previous' and found['cause'] == 'candidate_caused' and found['historical']['verdict'] == 'candidate_regressed'
 
 
 @pytest.mark.parametrize('prior, state_changes, proposed, runtime', [
@@ -88,15 +92,15 @@ def test_the_same_candidate_on_the_same_baseline_and_runtime_repeats_the_regress
 ])
 def test_nothing_else_repeats_a_regression(prior, state_changes, proposed, runtime):
     state = dict(current_state(prior), **{key: plain(**value) if key == 'baseline' else value for key, value in state_changes.items()})
-    assert incremental.repeats_regression(state, proposed, runtime) is False
+    assert incremental.repeats_regression(state, proposed, runtime) is None
 
 
 def test_a_first_run_and_a_previous_run_without_a_frozen_candidate_never_repeat_a_regression():
-    assert incremental.repeats_regression(None, dict(file=B), '9' * 64) is False
-    assert incremental.repeats_regression(current_state(None), dict(file=B), '9' * 64) is False
+    assert incremental.repeats_regression(None, dict(file=B), '9' * 64) is None
+    assert incremental.repeats_regression(current_state(None), dict(file=B), '9' * 64) is None
     prior = prior_run()
     prior['record']['candidate'] = None
-    assert incremental.repeats_regression(current_state(prior), dict(file=B), '9' * 64) is False
+    assert incremental.repeats_regression(current_state(prior), dict(file=B), '9' * 64) is None
 
 
 @pytest.fixture
@@ -121,7 +125,7 @@ def test_a_run_records_its_baseline_and_becomes_the_next_runs_previous(store):
     first, first_output = start(args, folder, 'run-one')
     assert first['prior'] is None and first['problem'] is None
     assert json.loads((first_output / incremental.RECORD).read_text()) == dict(
-        profile=incremental.RECORD_PROFILE, scope=None, baseline=plain(file=A), candidate=None)
+        profile=incremental.RECORD_PROFILE, scope=None, baseline=plain(file=A), candidate=None, regressions=[])
     incremental.froze(first, 0, dict(file=B))
     second, _ = start(args, folder, 'run-two')
     assert second['prior']['run'] == 'run-one' and second['prior']['record']['candidate'] == dict(attempt=0, states=plain(file=B))
@@ -151,6 +155,14 @@ def test_a_run_outside_the_private_run_store_reads_the_previous_run_but_writes_n
     pytest.param(lambda text: json.dumps(dict(json.loads(text), candidate=dict(attempt='0', states={}))), id='attempt_not_int'),
     pytest.param(lambda text: json.dumps(dict(json.loads(text), scope='file')), id='scope_not_a_list'),
     pytest.param(lambda text: '', id='empty'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions='x')), id='regressions_not_a_list'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=['x'])), id='evidence_not_an_object'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[dict(EVIDENCE, key='xyz')])), id='evidence_key_not_hex'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[dict(EVIDENCE, run='../outside')])), id='evidence_run_not_a_run_folder_name'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[dict(EVIDENCE, cause='pipeline_caused')])), id='evidence_cause_not_owned_by_the_candidate'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[dict(EVIDENCE, historical=None)])), id='evidence_without_the_measurement'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[dict(EVIDENCE, historical=dict(frozen_inputs='x'))])), id='evidence_inputs_not_an_object'),
+    pytest.param(lambda text: json.dumps(dict(json.loads(text), regressions=[EVIDENCE] * (incremental.REGRESSIONS_KEPT + 1))), id='oversized_memory'),
 ])
 def test_a_damaged_previous_record_is_unknown_and_never_a_first_run(store, damage):
     args, folder = store
@@ -280,3 +292,106 @@ def test_the_run_block_and_its_record_are_not_publicly_exportable_whatever_their
         value = dict(profile=profile, publication_allowed=False)
         assert not public_export_allowed([exportable(receipt=value)])
         assert not public_export_allowed([exportable(receipt=dict(value, publication_allowed=True))])
+
+
+def finish(output, receipt):
+    (output / 'workflow.json').write_text(json.dumps(receipt))
+
+
+def run_after(args, folder, name, candidate, receipt, baseline=None):
+    """One more run of the project: it records its baseline, freezes `candidate` (or none) and ends with `receipt`."""
+    state, output = start(args, folder, name, baseline)
+    if candidate is not None: incremental.froze(state, 0, candidate)
+    finish(output, receipt)
+    return state
+
+
+REPEAT = dict(status='blocked', reason='candidate_already_regressed', previous_run='run-00')
+
+
+@pytest.mark.parametrize('between', [
+    pytest.param([(dict(file=B), REPEAT)], id='one_blocked_repeat'),
+    pytest.param([(dict(file=B), REPEAT)] * 3, id='three_blocked_repeats'),
+    pytest.param([(None, dict(status='no_change'))], id='a_run_that_froze_no_candidate'),
+    pytest.param([(dict(file=B), dict(status='collecting'))], id='an_interrupted_run'),
+    pytest.param([(dict(file=C), prior_run(regressed=False)['receipt'])], id='another_candidate_that_did_not_regress'),
+    pytest.param([(dict(file=C), prior_run()['receipt'])], id='another_candidate_that_regressed'),
+])
+def test_a_measured_regression_is_remembered_through_every_later_run(store, between):
+    args, folder = store
+    run_after(args, folder, 'run-00', dict(file=B), prior_run()['receipt'])
+    for number, (candidate, receipt) in enumerate(between, 1):
+        run_after(args, folder, f'run-{number:02d}', candidate, receipt)
+    state, _ = start(args, folder, 'run-last')
+    incremental.froze(state, 0, dict(file=B))
+    found = incremental.repeats_regression(state, dict(file=B), '9' * 64)
+    assert found and found['run'] == 'run-00'
+    assert not incremental.repeats_regression(state, dict(file=B), '8' * 64)
+    assert not incremental.repeats_regression(state, dict(file=B), None)
+    assert not incremental.repeats_regression(state, dict(file=D), '9' * 64)
+
+
+def test_a_blocked_repeat_still_reports_its_candidate_as_regressed_and_flags_it_when_applied(store):
+    args, folder = store
+    run_after(args, folder, 'run-00', dict(file=B), prior_run()['receipt'])
+    run_after(args, folder, 'run-01', dict(file=B), REPEAT)
+    state, _ = start(args, folder, 'run-02', dict(file=B))  # the candidate was applied by hand since
+    result = {}
+    incremental.attach(result, state, dict(file=B))
+    block = result['incremental']
+    assert block['previous']['candidate_regressed'] is True
+    assert block['flags'] == ['regressed_candidate_applied']
+    assert block['historical']['verdict'] == 'candidate_regressed' and block['historical']['run'] == 'run-00'
+
+
+def test_the_regression_memory_is_bounded_and_forgets_the_oldest_first(store):
+    args, folder = store
+    for number in range(incremental.REGRESSIONS_KEPT + 1):
+        run_after(args, folder, f'run-{number:03d}', dict(file=(f'{number + 1:064x}', 0o644)), prior_run()['receipt'])
+    state, output = start(args, folder, 'run-last')
+    assert len(json.loads((output / incremental.RECORD).read_text())['regressions']) == incremental.REGRESSIONS_KEPT
+    newest, oldest = dict(file=(f'{incremental.REGRESSIONS_KEPT + 1:064x}', 0o644)), dict(file=(f'{1:064x}', 0o644))
+    assert incremental.repeats_regression(state, newest, '9' * 64)
+    assert not incremental.repeats_regression(state, oldest, '9' * 64)
+
+
+def unmeasured(**block):
+    return dict(status='inconclusive', before_after=dict(block))
+
+
+@pytest.mark.parametrize('prior, expected', [
+    pytest.param(prior_run(), True, id='measured_regression_owned_by_the_candidate'),
+    pytest.param(prior_run(regressed=False), False, id='measured_inconclusive_pair_bound_to_the_candidate'),
+    pytest.param(prior_run(regressed=False, verdict='improved'), False, id='measured_improvement_bound_to_the_candidate'),
+    pytest.param(prior_run(receipt=dict(status='collecting')), None, id='interrupted_run_receipt'),
+    pytest.param(prior_run(receipt=dict(status='budget_exhausted', reason='budget_exhausted')), None, id='budget_exhausted_before_any_trial'),
+    pytest.param(prior_run(receipt=unmeasured(status='unavailable', reason='ValueError')), None, id='guard_block_unavailable'),
+    pytest.param(prior_run(receipt=unmeasured(profile=before_after.PROFILE, verdict='inconclusive', scores=None, bindings=dict(attempt=0))), None,
+                 id='guard_block_without_paired_outcomes'),
+    pytest.param(prior_run(receipt=dict(status='blocked', reason='candidate_already_regressed', previous_run='run-00')), None,
+                 id='blocked_repeat_whose_record_carries_no_evidence'),
+    pytest.param(prior_run(attempt=1, regressed=False), None, id='measurement_of_another_attempt_than_the_frozen_candidate'),
+    pytest.param(prior_run(attempt=1), None, id='regression_of_another_attempt_than_the_frozen_candidate'),
+    pytest.param(prior_run(cause='pipeline_caused'), None, id='regression_owned_by_the_pipeline'),
+    pytest.param(prior_run(cause='undetermined'), None, id='regression_cause_undetermined'),
+    pytest.param(prior_run(receipt=None), None, id='previous_receipt_unreadable'),
+])
+def test_previous_candidate_regressed_is_true_false_or_unknown_from_what_the_receipt_measured(prior, expected):
+    assert incremental.regressed(prior) is expected
+
+
+def test_a_previous_run_that_froze_no_candidate_has_no_regression_to_report():
+    prior = prior_run()
+    prior['record']['candidate'] = None
+    assert incremental.regressed(prior) is None
+
+
+@pytest.mark.parametrize('receipt', [
+    pytest.param(dict(prior_run()['receipt'], investigation=['candidate_caused']), id='investigation_not_an_object'),
+    pytest.param(dict(prior_run()['receipt'], before_after=dict(prior_run()['receipt']['before_after'], bindings=['attempt'])), id='bindings_not_an_object'),
+])
+def test_a_previous_receipt_of_the_wrong_shape_is_unknown_and_never_stops_the_run(store, receipt):
+    args, folder = store
+    run_after(args, folder, 'run-00', dict(file=B), receipt)
+    state, _ = start(args, folder, 'run-01')
+    assert (state['prior'], state['problem'], state['regressions']) == (None, 'previous_run_unreadable', [])

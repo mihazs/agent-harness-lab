@@ -94,6 +94,49 @@ def test_a_regressed_candidate_is_not_evaluated_again_and_the_delta_names_the_ea
     assert (runs.base.project / 'AGENTS.md').read_text() == 'good'
 
 
+def test_a_regressed_candidate_is_not_evaluated_again_by_the_third_run_or_any_later_one(runs):
+    first, first_output = runs('worse', harness='good')
+    assert (first['status'], first['reason']) == ('blocked', 'candidate_regressed')
+    previous = first_output
+    for _ in range(3):
+        repeat, output = runs('worse')
+        assert (repeat['status'], repeat['reason'], repeat['previous_run']) == ('blocked', 'candidate_already_regressed', first_output.name)
+        assert not (output / 'evaluation-0').exists() and 'before_after' not in repeat
+        block = repeat['incremental']
+        assert block['previous']['run'] == previous.name and block['previous']['candidate_regressed'] is True
+        assert block['historical']['verdict'] == 'candidate_regressed'
+        previous = output
+    assert (runs.base.project / 'AGENTS.md').read_text() == 'good'
+
+
+def test_a_run_that_proposed_nothing_does_not_make_the_next_run_forget_a_regression(runs):
+    first, first_output = runs('worse', harness='good')
+    quiet, _ = runs('no_change')
+    assert quiet['status'] == 'no_change'
+    again, output = runs('worse')
+    assert (again['status'], again['reason'], again['previous_run']) == ('blocked', 'candidate_already_regressed', first_output.name)
+    assert not (output / 'evaluation-0').exists()
+    assert again['incremental']['previous']['candidate_regressed'] is None  # the quiet run proposed no candidate to measure
+
+
+def test_a_different_candidate_in_between_does_not_make_the_next_run_forget_a_regression(runs):
+    first, first_output = runs('worse', harness='good')
+    other, _ = runs('ok')  # a passing candidate on the same baseline
+    assert other.get('reason') != 'candidate_already_regressed'
+    again, _ = runs('worse')
+    assert (again['status'], again['reason'], again['previous_run']) == ('blocked', 'candidate_already_regressed', first_output.name)
+
+
+def test_a_regressed_candidate_applied_by_hand_after_a_blocked_repeat_is_still_flagged(runs):
+    runs('worse', harness='good')
+    runs('worse')  # blocked as a repeat; its receipt holds no measurement of its own
+    edit(runs, 'worse')
+    third, _ = runs('ok')
+    block = third['incremental']
+    assert block['disposition'] == 'applied' and block['previous']['candidate_regressed'] is True
+    assert block['flags'] == ['regressed_candidate_applied']
+
+
 def test_a_regressed_candidate_applied_by_hand_is_flagged_and_evaluated_against_its_new_baseline(runs):
     runs('worse', harness='good')
     edit(runs, 'worse')  # the blocked candidate adopted anyway
