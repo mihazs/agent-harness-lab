@@ -6,6 +6,7 @@ root are never treated as independent. Not a bootstrap or a power guarantee.
 from collections import defaultdict
 from dataclasses import dataclass
 import math
+from . import reliability
 from .plan import schedule
 
 
@@ -87,7 +88,7 @@ def incomplete_bounds(spec, expected, records, groups):
 
 
 def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None,
-            include_empty_bounds=False):
+            include_empty_bounds=False, include_reliability=False):
     from .root_similarity import binding
     try:
         groups = binding(spec, root_similarity_evidence, root_similarity_bank)
@@ -127,8 +128,11 @@ def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None
     for (family, root), pairs in roots.items():
         differences = [int(pair['candidate']) - int(pair['baseline']) for pair in pairs.values()]
         families[family].append((root, sum(differences) / len(differences)))
+    # Opt-in: the default result bytes are a pinned legacy contract.
+    def extra(by_root, repeats): return dict(repeat_reliability=reliability.profile(by_root, repeats)) if include_reliability else {}
     if len({groups.get(root, root) for _, root in roots}) < spec.min_roots:
-        return dict(status='inconclusive', reason='insufficient_independent_roots', roots=len(roots))
+        return dict(status='inconclusive', reason='insufficient_independent_roots', roots=len(roots),
+                    **extra(roots, spec.repeats))
     # Bonferroni for one primary endpoint and every frozen family noninferiority check.
     adjusted = spec.alpha / (len(families) + 1)
     family_results = {family: bound([v for _, v in values], [1 / len(values)] * len(values), adjusted,
@@ -145,4 +149,5 @@ def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None
     return dict(status='rejected' if harmful else 'supported' if passes else 'inconclusive', primary=primary, families=family_results,
                 reason='correctness_regression' if harmful else 'fixed_analysis_criteria_met' if passes else 'uncertainty_or_margin_not_met',
                 roots=len(roots), repetitions=spec.repeats, trials=len(records),
-                multiplicity='Bonferroni_primary_and_families', rare_harm_risk='not_established_by_zero_incidents')
+                multiplicity='Bonferroni_primary_and_families', rare_harm_risk='not_established_by_zero_incidents',
+                **extra(roots, spec.repeats))

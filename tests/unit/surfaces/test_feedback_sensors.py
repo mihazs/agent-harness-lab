@@ -48,3 +48,13 @@ def test_hosted_ci_paths_are_not_sensor_candidates(tmp_path):
         (directory/'tests').mkdir()
     (tmp_path/'.gitlab-ci.yml').write_text('SYNTHETIC_CONTENT')
     assert feedback_sensors.capture(tmp_path)['candidates']==[]
+
+
+def test_a_git_ignored_directory_is_not_walked_while_coverage_stays_walked(tmp_path):
+    # docs/static-audit.md states this omission: the coverage value does not record it, so the documentation must.
+    (tmp_path/'.git').mkdir();(tmp_path/'.gitignore').write_text('vendor/\n')
+    for name in ('vendor/tests/test_dep.py','vendor/package.json','tests/test_app.py'):
+        (tmp_path/name).parent.mkdir(parents=True,exist_ok=True);(tmp_path/name).write_text('')
+    result=feedback_sensors.capture(tmp_path)
+    assert {row['path'] for row in result['candidates']}=={'tests','tests/test_app.py'}
+    assert result['coverage']=='walked_checkout_metadata_only'

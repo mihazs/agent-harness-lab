@@ -317,8 +317,9 @@ Labels are unauthenticated, and capture outside the frame is unknown.
 This first slice of #75 covers the frame, plan, receipt and fixed-window
 estimates. Later sections cover fixed and stratified budgets, corpus review
 linkage and observe-only monitoring, and the logged budget and adaptive
-decisions below. The issue still tracks cluster designs beyond the declared
-unit. Prediction-powered e-values remain an experimental extension for later.
+decisions below, and the versioned summary at the end. The issue still tracks
+cluster designs beyond the declared unit and review-queue export. Prediction-powered
+e-values remain an experimental extension for later.
 
 ## Opt-in fixed-size hard-budget design
 
@@ -399,3 +400,30 @@ The times, the first-label time, the log's completeness and its initial budget a
 plan are caller declarations that this check does not authenticate, and the report
 carries them as limitations. An empty log records nothing. This check does not
 change `draw` or `estimate`, and the fixed and stratified designs are not covered.
+
+## Versioned audit summary
+
+`agent_harness_lab.diagnostics.audit_summary.summarize(observation, decision_report=None)`
+compacts the `audit_report` of a `triage_audit_observation` (plain or composition
+view) into one `audit-summary-v1` record, so monitoring and the triage gate read the
+same policy and model identities, receipt hash, design profile, status, reasons,
+review counts, weights, estimates or missing-label bounds, and merged limitations.
+It carries counts of observed false negatives, never unit hashes. The fixed and
+stratified estimate reports do not include every Poisson field (frame exclusions,
+weights, alert-only counts, pending and nonresponse split, missing-label bounds);
+the summary leaves those `null` rather than zero. The optional
+`audit_decisions.check` report is checked against the same receipt. A decision at
+or after the first label turns the summary `invalid` and drops every estimate and
+bound; without a log the summary keeps its estimates and adds
+`decision_log_not_supplied`. An observation that claims authority, or an estimate
+or log report that belongs to another receipt, is refused.
+
+`audit_summary.check(summary, policy)` rejects an altered or inconsistent summary
+(including one re-sealed after an edit) and one whose policy or model hash differs
+from the supplied `diagnostic-triage-policy-v2`. The seal and the hash match detect
+accidental or partial edits only. They prove neither who produced the summary nor
+that the policy or model ran. The summary is `observe_only`, grants no promotion
+authority, forbids publication and automatic policy updates and rollback, and
+leaves a recalibrated policy to a new revision and a new evaluation. It is
+descriptive evidence, not a drift detector or a causal claim. This is a library API
+with no CLI.

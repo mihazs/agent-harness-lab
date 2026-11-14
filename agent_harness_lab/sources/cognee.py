@@ -47,6 +47,10 @@ RESULT_DERIVATION = dict(session='session_qa_entry', trace='agent_trace_step', s
 # SearchResultKind values at the pin that are retrieved items; completion kinds are generated answers.
 RETRIEVED = ('chunk', 'summary', 'cypher', 'coding_rule', 'code', 'skill')
 GENERATED = ('graph_completion', 'rag_completion', 'triplet_completion', 'natural_language', 'temporal', 'structured')
+# Node types of the code graph the recall `code` scope reads (cognee/modules/retrieval/code_retriever.py at the pin).
+CODE_NODES = ('ApiEndpoint', 'CodeAssociation', 'CodeExtractionAccount', 'CodeInsight', 'CodeIntent', 'CodeLintFinding',
+              'CodeModule', 'CodeService', 'CodeSymbol', 'CodeTestReference', 'CodeFileReference', 'CodeFlow',
+              'ExternalDependency', 'StorageResource')
 SELECTION = {'schema_version', 'cognee_version', 'instance', 'dataset', 'dataset_id', 'format', 'export'}
 
 
@@ -112,6 +116,7 @@ class RecallClaim(Contract):
     score: float | None = None
     original_at: str | None = None
     graph_node_refs: tuple = ()
+    code_node_type: str | None = None
     independent_case: bool = False
     factually_verified: bool = False
     task_outcome_verified: bool = False
@@ -128,6 +133,9 @@ class RecallClaim(Contract):
         for value in (self.session_sha256, *self.graph_node_refs):
             if value is not None: fingerprint(value)
         if self.search_type is not None: label(self.search_type)
+        if self.code_node_type is not None and (self.claim_type != 'recall_code' or self.code_node_type not in CODE_NODES):
+            raise ValueError('only a code result names a code-graph node type')
+        if (self.graph_refs_status == 'named') != bool(self.graph_node_refs): raise ValueError('graph references and status disagree')
         if type(self.occurrence) is not int or self.occurrence < 0: raise ValueError('invalid claim counter')
         if (self.score is None) != (self.score_semantics == 'none') or type(self.score) not in (float, int, type(None)):
             raise ValueError('score and its semantics must agree')
@@ -362,7 +370,7 @@ def parse_recall(value, selection, bounds):
         semantics = 'none' if score is None else 'vector_distance_lower_is_better' if source == 'skills' else 'unspecified'
         scoped_session = source in ('session', 'trace', 'session_context')
         if scoped_session and session is None: warnings.add('session_id_missing')
-        refs, refs_status = (), 'not_applicable'
+        refs, refs_status, code_type = (), 'not_applicable', None
         if source == 'session':
             used = entry.get('used_graph_element_ids') or {}
             ids = used.get('node_ids', []) if isinstance(used, dict) else None
@@ -372,11 +380,26 @@ def parse_recall(value, selection, bounds):
             refs = tuple(scoped('node', i, 0) for i in ids)
             refs_status = 'named' if refs else 'none'
             if not refs: warnings.add('session_entry_without_graph_refs')
+        elif source in ('graph', 'code'):
+            # SearchResultItem.metadata names the ingested Data (the Document node) and the chunk; a code fact's own `id` is
+            # its code-graph node, trusted only with a code-graph `type`. Evidence references are not read: their artifact
+            # IDs are not typed at the pin.
+            meta, raw = entry.get('metadata') or {}, entry.get('raw') or {}
+            if not isinstance(meta, dict) or not isinstance(raw, dict): raise ValueError('Cognee result metadata and raw must be objects')
+            ids = [meta.get('data_id'), meta.get('chunk_id')]
+            if source == 'code':
+                if raw.get('type') in CODE_NODES: ids.append(raw.get('id')); code_type = raw['type']
+                elif raw.get('id') is not None: warnings.add('code_fact_type_unrecognized')
+            ids = [i for i in ids if i is not None]
+            if any(not isinstance(i, str) or not i for i in ids): raise ValueError('Cognee result provenance IDs must be non-empty strings')
+            refs = tuple(dict.fromkeys(scoped('node', i, 0) for i in ids))
+            refs_status = 'named' if refs else 'none'
+            if not refs and derivation == 'retrieved_item': warnings.add('result_without_provenance_refs')
         original, stamped = instant(entry.get('time'), None) if source == 'session' else (None, 'not_modelled')
         if source == 'session' and stamped != 'native': warnings.add(stamped+'_timestamp')
         claims.append(RecallClaim('recall_'+source, scoped('recall', session, source, identity, occurrence), occurrence, derivation,
             scoped('dataset'), body, dataset, 'declared' if scoped_session and session else 'unknown' if scoped_session else 'not_applicable',
-            refs_status, semantics, stamped, session if scoped_session and session else None, search, score, original, refs))
+            refs_status, semantics, stamped, session if scoped_session and session else None, search, score, original, refs, code_type))
     counts = Counter(c.claim_type for c in claims)
     summary = dict(schema_version=1, profile=PROFILE, cognee_version=selection['cognee_version'],
         upstream_commit=PINNED[selection['cognee_version']], export_format='recall_results', version_attestation='caller_declared',

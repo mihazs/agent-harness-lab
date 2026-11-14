@@ -1,6 +1,7 @@
 """Offline Git/GitHub commit joins over cached checkpoints; a match grants no authority."""
 import re
 from .execution import ExecutionMetadata, RecordRef
+from .gitea import GiteaSelection
 from .gitlab import GitLabSelection
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import EvidenceRecord, SourceSpec, digest
@@ -15,6 +16,10 @@ ROLES = (('head', 'pr_head_commit'), ('base', 'pr_base_commit'), ('merge_result'
     ('test_merge', 'pr_test_merge_commit'), ('member', 'commit_on'))
 GITLAB_PROFILE = 'cross-journal-gitlab-mr-commit-join-v1'
 GITLAB_RESOLVER_VERSION = 'git-gitlab-mr-commit-join-v1'
+GITEA_PROFILE = 'cross-journal-gitea-pull-commit-join-v1'
+GITEA_RESOLVER_VERSION = 'git-gitea-pull-commit-join-v1'
+# The record type that proves a forge repository or project was captured, per host.
+IDENTITY = dict(github='github_repository', gitlab='gitlab_project', gitea='gitea_repository')
 HIDDEN = ('refs', 'graph', 'prior')
 
 
@@ -52,7 +57,7 @@ def _report(status, reason, key, sha, git, hub, receipt=None, profile=PROFILE, r
         receipt=receipt.to_dict() if receipt is not None else None)
     return dict(schema_version=1, profile=profile, resolver_version=resolver, status=status, reason=reason,
         commit_sha256=digest(sha), repository=dict(key_sha256=key, **{host: 'journal_declared_current'
-            if hub and hub['observations'].get(host+('_repository' if host == 'github' else '_project')) == 'current' else 'unknown'},
+            if hub and hub['observations'].get(IDENTITY[host]) == 'current' else 'unknown'},
             git='caller_declared'),
         git=public(git) if git else None, **{host: public(hub) if hub else None}, **extra, **receipts,
         applicability='selected_cached_checkpoints_only', native_freshness_verified=False,
@@ -157,6 +162,48 @@ def join_pull_commit(git_source, git_store, github_source, github_store, *, repo
         roles=roles,untrusted_roles=sorted(untrusted),prior_untrusted_roles=sorted(prior_untrusted))
 
 
+def _check(git_source, remote_source, provider, commit_sha):
+    if not isinstance(commit_sha, str) or FULL_SHA.fullmatch(commit_sha) is None:
+        raise ValueError('full lowercase 40-hex commit identity required')
+    for spec, expected in ((git_source, ('local_git', 'git')), (remote_source, ('api', provider))):
+        if not isinstance(spec, SourceSpec) or (spec.kind, spec.provider) != expected:
+            raise ValueError(f'commit join requires a local Git source and a {provider} source')
+
+
+def _membership(git_source, git_store, remote_source, remote_store, key, commit_sha, natives, *, host, profile, resolver, namespace,
+        reasons, link=None, **extra):
+    """Join one local commit to a forge's server-reported change-request membership.
+
+    natives maps the project, change-request and member record types to their native IDs. reasons names the
+    project-unobserved, request-unobserved and matched outcomes. Membership is the server's claim, never ancestry.
+    link, a (namespace, resolver) pair, also requires the graph's native commit_on join from the member to the
+    request: when the record identities do not bind the caller's request ID to its number, only that join does.
+    """
+    git = _observe(git_store, git_source, dict(git_commit=digest(('git_commit', commit_sha)),
+        git_object_reference=digest(('git_object_reference', digest(commit_sha)))))
+    hub = _observe(remote_store, remote_source, natives)
+    project, request, member = natives
+    def outcome(status, reason, receipt=None):
+        return _report(status, reason, key, commit_sha, git, hub, receipt, profile, resolver, host, **extra)
+    if git_source.project_sha256 != key: return outcome('unlinked', 'repository_identity_not_shared')
+    seen = hub['observations']
+    if 'unavailable' in (git['observations']['git_commit'], seen[member]): return outcome('unknown', 'checkpoint_unavailable')
+    if seen[project] != 'current': return outcome('unknown', reasons[0])
+    if seen[request] != 'current': return outcome('unknown', reasons[1])
+    local, remote = git['observations']['git_commit'], seen[member]
+    if 'ambiguous' in (local, remote): return outcome('unknown', 'ambiguous_revision')
+    if 'stale' in (local, remote): return outcome('stale', 'not_in_current_checkpoint')
+    if (local, remote) == ('current', 'current'):
+        left, right = git['refs']['git_commit'], hub['refs'][member]
+        if link and not any(j.relation == 'commit_on' and j.right is not None and (j.namespace, j.resolver_version, j.status) == (*link, 'candidate')
+                and (j.left.key, j.right.key) == (right.key, hub['refs'][request].key) for j in hub['graph'].joins):
+            return outcome('unknown', 'commit_link_unobserved')
+        return outcome('matched', reasons[2], JoinReceipt(left, right, 'same_commit', namespace, resolver,
+            (left, right, hub['refs'][project], hub['refs'][request])))
+    if local == 'unobserved' and git['observations']['git_object_reference'] == 'current': return outcome('unknown', 'commit_reference_only')
+    return outcome('unknown', 'capture_truncated' if local == 'unobserved' and git['capture_truncated'] else 'commit_unobserved')
+
+
 def join_merge_request_commit(git_source, git_store, gitlab_source, gitlab_store, *, selection, project_id, iid, commit_sha):
     """Relate one exact local commit to a GitLab MR's server-reported commit membership.
 
@@ -164,39 +211,44 @@ def join_merge_request_commit(git_source, git_store, gitlab_source, gitlab_store
     never ancestry, merge result or outcome. The project is identified by the numeric ID
     the server returned (it is part of the record identities) and the shared source scope.
     """
-    if not isinstance(commit_sha, str) or FULL_SHA.fullmatch(commit_sha) is None:
-        raise ValueError('full lowercase 40-hex commit identity required')
+    _check(git_source, gitlab_source, 'gitlab', commit_sha)
     if any(type(n) is not int or n < 1 for n in (project_id, iid)): raise ValueError('invalid GitLab project or merge request identity')
     if (not isinstance(selection, GitLabSelection) or selection.schema_version != 9 or 'commits' not in selection.capture
             or iid not in selection.merge_requests):
         raise ValueError('GitLab selection must be schema 9 and capture commits of the merge request')
-    for spec, expected in ((git_source, ('local_git', 'git')), (gitlab_source, ('api', 'gitlab'))):
-        if not isinstance(spec, SourceSpec) or (spec.kind, spec.provider) != expected:
-            raise ValueError('merge request commit join requires a local Git source and a GitLab source')
     if (gitlab_source.project_sha256, gitlab_source.scope_sha256) != (selection.project_sha256, selection.sha256):
         raise ValueError('GitLab source does not match the selection')
-    git = _observe(git_store, git_source, dict(git_commit=digest(('git_commit', commit_sha)),
-        git_object_reference=digest(('git_object_reference', digest(commit_sha)))))
     scope = selection.project_identity(project_id)
     natives = dict(gitlab_project=digest(('gitlab_project', scope, 'project')),
         gitlab_merge_request=digest(('gitlab_merge_request', scope, iid)),
         gitlab_mr_commit=digest(('gitlab_mr_commit', scope, (iid, digest(commit_sha)))))
-    hub = _observe(gitlab_store, gitlab_source, natives)
-    key = selection.project_sha256
-    def outcome(status, reason, receipt=None):
-        return _report(status, reason, key, commit_sha, git, hub, receipt, GITLAB_PROFILE, GITLAB_RESOLVER_VERSION, 'gitlab',
-            merge_request_sha256=natives['gitlab_merge_request'], membership='server_reported', ancestry='unknown')
-    if git_source.project_sha256 != key: return outcome('unlinked', 'repository_identity_not_shared')
-    seen = hub['observations']
-    if 'unavailable' in (git['observations']['git_commit'], seen['gitlab_mr_commit']): return outcome('unknown', 'checkpoint_unavailable')
-    if seen['gitlab_project'] != 'current': return outcome('unknown', 'project_identity_unobserved')
-    if seen['gitlab_merge_request'] != 'current': return outcome('unknown', 'merge_request_unobserved')
-    local, remote = git['observations']['git_commit'], seen['gitlab_mr_commit']
-    if 'ambiguous' in (local, remote): return outcome('unknown', 'ambiguous_revision')
-    if 'stale' in (local, remote): return outcome('stale', 'not_in_current_checkpoint')
-    if (local, remote) == ('current', 'current'):
-        left, right = git['refs']['git_commit'], hub['refs']['gitlab_mr_commit']
-        return outcome('matched', 'exact_merge_request_commit_membership', JoinReceipt(left, right, 'same_commit',
-            'git-gitlab.mr-commit', GITLAB_RESOLVER_VERSION, (left, right, hub['refs']['gitlab_project'], hub['refs']['gitlab_merge_request'])))
-    if local == 'unobserved' and git['observations']['git_object_reference'] == 'current': return outcome('unknown', 'commit_reference_only')
-    return outcome('unknown', 'capture_truncated' if local == 'unobserved' and git['capture_truncated'] else 'commit_unobserved')
+    return _membership(git_source, git_store, gitlab_source, gitlab_store, selection.project_sha256, commit_sha, natives,
+        host='gitlab', profile=GITLAB_PROFILE, resolver=GITLAB_RESOLVER_VERSION, namespace='git-gitlab.mr-commit',
+        reasons=('project_identity_unobserved', 'merge_request_unobserved', 'exact_merge_request_commit_membership'),
+        merge_request_sha256=natives['gitlab_merge_request'], membership='server_reported', ancestry='unknown')
+
+
+def join_pull_request_commit(git_source, git_store, gitea_source, gitea_store, *, selection, repository_id, pull_id, number, commit_sha):
+    """Relate one exact local commit to a Gitea PR's server-reported commit membership.
+
+    Needs a schema-6 selection that captured the PR's commits. Membership is the server's claim,
+    never ancestry, merge result or outcome. The repository and PR are identified by the numeric
+    IDs the server returned (they are part of the record identities) and the shared source scope.
+    """
+    _check(git_source, gitea_source, 'gitea', commit_sha)
+    if any(type(n) is not int or n < 1 for n in (repository_id, pull_id, number)):
+        raise ValueError('invalid Gitea repository or pull request identity')
+    if (not isinstance(selection, GiteaSelection) or selection.schema_version != 6 or 'commits' not in selection.capture
+            or number not in selection.pulls):
+        raise ValueError('Gitea selection must be schema 6 and capture commits of the pull request')
+    if (gitea_source.version, gitea_source.project_sha256, gitea_source.scope_sha256) != (
+            selection.source_version, selection.project_sha256, selection.sha256):
+        raise ValueError('Gitea source does not match the selection')
+    repository = selection.native_sha256(repository_id)
+    natives = dict(gitea_repository=selection.record_sha256('gitea_repository', repository, 'repository'),
+        gitea_pull=selection.record_sha256('gitea_pull', repository, selection.native_sha256(pull_id)),
+        gitea_pull_commit=selection.record_sha256('gitea_pull_commit', repository, (number, digest(commit_sha))))
+    return _membership(git_source, git_store, gitea_source, gitea_store, selection.project_sha256, commit_sha, natives,
+        host='gitea', profile=GITEA_PROFILE, resolver=GITEA_RESOLVER_VERSION, namespace='git-gitea.pull-commit',
+        reasons=('repository_identity_unobserved', 'pull_unobserved', 'exact_pull_request_commit_membership'),
+        link=('gitea.native', 'gitea-claims-v1'), pull_request_sha256=natives['gitea_pull'], membership='server_reported', ancestry='unknown')

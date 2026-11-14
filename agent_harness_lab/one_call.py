@@ -54,9 +54,12 @@ def preflight(args):
         return 'responses_inherit_env_unsupported'
     settings = getattr(args, 'project_settings', None)
     if settings:
+        from .evaluation.manifest_contract import ContractError
         from .evaluation.task_bank import validate
         try:
-            reviewed = validate(config.bank_path(args.project, settings))
+            reviewed = validate(config.bank_path(args.project, settings), registry=settings.get('areas', []))
+        except ContractError:
+            raise  # a typed area declaration defect keeps its reason, field and origin
         except (ValueError, OSError, TypeError, KeyError):
             return 'configured_bank_invalid_or_unavailable'
         if reviewed['bank_sha256'] != settings['bank']['sha256']:

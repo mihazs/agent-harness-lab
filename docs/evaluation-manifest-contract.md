@@ -36,8 +36,8 @@ integrity failure. A direct shape check that does not drop digests reports an au
 ## Typed reasons
 
 A violation reaches the user as a reason, the stage, the file, the field (names only,
-never content; list positions are task or entry indexes), whether AHL or the agent output
-is at fault, and the exact next step. The receipt carries them as `reason` and
+never content; list positions are task or entry indexes), whether AHL, the agent output or
+a project declaration is at fault, and the exact next step. The receipt carries them as `reason` and
 `contract_violation`; the CLI prints them as one line. The generic remediation for each
 reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 
@@ -53,6 +53,12 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `evaluation_construction_timeout` | agent output defect | one more pass, only if the remaining budget covers it |
 | `evaluation_task_infeasible` | agent output defect | no |
 | `internal_contract_error` | AHL contract mismatch | no |
+| `area_registry_invalid` | project declaration defect | no |
+| `area_duplicate` | project declaration defect | no |
+| `task_areas_empty` | project declaration defect | no |
+| `task_areas_too_many` | project declaration defect | no |
+| `task_areas_invalid` | project declaration defect | no |
+| `task_area_undeclared` | project declaration defect | no |
 
 An unexpected `KeyError`, `TypeError`, `AttributeError` or `IndexError` inside a stage is
 caught at the stage boundary and reported as `internal_contract_error` with the stage
@@ -64,6 +70,33 @@ name; no result text is an exception message. Semantic rejections after the shap
 budgets: a construction pass that overruns its time box, and a task whose `complete`
 control cannot be graded within the per-trial timeout. Their rules, and the refinement
 that keeps the frozen tasks, are in [stage budgets and early stops](budget-stages.md).
+
+## Capability area declarations
+
+A project may declare capability areas and tag bank tasks with them
+([how to](declare-capability-areas.md)). A defect in either declaration is a project
+declaration defect, not agent output: it is never repaired by an authoring pass, and the
+next step is to edit `ahl.json` or the bank.
+
+| Field | Where | Rule |
+| --- | --- | --- |
+| `areas` | `ahl.json` | Optional list of at most 32 entries; absent declares nothing. |
+| `areas[].id` | `ahl.json` | Required, unique, lowercase kebab-case, at most 64 characters. |
+| `areas[].label` | `ahl.json` | Required, 1 to 80 printable characters. |
+| `areas[].description` | `ahl.json` | Required, 1 to 400 printable characters. |
+| `areas` | bank task | Optional list of one to three distinct declared ids; absent means untagged. |
+
+The reasons are `area_registry_invalid` (shape, size or an id or text outside the rules),
+`area_duplicate` (an id listed twice in the registry or in one task), `task_areas_empty`
+(an empty list or an empty id), `task_areas_too_many` (more than three tags),
+`task_areas_invalid` (not a list of kebab-case ids) and `task_area_undeclared` (a tag the
+project does not declare; areas are never created implicitly). Errors name the stage
+(`configuration` for `ahl.json`, `bank_validation` for the bank), the file, and a field
+such as `tasks[2].areas[1]`, never the offending value. Tags are checked against the
+registry wherever a configured bank is validated: before `ahl improve` dispatches
+anything and when a configured evaluation starts. `ahl bank` has no project, so it checks
+tag shape only and lists a per-area task count; a task listed in several areas is counted
+in each.
 
 ## Shape check and repair
 

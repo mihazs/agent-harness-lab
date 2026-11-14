@@ -76,7 +76,7 @@ def main(argv):
                 result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
             if args.export:
                 from .bank_tools import export_manifest
-                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke')
+                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke',quarantined_excluded=result['quarantined_tasks'])
             if inspection_only and not args.list:
                 result.pop('task_index')
             if args.list and not inspection_only:
@@ -157,7 +157,7 @@ def main(argv):
                     cohort_json=read_regular(args.cohorts,1024*1024) if args.cohorts else None
                     result=analyze_sequential(spec,records,binding,cohort_json=cohort_json,include_missing_bounds=True)
                 else:
-                    result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
+                    result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank, include_reliability=True)
                 result['oracle_validity'] = 'unverified'
                 result['promotion'] = asdict(decide(spec, result))
                 result = attach(spec, records, result, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)

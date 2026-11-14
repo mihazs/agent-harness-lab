@@ -138,6 +138,24 @@ value. Empty bins and undefined rates are null. Brier and the tables do not
 feed any constraint, so a low Brier score cannot rescue a failed recall or
 coverage check, and scores are not assumed to be calibrated probabilities.
 
+For a data-revision and calibration-size scope, call `evaluate(policy, observations,
+report_version=6)`. The separate `diagnostic-triage-evaluation-v6` profile applies
+every v5 check, decision and diagnostic unchanged and requires two additional
+policy fields that no earlier profile accepts: `corpus_sha256` (the SHA-256 of the
+data revision the policy is scoped to) and `min_calibration_roots` (a nonnegative
+integer). AHL supplies no default for either. It refuses any observation whose own
+`corpus_sha256` differs or is missing, so rows from an out-of-scope data revision
+are rejected rather than evaluated, and echoes `corpus_sha256` beside the policy and
+model hashes. When the policy declares a `calibrator_sha256` and lists fewer
+`calibration_roots_sha256` than `min_calibration_roots`, the report is
+`rejected` with `calibration_roots_below_minimum`; a policy that declares no
+calibrator is not affected. Both checks compare caller-supplied identities and
+declared hash lists: they cannot show that the corpus hash names the data actually
+scored, that the calibrator was fitted on those roots, or that the minimum was
+chosen before validation data were seen. Earlier profiles and `ahl benchmark` are
+unchanged, and the v6 report is private and grants no certification or promotion
+authority.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,

@@ -9,7 +9,7 @@ import pytest
 
 import agent_harness_lab
 from agent_harness_lab.cli import main
-from agent_harness_lab.evaluation.bank_tools import export_manifest, frozen_grader
+from agent_harness_lab.evaluation.bank_tools import audit_graders, export_manifest, frozen_grader
 
 
 @pytest.fixture
@@ -82,3 +82,89 @@ def test_symlink_source_overlap_and_existing_output_refuse_without_writes(root,o
     assert not (root/'input/export').exists()
     assert [p.name for p in existing.iterdir()] == ['keep']
     assert (existing/'keep').read_text() == 'preserve'
+
+
+def _quarantine(root, *task_ids):
+    path = root/'input/bank.json'
+    value = json.loads(path.read_text())
+    for task in value['tasks']:
+        if task['task_id'] in task_ids: task['review_status'] = 'quarantined'
+    path.write_text(json.dumps(value))
+    return path
+
+
+def test_quarantined_task_is_listed_and_flagged_but_still_inspectable(root):
+    from agent_harness_lab.evaluation.task_bank import inspect, validate
+    bank = _quarantine(root, 'localization')
+    for result in (validate(bank), inspect(bank)):
+        assert result['quarantined_tasks'] == ['localization'] and result['tasks'] == 7
+        assert {'task': 'localization', 'status': 'task_quarantined'} in result['issues']
+        assert not result['review_declarations_complete'] and not result['certification_eligible']
+
+
+def test_quarantined_tasks_never_enter_an_executable_manifest(root):
+    bank = _quarantine(root, 'localization', 'resumption')
+    manifest = export_manifest(bank, root/'export', max_trials=10)
+    kept = {'regression', 'tool-recovery', 'instruction-conflict', 'skill-routing', 'adversarial-input'}
+    assert {t['id'] for t in manifest['tasks']} == kept
+    assert set(manifest['grader_bundles']) == kept
+    assert {c['task'] for c in manifest['grader_self_tests']} <= kept
+    assert sorted(p.name for p in (root/'export/fixtures').iterdir()) == sorted(kept)
+    assert sorted(p.name for p in (root/'export/graders').iterdir()) == sorted(kept)
+
+
+def test_trial_ceiling_counts_only_executable_tasks(root):
+    bank = _quarantine(root, 'localization')
+    with pytest.raises(ValueError, match='trial ceiling'):
+        export_manifest(bank, root/'too-small', max_trials=11)
+    assert len(export_manifest(bank, root/'fits', max_trials=12)['tasks']) == 6
+
+
+def test_explicit_selection_of_a_quarantined_task_is_refused_before_writing(root):
+    bank = _quarantine(root, 'localization')
+    with pytest.raises(ValueError, match='quarantined tasks cannot be selected: localization'):
+        export_manifest(bank, root/'export', task_ids=['regression', 'localization'])
+    assert not (root/'export').exists()
+    assert [t['id'] for t in export_manifest(bank, root/'ok', task_ids=['regression'])['tasks']] == ['regression']
+
+
+def test_a_bank_with_only_quarantined_tasks_has_nothing_to_export_or_audit(root):
+    ids = [t['task_id'] for t in json.loads((root/'input/bank.json').read_text())['tasks']]
+    bank = _quarantine(root, *ids)
+    with pytest.raises(ValueError, match='no executable task'):
+        export_manifest(bank, root/'export')
+    assert not (root/'export').exists()
+    with pytest.raises(ValueError, match='no executable task'):
+        audit_graders(bank, cooperative=True)
+
+
+def test_cli_export_reports_the_quarantined_exclusion(root):
+    bank = _quarantine(root, 'localization')
+    with chdir(root), patch('builtins.print') as printed:
+        code = main(['bank', '--manifest', str(bank), '--export', 'export'])
+    assert code == 3
+    result = json.loads(printed.call_args.args[0])
+    assert result['export'] == {'tasks': 6, 'profile': 'descriptive_smoke', 'quarantined_excluded': ['localization']}
+    assert not (root/'export/fixtures/localization').exists()
+
+
+def test_quarantine_isolates_a_broken_grader_from_the_audit(root):
+    from agent_harness_lab.evaluation.integrity import digest
+    bank = root/'input/bank.json'
+    healthy = audit_graders(bank, cooperative=True)['checks']
+    own = [c for c in healthy if c['task'] == 'regression']
+    assert own and len(own) < len(healthy)
+    value = json.loads(bank.read_text())
+    broken = next(t for t in value['tasks'] if t['task_id'] == 'regression')
+    bundle = bank.parent/broken['grader_bundle']
+    # A grader that rejects even the complete control cannot be calibrated.
+    (bundle/'grade.py.txt').write_text('import json,sys\nprint(json.dumps(dict(schema_version=1,valid=True,outcome=False,grader_id="x",grader_version="v1")))\nsys.exit(1)\n')
+    broken['grader_digest'] = digest(bundle)
+    bank.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='falsification failed: regression'):
+        audit_graders(bank, cooperative=True)
+    _quarantine(root, 'regression')
+    audited = audit_graders(bank, cooperative=True)
+    assert audited['status'] == 'controls_passed' and audited['quarantined_skipped'] == ['regression']
+    assert 'regression' not in {c['task'] for c in audited['checks']}
+    assert len(audited['checks']) == len(healthy) - len(own)

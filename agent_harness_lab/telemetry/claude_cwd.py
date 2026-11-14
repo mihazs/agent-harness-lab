@@ -44,25 +44,33 @@ def _linked(common, found):
             if pointer.name == '.git' and pointer.parent != Path(pointer.anchor): found.add(pointer.parent)
 
 
-def registered_worktrees(project):
-    """(worktree roots other than project, state): listed, not_a_repository or unavailable (unreadable or malformed metadata)."""
+def common_dir(project):
+    """(common git directory, is a linked worktree, state), read from the repository's files; the directory is None unless state is listed."""
     project, git = Path(project), Path(project)/'.git'
     try: info = os.lstat(git)
-    except FileNotFoundError: return frozenset(), 'not_a_repository'
-    except OSError: return frozenset(), 'unavailable'
+    except FileNotFoundError: return None, False, 'not_a_repository'
+    except OSError: return None, False, 'unavailable'
+    try:
+        if stat.S_ISDIR(info.st_mode): return git, False, 'listed'
+        if stat.S_ISREG(info.st_mode):
+            pointer = _read(git)
+            if pointer.startswith('gitdir: '):
+                admin = _resolve(project, pointer[len('gitdir: '):])
+                return _resolve(admin, _read(admin/'commondir')), True, 'listed'
+    except (OSError, ValueError): pass
+    return None, False, 'unavailable'
+
+
+def registered_worktrees(project):
+    """(worktree roots other than project, state): listed, not_a_repository or unavailable (unreadable or malformed metadata)."""
+    common, linked, state = common_dir(project)
+    if common is None: return frozenset(), state
     found = set()
     try:
-        if stat.S_ISDIR(info.st_mode): common = git
-        elif stat.S_ISREG(info.st_mode):
-            pointer = _read(git)
-            if not pointer.startswith('gitdir: '): return frozenset(), 'unavailable'
-            admin = _resolve(project, pointer[len('gitdir: '):])
-            common = _resolve(admin, _read(admin/'commondir'))
-            if common.name == '.git': found.add(common.parent)
-        else: return frozenset(), 'unavailable'
+        if linked and common.name == '.git': found.add(common.parent)
         _linked(common, found)
     except (OSError, ValueError): return frozenset(), 'unavailable'
-    found.discard(project)
+    found.discard(Path(project))
     return frozenset(found), 'listed'
 
 

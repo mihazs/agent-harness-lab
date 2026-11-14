@@ -1,4 +1,5 @@
 """Synthetic construction-manifest contract: controller-owned digests, typed reasons and one bounded repair."""
+# fixed-in: 76a4e021 -k wrong_digests_are_stripped or prompt_never_lists or authored_digest_is_a_typed_fixable_defect or authored_digest_stripping_touches_only
 from contextlib import ExitStack
 import copy
 import json

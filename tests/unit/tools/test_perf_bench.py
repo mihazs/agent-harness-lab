@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import tracemalloc
 
 import pytest
 
@@ -43,6 +44,18 @@ def test_digest_is_the_file_content_hash(tmp_path):
     assert perf_bench.write_events(path, 50) == perf_bench.digest(path) == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_digest_streams_the_file_instead_of_reading_it_whole(tmp_path):
+    path = tmp_path / 'big.bin'
+    path.write_bytes(bytes(12_000_000))
+    tracemalloc.start()
+    try:
+        perf_bench.digest(path)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 2_000_000
+
+
 def test_spread_reports_median_min_max_and_run_count():
     assert perf_bench.spread([3, 1, 2], 1000, 0) == dict(median=2000, min=1000, max=3000, runs=3)
 
@@ -67,6 +80,49 @@ def test_diagnose_compares_output_hashes_across_runs(monkeypatch, contents, repe
     measured = perf_bench.diagnose((60,), repeats)['60']
     assert measured['outputs_identical_across_runs'] is expected
     assert measured['findings_sha256'] == hashlib.sha256(contents[0].encode()).hexdigest()
+
+
+def fake_diagnose_run(reports, status=0):
+    """A stand-in for the child process that writes a fixed findings.json and the next report.md."""
+    runs = iter(reports)
+
+    def fake_run(argv):
+        out = Path(argv[argv.index('--output') + 1])
+        out.mkdir()
+        (out / 'findings.json').write_text('findings')
+        (out / 'report.md').write_text(next(runs))
+        return 0.1, 50e6, status
+
+    return fake_run
+
+
+def test_diagnose_flags_a_differing_report_and_reports_the_first_runs_hash(monkeypatch):
+    monkeypatch.setattr(perf_bench, 'run', fake_diagnose_run(['one', 'two']))
+    measured = perf_bench.diagnose((60,), 2)['60']
+    assert measured['outputs_identical_across_runs'] is False
+    assert measured['report_sha256'] == hashlib.sha256(b'one').hexdigest()
+
+
+def test_diagnose_raises_instead_of_reporting_numbers_when_a_run_exits_nonzero(monkeypatch):
+    monkeypatch.setattr(perf_bench, 'run', fake_diagnose_run(['one'], status=2))
+    with pytest.raises(RuntimeError, match='status 2 at 60 events'):
+        perf_bench.diagnose((60,), 1)
+
+
+@pytest.mark.parametrize('flag, value', [('--runs', '0'), ('--repeats', '0'), ('--sizes', '60,0'), ('--sizes', '-5')], ids=['runs-zero', 'repeats-zero', 'size-zero', 'size-negative'])
+def test_main_refuses_a_non_positive_count_before_measuring(monkeypatch, tmp_path, flag, value):
+    monkeypatch.setattr(perf_bench, 'startup', lambda runs: pytest.fail('measured despite an invalid count'))
+    with pytest.raises(SystemExit) as stopped:
+        perf_bench.main([flag, value, '--output', str(tmp_path / 'report.json')])
+    assert stopped.value.code == 2 and not (tmp_path / 'report.json').exists()
+
+
+def test_report_records_the_drivers_own_peak_memory(monkeypatch, tmp_path):
+    monkeypatch.setattr(perf_bench, 'startup', lambda runs: {})
+    monkeypatch.setattr(perf_bench, 'diagnose', lambda sizes, repeats: {})
+    output = tmp_path / 'report.json'
+    assert perf_bench.main(['--sizes', '60', '--output', str(output)]) == 0
+    assert json.loads(output.read_text())['environment']['driver_peak_rss_mb'] > 0
 
 
 def report(startup_ms, seconds, peak_mb, identical=True):

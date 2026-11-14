@@ -1,5 +1,6 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
-from .evaluation.manifest_contract import REASONS as CONTRACT_REASONS
+from .evaluation.manifest_contract import ALL_REASONS as CONTRACT_REASONS
+from .typed_exit import REASONS as TYPED_EXIT_REASONS
 
 REMEDIATION = {
     'target_filesystem_read_only': 'Use a separately authorized writable execution context or keep analysis read-only.',
@@ -11,8 +12,11 @@ REMEDIATION = {
     'history_source_ai_memory_unsupported': 'ahl improve reads native Codex and Claude sessions only and opens no network connection; rerun with --source native, codex or claude, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis.',
     'capture_version_differs_from_pin': 'Selected captures were recorded by a runtime version outside the fixture-verified declared range and were not parsed with the verified adapter. Rerun without --source-root for descriptive, unverified project-filtered discovery, or verify that release: run ahl sources claude pin-check --events FILE on one capture, then add its contract fixture and extend the range.',
     'cwd_worktrees_unavailable': 'The project repository\'s registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository\'s .git directory and rerun; until then treat registered_worktree_of_project as a lower bound.',
+    'history_not_found_for_worktree': 'No session was recorded under this path, which is a linked worktree of a repository, so history recorded for the repository\'s main checkout was not read; this does not show there is nothing to learn. Rerun with --history-from MAIN_CHECKOUT to read that checkout\'s sessions read-only, or run from the main checkout.',
+    'source_project_path_differs': 'Sessions recorded for another checkout of this repository (--history-from) were read instead of this path\'s; read any finding as that checkout\'s history, and an empty result as no captures there.',
     'history_no_matching_sessions': 'No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
     'history_runtime_has_no_captures': 'No captured events of the requested runtime matched this project, --since and --session; rerun with --source native to include both runtimes, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history.',
+    'inventory_entry_bound_exceeded': 'The checkout holds more directory entries than the inventory examines; add the largest directories named in inventory_remedy, if they hold no harness files, to .gitignore, then run ahl audit again and rerun.',
     'global_scope_model_evaluation_unavailable': 'Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project.',
     'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
     'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
@@ -38,6 +42,7 @@ REMEDIATION = {
     'shared_trial_budget_exhausted': 'Review and increase the shared trial budget if appropriate.',
     'no_change_harness_supported': 'Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion.',
     'no_change_evidence_insufficient': 'The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence.',
+    'no_outcome_evidence': 'Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
     'evaluation_uninformative': 'Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun.',
     'refinement_budget_unavailable': 'The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun.',
@@ -72,6 +77,7 @@ REMEDIATION = {
     'inference_protocol_error_no_retry': 'Inspect the recorded inference protocol error before any retry.',
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
+    **{reason: step for reason, (_, _, step) in TYPED_EXIT_REASONS.items()},
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
     'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
     'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',
@@ -121,6 +127,8 @@ def guidance(result):
         action = 'Review the private receipt before retrying.'
     else:
         action = REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+    if status != 'analyzed' and reason != 'history_not_found_for_worktree' and any(r.get('reason') == 'history_not_found_for_worktree' for r in result.get('capture_reasons') or ()):
+        action += ' ' + REMEDIATION['history_not_found_for_worktree']
     steps = result.get('next_steps')
     if reason == 'no_change_evidence_insufficient' and isinstance(steps, list) and steps and isinstance(steps[0], dict):
         action += f" First step: {steps[0].get('action')} Run: {steps[0].get('command')}"

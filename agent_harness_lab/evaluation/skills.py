@@ -252,3 +252,86 @@ def paired_transfer(records, *, policy):
                 conditional_on_observed_activation=dict(activated, interpretation='descriptive_not_causal'),
                 disposition=disposition, reason=reason, causal_effect='requires_frozen_paired_experiment',
                 automatic_promotion=False)
+
+
+COMPLIANCE_SCHEMA = 'skill-procedure-compliance-v1'
+REQUIREMENTS = ('tool_call', 'no_tool_call', 'artifact')
+MAX_ALTERNATIVES, MAX_REQUIREMENTS = 16, 32
+
+
+def _requirements(rows, owner, *, required):
+    if not isinstance(rows, (list, tuple)) or (required and not rows):
+        raise ValueError(f'{owner} needs a {"nonempty " if required else ""}requirement list')
+    if len(rows) > MAX_REQUIREMENTS:
+        raise ValueError(f'a requirement list holds at most {MAX_REQUIREMENTS} requirements')
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {'kind', 'target'}:
+            raise ValueError('requirement fields must be exactly kind and target')
+        if row['kind'] not in REQUIREMENTS:
+            raise ValueError('requirement kind must be tool_call, no_tool_call or artifact')
+        if not isinstance(row['target'], str) or not row['target']:
+            raise ValueError('requirement target must be nonempty text')
+    return [(f"{row['kind']}:{row['target']}", row) for row in rows]
+
+
+def procedure_compliance(spec, *, events, artifacts):
+    """Grade one case against externally checkable requirements, accepting any declared alternative.
+
+    A requirement is `tool_call` (observed), `no_tool_call` (not observed) or `artifact` (a named
+    executable check passed). Each resolves to met, unmet or unknown. An absent tool call is unmet only
+    when every row of a nonempty capture says it is complete and every tool call is named; otherwise it is unknown, as is an artifact
+    check that is missing, ungraded by an executable grader or not boolean. Skill-activation signals and
+    phrasing never satisfy a requirement. Safety requirements are reported apart from the procedure.
+    """
+    from ..telemetry.schema import event
+    import hashlib
+    import json
+    if not isinstance(spec, dict) or set(spec) != {'alternatives', 'safety'}:
+        raise ValueError('procedure spec declares exactly alternatives and safety')
+    alternatives = spec['alternatives']
+    if not isinstance(alternatives, dict) or not alternatives:
+        raise ValueError('procedure spec needs at least one alternative')
+    if len(alternatives) > MAX_ALTERNATIVES:
+        raise ValueError(f'procedure spec holds at most {MAX_ALTERNATIVES} alternatives')
+    if any(not isinstance(name, str) or not name for name in alternatives):
+        raise ValueError('alternative names must be nonempty text')
+    declared = {name: _requirements(rows, f'alternative {name}', required=True) for name, rows in alternatives.items()}
+    safety = _requirements(spec['safety'], 'safety', required=False)
+    if not isinstance(artifacts, dict):
+        raise ValueError('artifact checks must be an object')
+    rows = [event(raw) for raw in events]
+    if len({row['case_id'] for row in rows}) > 1:
+        raise ValueError('procedure compliance requires one case')
+    calls = [row for row in rows if row['activity'] == 'tool_call']
+    called = {row.get('tool_name') for row in calls}
+    # A nameless tool call may be any tool, so it makes absence undecidable like a partial capture.
+    complete = bool(rows) and all(row.get('capture_complete') is True for row in rows) and all(row.get('tool_name') for row in calls)
+
+    def resolve(row):
+        kind, target = row['kind'], row['target']
+        if kind == 'artifact':
+            check = artifacts.get(target)
+            if (not isinstance(check, dict) or type(check.get('passed')) is not bool
+                    or check.get('provenance') != 'executable_grader'):
+                return 'unknown'
+            return 'met' if check['passed'] else 'unmet'
+        if target in called:
+            return 'met' if kind == 'tool_call' else 'unmet'
+        return ('unmet' if kind == 'tool_call' else 'met') if complete else 'unknown'
+
+    def combine(states):
+        return 'noncompliant' if 'unmet' in states else 'unknown' if 'unknown' in states else 'compliant'
+
+    report, verdicts = {}, []
+    for name, requirements in declared.items():
+        states = {key: resolve(row) for key, row in requirements}
+        report[name] = dict(state=combine(states.values()), requirements=states)
+        verdicts.append(report[name]['state'])
+    guards = {key: resolve(row) for key, row in safety}
+    digest = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return dict(schema=COMPLIANCE_SCHEMA, spec_sha256=digest,
+                state='compliant' if 'compliant' in verdicts else 'noncompliant' if set(verdicts) == {'noncompliant'} else 'unknown',
+                safety_state=('violated' if 'unmet' in guards.values() else 'unknown' if 'unknown' in guards.values()
+                              else 'satisfied' if guards else 'none_declared'),
+                alternatives=report, safety=guards, interpretation='observable_requirements_not_causal',
+                publication_allowed=False)

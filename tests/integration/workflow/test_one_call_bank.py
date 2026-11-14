@@ -13,6 +13,7 @@ import pytest
 from agent_harness_lab import config
 from agent_harness_lab.cli import evaluator, main
 from tests.integration.evaluation.test_offline_evaluation import SOLVER
+from tests.support.area_bank import REGISTRY
 
 
 @pytest.fixture
@@ -282,3 +283,38 @@ def test_grader_failure_and_interruption_preserve_target(pinned, interrupted, en
             with pytest.raises(SystemExit) as stopped: invoke(pinned, entry=entry)
             assert stopped.value.code == 2
     assert (pinned.project/'AGENTS.md').read_text() == 'bad'
+
+
+def tag_bank(pinned, tags, registry):
+    """Tag the pinned bank's tasks, re-pin its digest and declare the project's areas."""
+    declared = json.loads(pinned.bank.read_text())
+    for task in declared['tasks']:
+        if task['task_id'] in tags: task['areas'] = tags[task['task_id']]
+    pinned.bank.write_text(json.dumps(declared))
+    pinned.value['bank']['sha256'] = hashlib.sha256(pinned.bank.read_bytes()).hexdigest()
+    if registry is not None: pinned.value['areas'] = registry
+    write_config(pinned)
+
+
+@pytest.mark.parametrize('tags, registry, reason, field', [
+    pytest.param({'localization': ['coding', 'design']}, [REGISTRY[0]], 'task_area_undeclared', 'tasks[0].areas[1]', id='undeclared-area'),
+    pytest.param({'localization': ['coding']}, None, 'task_area_undeclared', 'tasks[0].areas[0]', id='project-declares-no-areas'),
+    pytest.param({'localization': ['coding', 'ux-ui', 'docs', 'review']}, REGISTRY, 'task_areas_too_many', 'tasks[0].areas', id='four-areas'),
+    pytest.param({'localization': []}, REGISTRY, 'task_areas_empty', 'tasks[0].areas', id='empty-areas'),
+    pytest.param({'localization': ['coding', 'coding']}, REGISTRY, 'area_duplicate', 'tasks[0].areas[1]', id='repeated-area'),
+])
+def test_bank_area_tags_the_project_does_not_declare_stop_with_a_typed_reason_before_dispatch(pinned, capsys, tags, registry, reason, field):
+    tag_bank(pinned, tags, registry)
+    with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')), pytest.raises(SystemExit) as exited:
+        invoke(pinned)
+    error = capsys.readouterr().err
+    assert exited.value.code == 2
+    assert f'ahl: {reason}: stage=bank_validation file=bank.json field={field} origin=project_declaration_defect.' in error
+    assert (pinned.project/'AGENTS.md').read_text() == 'bad'
+
+
+def test_bank_area_tags_the_project_declares_pass_preflight(pinned):
+    tag_bank(pinned, {'localization': ['coding'], 'regression': ['coding', 'ux-ui']}, REGISTRY)
+    (pinned.project/'mode').write_text('no_change')
+    code, result = invoke(pinned)
+    assert (code, result['status']) == (0, 'no_change')

@@ -121,6 +121,25 @@ PLATFORM = dict(provider=PLATFORM_PROVIDER, profile=PLATFORM_PROFILE, version_ke
     claim=Mem0PlatformClaim, limits=dict(LIMITS, max_pages=1000))
 
 
+def evidence(source, claims, surface, collected):
+    """One partial contextual-assertion record per claim; a memory is a model hypothesis, a history row a native field."""
+    return [EvidenceRecord(source.source_key, c.native_id_sha256, digest(asdict(c)), digest(asdict(c)),
+        'contextual_assertion', surface['record']+c.claim_type, collected, original_at=c.original_at,
+        provenance='model_hypothesis' if c.claim_type == 'memory' else 'native_field', capture_completeness='partial',
+        state='tombstone' if c.tombstone else 'present') for c in claims]
+
+
+def field(row, key, platform):
+    """A row's scope value: Platform get-all and history name the run `session_id`."""
+    return row.get('session_id' if platform and key == 'run_id' else key)
+
+
+def member(row, mode, conditions, platform):
+    """Whether the filter the listing used would return this row."""
+    found = [all(field(row, k, platform) == v for k, v in c.items()) for c in conditions]
+    return all(found) if mode == 'AND' else any(found)
+
+
 def expiry(value, exported):
     """Memory status from expiration_date against the export instant; an undecidable date is never guessed."""
     if value is None: return 'asserted', None
@@ -157,10 +176,7 @@ class Mem0Export(LocalExport):
             'Mem0 export changed during capture', read_regular, regular_sha256)
         self.claims, self.summary = parse(decoded.pop(), selection, bounds, surface)
         collected = datetime.now(timezone.utc).isoformat()
-        records = [EvidenceRecord(source.source_key, c.native_id_sha256, digest(asdict(c)), digest(asdict(c)),
-            'contextual_assertion', surface['record']+c.claim_type, collected, original_at=c.original_at,
-            provenance='model_hypothesis' if c.claim_type == 'memory' else 'native_field', capture_completeness='partial',
-            state='tombstone' if c.tombstone else 'present') for c in self.claims]
+        records = evidence(source, self.claims, surface, collected)
         records.append(EvidenceRecord(source.source_key, digest((surface['record']+'export', selection['instance'], selection['export'])),
             export_sha256, export_sha256, 'contextual_assertion', surface['record']+'export', collected, provenance='native_field',
             capture_completeness='partial'))
@@ -217,9 +233,7 @@ def parse(value, selection, bounds, surface=OSS):
     mode, conditions = filter_conditions(value.get('filters'), scopes, platform)
     filters = {k: v for condition in conditions for k, v in condition.items()}
     allowed = {k: {c[k] for c in conditions if k in c} for k in filters}
-    def listed_in_scope(row):
-        found = [all(field(row, k) == v for k, v in c.items()) for c in conditions]
-        return all(found) if mode == 'AND' else any(found)
+    def listed_in_scope(row): return member(row, mode, conditions, platform)
     version, instance = selection[vkey], selection['instance']
     if vkey in value and value[vkey] != version: raise ValueError('Mem0 export version mismatch')
     if set(value) - set(surface['envelope']): warnings.add('unknown_envelope_fields')
@@ -227,7 +241,7 @@ def parse(value, selection, bounds, surface=OSS):
     # An AND of user_id and agent_id misses speaker-attributed facts, so such a listing can silently be partial.
     if platform and mode == 'AND' and any({'user_id', 'agent_id'} <= set(c) for c in conditions):
         warnings.add('and_filter_may_omit_speaker_attributed_facts')
-    def field(row, key): return row.get('session_id' if platform and key == 'run_id' else key)
+    def scope_of(row, key): return field(row, key, platform)
     if type(value.get('show_expired', False)) is not bool: raise ValueError('Mem0 show_expired must be a boolean')
     exported, status = instant(value.get('exported_at'), None)
     if status != 'native': warnings.add('export_time_unverified')
@@ -271,7 +285,7 @@ def parse(value, selection, bounds, surface=OSS):
         kept = []
         for event in events:
             bounded(event)
-            if platform and any(field(event, k) is not None and field(event, k) not in values for k, values in allowed.items()):
+            if platform and any(scope_of(event, k) is not None and scope_of(event, k) not in values for k, values in allowed.items()):
                 counts['history_outside_filter'] += 1; warnings.add('history_row_outside_filter_scope'); continue
             if text(event.get('id')) is None or event['id'] in seen or event.get('memory_id') != identity:
                 rejected['history'] += 1; warnings.add('history_row_rejected'); continue
@@ -321,7 +335,7 @@ def parse(value, selection, bounds, surface=OSS):
         native = scoped('memory', identity)
         claims.append(surface['claim']('memory', native, native, DERIVATION['memory'], state, 'filter_matched', state == 'asserted',
             False, digest(row['memory']), None, None, None if row.get('metadata') is None else digest(row['metadata']),
-            *(hashed(key.split('_')[0], field(row, key)) for key in (*SCOPES, 'actor_id')), role(row), None, None, original, stamp,
+            *(hashed(key.split('_')[0], scope_of(row, key)) for key in (*SCOPES, 'actor_id')), role(row), None, None, original, stamp,
             score_reported='score' in row, **extra))
         counts['memory_'+state] += 1
     claims.sort(key=lambda c: (c.claim_type, c.memory_native_id_sha256, -1 if c.sequence is None else c.sequence))

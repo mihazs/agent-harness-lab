@@ -1,5 +1,4 @@
 """Private immutable development-bank admission; citations never become native proof."""
-from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -270,7 +269,7 @@ def accept(store, case_id, parent_path, request_path):
         with tempfile.TemporaryDirectory(dir=store.root,prefix='.bank-stage-') as temporary:
             staged = Path(temporary)/'revision'; staged.mkdir(mode=0o700); accounting = [0,0]
             tasks = [_copy_assets(parent_path.parent,t,staged,accounting) for t in parent_value['tasks']]
-            new_task = json.loads(json.dumps(asdict(task)))
+            new_task = task.declaration()
             new_task.update(task_id='regression-'+case_id,fixture='inputs/minimized',fixture_digest=fixture_hash,
                 grader_bundle='inputs/oracle',partition='development',review_status='accepted',independence='unverified',
                 reviewer=request['operator']['identity'])

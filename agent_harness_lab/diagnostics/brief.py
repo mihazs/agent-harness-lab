@@ -7,7 +7,7 @@ only in the separate private mechanism-summary artifact. Nothing here is a diagn
 import hashlib
 import json
 
-from ..telemetry import claude_native, codex_rollout
+from ..telemetry import claude_native, codex_rollout, error_catalog
 from ..telemetry.claude_cwd import from_sources
 
 PROFILE = 'ahl-analysis-brief-v1'
@@ -92,11 +92,19 @@ class Scan:
                 key = (tool, 'tool_reported_error')
                 if key not in self.groups and len(self.groups) >= MAX_GROUPS:
                     key = (OVERFLOW, 'tool_reported_error')
-                group = self.groups.setdefault(key, dict(errors=0, cases=set(), roots=set(), buckets=[0] * BUCKETS, next_action={}, refs=[], capped=False, classes={}))
+                group = self.groups.setdefault(key, dict(errors=0, cases=set(), roots=set(), buckets=[0] * BUCKETS, next_action={}, refs=[], capped=False, classes={}, kinds={}))
                 group['errors'] += 1
                 # Rows without a recorded class stay 'unknown' rather than being assigned to one.
                 where = event.get('cwd_class', 'unknown')
                 group['classes'][where] = group['classes'].get(where, 0) + 1
+                # Only a catalog match or an explicit `unclassified` is a class; a source that records none stays 'unknown'.
+                label = event.get('tool_error_class')
+                kind = group['kinds'].setdefault(label if label in error_catalog.VOCABULARY else 'unknown', dict(errors=0, cases=set()))
+                kind['errors'] += 1
+                if len(kind['cases']) < MAX_IDS:
+                    kind['cases'].add(case)
+                else:
+                    group['capped'] = True
                 for name, value in (('cases', case), ('roots', event.get('root_case_id', case))):
                     if len(group[name]) < MAX_IDS:
                         group[name].add(value)
@@ -156,9 +164,24 @@ def _mechanism(key, group, calls, refs):
                counts_are_lower_bounds=group['capped'], competing_explanations=list(COMPETING))
     if group['classes'] != dict(unknown=group['errors']):  # nothing to report for sources that record no class
         row['errors_by_cwd_class'] = dict(sorted(group['classes'].items()))
+    if group['kinds'].keys() != {'unknown'}:  # same rule: nothing to report for sources that record no class
+        row['errors_by_error_class'] = {name: kind['errors'] for name, kind in sorted(group['kinds'].items())}
+        row['cases_by_error_class'] = {name: len(kind['cases']) for name, kind in sorted(group['kinds'].items())}
     if refs:
         row['evidence_refs'] = list(group['refs'])
     return row
+
+
+def _error_classes(groups):
+    """Catalog version and how many structured errors matched a class, matched none or had no class captured."""
+    totals = dict(errors=0, classified=0, unclassified=0, not_captured=0)
+    for group in groups.values():
+        for name, kind in group['kinds'].items():
+            totals['errors'] += kind['errors']
+            totals['classified' if name in error_catalog.CLASSES else 'not_captured' if name == 'unknown' else 'unclassified'] += kind['errors']
+    if totals['classified'] + totals['unclassified'] == 0:
+        return None
+    return dict(catalog=error_catalog.VERSION, runtimes=list(error_catalog.RUNTIMES), **totals)
 
 
 def mechanism_summaries(result):
@@ -313,6 +336,8 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
                              # Flags only: the brief itself never depends on the artifact caps.
                              artifacts=dict(analysis_detail_truncated=bool((artifact_bounds or {}).get('analysis', {}).get('truncated', {}).get('applied')),
                                             event_store_truncated=bool((artifact_bounds or {}).get('event_store', {}).get('truncated', {}).get('applied')))))
+    if (classes := _error_classes(result['groups'])) is not None:
+        brief['tool_error_classes'] = classes
     for section in ('mechanisms', 'weak_outcome_signals', 'missing_evidence'):
         while _size(brief) > MAX_BRIEF_BYTES and brief[section]:
             brief[section].pop()

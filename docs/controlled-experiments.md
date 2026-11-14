@@ -8,10 +8,10 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, live utility and compiler evaluation |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only | A live run proving the bridge hook executes in the supported runtime, an isolated non-identity transform, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
@@ -52,8 +52,26 @@ explicit expected-negative labels, never from a record's own component, so
 unreviewed proposer records defer as `route_requires_review` and unauthorized
 adapter routes defer. Order, deduplication and budget charges match
 `run_queue`; eligible records stay `proposed`. Both receipts are private
-profiles rejected by public export. Neither is attached to the `ahl improve`
-receipt yet; that integration remains open in #10.
+profiles rejected by public export. The route-disposition plan is not attached
+to the `ahl improve` receipt yet; that integration remains open in #10.
+
+`ahl improve` admits every `candidate` proposal it reads through
+`mechanisms.from_proposal` and adds a compact `mechanism_coverage` field to its
+receipt (`workflow.json`). The proposer is told the entry format; the allowlist
+of citable evidence is the analysis brief it was shown, meaning its listed
+mechanism IDs (such as `Bash/tool_reported_error`) and its observed weak-outcome
+signals, never an unknown or unobserved signal. The admission receipts
+(`mechanism-admission-<attempt>.json`) and the coverage report
+(`mechanism-coverage.json` and `.md`) stay in the private run folder. Every
+admitted record is `proposed` and unreviewed, so a tie, an accepted patch or an
+evaluation error leaves it listed as `open`, never `resolved`; the controller
+declares no capture completeness, so `coverage_complete` is `false` and unseen
+mechanisms stay possible. An entry the contract refuses, including the older
+free-text form, is counted with its reason, and a run whose proposal admits
+nothing reports `no_mechanisms_recorded`. The receipt field is advisory: a
+failure to write it is reported as `unavailable` and never changes the run
+status. It records bookkeeping, not a diagnosis, a validated repair or a
+statement of which mechanism a combined patch repaired.
 
 `coverage.report` summarizes records, or the `run_queue` output, as a private
 `mechanism-coverage-v1` report without evaluating, charging or mutating
@@ -178,11 +196,25 @@ filters on activation. Activation counts as observed only for `activated: true`
 with an evidence reference; `activated: false`, an injected hash or a bare label
 stays unknown. Observed activations on controls are reported as false activations.
 Success among observed activations is reported as descriptive, not causal.
+`evaluation.skills.procedure_compliance(spec, events=..., artifacts=...)` grades one
+case against externally checkable requirements instead of phrasing. The spec declares
+exactly `alternatives` (at most 16 named lists of at most 32 requirements, so another
+correct procedure passes) and `safety` (requirements that stay independent of the
+procedure). A requirement is `tool_call` (observed), `no_tool_call` (not observed) or
+`artifact` (a named check from an executable grader passed). Each resolves to `met`,
+`unmet` or `unknown`. An absent tool call is `unmet` only when every row of a nonempty
+capture declares `capture_complete`; a partial or empty capture leaves it `unknown`,
+and so does an artifact check that is missing, not boolean or not from an executable
+grader. A skill-activation signal or a keyword never satisfies a requirement. The case
+is `compliant` when one alternative is fully met, `noncompliant` when every alternative
+has an unmet requirement, and `unknown` otherwise; `safety_state` is `satisfied`,
+`violated`, `unknown` or `none_declared`. The private report carries the spec SHA-256
+and `publication_allowed: false`, and it is neither task success nor a causal effect.
 The procedure compiler returns a bounded project hypothesis and never
 installs globally. The typed adapter preserves an exact original tool envelope and
 adds presentation metadata only. It cannot call a tool, retry an action, expand
 network/filesystem authority or turn an error into success. Runtime integration
-currently reports unsupported.
+currently reports unsupported, with the documented candidate and its open blockers as data.
 
 `AdapterSpec` (`ahl.adapter-spec.v1`) is the opt-in capability contract for one
 presentation adapter: ID, version, implementation SHA-256, target tools, the
@@ -205,6 +237,34 @@ unchanged bytes, `previous_digest` must stay as authorized. The verdict
 declared authority. The review never executes adapter code, never promotes, and
 reports the runtime as unsupported. `verify_adapter_bytes` rechecks bytes against
 the declared digest. Nothing calls these APIs by default.
+
+`evaluation.adapter_bridge` is the identity-only bridge for the one documented
+runtime integration, the Claude Code `PostToolUse` and `PostToolUseFailure` hooks;
+[the decision record](adapter-runtime-decision.md) holds the evidence, coverage and
+blockers. `probe_runtime(runtime, version)` is offline: only the pinned Claude Code
+version is `declared`, Codex and any other version are `unsupported`, and nothing is
+ever `verified` by it. `Bridge` rejects, at construction, an unsupported runtime or
+version, a spec outside the project authorization, a spec without the `identity`
+transform, and adapter bytes that differ from the declared digest. It never loads or
+runs those bytes. `Bridge.handle(stdin_bytes)` returns hook stdout bytes. Each event
+becomes a `tool-envelope-v1` bound to the run (`session_id`) and call
+(`tool_use_id`); a failure event keeps `error` status and no other field can change
+it. The identity result is verified against the original and the reply is an empty
+object, so the runtime keeps the original output. A duplicate with the same content
+is a recorded no-op, a duplicate with different content fails without replacing the
+first, a result for a cancelled call is dropped, and results may arrive in any
+order. The metadata-only `ledger()` is separate from the private `provenance()`
+envelopes. A malformed, oversized, unauthorized, other-run or conflicting event
+fails: a `required` bridge answers `continue: false` and stops the affected
+execution, while `optional-identity` records the failure and leaves the original
+output. The policy is frozen at construction and no failure becomes a success.
+`capability_receipt()` binds the bridge source, adapter, spec and authorization
+digests to the calls and to any model-visible results the caller observed; without
+observations the application state stays `unknown`, and the only accepted source is
+the test `fake-runtime`, which sets `runtime_verified` to false. `verify_receipt`
+fails after any change to the authorization, spec, adapter bytes, bridge source or
+receipt content, or after an observed mismatch. A hook command, deployment of its
+configuration and the isolated transform worker are not part of this bridge.
 
 Lexical retrieval accepts only approved reviewed summaries, retains sampling
 provenance and returns untrusted evidence, including any injection text. It never

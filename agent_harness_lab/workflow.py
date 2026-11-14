@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 
-from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces
+from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces, typed_exit
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
@@ -98,7 +98,7 @@ def project_lock(project):
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
-        raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
+        raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
@@ -150,7 +150,8 @@ def evidence(args, output, source_context=None, *, progress=None):
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None),
-            history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None, **source_identity)
+            history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None,
+            history_from=getattr(args, 'history_from', None), **source_identity)
         events.seek(0)
         store = {}
         # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
@@ -211,7 +212,7 @@ def analyze_project(args):
 
 def file_state(path):
     if path.is_symlink():
-        raise ValueError('Symlinked harness files are outside automatic adoption scope')
+        raise typed_exit.TypedExit('unsupported_instruction_layout', 'Symlinked harness files are outside automatic adoption scope')
     if not path.exists():
         return None
     if not path.is_file():
@@ -254,7 +255,7 @@ def snapshot(project, target, *, allowed_paths=None):
     for path in harness_files(project,allowed_paths):
         relative = str(path.relative_to(project))
         if any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(project)):
-            raise ValueError('Snapshot path crosses a symlink')
+            raise typed_exit.TypedExit('unsupported_instruction_layout', 'Snapshot path crosses a symlink')
         total += path.stat().st_size
         if len(states) >= MAX_FILES or total > MAX_BYTES:
             raise ValueError('Harness snapshot exceeds its file/byte limit')
@@ -495,8 +496,9 @@ def adopt(project, baseline, candidate, original, proposed, scoped=False):
     return [operation['path'] for operation in receipt['operations']]
 
 
-def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False):
-    """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change."""
+def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False, provenance=None):
+    """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change.
+    provenance replaces the journal source and adds fields (the reviewed plan's identity)."""
     from agent_harness_lab.application_receipt import application_receipt
     from agent_harness_lab.promotion.journal import Journal, file_record
     with project_lock(project):
@@ -521,7 +523,7 @@ def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=
         if not before:
             return dict(status='no_change', operations=[], activation='unknown', behavioral_effect='not_established')
         journal = Journal(project, state_root() / 'promotions' / identity(project))
-        transaction = journal.prepare(before, after, dict(source='directly_authorized_adopt_api'))
+        transaction = journal.prepare(before, after, {'source': 'directly_authorized_adopt_api', **(provenance or {})})
         return application_receipt(journal, journal._execute(transaction['deployment']))
 
 
@@ -541,6 +543,7 @@ def _bounded_sha256(path, limit=8*1024*1024):
 
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
+    from .diagnostics.mechanisms import MECHANISM_GUIDANCE
     from .one_call import invocation_context
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
@@ -576,8 +579,21 @@ def _improve(args):
         # Nothing was captured for this request; stop before any candidate preparation or model spend.
         from .one_call import REMEDIATION
         reason = 'history_runtime_has_no_captures' if args.history_source in ('codex', 'claude') else 'history_no_matching_sessions'
+        # A linked worktree's own path has no sessions: name that cause instead of a generic empty history.
+        if any(r['reason'] == 'history_not_found_for_worktree' for r in data.get('capture_reasons', ())): reason = 'history_not_found_for_worktree'
         result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                       remediation=REMEDIATION[reason], history=data['history'], automatic_promotion=False)
+        construction_receipt(result, args)
+        write_json(output/'workflow.json', result)
+        return result
+    from . import first_use
+    if first_use.blocked(data, args):
+        # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
+        # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
+        result = dict(status='blocked', reason=first_use.NO_OUTCOME, output=str(output), changed_files=[], analysis=data['execution'],
+                      next_steps=getattr(args, '_analysis_next_steps', []), automatic_promotion=False, publication_allowed=False)
+        if 'history' in data: result['history'] = data['history']
+        first_use.attach(result, data, args, prepared=False)
         construction_receipt(result, args)
         write_json(output/'workflow.json', result)
         return result
@@ -675,12 +691,15 @@ def _improve(args):
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
                   analysis=data['execution'])
     if 'history' in data: result['history'] = data['history']
+    elif data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     protected = {}
     refinement_feedback = []
+    proposals = []
     single_run = None
     final_attempt = None
     proposed = None
     grader_changed = False
+    prepared = ran_trials = False
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
@@ -725,6 +744,7 @@ def _improve(args):
                     prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None),analysis=True)
             else:
                 proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None),analysis=True)
+            prepared = True
             write_json(proposal_path,proposal)
             write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
@@ -752,6 +772,7 @@ The parent freezes the patch; {'the configured task bank supplies the evaluation
 Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparation/task roles and {args.timeout} seconds;
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
+{MECHANISM_GUIDANCE}
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
@@ -764,11 +785,13 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             write_json(output / f'preparation-{attempt}.environment.json',
                        runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
             run = runner.execute(command, prepare, remaining(), prompt, env=environment)
+            prepared = True
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
             if runner.trace_result(check, agent)[0] != 'completed':
-                result['status'] = 'execution_error'
+                # A preparation cut off by the shared budget is a budget exhaustion of that stage, not an unexplained execution error.
+                result['status'] = 'budget_exhausted' if run.get('timeout') or remaining() <= 0 else 'execution_error'
                 break
         if any(runner.digest(path) != value for path, value in protected.items()):
             raise ValueError('Preparation changed a previous frozen evaluation')
@@ -785,11 +808,13 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
+        proposals.append(proposal)
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(status='no_change',reason=brief.disposition(data))
             if result['reason'] == 'no_change_evidence_insufficient':
                 result['next_steps'] = getattr(args,'_analysis_next_steps',[])
+            first_use.attach(result, data, args, prepared=True)
             break
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
@@ -802,6 +827,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposed == original:
             proposed = None
             result.update(status='no_change',reason='candidate_identical_to_baseline')
+            first_use.attach(result, data, args, prepared=True)
             break
         if instruction is not None:
             write_json(output/f'instruction-validation-{attempt}.json', instruction)
@@ -809,6 +835,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if instruction['status'] != 'valid':
                 result.update(status='blocked', reason='instruction_validation_'+instruction['status'],
                               instruction_reasons=instruction['reasons'])
+                if 'inventory_entry_bound_exceeded' in instruction['reasons']:  # the typed reason the audit reports
+                    result.update(reason='inventory_entry_bound_exceeded', inventory_remedy=instruction.get('inventory_remedy'))
                 break
         stopped = (agents_validation.review_tree(baseline, candidate, original, proposed).outcome()
                    or skill_validation.review_tree(baseline, candidate, original, proposed,
@@ -847,6 +875,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
             with stages.charge('trials'): compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            ran_trials = True
             check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
@@ -1034,6 +1063,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'evaluation',
                         'grader_bundles' if 'bundle' in str(exc) else 'grader_self_tests') from exc
                 raise
+        ran_trials = True
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         args._observed = evaluated.get('trials', [])
         if hasattr(args, 'project_settings'):
@@ -1166,6 +1196,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
+    first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'from_audit' if audited else 'focus')
@@ -1177,6 +1208,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis
+    if proposals:
+        from .diagnostics import improve_coverage
+        try:
+            result['mechanism_coverage']=improve_coverage.attach(output,[improve_coverage.admit(item,getattr(args,'_analysis_brief',None),baseline_hash) for item in proposals])
+        except (ValueError,TypeError,KeyError,OSError) as exc:  # Advisory bookkeeping never changes the run result.
+            result['mechanism_coverage']=dict(status='unavailable',reason=type(exc).__name__,authority='none')
     if access is not None:
         result['construction_access']=access.report()
         result['publication_allowed']=False
@@ -1254,8 +1291,16 @@ def _run_improvement(args, *, parent_started=None):
         if getattr(args,'from_audit',None) is not None:
             if getattr(args,'focus',None) is not None or getattr(args,'repair_contracts',False):
                 raise ValueError('audit hypothesis cannot be combined with focus or contract repair')
-            from .audit.recheck import select
-            args._audit_hypothesis=select(args.from_audit,args.project,args.agent)
+            from .audit.recheck import InventoryBlocked, select
+            try: args._audit_hypothesis=select(args.from_audit,args.project,args.agent)
+            except InventoryBlocked as error:  # typed and before any model spend: nothing was staged or run
+                output = output_dir(args,deadline=started+args.timeout)
+                reason = 'inventory_' + error.remedy['reason']
+                result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                              remediation=REMEDIATION[reason], inventory_remedy=error.remedy)
+                construction_receipt(result, args)
+                write_json(output/'workflow.json', result)
+                return result
             args.focus=args._audit_hypothesis['focus']
             if now()>=started+args.timeout: raise TimeoutError('audit recheck exhausted improvement budget')
         return _improve(args)
@@ -1265,7 +1310,8 @@ def _run_improvement(args, *, parent_started=None):
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
-        status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
+        status = (exc.status if isinstance(exc, typed_exit.TypedExit) else
+                  'interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
@@ -1278,11 +1324,13 @@ def _run_improvement(args, *, parent_started=None):
             except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
 
         if inference_error: result['reason'] = str(exc)
+        if isinstance(exc, typed_exit.TypedExit): result['reason'] = exc.reason
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
         construction_receipt(result, args)
         from .scope import interrupted
         result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed
+        typed_exit.seal(result, args)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
             result['isolation_qualification']=permission_backend.permission_qualification()
@@ -1331,6 +1379,16 @@ def construction_receipt(result, args):
         result['budget_exhaustion'] = budget_stages.exhausted(stages, getattr(args, '_observed', None))  # unset: the evaluation never reported, so unknown
 
 
+def _sealed(result, args):
+    """Type a non-zero result and keep its private receipt file in step."""
+    if exit_code(result.get('status')) and 'exit_receipt' not in result:
+        typed_exit.seal(result, args)
+        output = result.get('output')
+        if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
+            write_json(Path(output)/'workflow.json', result)
+    return result
+
+
 def improve(args):
     if getattr(args,'from_audit',None) is not None:
         from copy import copy
@@ -1347,7 +1405,7 @@ def improve(args):
         output = result.get('output')
         if isinstance(output, (str, os.PathLike)) and (Path(output)/'workflow.json').is_file():
             write_json(Path(output)/'workflow.json', result)
-    return result
+    return _sealed(result, args)
 
 
 def watch_configuration(args):
@@ -1435,10 +1493,12 @@ def watch(args):
                         result = _run_improvement(options,parent_started=started)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
-                        result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
-                                      **({'reason': exc.reason} if isinstance(exc, manifest_contract.ContractError) else {}),
+                        result = dict(status=exc.status if isinstance(exc, typed_exit.TypedExit) else
+                                      'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
+                                      **({'reason': exc.reason} if isinstance(exc, (manifest_contract.ContractError, typed_exit.TypedExit)) else {}),
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
                         construction_receipt(result, options)
+                    _sealed(result, options)  # a normally returned result and the one built above both end typed
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
@@ -1450,8 +1510,11 @@ def watch(args):
             if args.once or status == 'interrupted':
                 if not emitted:
                     print('ahl: No fresh run. Evidence coverage: unavailable. Next: Review the private watch checkpoint.', file=sys.stderr)
+                    if exit_code(status):  # the previous disposition, not a fresh failure: say so, typed
+                        print(json.dumps(typed_exit.seal(dict(status=status, fresh_run=False))), flush=True)
                 return exit_code(status)
             time.sleep(args.interval)
     except KeyboardInterrupt:
         print('ahl: Inconclusive. Evidence coverage: unavailable. Next: Review the interrupted run before starting another.', file=sys.stderr)
+        print(json.dumps(typed_exit.seal(dict(status='interrupted'))), flush=True)
         return exit_code('interrupted')

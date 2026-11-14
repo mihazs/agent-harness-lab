@@ -40,13 +40,13 @@ RUNTIME = ('--format', '--source-version', '--output')
 EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--inherit-env', '--sandbox-graders',
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
-    'improve': (*COMMON, '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
+    'improve': (*COMMON, '--history-from', '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
                 '--resume', '--construction-fraction', '--repair-contracts', '--scope', '--remember-runtime'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',
                'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'campaign',
-               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'annotation-plan', 'compare', 'benchmark-report', 'doctor', 'audit', 'init',
+               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'apply', 'annotation-plan', 'compare', 'benchmark-report', 'doctor', 'audit', 'init',
                'sources', 'memory', 'config', 'analyze', 'analysis', 'improve', 'watch')
 # Wording that would imply behavioral auto-adoption or continuous self-modification.
 FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automatic improvement', 'automatically apply',

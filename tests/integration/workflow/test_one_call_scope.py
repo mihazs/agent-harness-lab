@@ -190,6 +190,18 @@ def test_user_level_plan_does_not_carry_the_projects_configuration(one, home):
     assert references['global']['authorization'] != references['project']['authorization']
 
 
+def test_user_level_authorization_is_independent_of_the_projects_settings(one, home):
+    digests = []
+    for name in ('example', 'other'):  # two project configurations that differ in what they govern
+        (one.project / 'ahl.json').write_text(json.dumps(config.defaults() | dict(harness_paths=[f'.agents/skills/{name}/SKILL.md'])))
+        (home.claude / 'skills/user-claude/SKILL.md').write_bytes(BOM + skill('user-claude'))
+        code, result = one.invoke('--repair-contracts', '--scope', 'global', '--agent', 'claude')
+        assert (code, result['layers_changed']) == (0, ['global'])
+        plan = json.loads(Path(result['layers'][0]['plan']).read_text())
+        digests.append(dict(plan['harness_change_plan']['references'])['authorization'])
+    assert digests[0] == digests[1]
+
+
 @pytest.mark.parametrize('flags,needle', [
     ((), '--agent codex or --agent claude'),
     (('--agent', 'auto'), '--agent codex or --agent claude'),
@@ -249,9 +261,13 @@ def test_default_scope_refuses_a_project_that_is_a_user_level_location(one, home
     assert code == 0 and json.loads(out.getvalue())['layers_changed'] == ['global']
 
 
-@pytest.mark.parametrize('where', ['home', 'claude', 'skills'])
-def test_default_model_driven_run_refuses_a_user_level_project_before_any_work(one, home, capsys, where):
-    project = dict(home=home.path, claude=home.claude, skills=home.claude / 'skills')[where]
+@pytest.mark.parametrize('where', ['home', 'claude', 'skills', 'codex', 'codex-skills', 'config-dir'])
+def test_default_model_driven_run_refuses_a_user_level_project_before_any_work(one, home, capsys, monkeypatch, where):
+    if where == 'config-dir':
+        monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(one.root / 'claude-config'))
+        home.add(one.root / 'claude-config/skills/cfg/SKILL.md', BOM + skill('cfg'))
+    project = dict(home=home.path, claude=home.claude, skills=home.claude / 'skills', codex=home.codex,
+                   **{'codex-skills': home.codex / 'skills', 'config-dir': one.root / 'claude-config'})[where]
     before = tree(home.path)
     with contextlib.redirect_stdout(io.StringIO()), pytest.raises(SystemExit) as raised:
         main(['improve', str(project), '--agent', 'claude'])

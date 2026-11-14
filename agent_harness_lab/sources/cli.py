@@ -9,6 +9,7 @@ from .snapshot import LocalExport
 from .okf import MissingOKFDependency, OKFExport
 from .store import SourceStore
 from .git import GitExport
+from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
 from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
 from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
@@ -28,6 +29,7 @@ from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .gitea import PROVIDER as GITEA, GiteaConfigured
 from .gitlab import PROVIDER as GITLAB, GitLabConfigured
+from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
 from .remote_config import ConfiguredAPI
 from .native import NativeCapture
 from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
@@ -35,7 +37,8 @@ from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION a
 from agent_harness_lab.config import read_json
 
 # Selected-resource forge readers: connector and the preview summary key each prints.
-FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary')}
+FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
+    MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary')}
 
 
 def main(argv):
@@ -55,6 +58,11 @@ def main(argv):
             print('usage: ahl sources claude-mem tool-check --tools FILE', file=sys.stderr); return 2
         from .claude_mem_tools import main as tool_check
         return tool_check(argv[2:])
+    if argv and argv[0] == 'mempalace':
+        if argv[1:2] != ['capabilities']:
+            print('usage: ahl sources mempalace capabilities [--tools-list FILE]', file=sys.stderr); return 2
+        from .mempalace_capabilities import main as capabilities_main
+        return capabilities_main(argv[2:])
     if argv and argv[0] == 'github':
         from .github_quota import main as quota_main
         return quota_main(argv[1:])
@@ -65,7 +73,7 @@ def main(argv):
         'preview reads selected data without importing it; import writes a cache checkpoint; status reads cache metadata; '
         'recheck compares the selected source with its cache. Preview/import/recheck can contact a provider when the manifest selects an API source. '
         'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
-        'Local providers include ahl-metadata, ai-memory-okf, git, test-results, claude-jsonl, codex-rollout, '
+        'Local providers include ahl-metadata, ai-memory-okf, git, test-results, quality-reports (selected SARIF 2.1.0 logs), claude-jsonl, codex-rollout, '
         'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network), '
         'mem0-oss-export (one selected Mem0 OSS v2.2.1 get_all/history JSON export; no server, Platform or network), '
         'mem0-platform-export (one selected Mem0 Platform v3 get-all page sequence plus history JSON export; no API call or network), '
@@ -75,12 +83,14 @@ def main(argv):
         'opencode-sqlite-backup (one selected caller-supplied backup; metadata only). '
         'Rate limits: forge reads share a reserve, budget and quota state; see ahl sources github quota --help. '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
-        'project on an explicit HTTPS instance, GET only, no enumeration). '
+        'project on an explicit HTTPS instance, GET only, no enumeration) or mem0-oss-rest / mem0-platform-api (one scoped, '
+        'read-only Mem0 memory and history listing on an explicit HTTPS origin; never an add, update, delete or export call). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
         'For reviewed cache relationships, use ahl sources lineage --help; for a read-only harness surface '
         'inventory of one checkout, use ahl sources inventory --help. To compare a Claude Code capture with the verified profile contract by field name only, '
         'use ahl sources claude pin-check --help. To check a saved Claude-Mem MCP tool listing against the pinned release without contacting a worker, '
-        'use ahl sources claude-mem tool-check --help.')
+        'use ahl sources claude-mem tool-check --help. For the offline MemPalace capability report and a names-only check of a saved '
+        'tools/list result, use ahl sources mempalace capabilities --help.')
     parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory'),
         help='Requested source operation (default: %(default)s); lineage and inventory have their own options and help')
     parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')
@@ -88,7 +98,7 @@ def main(argv):
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
     parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
-    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete Authorization header value for a configured Gitea or GitLab source; '
+    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete credential for a configured Gitea, GitLab or Mem0 source (an Authorization header value; for Mem0 OSS the X-API-Key value); '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
     connector = None
@@ -103,7 +113,7 @@ def main(argv):
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
             if args.authorization_file is not None and not remote: raise ValueError('authorization file requires an API configuration')
             forge = FORGES.get(declaration['source'].get('provider')) if remote else None
-            if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea or GitLab configuration')
+            if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea, GitLab or Mem0 configuration')
             connector = (forge[0](args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if forge
                 else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
             source, _ = connector.declaration(**scope)
@@ -113,6 +123,8 @@ def main(argv):
                 connector = GitExport(args.manifest)
             elif source.provider == TEST_RESULTS:
                 connector = TestResultsExport(args.manifest)
+            elif source.provider == QUALITY_REPORTS:
+                connector = QualityReportsExport(args.manifest)
             elif source.provider == CLAUDE_MEM:
                 connector = ClaudeMemExport(args.manifest)
             elif source.provider == MEMPALACE_KG:
@@ -155,6 +167,7 @@ def main(argv):
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             registry.register(Capability('local_file', TEST_RESULTS, TEST_RESULTS_VERSION, ('development_artifact',)), connector)
+            registry.register(Capability('local_file', QUALITY_REPORTS, QUALITY_REPORTS_VERSION, ('development_artifact',)), connector)
             registry.register(Capability('local_file', CLAUDE_MEM, CLAUDE_MEM_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE_KG, MEMPALACE_KG_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE_SEARCH, MEMPALACE_SEARCH_VERSION, ('contextual_assertion',)), connector)
@@ -163,6 +176,7 @@ def main(argv):
             registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEM0_PLATFORM, MEM0_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_REFS, HINDSIGHT_REFS_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', HINDSIGHT_REFS, 'v2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_MODELS, HINDSIGHT_MODELS_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_KNOWLEDGE, HINDSIGHT_KNOWLEDGE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT_ZIP, HINDSIGHT_ZIP_VERSION, ('contextual_assertion',)), connector)
@@ -180,7 +194,7 @@ def main(argv):
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
                 registry.register(Capability('local_file', 'claude-jsonl', version, ('behavioral_event',)), connector)
             if isinstance(connector, ConfiguredAPI):
-                registry.register(Capability('api', connector.provider, source.version, ('contextual_assertion', 'development_artifact')), connector)
+                registry.register(Capability('api', connector.provider, source.version, connector.planes), connector)
             result = registry.probe(source, **scope)
             if result['status'] != 'recognized':
                 print(json.dumps(result)); return 3
@@ -199,6 +213,8 @@ def main(argv):
                     result['git_summary'] = connector.summary
                 elif isinstance(connector, TestResultsExport):
                     result['test_results_summary'] = connector.summary
+                elif isinstance(connector, QualityReportsExport):
+                    result['quality_reports_summary'] = connector.summary
                 elif isinstance(connector, ClaudeMemExport):
                     result['claude_mem_summary'] = connector.summary
                 elif isinstance(connector, MemPalaceKnowledgeGraph):

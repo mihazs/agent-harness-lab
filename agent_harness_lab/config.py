@@ -8,6 +8,7 @@ import re
 import sys
 import uuid
 import stat
+from .evaluation.areas import parse_registry
 from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
 from . import surfaces
 
@@ -52,9 +53,10 @@ def validate(value):
     if isinstance(value, dict) and {'scope', 'global', 'global_root', 'harness_scope'} & set(value):
         raise ValueError('a project configuration cannot select a harness scope; only the --scope option on the command line can include the user-level harness')
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) - {'plugin_checkouts'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) - {'plugin_checkouts', 'areas'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
     if 'plugin_checkouts' in value: plugin_checkouts(value['plugin_checkouts'])
+    if 'areas' in value: parse_registry(value['areas'])
     if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
         raise ValueError('invalid profile or recommendation policy')
     runtime = value['runtime']
@@ -235,7 +237,7 @@ def evaluation_settings(path, manifest_path, manifest, versions, agent, binary):
     from .evaluation.task_bank import validate as validate_bank
     value, configuration_digest = load(path)
     bank = bank_path(Path(path).absolute().parent, value)
-    reviewed = validate_bank(bank)
+    reviewed = validate_bank(bank, registry=value.get('areas', []))
     if reviewed['bank_sha256'] != value['bank']['sha256'] or manifest.get('bank_digest') != value['bank']['sha256']:
         raise ValueError('configured bank digest does not match the evaluation')
     if manifest.get('skills') or not set(manifest.get('harness_paths', [])) <= set(value['harness_paths']):

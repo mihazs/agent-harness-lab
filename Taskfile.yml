@@ -580,29 +580,29 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_recheck.py -v'
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_git.py -k recheck -v'
   test:sources:commit-join:
-    desc: Run offline Git/GitHub commit, PR commit-role and Git/GitLab MR commit join negative controls and link-study scoring with synthetic journals
+    desc: Run offline Git/GitHub commit, PR commit-role, Git/GitLab MR and Git/Gitea PR commit join negative controls and link-study scoring with synthetic journals
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_commit_join.py tests/integration/sources/test_source_gitlab_commit_join.py tests/integration/sources/test_source_link_study.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_commit_join.py tests/integration/sources/test_source_gitlab_commit_join.py tests/integration/sources/test_source_gitea_commit_join.py tests/integration/sources/test_source_link_study.py -v'
   test:sources:ref-movement:
     desc: Run offline local Git ref movement controls with synthetic native repositories
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/sources/test_source_ref_movement.py -v'
   test:sources:test-results:
-    desc: Run offline JUnit XML and pytest JSON result controls and the Actions job join with synthetic hostile reports
+    desc: Run offline JUnit XML and pytest JSON result controls, the Actions job join, SARIF quality report controls and merged-PR failing-CI leads with synthetic hostile reports
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py tests/unit/sources/test_source_quality_reports.py tests/unit/sources/test_source_ci_leads.py -v'
   test:sources:claude-mem:
     desc: Run offline Claude-Mem v15.9.0 export, native-session correlation and saved MCP tool-listing controls with synthetic invented inputs
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/unit/sources/test_source_claude_mem_tools.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
   test:sources:mem0:
-    desc: Run offline Mem0 OSS v2.2.1 and Platform v3 memory/history export controls with synthetic invented exports
+    desc: Run offline Mem0 OSS v2.2.1 and Platform v3 export controls and the read-only REST/API client controls with synthetic fixtures
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_mem0.py tests/unit/sources/test_source_mem0_platform.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_mem0.py tests/unit/sources/test_source_mem0_platform.py tests/unit/sources/test_source_mem0_api.py -v'
   test:sources:hindsight:
     desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py tests/unit/sources/test_source_hindsight_zip.py tests/unit/sources/test_source_hindsight_models.py tests/unit/sources/test_source_hindsight_knowledge.py tests/unit/sources/test_source_hindsight_model_refs.py tests/unit/sources/test_source_hindsight_serialized_refs.py -v'
   test:sources:cognee:
     desc: Run offline Cognee v1.6.5 graph export controls with synthetic invented datasets
     cmds:

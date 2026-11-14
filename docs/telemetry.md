@@ -568,12 +568,25 @@ verified release) accepts a **declared range**: each release in `VERIFIED_RANGES
 (`agent_harness_lab/telemetry/claude_native.py`) must have a synthetic contract
 fixture in `tests/fixtures/claude_contract/<version>.jsonl`, and a test fails when
 the accepted versions and the fixtures differ. A range stays within one minor line.
-Today the declared range is `2.1.316` to `2.1.318`, with one fixture per release. A
-release outside it is not accepted until its fixture exists. The `2.1.317` fixture
-also holds identity, pull-request link, permission-mode and agent-name records;
-the adapter reads none of them, so they are counted per type as
-`unknown_entry_type` and never parsed. Add a release with
+Today the declared set is `2.1.316` to `2.1.318` and `2.1.322`, with one fixture per
+release. `2.1.319` to `2.1.321` have no fixture and stay unverified, as does any
+release outside the set, until its fixture exists. Add a release with
 [the maintainer guide](verify-claude-release.md).
+
+The `2.1.317` and `2.1.322` fixtures hold record kinds the adapter does not read.
+Each kind in the fixtures has one class:
+
+| Class | Record kinds | Treatment |
+| --- | --- | --- |
+| `handled` | `user`, `assistant`, `attachment`, `system` | Read into events; `progress` is also handled. |
+| `ignored` (`declared_non_event_entry`) | `file-history-snapshot`, `queue-operation`, `last-prompt`, `ai-title`, `mode`, `atis-latch`, `api-request`, `api-request-shape`, `api-request-blob`, `tools-used`, `file-history-delta`, `cost-state` | Skipped and counted per type; carry no conversation event. |
+| `unknown-by-design` (`unknown_entry_type`) | `agent-name`, `fork-context-ref`, `permission-mode`, `pr-link`, `session-owner` | Skipped and counted per type; never parsed, so they cannot become a success, failure or independence label. |
+
+`ahl sources claude pin-check` reports `compatible_with_unknown_types` for the
+`2.1.317` and `2.1.322` fixtures because of the last row. A content block the
+adapter cannot represent, such as `image` (`unknown` in the pin-check report),
+becomes one `unsupported_native_block` coverage event with no outcome, tool name or
+call identifier.
 
 A capture whose first attributable envelope records a release outside the accepted
 set is not parsed with the verified adapter. Its file receipt carries the typed
@@ -671,3 +684,47 @@ and never reaches the brief, mechanism summaries or role views.
 body-insensitive metadata fingerprint that detects changed telemetry, and a duplicate native line whose input
 differs is still the same idempotent duplicate. This is separate from the `input_fingerprint` a caller-supplied normalized
 ledger declares, which is hashed with the rest of that ledger.
+
+## Tool error classes
+
+A structured tool error carries no text in the ledger, so counts alone cannot tell a failure the harness can
+prevent from the tool's own validation message. The pinned native Claude adapter therefore classifies each
+`tool_result` whose `is_error` is true against a fixed catalog of messages the runtime itself writes
+(`agent_harness_lab/telemetry/error_catalog.py`, version `ahl-tool-error-catalog-v1`) and records only the class
+as `tool_error_class`. Every other error body is `unclassified`; the body is never stored, excerpted or hashed.
+
+| `tool_error_class` | The result begins with the runtime's message that |
+| --- | --- |
+| `read_before_edit` | the file has not been read yet. |
+| `file_changed_since_read` | the file changed after it was read. |
+| `edit_target_not_unique` | the edit text matches more than once and `replace_all` is false. |
+| `edit_target_not_found` | the edit text is not in the file. |
+| `file_not_found` | the file does not exist. |
+| `permission_denied` | a permission was not granted or a rule denied the call. |
+| `user_rejected` | the user declined the tool call. |
+| `user_interrupted` | the user interrupted the tool call. |
+| `command_timeout` | a command that exited non-zero timed out. |
+| `command_exit_nonzero` | a command exited non-zero (`Exit code N`). |
+| `unknown_tool` | the tool name does not exist. |
+| `input_validation` | the input failed validation. |
+| `unclassified` | none of the above; this includes every error from a release outside the catalog's range. |
+
+**Matching.** An exact `<tool_use_error>` wrapper is removed, then only the first 4,096 characters are compared
+with anchored patterns, so a message embedded later in other text, in a different case, truncated, or followed by
+extra words stays `unclassified`. Messages that end in a user-supplied part (the edit text, a path, the command
+output) match their fixed prefix only. The class says the result begins with a catalog message, not which
+component wrote it: a tool that returns the same words as its own error cannot be told apart.
+
+**Version pin.** The catalog applies to the releases in `RUNTIMES` (currently `2.1.322`), whose own message strings
+were compared with the patterns, and each must also be a release the adapter verifies. A release the adapter
+reads but the catalog never compared (for example `2.1.316`) yields `unclassified` for every error. Add a release
+by comparing its strings, not by assuming they match. Events from a source that records no class (Codex, normalized
+ledgers, the descriptive reader) carry no `tool_error_class`.
+
+**Reports.** A mechanism group lists `errors_by_error_class` and `cases_by_error_class` (distinct cases per class),
+so one tool's errors compare across classes and a class concentrated in one case differs from one spread across many.
+Errors without a recorded class count as `not_captured` in the brief and as `unknown` in the group, never as
+`unclassified`. The brief's `tool_error_classes` gives the catalog version, its runtimes and the `classified`,
+`unclassified` and `not_captured` totals. A class is an observed pattern with the usual competing explanations (an
+expected negative test, a probe); it is not a diagnosis. The field is derived from a private result body, so it
+stays out of duplicate checks and the body-insensitive metadata fingerprint, as `input_fingerprint` does.

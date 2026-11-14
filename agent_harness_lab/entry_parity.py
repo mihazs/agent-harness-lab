@@ -33,7 +33,7 @@ _RUN_TIMING = ('invocation.deadline', 'invocation.remaining_seconds')
 _CONSTRUCTION_TIMING = ('evaluation_construction_seconds', 'evaluation_construction_repairs.*.elapsed_seconds')
 # Measured stage durations and the stage that took most of them; embedded in recovery.json too.
 _BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spent_seconds',
-                  'budget_exhaustion.consumed_most_by')
+                  'budget_exhaustion.consumed_most_by', 'spent_without_evaluation.preparation_seconds')
 ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.

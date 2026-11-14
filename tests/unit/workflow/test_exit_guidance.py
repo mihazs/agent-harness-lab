@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_harness_lab.evaluation.manifest_contract import DECLARATION_REASONS, ContractError
 from agent_harness_lab.exit_guidance import REMEDIATION, STATUS_ACTION, summary
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -82,3 +83,23 @@ def test_an_uninformative_stop_appends_its_class_specific_next_step_and_a_stage_
     timeout = dict(status='budget_exhausted', reason='evaluation_construction_timeout',
                    contract_violation=dict(stage='evaluation_construction', file='manifest.json', field=None, origin='agent_output_defect'))
     assert summary(timeout).endswith('Stage: evaluation_construction; file: manifest.json; field: none; origin: agent_output_defect.')
+
+
+@pytest.mark.parametrize('reasons, appended', [
+    pytest.param([{'reason': 'history_not_found_for_worktree', 'captures': 0}], True, id='worktree-history-not-found'),
+    pytest.param([{'reason': 'source_project_path_differs', 'captures': 1}], False, id='other-capture-reason'),
+    pytest.param([], False, id='no-capture-reason'),
+    pytest.param(None, False, id='unknown-capture-reasons'),
+])
+def test_no_change_receipt_names_a_worktree_path_mismatch_only_when_it_was_recorded(reasons, appended):
+    receipt = {'status': 'no_change', 'reason': 'no_change_evidence_insufficient', **({} if reasons is None else {'capture_reasons': reasons})}
+    assert summary(receipt).endswith(REMEDIATION['history_not_found_for_worktree']) is appended
+    assert summary(receipt).startswith('Evidence insufficient.')
+
+
+@pytest.mark.parametrize('reason', sorted(DECLARATION_REASONS))
+def test_a_declaration_defect_summary_names_stage_file_field_and_origin(reason):
+    error = ContractError(reason, 'bank_validation', 'tasks[2].areas[1]', 'bank.json')
+    rendered = summary(dict(status='invalid_input', reason=reason, contract_violation=error.receipt()))
+    assert rendered.endswith(REMEDIATION[reason] + ' Stage: bank_validation; file: bank.json; field: tasks[2].areas[1]; '
+                             'origin: project_declaration_defect.')

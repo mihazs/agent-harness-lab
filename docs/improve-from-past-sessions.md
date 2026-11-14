@@ -45,10 +45,43 @@ Both routes take the same options and return the same receipt shape and exit cod
 ## Read the result
 
 The receipt and the private `analysis.json` carry a `history` object with
-`sessions_captured`, `session_selected`, `pin_compatibility` counts (`declared_range` and `unverified`), `capture_reasons`, `cwd_drift` (records per working-directory class when native Claude captures changed directory; counts only), `runtime_lag` (only when a recorded release is newer than the newest verified one: counts per version and the exact next step), `events`, `cases`, `scope`, `since` and an `unknown` list.
+`sessions_captured`, `session_selected`, `pin_compatibility` counts (`declared_range` and `unverified`), `capture_reasons`, `cwd_drift` (records per working-directory class when native Claude captures changed directory; counts only), `runtime_lag` (only when a recorded release is unverified and not older than the first verified one, either newer than the newest or in a gap between verified ranges: counts per version and the exact next step), `events`, `cases`, `scope`, `since` and an `unknown` list.
 Capture completeness and recurrence outside the captured sessions are always
 listed as unknown; a repeated pattern is reported only when it was observed in
 the captured sessions. The object holds counts only, no paths or message bodies.
+
+## Try it in a worktree
+
+Sessions are looked up by the project's own path, and a linked worktree has a
+different path from the repository's main checkout. `ahl analyze` or `ahl improve`
+of a worktree therefore finds no captures even when the repository has recorded
+sessions. When the project is a linked worktree and no capture matched its path,
+the receipt says so instead of finishing as an empty success: `ahl analyze` adds
+`capture_reasons: [{reason: history_not_found_for_worktree, captures: 0}]`, and
+`ahl improve . --history` stops with `status: blocked` and that `reason`.
+The finding is "history not found for this path", never "nothing to learn".
+The reason is given only when no `--since`, `--source`, `--session` or
+`--max-capture-scan` limit applied: when one did, the cause of the empty result
+is unknown, so the receipt keeps that request's own reason (for example
+`history_no_matching_sessions`) and its next step.
+
+To read the main checkout's sessions on purpose, pass it explicitly:
+
+```sh
+ahl analyze ../linked-worktree --history-from .
+ahl improve ../linked-worktree --history --history-from .
+```
+
+`--history-from CHECKOUT` is opt-in and read-only. `CHECKOUT` must be another
+checkout of the same repository (the same Git common directory, read from files
+without running Git); a directory of an unrelated project is refused with exit
+code 2, so the option cannot widen the scope to other projects. It excludes
+`--events` and `--source-root`. The receipt carries
+`capture_reasons: [{reason: source_project_path_differs, captures: N}]`; only
+that checkout's sessions are read (the worktree's own are not merged in), and
+findings describe its history. Evaluation reports are still read from the project path.
+A repository whose Git files cannot be read stays unknown: no worktree claim is
+made. The receipt holds counts only, no paths.
 
 ## When the request cannot be satisfied
 
@@ -60,6 +93,12 @@ typed `reason` and the exact next step in `remediation`:
 | `history_runtime_has_no_captures` | No captured events of the `--source codex` or `--source claude` runtime matched this project, `--since` and `--session`. |
 | `history_source_ai_memory_unsupported` | `ahl improve` reads native sessions only and opens no network connection. Use `ahl analyze . --memory-manifest MANIFEST --authorization-file FILE` for ai-memory evidence. |
 | `history_no_matching_sessions` | No captured events matched this project, `--since` and `--session`. |
+| `history_not_found_for_worktree` | No session was recorded under this path and the project is a linked Git worktree, so the main checkout's history was not read. See [Try it in a worktree](#try-it-in-a-worktree). |
+| `no_outcome_evidence` | Sessions were captured and show findings, but no verified outcome relates them to a failure and no `--focus` or `--from-audit` hypothesis was supplied. No model call was made; `findings_not_candidates` counts why no finding became a candidate. |
+
+When you see `no_outcome_evidence`, add verified evidence (an executable-grader evaluation under `artifacts/`),
+run `ahl audit .`, or pass `--focus` with a hypothesis to test; rerunning unchanged repeats the same result at no cost.
+A run that did call the model and evaluated nothing is labelled `spent_without_evaluation`.
 
 Malformed requests exit 2 before any run starts: `--since` or `--source` without
 `--history`, an invalid `--since` or `--session`, or `--history` together with `--events` or

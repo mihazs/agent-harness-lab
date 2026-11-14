@@ -76,6 +76,12 @@ a truncated capture explains it as well as abandonment). Groups rank by reported
 roots, cases, bins with occurrences and error count. Counts are lower bounds when
 `counts_are_lower_bounds` is true.
 
+Where the capture came from a pinned native Claude release the catalog covers, each group also reports
+`errors_by_error_class` and `cases_by_error_class`: a fixed vocabulary of runtime-generated messages such as
+`read_before_edit` or `edit_target_not_unique`, with everything else `unclassified` and no message text kept. The brief's
+`tool_error_classes` names the catalog version and totals. See
+[tool error classes](telemetry.md#tool-error-classes).
+
 The brief also lists capture coverage and exclusions, the methods that ran and the
 exact prerequisite each missing method lacks, weak-outcome signals, and a
 `missing_evidence` list whose entries carry the command that would supply it. Weak-outcome signals
@@ -359,11 +365,25 @@ caveat. Every other case is `no_change_evidence_insufficient`: the receipt then 
 `next_steps` list (strongest observed patterns, each missing-evidence item, then `ahl audit .`), each with
 the command to run. Neither reason claims the harness is correct beyond the examined behaviors.
 
+A receipt that ends `no_outcome_evidence`, or `no_change` after preparation (the proposer wrote `no_change`, or a
+candidate identical to the baseline, `candidate_identical_to_baseline`), while `analysis.findings` is above zero, carries `findings_not_candidates`: `reason: findings_not_actionable`, the
+`findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
+`capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
+never an independence or severity claim. `ahl improve --history` returns `no_outcome_evidence` before any preparation call when no
+verified executable-grader outcome exists and no hypothesis source (`--from-audit` or `--focus`) was supplied;
+`next_steps` then lists the evidence that would unlock a candidate. Runs with explicit `--events` or `--source-root`
+input (and the closed input profile) never read evaluation results, so no added outcome could unlock them: they are
+not blocked and still reach preparation. A run whose preparation called the model and
+evaluated no trial carries `spend_label: spent_without_evaluation` (also in the `ahl: outcome=` line as `label=`)
+and a `spent_without_evaluation` object with `preparation_seconds` and `provider_reported_spend: unverified`.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
 | `analysis_incomplete` | Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings. |
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
+| `area_duplicate` | List each area id once, in the ahl.json areas and in every task areas list, then rerun. |
+| `area_registry_invalid` | Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |
@@ -399,6 +419,27 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `instruction_template_missing` | This release ships no instruction template, so the instruction file was left unchanged; install a newer release with: ahl update |
 | `instruction_write_failed` | Fix the filesystem error reported for the instruction file, then run: ahl update |
 | `region_edited_by_user_replaced` | Text edited inside the managed region of the instruction file was replaced and the edited text is in the backup; keep your own text outside the markers |
+| `invalid_usage` | Correct the option or project argument named on stderr, then rerun; ahl improve --help lists every option. |
+| `usage_conflict` | Resume with no other option: ahl improve PROJECT --resume RUN_ID |
+| `protected_destination` | Choose an output or state location outside the project and its history, then rerun. |
+| `unsupported_instruction_layout` | Make each instruction file a regular file inside the project instead of a symbolic link, then rerun. |
+| `run_input_rejected` | Read the rejected input named on stderr, correct it, then rerun; the private receipt of the run records the stage. |
+| `workspace_busy` | Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock. |
+| `run_conflict` | Read the conflict recorded in the private receipt of the run, resolve it, then rerun. |
+| `budget_exhausted` | Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun. |
+| `execution_failed` | Read the stage error recorded in the private receipt, fix the runtime or environment problem it names, then rerun. |
+| `system_error` | Fix the filesystem or operating-system condition reported on stderr, then rerun. |
+| `interrupted` | Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID |
+| `proposal_invalid` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
+| `evaluation_run_failed` | Read the failed evaluation records in the private receipt, fix the cause they name, then rerun. |
+| `run_incomplete` | Read which evidence is missing in the private receipt of the run, restore it, then rerun. |
+| `intervention_required` | Read the intervention the private receipt records, perform it, then rerun. |
+| `setup_failed` | Correct the setup problem reported on stderr, then rerun. |
+| `evidence_inconclusive` | Read the incomplete evidence recorded in the private receipt before drawing any conclusion, then rerun with more evidence. |
+| `prerequisite_blocked` | Satisfy the prerequisite recorded in the private receipt, then rerun. |
+| `capability_unavailable` | Run where the required filesystem capabilities exist; there is no unsafe fallback. |
+| `nested_invocation_refused` | Run ahl from the user shell, not from a managed preparation session. |
+| `legacy_attempted` | Read the recorded legacy operation in the private receipt before retrying. |
 | `fixed_comparison_inference_budget_infeasible` | Increase the declared inference budget for the comparison. |
 | `fresh_comparison_incomplete` | Review the incomplete comparison and its missing trial coverage. |
 | `frozen_inputs_changed` | Review the changed frozen inputs before starting a fresh evaluation. |
@@ -412,8 +453,11 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `inference_sandbox_unavailable` | Provide the required inference sandbox capabilities. |
 | `inference_tool_count_exhausted` | Review the configured inference tool-call limit. |
 | `inference_transport_failed_no_retry` | Inspect the recorded inference transport failure before any retry. |
+| `history_not_found_for_worktree` | No session was recorded under this path, which is a linked worktree of a repository, so history recorded for the repository's main checkout was not read; this does not show there is nothing to learn. Rerun with --history-from MAIN_CHECKOUT to read that checkout's sessions read-only, or run from the main checkout. |
+| `source_project_path_differs` | Sessions recorded for another checkout of this repository (--history-from) were read instead of this path's; read any finding as that checkout's history, and an empty result as no captures there. |
 | `history_no_matching_sessions` | No captured events matched this project, --since and --session; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
 | `history_runtime_has_no_captures` | No captured events of the requested runtime matched this project, --since and --session; rerun with --source native to include both runtimes, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
+| `inventory_entry_bound_exceeded` | The checkout holds more directory entries than the inventory examines; add the largest directories named in inventory_remedy, if they hold no harness files, to .gitignore, then run ahl audit again and rerun. |
 | `history_source_ai_memory_unsupported` | ahl improve reads native Codex and Claude sessions only and opens no network connection; rerun with --source native, codex or claude, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis. |
 | `instruction_removal_inconclusive` | Restore the missing behavioral controls before evaluating the removal. |
 | `instruction_removal_rejected` | Review the failed behavioral controls before revising the removal. |
@@ -438,6 +482,7 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `precision_target_infeasible` | Review the requested precision target and available budget. |
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
+| `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
@@ -446,6 +491,10 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
+| `task_area_undeclared` | Declare the area in the ahl.json areas with an id, a label and a description, or correct the tag on the task, then rerun. |
+| `task_areas_empty` | Give a tagged task one to three area ids, or remove its areas field to leave it untagged, then rerun. |
+| `task_areas_invalid` | Write the task areas field as a list of one to three lowercase kebab-case area ids, then rerun. |
+| `task_areas_too_many` | Tag a task with at most three areas and keep the ones it genuinely exercises, then rerun. |
 | `status:applied` | Review the recorded deployment and its rollback information. |
 | `status:blocked` | Review the reported prerequisite before retrying. |
 | `status:budget_exhausted` | Review the recorded budget before retrying. |

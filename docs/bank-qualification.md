@@ -32,6 +32,15 @@ review declarations remain visible as issues. Known root/family/project/time
 leakage, copied fixtures, changed oracle bytes and invalid inputs retain their
 existing checks; lack of certification authority does not skip validation.
 
+A task declared `review_status: quarantined` stays in the bank for inspection,
+leakage and content checks, and validation lists it in `quarantined_tasks` with a
+`task_quarantined` issue. It is never executable: `--export` leaves it out of the
+manifest and reports it as `quarantined_excluded`, `--audit` skips its controls and
+lists it as `quarantined_skipped`, and an explicit `task_ids` selection naming it
+is refused. A bank whose tasks are all quarantined has nothing to export or audit.
+Quarantining changes the bank bytes, so it needs a new frozen plan, and it neither
+removes the task's exposure nor makes the remaining tasks independent.
+
 A new export retains its fixtures, grading argv, frozen bundles, grouping revision,
 artifact allowlists and trial ceilings. Its profile remains `descriptive_smoke`,
 with `independence_verified: false`, `bank_certification_status: unverified` and

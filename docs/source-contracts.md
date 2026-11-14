@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -700,9 +700,9 @@ import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
 execution's version. Declared Codex and Claude Code instruction inventories are
 described below, as are the static hook inventory and path-scoped rules. Managed
-and global instruction capture remains open in #46. Observed loading,
-independently evidenced execution bindings and Gitea commit reconciliation
-(the Git/GitHub and Git/GitLab joins are below) remain open in #58/#77–#80.
+and global instruction capture remains open in #46. Observed loading and
+independently evidenced execution bindings remain open in #58/#77–#80 (the
+Git/GitHub, Git/GitLab and Git/Gitea commit joins are below).
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
@@ -772,8 +772,7 @@ atomically through the existing journal. Cached status and explicit analyze/doct
 context can inspect those facets without reading Git. Older checkpoints retain
 their captured graph when HEAD, refs or current files change. `task test:sources:git`
 runs the native synthetic Git contract and compatibility cases. Historical execution
-binding, Gitea reconciliation and independent proof persistence remain
-open in #58.
+binding and independent proof persistence remain open in #58.
 
 ### Explicit local Git relationship recheck
 
@@ -904,8 +903,9 @@ for foreign repositories, force-push staleness, abbreviated/case-variant SHAs,
 missing repository identity and truncated history. It also runs one native case
 through both built-in readers. The [PR commit-role join](#offline-pr-commit-role-join)
 below answers the PR head and merge-result questions this join leaves open. The
-remaining cross-source chain, persisted proofs, contradiction reports and the
-diagnostic-utility study stay open in #58.
+remaining cross-source chain, persisted proofs, most contradiction reports and the
+diagnostic-utility study stay open in #58; [merged PRs with failing CI](#merged-pull-requests-with-failing-ci)
+is the one lead implemented offline.
 
 ### Offline Git/GitLab merge request commit join
 
@@ -937,10 +937,49 @@ squash or rebase commit is not related to the original. No outcome, grade,
 independent root, verification or execution authority follows. The report holds
 fingerprints only, has `publication_allowed: false` and profile
 `cross-journal-gitlab-mr-commit-join-v1`, and public benchmark export rejects it.
-Gitea has no equivalent graph yet and stays open in #46.
-`task test:sources:commit-join` runs synthetic controls for foreign scopes,
-stale membership, missing records and invalid inputs, plus one case through both
-built-in readers.
+The [Gitea PR join](#offline-gitgitea-pull-request-commit-join) below follows the
+same rules. `task test:sources:commit-join` runs synthetic controls for foreign
+scopes, stale membership, missing records and invalid inputs, plus one case through
+both built-in readers.
+
+### Offline Git/Gitea pull request commit join
+
+`sources.commit_join.join_pull_request_commit(git_source, git_store, gitea_source,
+gitea_store, selection=SEL, repository_id=ID, pull_id=PULL_ID, number=N,
+commit_sha=SHA)` relates one exact local commit to one Gitea PR's server-reported
+commit listing, across a `local_git/git` journal and an `api/gitea` journal captured
+with a [schema 6](#explicit-gitea-rest-captures) selection that includes `commits`
+and the PR number. It has the GitLab join's guarantees: it reads only the two
+selected journals, runs no Git, makes no network or model calls, changes neither
+journal and has no CLI exposure yet. The SHA must be full, lowercase, 40-hex; the
+three IDs must be positive integers; the Gitea source must carry the selection's
+version, repository and scope fingerprints. Violations raise before any journal is
+read.
+
+`repository_id` and `pull_id` are the server-reported object IDs, not the PR
+number. They are part of the record identities, so a recreated repository or a
+replaced PR with the same name or number is never matched. The Git source must
+declare the selection's repository fingerprint, which is the declared instance
+plus the case-insensitive `owner/repo` name, not a verified repository identity.
+The `gitea_repository` and `gitea_pull` records must be current in the latest Gitea
+checkpoint. Statuses follow the GitLab join: `matched` (the commit record is
+current in both latest checkpoints, the PR-commit record for that PR is current and
+the latest Gitea graph holds the server-reported `commit_on` edge from that
+PR-commit record to that PR record), `stale`, `unlinked` (different declared
+fingerprints) and `unknown` (unavailable checkpoint or graph, missing repository or
+PR record, unobserved, reference-only, truncated or ambiguous, or
+`commit_link_unobserved` when no such edge ties the two records). The edge is what
+binds `pull_id` to `number`: the PR object record is keyed on the object ID alone
+and the PR-commit record on the number alone, so a caller-supplied pair naming two
+different selected PRs finds both records current but no edge, and is not matched.
+A `matched` report carries one `same_commit` candidate receipt with basis `source_declaration`, and states
+`membership: server_reported` and `ancestry: unknown`. Gitea merge and head SHAs
+are not ancestry, so a squash or rebase commit is not related to the original. No
+outcome, grade, independent root, verification or execution authority follows. The
+report holds fingerprints only, has `publication_allowed: false` and profile
+`cross-journal-gitea-pull-commit-join-v1`, and public benchmark export rejects it.
+`task test:sources:commit-join` runs its synthetic controls, plus one case through
+both built-in readers.
 
 ### Offline PR commit-role join
 
@@ -1369,11 +1408,17 @@ capability reference such as `instructions:codex`, which names the matching
 and `harness_sha256` names the `HarnessSnapshot` captured in the same Git read.
 The inventory therefore extends that snapshot without changing its fingerprint
 or the controller binding. Files that classify as `private_excluded` are
-`present_content_not_read`: their bytes are never read or hashed. A file below a
-vendored tree such as `node_modules` or `.venv` is still listed under its kind,
-with the fact `vendored: true`, because the classifier never makes it
-adoptable. The inventory runs no git, so a folder excluded only by ignore rules
-is not labelled here; the promotion journal checks those rules.
+`present_content_not_read`: their bytes are never read or hashed. In a checkout with
+a `.git` entry at its root, a directory that the checkout's own `.gitignore` files
+exclude, such as the usual `node_modules` or `.venv`, is neither counted, entered nor
+listed, and the refusals and files below it are not reported. The root `.claude`,
+`.agents` and `.codex` folders, the root `skills` tree and the `task_cwd` directory
+are walked even when ignored. The inventory runs no git: it reads only `.gitignore`
+files below the checkout, in a conservative subset of git's rules, and an ignore
+file it cannot model exactly (or a checkout with no `.git` entry) skips nothing.
+A file below a vendored tree that the ignore rules do not exclude is still listed
+under its kind, with the fact `vendored: true`, because the classifier never makes
+it adoptable. The promotion journal checks ignore rules separately.
 `observed_loading` and `effective` are always `unknown`. Construction rejects
 any other value, because a listed file is not evidence that a runtime loaded it.
 
@@ -1387,9 +1432,11 @@ reaches a node.
 Bounds: 1000 nodes, 10 MiB of read candidate bytes across all roots, directory
 depth 32, 20000 examined directory entries and 50000 parser facts across all
 nodes, so many small parsed files cannot multiply memory. Entries are counted as each is
-read, so one huge directory is blocked before it is held in memory. Exceeding
-any bound returns `blocked` with its reason and no nodes or refusals, never a
-truncated result.
+read, so one huge directory is blocked before it is held in memory; ignored
+directories are skipped before they are listed, so their entries are not counted.
+`ahl audit --max-inventory-entries N` (1 to 200000, for that run only) raises the
+entry bound; the other bounds are fixed. Exceeding any bound returns `blocked` with
+its reason and no nodes or refusals, never a truncated result.
 Roots outside the checkout, such as `~/.claude`, `$CODEX_HOME`, plugin caches
 and managed paths, are never read implicitly. The caller can declare one with
 `--external-root LABEL=PATH`. It must be an absolute path that does not overlap
@@ -3392,6 +3439,15 @@ Collection is bounded at 10,000 returned files and by transport budgets. Reads
 are non-atomic; reported changes do not verify execution or outcomes. V5 has a
 separate scope, and earlier histories are unchanged.
 
+An opt-in `schema_version=6`, `version="v6"` profile accepts every capability of
+schemas 3-5 and also emits an evidence graph with one `commit_on` candidate join
+per server-reported PR commit (commit record to PR record, namespace
+`gitea.native`). It adds no request, so the graph holds only what `commits`
+already captured, and schemas 1-5 keep their graph-less checkpoints. V6 has a
+separate scope, and earlier histories are unchanged.
+[`join_pull_request_commit`](#offline-gitgitea-pull-request-commit-join) reads
+that graph.
+
 For v2, a review listing returning 404 remains `not_found` and blocks a
 checkpoint: the response alone does not establish whether the endpoint is
 unsupported or the listing is otherwise unavailable. V1 retains its existing
@@ -3851,8 +3907,8 @@ billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
 numbers, deep nesting, duplicate case names, commit-identity validation and CLI
 journals that hold hashes only. Still open in #53: artifact download or zip
-handling; TAP, SARIF, coverage and lint reports; and expired-artifact coverage
-warnings from a live read.
+handling; TAP, coverage and lint reports; and expired-artifact coverage warnings
+from a live read.
 
 ### Joining test results to Actions jobs
 
@@ -3886,6 +3942,120 @@ in two reports keeps one origin per report. Reruns stay correlated replicates
 a model caused it. Warnings from both sides, including the unread logs, artifacts and
 annotations, stay in the report, and `capture_completeness` is `partial`.
 `task test:sources:test-results` runs the synthetic controls.
+
+### Merged pull requests with failing CI
+
+`sources.ci_leads.merged_pull_failing_ci_leads(summary, *, repository_id)` turns the
+GitHub reader's `summary` (a capture that selected the `checks` and/or `actions`
+detail) into scoped investigation leads for one contradiction pattern: a PR was
+merged while the CI captured for its exact head commit still fails. It reads no file
+or network and returns profile `merged-pull-failing-ci-leads-v1` (rejected by public
+export). A repository whose fingerprint differs from `repository_id` is `unlinked`
+with no leads.
+
+CI is attached to a PR only through the head commit identity the PR node carries.
+Failing evidence is a check run with conclusion `failure`, `timed_out` or
+`startup_failure`, a workflow run (latest attempt) with the same conclusions, or the
+newest commit status of a context in state `error` or `failure`. Cancelled, skipped,
+neutral, pending and unfinished results are not failures. A status context whose
+newest entries share one instant but disagree is neither failing nor passing and is
+listed as `conflicting_same_instant_statuses`. Each lead groups the failing evidence of
+one PR and labels every item `before_close`, `after_close` or `unknown` against the
+merge time; a run's `updated_at` only bounds when it finished, so a later value stays
+`unknown`. Several failing items on one head are one lead, not extra roots.
+
+A lead carries no `verdict` and lists `possible_explanations`: the check may not be
+required for merge, a rerun outside the capture may have passed, or a maintainer may
+have accepted the failure. The `required_checks_unknown` and
+`merge_commit_ci_not_evaluated` warnings always apply, as do the capture's own
+warnings (for example `latest_checks_only`). Open PRs are skipped. Not evaluated, with a
+reason, are closed-unmerged PRs (`closed_without_merge`: closing with failing CI is
+consistent), closed plain issues (`issue_without_commit_identity`: an issue names no
+commit and closing references are not read), merged PRs when no CI detail was
+selected (`ci_detail_not_selected`) and merged PRs with no CI captured for the head
+(`no_ci_evidence_for_head`).
+`causal_status` is `unknown`, `task_outcomes_verified` is `false` and
+`independent_roots` is `null`. `task test:sources:test-results` runs the synthetic
+controls. The `wiki claims a skill was used` and `PR says fixed but no graded run
+exists` leads remain open in #58.
+
+## Offline SARIF quality and security reports
+
+Select `local_file/quality-reports/v1` in the existing local source declaration,
+with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
+ "reports": [{"path": "reports/analysis.sarif", "format": "sarif"}],
+ "limits": {"max_findings": 5000}}
+```
+
+This is a separate provider from `test-results`, so static-analysis and security
+findings never share a status vocabulary, record type or outcome with test cases.
+The scope fingerprint must equal `digest(selection)`; the commit, paths and limits
+are part of it, and the commit, path and `limits` rules are those of the
+[test result reports](#offline-ci-test-result-reports). `QualityReportsExport`
+reads only the selected files, with no discovery, network, analyzer execution or
+URL fetch. A report URI, `$schema` or rule help link is hashed or ignored, never
+opened. A run carrying `externalPropertyFileReferences` is quarantined: the
+whole report is refused as `HostileReport` and nothing from it is imported.
+
+Only SARIF 2.1.0 is read. Each result of each run becomes one `quality_finding`
+development-artifact record and each report one `quality_report` record, both with
+no outcome metadata (source record schema 1), so a finding can never be a test
+success or failure, and `validate_outcome_source` already refuses outcomes from
+this provider. A finding keeps three fingerprints beside the report's: the tool
+(driver name and version), the rule (`ruleId` or `rule.id`) and the finding itself
+(tool, rule and the first location's URI and start line), plus an occurrence index
+for repeated identities (`duplicate_finding_identity`). Messages, code flows,
+fixes, snippets and URIs are not stored or printed; journals and previews hold
+hashes and counts.
+
+SARIF's own words stay separate and unmerged:
+
+| Field | Values |
+| --- | --- |
+| `level` | `error`, `warning`, `note`, `none`, or `unknown` when absent (`level_not_stated`), unrecognized (`unrecognized_level`) or contradicting a non-`fail` kind (`conflicting_result_kind`) |
+| `kind` | `fail` (the SARIF default), `pass`, `open`, `review`, `notApplicable`, `informational`; any other value is refused |
+| `suppression` | `declared` when `suppressions` is non-empty, else `none`; the suppression status is not interpreted (`suppression_status_not_interpreted`) |
+
+The level is not resolved through rule configuration, and a suppressed result is
+neither dropped nor counted as fixed. An empty or missing `results` list is not a
+clean bill: a report with no findings adds `no_findings_is_not_clean`; a run whose
+invocations report `executionSuccessful: false` adds
+`tool_execution_failure_reported`, and one that never states success adds
+`tool_execution_success_unstated`. Missing coverage, such as files the tool did
+not scan, is not knowable from the log.
+
+Findings are evidence about the declared commit only. Every one carries
+`commit_binding: caller_declared`, `commit_verified: false` and
+`outcome_scope: declared_commit_quality_evidence`; records keep causal status and
+independence `unknown`. A finding does not say a model caused it, and the absence
+of findings does not say a task was met. The preview `quality_reports_summary`
+reports level and kind counts, `suppressed`, warnings and `task_outcomes_verified`,
+`verification_authorized`, `execution_authorized`, `scripts_executed`,
+`publication_allowed` and `network_used`, all `false`, with profile
+`ci-quality-reports-v1`, which `public_export_allowed` rejects.
+
+Reports are decoded by the shared hardened JSON loader described for pytest JSON:
+duplicate keys, `NaN` and `Infinity`, nesting, container and scalar bounds are
+checked before records are made. `limits` may only lower these ceilings:
+
+| Limit | Ceiling |
+| --- | --- |
+| `max_reports` | 64 |
+| `max_report_bytes` | 16 MiB |
+| `max_findings` | 100,000 across all reports |
+| `max_json_depth` | 64 |
+| `max_json_containers` | 1,000,000 |
+| `max_json_values` | 2,500,000 |
+
+Not covered here: joining findings to Actions jobs, SARIF taxonomies, rule
+metadata and result fingerprints, and any live read of code-scanning alerts.
+`task test:sources:test-results` runs the synthetic controls: level and kind
+mapping, malformed and contradictory results, external references, hostile
+nesting and size bounds, commit-identity validation, changed-during-capture and
+CLI journals that hold hashes only.
 
 ## Offline MemPalace drawer result
 
@@ -3960,6 +4130,52 @@ Producer, version, graph completeness and lineage remain unverified; a fact is
 not a task outcome. No query, mutation, embedding or network operation is
 performed. Live retrieval, backend selection and remote endpoints remain
 unsupported and are never inferred from database files.
+
+### MemPalace capability report
+
+`ahl sources mempalace capabilities` prints the four profiles above, the pinned
+upstream tool each one mirrors, and which other pinned tools AHL refuses. It
+starts no worker, opens no palace, calls no tool, uses no network and runs no
+model; `network_used` and `model_used` are `false`, and `source_read` is `false`
+unless `--tools-list` reads its one named file. The
+classification comes from the public v3.7.0 `mcp_server.py` (`TOOLS` and its
+`_MUTATING_TOOLS` set) and is a pinned table, not a probe of a running server.
+
+| Report field | Meaning |
+| --- | --- |
+| `profiles` | Each import profile with its tool, claim type and scope (`wing`, or `entity` for the knowledge graph, which is not wing-scoped). `profile_runs_tool` is always `false`: the profile reads a saved result. `live_tool_embeds_query` marks a tool whose live call embeds the query |
+| `tools.live_query_embedding` | `mempalace_search` and `mempalace_check_duplicate`: the pinned handlers embed the query text (`mempalace_search` through `search_memories`, the other directly), so a live call would need its own resource opt-in. Saved results trigger no embedding |
+| `tools.supported_offline` | The four tools whose saved results have a profile |
+| `tools.unsupported_read` | Other tools the pin does not refuse in read-only mode, such as `mempalace_status` or `mempalace_diary_read`. They have no profile, and nothing is inferred from them |
+| `tools.refused_mutating`, `tools.refused_state_changing` | Tools that write, mine, sync, invalidate or supersede, plus the three that change server state. AHL never calls them |
+| `live_import` | `unsupported`. Paged reads expose `offset` and `limit` but no snapshot token, opening a palace can create files, and a server holds a writer lease. Backend files are never read |
+
+To compare a saved MCP `tools/list` result with the pinned input schemas, add
+`--tools-list FILE`. The file is one regular, single-link JSON file within the
+profile byte and structure bounds; a symlink or duplicate key is refused. Only
+names are compared, and the result prints no description or unknown tool name:
+
+| Verdict | Meaning | Exit code |
+| --- | --- | --- |
+| `compatible` | All four profile tools are present with the pinned property and required names | 0 |
+| `compatible_with_unknown_tools` | As above, plus tools the pin does not list. They are counted, never named or parsed | 0 |
+| `inconclusive` | A profile tool is absent from a listing that has a `nextCursor`, so another page might hold it, and no present profile tool differs | 3 |
+| `incompatible` | A profile tool differs in property or required names, or is absent from a listing without a `nextCursor`. Do not rely on the profile for that server | 3 |
+
+Only the one saved page is read. A `nextCursor` sets `listing_complete` to
+`false` and adds the `listing_incomplete` warning; a matching incomplete listing
+stays `compatible`, but `unknown_tool_count` and `advertised_write_tools` then
+count only that page.
+
+`advertised_write_tools` lists pinned write tools the listing exposes that the
+pinned server hides in its read-only mode, so their presence suggests it was not
+in that mode; AHL still calls none. `mempalace_reconnect` is state-changing and
+refused, but upstream deliberately keeps it listed in read-only mode, so it is
+never counted there. A matching
+listing identifies neither the server nor its version, says nothing about result
+shapes, and is not evidence that any saved result was produced by that server.
+Invalid input exits 2 with a reason class only. Real-server evidence remains
+absent until a maintainer supplies an authorized listing and results.
 
 ## Offline Claude-Mem exports
 
@@ -4368,10 +4584,9 @@ the export record, checked before mapping), `max_fields` 64 per row,
 4,000,000. `limits` may only lower them. `task test:sources:mem0` runs the
 synthetic controls.
 
-Still open in #49: a read-only OSS REST client and a read-only hosted Platform
-client with explicit origin, token source, retry and 401/403/404/429 stops, and
-verifying both envelopes against real captures. The offline Platform v3 profile
-is [documented below](#offline-mem0-platform-v3-exports).
+The offline Platform v3 profile is [documented below](#offline-mem0-platform-v3-exports),
+and the read-only [REST and Platform clients](#explicit-mem0-oss-rest-and-platform-v3-reads)
+reuse this envelope. Still open in #49: verifying both envelopes against real captures.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
@@ -4385,7 +4600,7 @@ namespace and claim type (`Mem0PlatformClaim`), so a Platform memory and an OSS
 memory never share a native ID. The descriptor is the OSS one with
 `api_version: "v3"` in place of `mem0_version`, and `limits` also accepts
 `max_pages` (ceiling 1,000). The reader opens one file and never calls the hosted
-API, so no origin, token or retry exists yet.
+API; the [read-only client](#explicit-mem0-oss-rest-and-platform-v3-reads) does.
 
 ```json
 {"exported_at": "2031-06-01T00:00:00Z", "api_version": "v3", "filters": {"user_id": "u1"},
@@ -4415,6 +4630,117 @@ other claim, expiry, tombstone, no-outcome and publication rules, summary
 fields, bounds and warnings are the OSS ones, and the summary reports
 `platform_v3: offline_export`. `task test:sources:mem0` runs the synthetic
 controls for both sources.
+
+## Explicit Mem0 OSS REST and Platform v3 reads
+
+`sources.mem0_api` reads the same pinned envelopes as the two offline exports
+above, directly from a Mem0 server, so a memory, a history row and their scope
+checks mean the same thing on either path. It is opt-in: no manifest, no read.
+Two separate API sources exist, each with its own provider, profile, selection
+and credential rule, because the OSS server and the hosted Platform do not share
+a request shape:
+
+| | OSS REST (`api/mem0-oss-rest/v1`) | Platform v3 (`api/mem0-platform-api/v1`) |
+| --- | --- | --- |
+| Selection | `Mem0Selection`, `release: "2.2.1"` | `Mem0PlatformSelection`, `release: "v3"` |
+| Listing | `GET /memories?...` with the filter as query parameters, plus `top_k` and `show_expired` | `POST /v3/memories/?page=N&page_size=100`; the filter is the JSON body, a read despite the verb |
+| History | `GET /memories/{id}/history` | `GET /v1/memories/{id}/history/` |
+| Filter | flat `user_id`, `agent_id`, `run_id` (ANDed) | flat object, or `{"OR": [flat, ...]}` / `{"AND": [flat, ...]}` of `user_id`, `agent_id`, `app_id`, `run_id` |
+| Credential | the API key, sent as `X-API-Key` (`auth_mode: "none"` reads an open development server) | the complete header value, for example `Token ...`, sent as `Authorization`; `auth_mode: "configured"` is required |
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "mem0-oss-rest", "version": "v1", "...": "..."},
+ "endpoint": "https://mem0.example.test",
+ "selection": {"base_url": "https://mem0.example.test", "instance": "laptop-a", "release": "2.2.1",
+               "filters": {"user_id": "u1"}, "show_expired": true, "max_memories": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+The manifest has the GitHub, Gitea and GitLab configuration shape. Pass the key
+with `--authorization-file PRIVATE_FILE` or `--authorization-env NAME`; only the
+named file or variable is read, and never by `probe` or `status`. `source.project_sha256` must be
+`selection.project_sha256`, a digest of the provider, `instance`, host, path and
+the exact filter, so another scope or server is another project. `scope_sha256`
+is `selection.sha256`. `endpoint` must equal `base_url`, a canonical HTTPS origin
+without a trailing slash or a route suffix. The shared transport is HTTPS only,
+so a local OSS server on plain `http://` needs a TLS proxy or the
+[offline export](#offline-mem0-oss-memory-and-history-exports).
+
+### What is never read or sent
+
+The readers build every path from the two fixed templates above. They never call
+an add, update, delete, reset, reprocess or create-export route, never use the
+unscoped admin listing, and never read `GET /memories/{id}` (the listing carries
+the same fields). A selection is refused when its filter is empty, names a key
+outside the surface's scopes, holds an operator, a padded value or the `*`
+wildcard that would match every tenant, or when `release` is not the pinned one.
+A memory ID is interpolated into a history path only when it is a plain token
+(`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`); another ID is `not_observed:
+unsafe_memory_id`. A listed row the filter would not return is excluded, and its
+history is never requested. A Platform `next` link is validated for the next page
+number but never followed, so a hostile link cannot redirect the credential.
+
+### Pagination, limits and stops
+
+`get_all` has no cursor and its default `top_k` is 20, so the OSS reader always
+sends `top_k=max_memories` (1 to 1,000, the server's ceiling). A result that
+fills `top_k` may have been cut off and is `pagination_incomplete:
+top_k_reached`; narrow the filter (for example with `run_id`) rather than
+guessing completeness. The Platform reader requests 100 rows per page until
+`next` is null, stopping between pages once `max_memories` (1 to 10,000) rows
+were read (`max_memories_reached`; the last page is kept whole). A page that
+skips or repeats a page number, has a link without a `page` parameter, carries an
+unknown envelope field, an empty page with a link or more than 100 rows fails the
+capture. A last page whose `count` disagrees with the rows read is
+`pagination_incomplete: count_mismatch` (`listing_count_mismatch`).
+
+History is one request per listed, in-scope memory, so a scope with N memories
+needs N+1 requests. `max_pages` (default 1,000), `max_bytes` (256 MiB), `seconds`
+(900) and `timeout` bound the whole capture, each response is limited to 8 MiB,
+and a spent budget is `budget_exhausted` partial coverage. There is no retry of a
+failed request: HTTP 401, 403, 404 and 429 become coverage states
+(`unauthorized`, `forbidden`, `not_found`, `rate_limited`) and other statuses,
+malformed JSON and non-JSON content fail the capture without a snapshot. A 404
+on one memory's history is only that memory's gap; a 401, 403, 429 or spent
+budget ends every later request. A 429 is never retried for the listing POST, and
+a GET waits only when `max_wait` allows it, as in the
+[forge rate-limit guide](forge-rate-limits.md), whose shared limiter state these
+readers use. Any non-captured coverage, including a truncated listing, makes the
+snapshot `checkpoint_ready: false`: the registry refuses to commit it and
+`ahl sources import` prints `status: "blocked"`, commits nothing and exits 3.
+
+### Claims and summary
+
+Claims, identities, lifecycle statuses (asserted, expired, replaced, deleted,
+current, superseded, tombstone), edits as versions, `run_id` as a scoped
+identifier rather than a task root, scores as relevance only and the
+no-outcome rule are the offline ones, applied by the same code. Native IDs equal
+the offline export's for the same `instance`, so the two paths dedup, but the
+sources are separate: the provider and root differ. The capture instant stands in
+for `exported_at` when deciding whether a dated memory has expired. The record
+`mem0_capture` (`mem0_platform_capture`) takes the place of the export file's
+record: its revision hashes the whole assembled response, so a change to an
+unmodelled field is a new capture. Because the profile is
+`mem0-oss-rest-v1` or `mem0-platform-api-v1`, `public_export_allowed` rejects the
+summary, which `ahl sources preview` prints as `mem0_summary` with
+`network_used: true`, `read_methods`, `coverage`, `history_memories` and
+`history_captured`. Memory and history text is fingerprinted, never stored or
+printed. A memory saying a test passed is still not a verified outcome.
+
+Reads are not atomic: a memory edited between the listing and its history read
+can disagree (`history_head_mismatch`). The summary warns `reads_non_atomic`.
+`version_attestation` is `caller_declared`: the OSS server does not report the
+SDK release, so `release` states what the operator believes it runs. Unsupported
+lifecycle fields (`lifecycle_state`, `structured_attributes`, `synthesized`,
+embeddings, `input`) are accepted but not interpreted, and the hosted Platform
+export job (`POST /v1/exports/`) is not called because it creates server-side
+state; import its output through the offline source instead.
+
+`task test:sources:mem0` runs the synthetic controls against a fake HTTPS wire on
+`mem0.example.test`: request-method and route allowlist, credential headers,
+scope and boundary exclusion, `top_k` and page truncation, hostile pages and
+IDs, 401/403/404/429 and budget stops, idempotent import and the CLI flow. Live
+OSS and Platform compatibility is not established by these fixtures.
 
 ## Offline Hindsight bank archives
 
@@ -4462,6 +4788,18 @@ independent origins or task outcomes. No referenced content or private text is
 retained; fingerprints are guessable. The producer and overall completeness
 remain unverified, and a local-file checkpoint does not establish bank coverage.
 The reader does not invoke reflect, models, a backend or the network.
+
+`local_file/hindsight-model-references/v2` adds one case. The [pinned exporter](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/engine/transfer/export.py)
+defaults `bank_rows_json_encoding` to `serialized`, so a JSONB column such as
+`reflect_response` can arrive as a JSON string; `v1` reports that as unknown. `v2`
+decodes a string `reflect_response` only when the manifest declares
+`bank_rows_json_encoding: "serialized"`. Without that declaration, with an object
+value under it, or with malformed, duplicate-key or non-object text, the lists
+stay unknown. Each nested string is decoded under the archive's one JSON
+container and value budget, and text that exceeds a depth or budget bound rejects
+the whole capture. The declaration comes from the caller-supplied archive and stays
+unverified (`row_encoding_declaration_unverified`). References remain unverified
+claims.
 
 `local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
 as the extracted archive profile below, with `archive` naming one explicitly
@@ -4622,10 +4960,12 @@ later file is decoded.
 | `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
 
 `limits` may only lower these ceilings. `task test:sources:hindsight` runs the
-synthetic controls. Still open in #51: reading the ZIP archive directly, an
-optional bank-specific read mode over a verified read-only API with an explicit
-URL and least-privilege token, mental models and knowledge pages as synthesized
-claims, verifying the shape against a real archive, and further releases.
+synthetic controls. Still open in #51, and not implementable offline: an optional
+bank-specific read mode over a verified read-only API with an explicit URL and
+least-privilege token, verifying the shape against a real archive, and further
+releases. The pinned OpenAPI lists GET operations for `memories/list`, `documents`
+and `mental-models`, but whether they are free of side effects and inference cost,
+and which token scopes they need, can be shown only against a Hindsight server.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
@@ -4820,6 +5160,7 @@ refused.
 | Evidence type | `derivation` separates a `session_qa_entry`, `agent_trace_step`, `distilled_lesson`, `retrieved_item` (chunk, summary, code, rule, skill kinds), `generated_answer` (completion kinds), `tool_result` and `system_marker`; an unrecognized kind is `unclassified`. |
 | Score | The number is kept with `score_semantics`: `unspecified` (retriever-defined) or `vector_distance_lower_is_better` for skills. It is relevance, never correctness. |
 | Origin | A session entry's `used_graph_element_ids.node_ids` become node hashes equal to the claims of a graph export of the same instance, dataset and dataset ID; an entry without any is `session_entry_without_graph_refs`. Edge IDs cannot be joined and are not kept. |
+| Retrieval provenance | A `graph` or `code` entry's `metadata.data_id` (the ingested Data, which is the Document node) and `metadata.chunk_id` become node hashes under the same rule. A `code` entry whose `raw.type` is one of the 14 code-graph node types at the pin (`CodeSymbol`, `CodeModule`, `ApiEndpoint` and the rest, from `code_retriever.py`) also hashes `raw.id` as its code-symbol reference and keeps that type as `code_node_type`; its name, file and line stay only in the body fingerprint. `graph_refs_status` is `named` or `none`; a retrieved item with none is `result_without_provenance_refs`, and a code fact with an unpinned type is `code_fact_type_unrecognized`. A non-string or empty ID, or non-object `metadata` or `raw`, refuses the file. `metadata.evidence` is not read, because its artifact IDs are untyped at the pin. A link is a candidate join to a graph export claim, never proof that the claim is correct. |
 
 Every claim keeps `independent_case`, `factually_verified` and
 `task_outcome_verified` false, so a generated answer is never a graded harness
@@ -4829,7 +5170,7 @@ Bodies, questions, answers and text are fingerprinted only. `max_rows`,
 always `partial` because top-k truncation cannot be seen.
 
 Still open in #52: verifying either shape against a real export or result list;
-`cogx` archives; code-symbol reference mapping; an opt-in, explicitly authorized
+`cogx` archives; evidence-reference mapping; an opt-in, explicitly authorized
 live `recall` connector with verified read-only API semantics and bounded
 cancellation of result streams; further releases and backends.
 

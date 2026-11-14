@@ -170,7 +170,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None, history_runtime=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None, since_ns=None, history_session=None, history_runtime=None, history_from=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -196,6 +196,17 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         raise ValueError('native source-root/session requires an explicit pinned Codex or Claude profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
+    checkout = project  # evaluation reports are read from the requested directory; sessions from `project`, which --history-from may rebind
+    differs = False
+    if history_from is not None:
+        if events is not None or source_root is not None:
+            raise ValueError('--history-from selects the project session store; drop --events/--source-root, or drop --history-from')
+        from .telemetry.claude_cwd import common_dir
+        other = Path(history_from).resolve()
+        mine, theirs = common_dir(project)[0], common_dir(other)[0]
+        if not other.is_dir() or mine is None or theirs is None or mine.resolve() != theirs.resolve():
+            raise ValueError('--history-from must be an existing checkout of the same repository as the project (same git common directory); sessions of other projects are never read')
+        differs, project = other != project, other
     caveats, sources, errors, reasons = [], [], [], []
     notify = progress or (lambda stage, **counts: None)
     notify('discovery', files=0, scanned=0, selected=0)
@@ -236,6 +247,14 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
                 selected.append((path, fmt))
+        if differs: reasons.append(dict(reason='source_project_path_differs', captures=len(selected)))
+        elif not selected and not caveats and since_ns is None and history_session is None and history_runtime is None:
+            from .telemetry.claude_cwd import common_dir
+            # Unknown stays unknown: a filter or scan limit may have hidden the path's own captures, and a project whose repository files cannot be read is not called a worktree.
+            if common_dir(project)[1]:
+                reasons.append(dict(reason='history_not_found_for_worktree', captures=0))
+                _warn(caveats, 'history_not_found_for_worktree: no capture was recorded under this path, which is a linked worktree of a repository; sessions recorded for '
+                    'the repository\'s main checkout were not read. Next: rerun with --history-from MAIN_CHECKOUT to read them read-only, labelled source_project_path_differs.')
     notify('capture_selection', selected=len(selected), incomplete=int(bool(caveats)))
 
     def normalized_events():
@@ -402,7 +421,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True, **attribution)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
-    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
+    outcomes = [] if events is not None or source_root is not None else _evaluation_results(checkout, max_files, sources, fingerprint, caveats)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]

@@ -35,7 +35,9 @@ oracle correction/invalidation and protected certification remain separate work.
   This conservative method needs independent roots. It may be underpowered; a
   narrow interval or benefit is never manufactured from a tiny task set. It does
   not model drift or certify absence of rare harms. Unknown provider costs remain
-  unknown. There is no optional stopping or task retry selection.
+  unknown. There is no optional stopping or task retry selection. `ahl experiment
+  --records` also prints a descriptive [repeat reliability profile](repeat-reliability.md)
+  of per-root consistency; it is not a decision input.
 - The promotion policy separates descriptive results, incomplete/blocked evidence,
   and a recommendation after verified prerequisites. It never sets automatic
   promotion true. A recommendation API call is not an isolation attestation:
