@@ -29,6 +29,7 @@ from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .gitea import PROVIDER as GITEA, GiteaConfigured
 from .gitlab import PROVIDER as GITLAB, GitLabConfigured
+from .claude_mem_api import PROVIDER as CLAUDE_MEM_WORKER, ClaudeMemWorkerConfigured
 from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
 from .remote_config import ConfiguredAPI
 from .native import NativeCapture
@@ -38,7 +39,8 @@ from agent_harness_lab.config import read_json
 
 # Selected-resource forge readers: connector and the preview summary key each prints.
 FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
-    MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary')}
+    MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary'),
+    CLAUDE_MEM_WORKER: (ClaudeMemWorkerConfigured, 'claude_mem_summary')}
 
 
 def main(argv):
@@ -84,7 +86,9 @@ def main(argv):
         'Rate limits: forge reads share a reserve, budget and quota state; see ahl sources github quota --help. '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration) or mem0-oss-rest / mem0-platform-api (one scoped, '
-        'read-only Mem0 memory and history listing on an explicit HTTPS origin; never an add, update, delete or export call). '
+        'read-only Mem0 memory and history listing on an explicit HTTPS origin; never an add, update, delete or export call) or '
+        'claude-mem-worker (one project\'s paged observation, summary and prompt lists on an explicit HTTPS origin in front of a worker you already run; '
+        'GET only, no MCP call, no worker start, no database). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
         'For reviewed cache relationships, use ahl sources lineage --help; for a read-only harness surface '
         'inventory of one checkout, use ahl sources inventory --help. To compare a Claude Code capture with the verified profile contract by field name only, '
@@ -98,7 +102,7 @@ def main(argv):
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
     parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
-    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete credential for a configured Gitea, GitLab or Mem0 source (an Authorization header value; for Mem0 OSS the X-API-Key value); '
+    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete credential for a configured Gitea, GitLab, Mem0 or Claude-Mem worker source (an Authorization header value; for Mem0 OSS the X-API-Key value); '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
     connector = None
@@ -113,7 +117,7 @@ def main(argv):
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
             if args.authorization_file is not None and not remote: raise ValueError('authorization file requires an API configuration')
             forge = FORGES.get(declaration['source'].get('provider')) if remote else None
-            if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea, GitLab or Mem0 configuration')
+            if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea, GitLab, Mem0 or Claude-Mem worker configuration')
             connector = (forge[0](args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if forge
                 else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
             source, _ = connector.declaration(**scope)
