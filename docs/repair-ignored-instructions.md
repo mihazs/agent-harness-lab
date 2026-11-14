@@ -55,7 +55,7 @@ ahl instruction-repair judge --target REF \
 | --- | --- | --- |
 | `rejected` | The candidate dropped a checkable rule (`rule_removed`) or a task or rule that held before no longer holds (`regression`) | Fix the repair; the lost and recovered counts are reported apart |
 | `recommendation_only` | The baseline arm did not reproduce the violation (`not_reproduced`) | Keep the recommendation; make no change |
-| `inconclusive` | Too few decided roots, unknown captures, missing preserved evidence or arms that overlap | Record more independent runs or complete captures |
-| `supported_by_recorded_pair` | The candidate arm followed the rule where the baseline did not, with no loss | Take the repair to the controlled experiment; this is not a validated improvement |
+| `inconclusive` | Too few decided roots, unknown captures, missing preserved evidence, a control or preserved root the candidate cannot decide (`control_undecided`, `preserved_undecided`) or arms that overlap | Record more independent runs or complete captures, and record every moved rule file as loaded |
+| `supported_by_recorded_pair` | The candidate arm followed the rule where the baseline did not, with no control or preserved root lost or left undecided | Take the repair to the controlled experiment; this is not a validated improvement |
 
 The exit status is 0 whenever a verdict was produced, including a rejection, and 2 for invalid input.

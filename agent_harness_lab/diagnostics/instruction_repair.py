@@ -79,7 +79,8 @@ def _hypotheses(finding, rows, texts):
         if any(row['ref'] == finding['instruction_ref'] and rules.hedged(row['sentence']) for row in rows):
             found.append(_hypothesis('unobservable_wording', 'observed', ['hedged_wording']))
         if finding['mechanism'] in ENFORCEABLE and loading in ('loaded', 'unknown'):
-            found.append(_hypothesis('prose_only_rule', 'observed' if loading == 'loaded' else 'not_excluded', ['mechanism=' + finding['mechanism']]))
+            # Only the broken rule is observed; whether a hook exists and failed is not read, so the hypothesis never gets the observed basis.
+            found.append(_hypothesis('prose_only_rule', 'not_excluded', ['mechanism=' + finding['mechanism'], 'loaded_rule_broken' if loading == 'loaded' else 'loading_unrecorded']))
     if direction == 'user_prompt':
         found.append(_hypothesis('no_self_check_for_user_instruction', 'not_excluded', ['direction=user_prompt', 'mechanism=' + finding['mechanism']]))
     if finding['span']['last_turn'] >= LONG_SESSION_TURNS:
@@ -154,8 +155,11 @@ def _arm(roots, excluded, key):
 
 
 def _pairs(before, after, skip=None):
-    """Lost, recovered and undecided roots of two arms paired by declared root, over every rule but skip."""
-    lost = recovered = undecided = 0
+    """Lost, recovered, undecided and unresolved roots of two arms paired by declared root, over every rule but skip.
+
+    A root is unresolved when a rule satisfied before is unknown after: the candidate may have lost it, so it cannot support a repair.
+    """
+    lost = recovered = undecided = unresolved = 0
     for root, outcomes in before.items():
         if root not in after:
             continue
@@ -163,7 +167,9 @@ def _pairs(before, after, skip=None):
         lost += ('satisfied', 'violated') in moves
         recovered += ('violated', 'satisfied') in moves
         undecided += any('unknown' in move for move in moves)
-    return dict(paired_roots=len(before.keys() & after.keys()), missing_in_candidate=len(before.keys() - after.keys()), lost=lost, recovered=recovered, undecided=undecided)
+        unresolved += ('satisfied', 'unknown') in moves
+    return dict(paired_roots=len(before.keys() & after.keys()), missing_in_candidate=len(before.keys() - after.keys()), lost=lost, recovered=recovered,
+                undecided=undecided, unresolved=unresolved)
 
 
 def _target_key(target, rows, session_list):
@@ -215,6 +221,8 @@ def judge(target, baseline, candidate, *, reproduction, preserved=None):
         verdict, reasons = 'inconclusive', ['preserved_not_supplied']
     elif kept['missing_in_candidate'] or not kept['paired_roots']:
         verdict, reasons = 'inconclusive', ['preserved_incomplete']
+    elif controls['unresolved'] or kept['unresolved']:
+        verdict, reasons = 'inconclusive', [name for name, arm in (('control_undecided', controls), ('preserved_undecided', kept)) if arm['unresolved']]
     elif not arms['candidate']['followed_interval95'][0] > arms['baseline']['followed_interval95'][1]:
         verdict, reasons = 'inconclusive', ['interval_overlap']
     return dict(profile=VERDICT_PROFILE, authority='screen_only', causal_diagnosis=False, validated_improvement=False, change_authorized=False,

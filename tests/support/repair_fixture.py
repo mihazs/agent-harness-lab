@@ -17,8 +17,8 @@ def harness(text, name='AGENTS.md', layer='project'):
 
 
 def arm(roots, turns, *, prefix='s', loaded='loaded', capture='complete'):
-    """One recorded session per root, all with the same turns; a root of None leaves the lineage undeclared."""
-    return [session(f'{prefix}-{index}', turns, capture=capture, loaded={SOURCE: loaded} if loaded else None, root=root)
+    """One recorded session per root, all with the same turns; a root of None leaves the lineage undeclared; loaded is one state or a source map."""
+    return [session(f'{prefix}-{index}', turns, capture=capture, loaded=loaded if isinstance(loaded, dict) else {SOURCE: loaded} if loaded else None, root=root)
             for index, root in enumerate(roots)]
 
 
@@ -59,5 +59,6 @@ def judged(*, baseline=RULE + CONTROL, candidate=RULE + CONTROL, target=None, re
     if preserved == 'default':
         kept = [f'p{n}' for n in range(3)]
         preserved = (arm(kept, CONTROL_CLEAN, prefix='pb'), arm(kept, CONTROL_CLEAN, prefix='pc'))
-    return repair.judge(target or target_ref(), harness(baseline), harness(candidate), reproduction=tuple(map(sessions, reproduction)),
+    files = candidate if isinstance(candidate, list) else harness(candidate)
+    return repair.judge(target or target_ref(), harness(baseline), files, reproduction=tuple(map(sessions, reproduction)),
                         preserved=tuple(map(sessions, preserved)) if preserved else None)

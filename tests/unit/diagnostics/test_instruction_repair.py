@@ -5,7 +5,7 @@ import pytest
 
 from agent_harness_lab.diagnostics import instruction_adherence as adherence
 from agent_harness_lab.diagnostics import instruction_repair as repair
-from tests.support.adherence_fixture import SOURCE, agent, call, session, user
+from tests.support.adherence_fixture import SOURCE, agent, call, edit, session, shell, user
 from tests.support.repair_fixture import (BROKEN, COMPLIANT, CONTROL, CONTROL_BROKEN, CONTROL_CLEAN, RULE, VIOLATION, arm, first, harness,
                                           judged, mechanisms, plan_for, report_for, sessions)
 
@@ -21,11 +21,17 @@ def one(turns, rules=RULE, **options):
 def test_a_loaded_rule_that_a_call_broke_is_a_prose_only_rule_with_competing_explanations_and_no_authority():
     plan = one(BROKEN)
     hypothesis = first(plan)['hypotheses'][0]
-    assert (hypothesis['mechanism'], hypothesis['repair_class'], hypothesis['route'], hypothesis['basis']) == (
-        'prose_only_rule', 'hook_or_feedback_sensor', 'hook', 'observed')
+    assert (hypothesis['mechanism'], hypothesis['repair_class'], hypothesis['route']) == ('prose_only_rule', 'hook_or_feedback_sensor', 'hook')
     assert hypothesis['status'] == 'hypothesis' and 'agent_error_unrelated_to_harness' in hypothesis['competing']
     assert (plan['causal_diagnosis'], plan['change_authorized'], plan['promotion_authority'], plan['authority']) == (False, False, False, 'recommendation_only')
     assert first(plan)['disposition'] == 'recommendation_only' and 'paired_evaluation' in first(plan)['requires']
+
+
+@pytest.mark.parametrize('loading, fact', [('loaded', 'loaded_rule_broken'), (None, 'loading_unrecorded')], ids=['loaded-rule-broken', 'loading-unrecorded'])
+def test_prose_only_is_never_an_observation_because_a_hook_that_failed_is_not_excluded(loading, fact):
+    raw = session('s1', BROKEN, loaded={SOURCE: loading} if loading else None, root='r1')
+    row = next(row for row in first(plan_for([raw], RULE))['hypotheses'] if row['mechanism'] == 'prose_only_rule')
+    assert (row['basis'], row['support'][-1]) == ('not_excluded', fact)
 
 
 def test_a_rule_that_was_not_loaded_is_a_loading_problem_and_nothing_else():
@@ -187,6 +193,26 @@ def test_outcomes_credit_a_rule_only_when_the_agent_demonstrably_had_it(turns, l
     assert outcomes(raw) == {adherence.rules.key(adherence.inventory(harness(RULE))[0][0]['rule']): expected}
 
 
+LINT = '- Always run `task lint`.\n'
+LINT_BEFORE_COMMIT = '- Always run `task lint` before running `git commit`.\n'
+LINT_THEN = [user('Fix it.'), shell('task lint'), agent('Noted.')]
+
+
+@pytest.mark.parametrize('before', ['unknown', 'not_loaded'])
+@pytest.mark.parametrize('rules, turns, expected', [
+    pytest.param(LINT, LINT_THEN + [agent('Done.')], 'unknown', id='required-step-run-only-before-the-rule-was-loaded'),
+    pytest.param(LINT, LINT_THEN + [edit('src/a.py')], 'unknown', id='required-step-run-before-loading-then-an-unchecked-write'),
+    pytest.param(LINT, LINT_THEN + [edit('src/a.py'), shell('task lint')], 'satisfied', id='required-step-run-after-loading'),
+    pytest.param(LINT_BEFORE_COMMIT, LINT_THEN + [shell('git commit -m x')], 'unknown', id='order-met-only-by-a-step-run-before-loading'),
+    pytest.param(LINT, LINT_THEN, 'unknown', id='rule-loaded-after-the-last-turn'),
+    pytest.param(RULE, COMPLIANT + [agent('Done.')], 'satisfied', id='forbidden-rule-never-broken-after-loading'),
+    pytest.param(RULE, COMPLIANT, 'unknown', id='forbidden-rule-loaded-after-the-last-turn'),
+])
+def test_outcomes_never_credit_a_rule_for_calls_made_before_the_agent_had_it(rules, turns, expected, before):
+    raw = session('s1', turns, loaded={SOURCE: dict(state='loaded', turn=3, before=before)}, root='r1')
+    assert list(outcomes(raw, rules).values()) == [expected]
+
+
 def test_a_prompt_rule_is_in_force_without_any_loading_state():
     raw = session('s1', [user('Do not edit `a.txt`.'), call('Edit', path='a.txt')], root='r1')
     assert list(outcomes(raw, rules='').values()) == ['violated']
@@ -292,6 +318,46 @@ def test_a_preserved_task_the_baseline_could_not_decide_is_not_a_loss_when_the_c
     baseline = arm(kept, CONTROL_CLEAN, prefix='pb', capture='partial')
     verdict = judged(preserved=(baseline, arm(kept, CONTROL_BROKEN, prefix='pc')))
     assert verdict['preserved']['lost'] == 0 and verdict['preserved']['undecided'] == 1
+
+
+EXTRA = 'project:EXTRA.md'
+
+
+@pytest.mark.parametrize('kept', [
+    dict(capture='partial'), dict(capture='unknown'), dict(loaded='not_loaded'), dict(loaded=None)],
+    ids=['partial-capture', 'unknown-capture', 'rule-not-loaded', 'loading-unrecorded'])
+def test_a_preserved_task_the_baseline_satisfied_and_the_candidate_cannot_decide_blocks_a_supported_verdict(kept):
+    roots = [f'p{n}' for n in range(3)]
+    verdict = judged(preserved=(arm(roots, CONTROL_CLEAN, prefix='pb'), arm(roots, CONTROL_CLEAN, prefix='pc', **kept)))
+    assert verdict['verdict'] == 'inconclusive' and verdict['reasons'] == ['preserved_undecided']
+    assert (verdict['preserved']['unresolved'], verdict['preserved']['lost']) == (3, 0)
+
+
+@pytest.mark.parametrize('moved', [dict(loaded='loaded'), {EXTRA: 'not_loaded'}, {EXTRA: 'truncated'}],
+                         ids=['file-never-recorded-as-loaded', 'file-not-loaded', 'file-truncated'])
+def test_an_unrelated_rule_moved_to_a_file_the_candidate_sessions_do_not_load_blocks_a_supported_verdict(moved):
+    roots = [f'r{n}' for n in range(5)]
+    loaded = {SOURCE: 'loaded', **(moved if EXTRA in moved else {})}
+    candidate = harness(RULE) + harness(CONTROL, name='EXTRA.md')
+    verdict = judged(candidate=candidate, reproduction=(arm(roots, BROKEN, prefix='b'), arm(roots, COMPLIANT, prefix='c', loaded=loaded)),
+                     preserved=(arm(['p0'], CONTROL_CLEAN, prefix='pb'), arm(['p0'], CONTROL_CLEAN, prefix='pc', loaded=loaded)))
+    assert verdict['verdict'] == 'inconclusive' and verdict['reasons'] == ['control_undecided', 'preserved_undecided']
+    assert (verdict['controls']['unresolved'], verdict['controls']['lost']) == (5, 0)
+
+
+def test_an_unrelated_rule_moved_to_a_file_the_candidate_sessions_load_stays_supported():
+    roots = [f'r{n}' for n in range(5)]
+    loaded = {SOURCE: 'loaded', EXTRA: 'loaded'}
+    verdict = judged(candidate=harness(RULE) + harness(CONTROL, name='EXTRA.md'),
+                     reproduction=(arm(roots, BROKEN, prefix='b'), arm(roots, COMPLIANT, prefix='c', loaded=loaded)),
+                     preserved=(arm(['p0'], CONTROL_CLEAN, prefix='pb'), arm(['p0'], CONTROL_CLEAN, prefix='pc', loaded=loaded)))
+    assert verdict['verdict'] == 'supported_by_recorded_pair' and verdict['controls']['unresolved'] == 0
+
+
+def test_a_root_the_baseline_could_not_decide_is_not_unresolved_when_the_candidate_cannot_either():
+    kept = ['p0']
+    verdict = judged(preserved=(arm(kept, CONTROL_CLEAN, prefix='pb', capture='partial'), arm(kept, CONTROL_CLEAN, prefix='pc', capture='partial')))
+    assert (verdict['preserved']['unresolved'], verdict['preserved']['undecided']) == (0, 1)
 
 
 def test_an_unknown_target_is_refused():

@@ -21,7 +21,7 @@ and `change_authorized: false`, and one candidate per finding. Abstentions are c
 Each candidate carries `recurrence` (copied from the report: sessions, declared independent roots,
 unknown-lineage sessions), `hypotheses`, `limits`, `guards`, `requires` and `disposition`. A hypothesis
 has a `mechanism`, a `basis` (`observed` when the evidence shows the fact, `not_excluded` when the
-evidence cannot rule it out), its `support`, a `repair_class`, a `route`, and its `competing`
+evidence cannot rule it out), its `support` (the structural facts behind it), a `repair_class`, a `route`, and its `competing`
 explanations, which always include `agent_error_unrelated_to_harness`.
 
 | Mechanism | Evidence it needs | Repair class |
@@ -30,7 +30,7 @@ explanations, which always include `agent_error_unrelated_to_harness`.
 | `conflicting_instructions` | A `conflict` finding | `resolve_conflict` |
 | `buried_or_duplicated` | The rule appears more than once, or sits in the later half of a file of at least 200 lines | `shorten_dedupe_reorder` |
 | `unobservable_wording` | The sentence carries a soft cue such as `try to` or `be careful` | `reword_observable` |
-| `prose_only_rule` | A loaded (observed) or possibly loaded (not excluded) rule that a call, order or missing step broke | `hook_or_feedback_sensor` (route `hook`) |
+| `prose_only_rule` | A loaded or possibly loaded rule that a call, order or missing step broke; the basis is always `not_excluded`, because whether a hook already enforces the rule is not read and a hook may exist and have failed. `support` records the observed fact apart: `loaded_rule_broken` or `loading_unrecorded` | `hook_or_feedback_sensor` (route `hook`) |
 | `context_loss` | The finding reaches turn 200 or later; a compaction is never read, so the basis is always `not_excluded` | `re_ground_after_compaction` (route `state`) |
 | `no_self_check_for_user_instruction` | The ignored instruction came from a user prompt | `pre_action_checklist_or_echo` |
 
@@ -56,8 +56,9 @@ baseline reproduction session. The arms are sessions files of the detector. The 
 `change_authorized: false`.
 
 The grader is the adherence detector. Per session it judges every checkable rule, and a rule is credited
-or faulted only when the agent had it: a harness rule not recorded `loaded`, a call before its loading
-turn, and any rule of a session with unknown capture are `unknown`. A root's outcome is the worst over its
+or faulted only when the agent had it: a harness rule not recorded `loaded`, a pass that rests only on
+calls before its loading turn (a pass is judged over the turns from the loading turn on), and any rule of a
+session with unknown capture are `unknown`. A root's outcome is the worst over its
 sessions; a session with no declared `root` is excluded and counted in `unknown_lineage_excluded`.
 
 Verdicts, decided in this order:
@@ -65,11 +66,12 @@ Verdicts, decided in this order:
 1. `rejected` with `rule_removed` when the candidate harness lacks a checkable rule the baseline had, and with `regression` when a rule that was satisfied in a paired root of the preserved arm, or of the reproduction arm for every other rule, is violated under the candidate.
 2. `inconclusive` with `no_decided_baseline_roots` when no baseline root was decided.
 3. `recommendation_only` with `not_reproduced` when the baseline arm shows no violation.
-4. `inconclusive` with `no_decided_candidate_roots`, `preserved_not_supplied`, `preserved_incomplete` (a baseline preserved root is missing or unpaired in the candidate arm) or `interval_overlap`.
-5. `supported_by_recorded_pair` when the lower 95% Wilson bound of the candidate's followed roots exceeds the upper bound of the baseline's. An unknown root counts as followed in the baseline and as not followed in the candidate, so unknown never helps the repair.
+4. `inconclusive` with `no_decided_candidate_roots`, `preserved_not_supplied`, `preserved_incomplete` (a baseline preserved root is missing or unpaired in the candidate arm), `control_undecided` or `preserved_undecided` (a root that was satisfied for a control rule, or for a rule of a preserved task, under the baseline and is unknown under the candidate, for example a partial capture, or a rule moved to a file the sessions never record as loaded) or `interval_overlap`.
+5. `supported_by_recorded_pair` when the lower 95% Wilson bound of the candidate's followed roots exceeds the upper bound of the baseline's and no control or preserved root was lost or left unresolved. An unknown root counts as followed in the baseline and as not followed in the candidate, and an unresolved control or preserved root blocks the verdict, so unknown never helps the repair.
 
-`reproduction`, `controls` and `preserved` report `lost` and `recovered` roots apart, and `undecided`
-roots where either side is unknown.
+`reproduction`, `controls` and `preserved` report `lost` and `recovered` roots apart, `undecided` roots
+where either side is unknown and, for `controls` and `preserved`, `unresolved` roots that were satisfied
+in the baseline and are unknown in the candidate.
 
 ## Analysis wiring
 

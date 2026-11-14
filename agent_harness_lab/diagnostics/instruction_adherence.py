@@ -345,7 +345,8 @@ def outcomes(session, rows):
 
     A rule is credited or faulted only when the agent demonstrably had it: a harness rule not recorded as loaded (or a call before its
     loading turn) and any rule of an unknown capture are unknown, so a pass or a miss is never attributed to a rule the agent may not
-    have seen. The same rule from several sources reports its worst outcome.
+    have seen. A pass counts only over the turns from the loading turn on: calls before it never satisfy the rule. The same rule from
+    several sources reports its worst outcome.
     """
     count, found = len(session['turns']), {}
     items = [dict(row, lo=0, hi=count, loading=session['loaded'].get(row['source'], ('unknown', 0))[0], begin=session['loaded'].get(row['source'], ('unknown', 0))[1])
@@ -353,6 +354,10 @@ def outcomes(session, rows):
     items += [item for item in _user_items(session) if item['rule']]
     for item in items:
         verdict, bad, _ = _verdict(item['rule'], session, item['lo'], item['hi'])
+        start = max(item['lo'], item['begin'])
+        if verdict == 'satisfied' and start > item['lo']:
+            # A pass counts only over the turns the agent had the rule; a call before its loading turn is no evidence, and a new fault is not claimed from a narrowed window.
+            verdict = 'satisfied' if start < item['hi'] and _verdict(item['rule'], session, start, item['hi'])[0] == 'satisfied' else 'unknown'
         if session['capture'] == 'unknown' or item['loading'] != 'loaded' or verdict == 'violated' and not any(turn >= item['begin'] for turn in bad):
             verdict = 'unknown'
         key = rules.key(item['rule'])
