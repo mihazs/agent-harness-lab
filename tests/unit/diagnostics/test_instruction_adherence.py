@@ -120,6 +120,19 @@ def test_call_made_after_the_rule_was_loaded_counts_and_the_earlier_one_does_not
     assert (finding['status'], finding['turns']) == ('observed_violation', [3])
 
 
+def test_call_before_a_load_turn_that_leaves_earlier_turns_unknown_is_a_possible_violation_not_not_loaded():
+    loaded = {SOURCE: dict(state='loaded', turn=3, before='unknown')}
+    report = analyze([session('s', [shell('git push --force'), agent('x'), agent('y'), agent('z')], loaded=loaded)], NEVER_PUSH)
+    assert (statuses(report), only(report)['loading']) == (['possible_violation'], 'unknown')
+
+
+def test_call_after_a_load_turn_that_leaves_earlier_turns_unknown_is_still_observed():
+    loaded = {SOURCE: dict(state='loaded', turn=3, before='unknown')}
+    report = analyze([session('s', [shell('git push --force'), agent('x'), agent('y'), shell('git push --force')], loaded=loaded)], NEVER_PUSH)
+    finding = only(report)
+    assert (finding['status'], finding['turns']) == ('observed_violation', [3])
+
+
 # Three-valued evidence: what is not captured never becomes a pass or a failure.
 
 def test_partial_capture_keeps_an_observed_prohibited_call_but_not_its_absence():
@@ -340,9 +353,10 @@ def test_calibrated_build_moves_weak_signals_to_abstentions_and_keeps_observed_f
     dict(session='s', turns=[dict(role='user')]), dict(session='s', turns=[dict(role='tool_call')]),
     dict(session='s', turns=[], capture='mostly'), dict(session='s', turns=[], project_dir='relative'),
     dict(session='s', turns=[], loaded={'a': 'maybe'}), dict(session='s', turns=[], loaded={'a': dict(state='loaded', turn=-1)}),
+    dict(session='s', turns=[], loaded={'a': dict(state='loaded', turn=1, before='loaded')}),
     dict(session='', turns=[]), dict(session='s', turns=[shell('x' * (adherence.MAX_TEXT + 1))])],
     ids=['no-turns', 'unknown-key', 'bad-role', 'user-without-text', 'call-without-tool', 'bad-capture', 'relative-project',
-         'bad-loading-state', 'negative-loading-turn', 'empty-id', 'oversized-text'])
+         'bad-loading-state', 'negative-loading-turn', 'bad-before-state', 'empty-id', 'oversized-text'])
 def test_invalid_session_is_refused(raw):
     with pytest.raises(ValueError):
         adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=[raw]))
