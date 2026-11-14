@@ -117,6 +117,47 @@ Read it in this order. An abridged block for the `clear_win` fixture below:
 Every field, its meaning and the recorded input it traces to are in the
 [output block reference](bayesian-decision-reference.md#output-block).
 
+## Read the descriptive report
+
+For a plan that declares `bayes_decision`, the command also prints a `descriptive_report`
+key beside the block. It is **descriptive only**: not a verdict, never an input to the
+decision above, and it passes or fails nothing. It restates the observed differences as a
+Pareto relation at `rope_epsilon` and a desirability summary. An abridged report for the
+`clear_win` fixture:
+
+```json
+{
+  "descriptive_only": true,
+  "decision_input": false,
+  "passes_gate": false,
+  "epsilon": 0.1,
+  "resources": "not_declared",
+  "objectives": [{"name": "quality", "status": "known", "gain": {"low": 0.4125, "high": 0.4125}}],
+  "candidate_epsilon_dominated": false,
+  "baseline_epsilon_dominated": true,
+  "relation": "candidate_dominates",
+  "desirability": {"value": 1.0, "low": 1.0, "high": 1.0}
+}
+```
+
+- `relation` says whether either arm is at least as good as the other on every objective
+  within `epsilon`: `candidate_dominates`, `baseline_dominates`, `epsilon_equivalent`, a
+  `trade_off` between objectives, or `undetermined` when an objective is unknown or only
+  bounded.
+- Quality is the paired difference of the fixed analysis (its bounds when outcomes are
+  ungraded). Cost and time enter only when a resource decision for the plan's pinned
+  contract is supplied through the library; the commands do not compute one, so they
+  print `resources` as `not_declared`, or an `unknown` `resources` objective when the
+  plan pins a contract. Unmeasured usage is `unknown`, never zero.
+- `desirability` is a single number for a reader's eye. Do not rank or choose by it: the
+  gate keeps quality, regression and resource trade-offs explicit for that reason. A
+  `value` of `null` means the unknowns could move it.
+- A `better` block next to `trade_off` or `undetermined` is not a contradiction: the
+  report describes the objectives, the block decides.
+
+`ahl compare` shows the report as a labelled text section. The
+[reference](bayesian-decision-reference.md#descriptive-report) lists every field.
+
 ## Act on a verdict
 
 | Verdict | What it means for you |
@@ -176,5 +217,8 @@ floor: its posterior alone would clear `p_cut`, and six roots still give no verd
   outcome. It is not observed improvement, certification or oracle validity.
 - The score is recommendation-only: `automatic_promotion` and `publication_allowed` stay
   `false`, and no model call appears anywhere in it.
+- The descriptive report is not a verdict and no peer-reviewed work validates its
+  desirability summary or epsilon-indicator for harness scoring; read it as a picture of
+  the trade-offs, never as a ranking.
 
 The [explanation](bayesian-decision-score.md#limits) gives each limit in full.

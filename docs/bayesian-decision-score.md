@@ -8,7 +8,8 @@ declares the frozen `bayes_decision` field gets a `bayesian_decision` block from
 decision receipt, and `ahl compare` displays a supplied block. A plan without the
 declaration prints byte-identical output. The default `p_cut` was calibrated with the
 seeded power simulator under a frozen protocol (see [Calibration](#calibration-issue-e)).
-The descriptive report is not yet implemented (see [Status](#status)).
+The descriptive desirability and Pareto epsilon-indicator report is implemented and kept apart
+from every decision (see [Descriptive-only role](#descriptive-only-role-option-5)).
 
 Use the [how-to](bayesian-decision-how-to.md) to add the score to a plan and read it, and
 the [reference](bayesian-decision-reference.md) for the spec field, the output block, the
@@ -62,7 +63,7 @@ as given:
 
 The identity of Options 1, 5 and 6 beyond those roles is not known from the repository.
 This page maps Option 1 to an exact sign-permutation test, Option 5 to a descriptive
-desirability and Pareto epsilon-indicator report (the planned optional report), and
+desirability and Pareto epsilon-indicator report (the descriptive report), and
 Option 6 to a guard that can only downgrade a verdict. Those mappings are guesses and are
 listed under open decisions. If the report turns up and disagrees,
 the report's text wins over this page's mapping, and this page should be amended.
@@ -393,6 +394,55 @@ no verdict, are never an input to the gate, and are labeled `descriptive_only`.
 Collapsing quality and cost into one scalar would hide trade-offs the lexicographic
 gate keeps explicit, so a single desirability number is never a decision input.
 
+It is implemented in `evaluation/bayes_descriptive.py` and printed as `descriptive_report`
+beside the block (see the [reference](bayesian-decision-reference.md#descriptive-report)
+and the [how-to](bayesian-decision-how-to.md#read-the-descriptive-report)). How it is
+kept apart from the decision:
+
+- The block is finished before the report is computed, and the report reads the fixed
+  analysis and a resource decision, never the block. Nothing in the decision path imports
+  it, and tests change the weights, the indicator and the whole report and require the
+  block, the fixed analysis and the promotion to stay identical.
+- It adds no parameter. Its one tolerance is the frozen `rope_epsilon`, and the optional
+  weights of the summary belong to the reader, are not frozen and have no command-line
+  option; a test shows no weight reaches the block.
+- It has no pass or fail key: `passes_gate` and `gate_eligible` are always `false`, and
+  there is no verdict key.
+
+What it computes, with the conservative choices it took where the design was open:
+
+- **Objectives on one scale.** Each objective becomes a gain in [-1, 1], positive when the
+  candidate is better: the paired correctness difference as is, and each resource
+  difference as `-mean_difference / horizon` (a lower cost is a gain). Dividing by the
+  frozen horizon needs no ratio of costs, so a zero or unknown baseline cost cannot
+  produce an undefined ratio; a horizon that is not a positive finite number makes the
+  objective unknown. Using one epsilon for quality and for resources is a convention, not
+  a calibrated trade-off rate, and is listed under the open decisions.
+- **Epsilon-indicator.** The additive indicator of Zitzler and co-authors (2003) for two
+  points: with the baseline at the origin and the candidate at its gains, the smallest
+  epsilon at which the baseline epsilon-dominates the candidate is the largest gain, and
+  the reverse is the negated smallest gain. The report prints both and, at `rope_epsilon`,
+  whether each dominance holds. Neither direction holding is a `trade_off`, not a failure.
+  The function takes fronts of any size and is checked against hand-computed two- and
+  three-point fronts.
+- **Desirability.** The weighted geometric mean of a ramp per objective, in the manner of
+  Derringer and Suich (1980): 0 at a loss of `rope_epsilon`, 1 at a gain of it. One
+  unacceptable objective makes the whole summary 0, which is the point of the geometric
+  mean and also why it is only a picture.
+- **Unknown stays unknown.** An unmeasured resource, or one whose decision is for another
+  contract, is an unknown objective that spans the whole scale. A relation or a summary
+  `value` is stated only when it holds for every value the unknown could take; otherwise
+  the relation is `undetermined` and `value` is `null`. An unknown cost is never zero cost,
+  and it cannot make a candidate dominate. Quality from an incomplete bank is the range
+  the fixed analysis already reports, not an imputed point.
+- **Quality is one objective.** The report does not show per-family objectives, so a
+  family regression that the gate catches can sit beside a `candidate_dominates` report;
+  the block decides.
+
+Both tools are established in the multi-objective literature, but, as for the rest of this
+page, no peer-reviewed work applies them to agent harness scoring: using them here is an
+inference by analogy, cited from the literature as known and not re-fetched.
+
 ## Relationship to the existing code
 
 Checked against the repository code:
@@ -452,7 +502,7 @@ supplied analysis already contains it.
 | the `bayesian_decision` block in `ahl experiment`, the history-store analysis and the decision receipt; display in `ahl compare` | implemented |
 | documentation and the six synthetic fixtures | implemented (this page, the [how-to](bayesian-decision-how-to.md) and the [reference](bayesian-decision-reference.md)) |
 | calibration with the power simulator's generator on declared null, in-ROPE, beneficial and dependent-root models; held-out seeds fixed before the run | implemented (see [Calibration](#calibration-issue-e)) |
-| descriptive desirability and Pareto epsilon-indicator report | planned, optional |
+| descriptive desirability and Pareto epsilon-indicator report, descriptive only | implemented (see [Descriptive-only role](#descriptive-only-role-option-5)) |
 
 Every defect found in this work gets a failing pytest regression test written first, in
 `tests/unit/evaluation/` or `tests/integration/evaluation/`.
@@ -647,3 +697,8 @@ them are in the [how-to](bayesian-decision-how-to.md#reproduce-the-six-examples)
   labeling it. The block follows the Hoeffding analysis, which also reports `supported`
   beside `oracle_validity: unverified`.
 - What the report's Options 1, 5 and 6 are, since the report was not found.
+- Whether the descriptive report should use one epsilon (`rope_epsilon`) for quality and for
+  resource gains as a fraction of the frozen horizon, or a frozen per-endpoint tolerance
+  such as the contract's `max_increase`; whether it should add per-family objectives; and
+  whether the summary weights deserve a command-line option. None was needed to keep the
+  report descriptive, so the most conservative choice was taken: no new parameter.

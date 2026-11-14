@@ -104,7 +104,11 @@ When the supplied analysis already contains a `bayesian_decision` block (see the
 "Bayesian decision score" section with its verdict, scores, gate stages, cross-check
 and resource state as text. It is copied from the analysis, never recomputed, labelled
 recommendation-only, and states that no peer-reviewed work applies the method to agent
-harness scoring. A page whose analysis has no block is unchanged.
+harness scoring. When the analysis also contains a `descriptive_report` (see the
+[descriptive report](bayesian-decision-reference.md#descriptive-report)), a "Descriptive report"
+section follows it with the Pareto relation, the epsilon-indicator and the desirability
+summary as text, labelled descriptive only and not a verdict; an unknown measurement shows
+as `unknown`, never zero. A page whose analysis has no block is unchanged.
 
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without

@@ -303,3 +303,82 @@ All six plans freeze two equally weighted families, `effect_margin` .1, `family_
 declare `bayes_decision` with every other parameter at its default. "Fixed analysis" is
 the `status` of the unchanged Hoeffding analysis printed beside the block; none of the six
 reaches `recommended`.
+
+## Descriptive report
+
+Key `descriptive_report` on the analysis result, beside `bayesian_decision`, for a plan
+that declares `bayes_decision`. Implemented in `evaluation/bayes_descriptive.py` and added
+by `bayes_analysis.attach` after the block is finished. It is **descriptive only**: it
+carries no verdict, is never an input to the gate, and nothing in the decision path reads
+it (`bayes_decision`, `statistics`, `resource_decision`, `promotion.policy` and the decision
+receipt do not import it). Its desirability summary and its Pareto epsilon-indicator are
+established multi-objective tools applied here by analogy; no peer-reviewed work validates
+them for agent harness scoring, and the research report this design cites was not
+available. A plan without `bayes_decision` prints no report.
+
+Sources are as for the [output block](#output-block), plus `caller` for the optional
+weights of the summary (a reader's choice, never frozen, and no command-line option sets
+them: the commands use equal weights).
+
+| Field | Meaning | Source |
+|-------|---------|--------|
+| `profile` | Always `bayes-descriptive-report-v1`. | constant |
+| `descriptive_only` | Always `true`. | constant |
+| `decision_input`, `gate_eligible`, `passes_gate`, `recommendation_authority`, `automatic_promotion`, `publication_allowed` | Always `false`. The report is not a decision input, cannot pass or fail a gate and grants nothing. | constant |
+| `statement` | The sentence saying so, printed with every report. | constant |
+| `epsilon` | The frozen `bayes_decision.rope_epsilon`, the one tolerance of every relation below. | plan |
+| `epsilon_source` | Always `bayes_decision.rope_epsilon`: no parameter is introduced here. | constant |
+| `resources` | `not_declared` (the plan pins no resource contract, so quality is the one objective), `not_evaluated` (it pins one and no decision was supplied), `contract_mismatch` (the decision is for another contract) or `evaluated`. | plan, resource decision |
+| `objectives`, `objectives[]` | One entry per objective: `quality`, then each endpoint of the resource decision as `resource.<name>`; an unusable resource decision gives one `resources` entry. | analysis, resource decision |
+| `objectives[].name`, `objectives[].kind`, `objectives[].unit` | The objective's name; for quality `kind` is `quality` and `unit` is `correctness_difference`, for a resource they are the endpoint's `kind` and `unit` (`null` when the decision omits them). | analysis, resource decision |
+| `objectives[].status` | `known` (one value), `bounded` (a range, from an incomplete bank) or `unknown`. | analysis, resource decision |
+| `objectives[].difference`, `objectives[].difference.low`, `objectives[].difference.high` | Candidate minus baseline in the objective's own unit; `null` when unknown. Quality is the `primary.mean` of the fixed analysis, or the `identified_low` and `identified_high` of its `missing_outcome_bounds`; a resource is the endpoint's `mean_difference`. | analysis, resource decision |
+| `objectives[].gain`, `objectives[].gain.low`, `objectives[].gain.high` | The difference on a scale where positive means the candidate is better and the range is [-1, 1]: quality as is, a resource as `-mean_difference / horizon`. `null` when unknown. | analysis, resource decision |
+| `objectives[].reason` | Why an objective is unknown: `no_estimate_in_analysis`, `resource_gate_not_evaluated`, `resource_contract_mismatch`, `resource_endpoints_missing`, `malformed_endpoint`, `horizon_undefined`, `measurement_unknown`, `no_mean_difference` or `difference_out_of_range`; `null` otherwise. | analysis, resource decision |
+| `epsilon_indicator`, `epsilon_indicator.baseline_vs_candidate`, `epsilon_indicator.baseline_vs_candidate.low`, `epsilon_indicator.baseline_vs_candidate.high` | The additive epsilon indicator of the baseline against the candidate: the smallest epsilon at which the baseline epsilon-dominates the candidate, `max` of the gains. The range covers every value an unknown objective could take. | analysis, resource decision |
+| `epsilon_indicator.candidate_vs_baseline`, `epsilon_indicator.candidate_vs_baseline.low`, `epsilon_indicator.candidate_vs_baseline.high` | The same in the other direction, `-min` of the gains: the smallest epsilon at which the candidate epsilon-dominates the baseline. | analysis, resource decision |
+| `candidate_epsilon_dominated` | Whether the baseline epsilon-dominates the candidate (`baseline_vs_candidate` at most `epsilon`): `true`, `false`, or `null` when the range straddles `epsilon`. | plan, analysis, resource decision |
+| `baseline_epsilon_dominated` | Whether the candidate epsilon-dominates the baseline (`candidate_vs_baseline` at most `epsilon`), with the same three values. | plan, analysis, resource decision |
+| `relation` | One word for the two flags, see below. | plan, analysis, resource decision |
+| `desirability`, `desirability.value`, `desirability.low`, `desirability.high` | The weighted geometric mean of one ramp per objective: 0 at a gain of `-epsilon` or less, 1 at `+epsilon` or more, linear between. `low` and `high` bound it over the ranges of the gains; `value` is the number when they agree and `null` otherwise. | plan, analysis, resource decision |
+| `desirability.weights`, `desirability.weights.<objective>` | The weight of each objective, 1 unless the caller gave one; each must be a positive finite number for a known objective. | caller |
+| `desirability.function`, `desirability.combination` | The ramp and the combination, as constants. | constant |
+
+| `relation` | When | Reading |
+|------------|------|---------|
+| `candidate_dominates` | the candidate epsilon-dominates the baseline and not the reverse | no objective is worse by more than `epsilon` and one is better by more |
+| `baseline_dominates` | the baseline epsilon-dominates the candidate and not the reverse | the mirror |
+| `epsilon_equivalent` | each epsilon-dominates the other | every objective differs by at most `epsilon` |
+| `trade_off` | neither does | one objective is better by more than `epsilon` and another is worse by more |
+| `undetermined` | either flag is `null` | an unknown or bounded objective leaves the relation open |
+
+Unknown stays unknown. A resource that is unmeasured, whose horizon is not a positive
+finite number or whose difference lies outside its horizon is an `unknown` objective with
+a `reason`, and it spans the whole [-1, 1] scale: it is never read as zero cost, a relation
+is claimed only when it holds for every value it could take, and an unknown objective can
+never make the candidate dominate. Resource usage enters only through a
+`resource_decision.decide` result whose `contract_sha256` equals the plan's pinned
+`resource_contract_sha256`; no command computes one yet, so the commands print the quality
+objective alone (`resources` is `not_declared`) or an unknown `resources` objective when a
+contract is pinned. Roots, repetitions and unknown outcomes are handled as in the fixed
+analysis the report reads; the report is not a posterior, an interval or a test.
+
+Relations of the six [fixtures](#fixtures), as printed by `ahl experiment --records`
+(quality is the one objective; `epsilon` is .1). They are committed in
+[`examples/bayes-decision/expected-verdicts.json`](../examples/bayes-decision/expected-verdicts.json)
+as `descriptive_relation`:
+
+| Fixture | `relation` | Why |
+|---------|------------|-----|
+| `clear_win` | `candidate_dominates` | The fixed analysis reports a paired mean of about +.41, above `epsilon`. |
+| `clear_loss` | `baseline_dominates` | About -.41. |
+| `tie` | `epsilon_equivalent` | About 0, inside the rope. |
+| `mixed_unknowns` | `candidate_dominates` | Quality is `bounded` by the ungraded arms; even the worst completion, +.16, is above `epsilon`. The block still withholds its verdict (`unknown_outcomes`). |
+| `critical_veto` | `undetermined` | The fixed analysis stops at the veto and reports no estimate, so quality is `unknown`. |
+| `starter_bank` | `candidate_dominates` | Six roots, every one a win, a paired mean of 1. The root floor still withholds the verdict. |
+
+`ahl compare` shows a supplied `descriptive_report` as a labelled text section after the
+Bayesian block, copied and never recomputed.
+
+Rounding: none; numbers are printed as computed. The report is deterministic and uses no
+random draw.
