@@ -133,6 +133,31 @@ gigabytes on a history of thousands of sessions. The role views given to control
 `analysis-summary.json` (unlimited analysis admission is unchanged) and additionally receive `analysis-brief.json`,
 which their instructions name as the place to start.
 
+### Imported text is data, never instructions
+
+Captured and imported records are untrusted. The role views and the role instruction
+strings are built from counts, hashes and closed labels, so imported sentences do not
+reach a model as instructions. One slot copies capture text into a view: an activity
+name, which the `normalized`, `ai-memory` and descriptive native readers (and an unknown
+session-observation `kind`) take verbatim. A name that is not a short label
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}`) appears in `analysis-summary.json` as
+`withheld-activity-<16 hex of SHA-256>` everywhere it occurred, and `limitations` says how
+many names were replaced. The placeholder keeps distinct names distinct and the counts
+unchanged; it does not claim the withheld text was malicious. Label-shaped names are
+unchanged. The pinned Codex and Claude readers map a closed vocabulary and never need it.
+
+The one deliberate text pass-through is an operator-approved incident summary, which
+carries `authority: untrusted_evidence_only` and is named untrusted evidence in
+`limitations`. `analysis.json` still holds the verbatim names for private review; only
+the model-facing views are filtered.
+
+A synthetic canary sweep (`tests/integration/sources/test_source_injection_canaries.py`)
+plants one instruction-shaped sentence in each string slot of each adapter's synthetic
+capture and requires that no role view carries it. A rejected capture counts as safe; the
+clean-capture and placeholder controls keep the sweep from passing vacuously. It covers
+those synthetic shapes only and does not show that every real capture or future adapter
+field is safe.
+
 ## Evidence-based method selection
 
 `method_selection` records the versioned structural prerequisite policy after
