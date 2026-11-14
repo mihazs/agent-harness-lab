@@ -9,7 +9,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes; evaluator trials record `skill_shadowing` candidates from a read-only scan of the runtime's user-level skill folder, and a shadowed copy makes `paired_transfer` inconclusive | Observed activation evidence, Codex skill signals, effective-path resolution and managed/plugin-layer shadowing, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only | A live run proving the bridge hook executes in the supported runtime, an isolated non-identity transform, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
@@ -173,6 +173,22 @@ that lacks the entry point is `absent` (a removal), and `activated` is always `n
 placement is not discovery, reading or use. For `harness_paths`, the bundle hash covers
 only the files the manifest lists.
 
+Each native (Claude or Codex) trial also records `skill_shadowing`, one row per staged skill name,
+from a read-only look at the runtime's user-level skills folder (`$CLAUDE_CONFIG_DIR/skills`, else
+`~/.claude/skills`, for Claude; `~/.agents/skills` for Codex). It opens only the folders whose name equals a
+staged skill, never lists the folder, never writes to it and records hashes, not text or paths. `state` is
+`ambient_same_name` (a same-name bundle exists beside the staged one, with `bundle_match` true, false or
+`null` when a hash comparison is impossible), `none_found` or `unknown`. `none_found` covers only
+`layers_scanned`: managed, plugin and enterprise layers are not scanned. A skills folder that is not a
+directory, any folder or `SKILL.md` on the way to a staged name that cannot be inspected (a permission or
+other `stat` error; only a missing path is absent), a name that could not be checked, or a trial of a
+non-native executor is `unknown`, never `none_found`. A same-name copy beside an `absent` (removed) skill means the removal arm still has the
+skill. `effective_layer` is always `unknown`: the row says a shadow is possible, not which copy the runtime
+used. A bundle over 512 files or 8 MiB is reported with unknown content rather than truncated. The Codex
+runner asks for same-name user skills to be disabled on the `skills` route; that request is never observed,
+so the row stays a candidate. `evaluation.skills.shadowing_state(rows)` rolls one trial up to
+`ambient_same_name`, `none_found` or `unknown`; pass it as `shadowing` on a `paired_transfer` record.
+
 Skill injection is availability evidence, not activation. Each evaluator trial records
 `skill_preload_requested` as true when the manifest requests a preload prompt for
 at least one explicitly listed skill. False also covers trials with no listed skills;
@@ -187,8 +203,9 @@ Only boolean outcomes from an executable grader count. Unverified, unidentified
 and single-arm records are counted as excluded or unmatched, never as failures,
 and their regression or activation flags are ignored. A critical regression or a
 mean control loss beyond the tolerance rejects the skill, even when its target
-tasks improve. An observed activation in the absent arm, such as a shadowed copy,
-makes the comparison inconclusive, as do missing matched target or control roots
+tasks improve. An observed activation in the absent arm, or a record whose `shadowing` is
+`ambient_same_name` in either arm, makes the comparison inconclusive (`absent_arm_activation`,
+`shadowed_skill_copy`), as do missing matched target or control roots
 and any unmatched or excluded record in a declared condition, because attrition
 in one arm can hide negative transfer. Otherwise the report stays `uncertified` until a
 frozen paired experiment runs through the evaluation gate. The main contrast never

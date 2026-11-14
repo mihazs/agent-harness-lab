@@ -172,3 +172,15 @@ def harness_skill_availability(record):
 def home_skills(environ):
     """User skill roots that still load under the temporary CODEX_HOME."""
     return (Path(environ['HOME'] if environ.get('HOME') else os.path.expanduser('~')) / '.agents/skills',)
+
+
+def ambient_skill_roots(agent, environ):
+    """The user-level skill folder a native trial can still load beside its staged skills, else None.
+
+    Managed, plugin and enterprise layers are not named; a scan covers this folder only."""
+    home = Path(environ['HOME'] if environ.get('HOME') else os.path.expanduser('~'))
+    if agent == 'claude':
+        return {'user': Path(environ.get('CLAUDE_CONFIG_DIR') or home / '.claude') / 'skills'}
+    if agent == 'codex':
+        return {'user': home_skills(environ)[0]}
+    return None
