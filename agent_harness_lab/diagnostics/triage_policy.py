@@ -16,6 +16,7 @@ REPORT_PROFILE_V3 = 'diagnostic-triage-evaluation-v3'
 REPORT_PROFILE_V4 = 'diagnostic-triage-evaluation-v4'
 REPORT_PROFILE_V5 = 'diagnostic-triage-evaluation-v5'
 REPORT_PROFILE_V6 = 'diagnostic-triage-evaluation-v6'
+REPORT_PROFILE_V7 = 'diagnostic-triage-evaluation-v7'
 BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8)  # fixed descriptive grid, never a tuned or accepted value
 MIN_BIN_ROOTS = 10  # below this a reliability bin is reported as sparse, not as evidence
 SEVERITIES = ('severe', 'normal', 'none')
@@ -24,7 +25,8 @@ ROLE_ROOTS = ('fit_roots_sha256', 'calibration_roots_sha256', 'threshold_tuning_
 POLICY_FIELDS = frozenset(('schema_version', 'profile', 'classes', 'costs', 'review_capacity_roots', 'abstention',
                            'min_coverage', 'max_severe_misses', 'threshold_provenance', 'model_sha256',
                            'calibrator_sha256', *ROLE_ROOTS))
-SCOPE_FIELDS = frozenset(('corpus_sha256', 'min_calibration_roots'))  # accepted only by report v6; every other caller refuses them
+SCOPE_FIELDS = frozenset(('corpus_sha256', 'min_calibration_roots'))  # accepted only by report v6 and later; earlier callers refuse them
+CLASS_CALIBRATION_FIELDS = frozenset(('min_calibration_roots_per_class', 'calibration_class_roots_sha256'))  # report v7 only
 CLASS_FIELDS = frozenset(('severity', 'threshold', 'min_precision', 'min_recall'))
 ABSTAINED = 'abstained'
 CONFLICT = 'conflicting_root_decisions'
@@ -55,9 +57,10 @@ def _sha(value):
     return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
 
 
-def check_policy(policy, *, require_disjoint_roles=False, require_scope=False):
+def check_policy(policy, *, require_disjoint_roles=False, require_scope=False, require_class_calibration=False):
     """Validate a frozen v2 policy; return its class order and forbidden evaluation roots."""
-    if not isinstance(policy, dict) or set(policy) != (POLICY_FIELDS | SCOPE_FIELDS if require_scope else POLICY_FIELDS):
+    expected = POLICY_FIELDS | (SCOPE_FIELDS if require_scope else frozenset()) | (CLASS_CALIBRATION_FIELDS if require_class_calibration else frozenset())
+    if not isinstance(policy, dict) or set(policy) != expected:
         raise ValueError('invalid triage policy v2 schema')
     if type(policy['schema_version']) is not int or policy['schema_version'] != 2 or policy['profile'] != POLICY_PROFILE:
         raise ValueError('invalid triage policy v2 schema')
@@ -99,7 +102,21 @@ def check_policy(policy, *, require_disjoint_roles=False, require_scope=False):
             if require_disjoint_roles and value in forbidden:
                 raise ValueError('declared fitting, calibration and threshold role roots overlap')
             forbidden.setdefault(value, key)
+    if require_class_calibration:
+        _check_class_calibration(policy, classes)
     return tuple(sorted(classes)), forbidden
+
+
+def _check_class_calibration(policy, classes):
+    """Per-class calibration roots must be unique hashes drawn from the declared calibration roots, one class per root."""
+    declared, groups = set(policy['calibration_roots_sha256']), policy['calibration_class_roots_sha256']
+    if not _count(policy['min_calibration_roots_per_class']):
+        raise ValueError('class calibration minimum must be a nonnegative integer')
+    if not isinstance(groups, dict) or set(groups) != set(classes) or not all(isinstance(v, list) for v in groups.values()):
+        raise ValueError('class calibration roots must be one list for every declared class')
+    members = [value for values in groups.values() for value in values]
+    if not all(_sha(v) and v in declared for v in members) or len(set(members)) != len(members):
+        raise ValueError('class calibration roots must be unique hashes from the declared calibration roots, one class per root')
 
 
 def _row_decision(scores, names, classes, margin):
@@ -165,9 +182,10 @@ def evaluate(policy, observations, *, report_version=2):
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
-    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6):
+    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6, 7):
         raise ValueError('unsupported triage report version')
-    names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4, require_scope=report_version >= 6)
+    names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4, require_scope=report_version >= 6,
+                                  require_class_calibration=report_version >= 7)
     classes, costs = policy['classes'], policy['costs']
     if report_version >= 4 and policy['model_sha256'] is None:
         raise ValueError('v4 and later require a policy bound to a model revision')
@@ -261,6 +279,10 @@ def evaluate(policy, observations, *, report_version=2):
     if report_version >= 6 and policy['calibrator_sha256'] is not None \
             and len(policy['calibration_roots_sha256']) < policy['min_calibration_roots']:
         failed.append('calibration_roots_below_minimum')
+    # The pooled count cannot show that the rare classes were calibrated on enough roots.
+    if report_version >= 7 and policy['calibrator_sha256'] is not None:
+        failed.extend(f'class:{name}:calibration_roots_below_minimum' for name in names
+                      if len(policy['calibration_class_roots_sha256'][name]) < policy['min_calibration_roots_per_class'])
     if len(severe_roots) > policy['max_severe_misses']:
         failed.append('severe_misses_above_maximum')
     overflow = max(0, len(abstained)-policy['review_capacity_roots'])
@@ -274,7 +296,7 @@ def evaluate(policy, observations, *, report_version=2):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')
-    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6}[report_version], role='validate',
+    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6,7:REPORT_PROFILE_V7}[report_version], role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',
@@ -294,6 +316,9 @@ def evaluate(policy, observations, *, report_version=2):
         result['role_separation']='declared_hash_lists_disjoint_only'
     if report_version >= 6:
         result['corpus_sha256'] = policy['corpus_sha256']
+    if report_version >= 7:
+        result['calibration_class_roots'] = dict(minimum=policy['min_calibration_roots_per_class'],
+                                                 counts={name: len(policy['calibration_class_roots_sha256'][name]) for name in names})
     if report_version >= 5:
         result['score_diagnostics'] = _score_diagnostics(sums, roots, names)
         if result['score_diagnostics']['reliability']['sparse_bins']:
