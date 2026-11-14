@@ -62,6 +62,8 @@ class ExperimentSpec:
                 raise ValueError('root cannot straddle weighted families')
         if not all(isinstance(v, str) and v for v in (self.experiment_id, self.baseline_hash, self.candidate_hash, self.grader_hash, self.runtime_hash)):
             raise ValueError('missing experiment provenance')
+        if self.baseline_hash == self.candidate_hash:  # a difference between one harness and itself is noise, not an effect
+            raise ValueError('arms_identical: baseline_hash and candidate_hash must name different harness states')
         if self.profile == 'certification' and self.partition != 'certification':
             raise ValueError('certification requires an untouched reserved partition')
         target=self.precision_half_width

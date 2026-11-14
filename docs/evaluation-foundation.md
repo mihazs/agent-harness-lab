@@ -2,7 +2,9 @@
 
 The current controller is recommendation-only for behavioral changes. Cooperative
 smoke evaluation cannot authorize automatic adoption. Existing low-level manifests
-remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate.
+remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate, and an evaluation with no
+eligible case, no trial, only unknown outcomes, no executed grader or identical arms carries a
+[vacuity label](vacuity-labels.md) and never an improvement.
 
 ## Implemented contracts
 
