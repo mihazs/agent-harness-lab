@@ -80,12 +80,12 @@ def receipt(labels):
     return dict(profile=PROFILE, vacuous=True, labels=validate(labels), improvement_allowed=False)
 
 
-def identical_arms(spec):
-    """A blocked analysis for a plan whose baseline and candidate hashes are equal, else None.
+def refuse_noise(spec, result):
+    """``result`` unless it claims support for arms with one harness hash, which is blocked: that difference is noise.
 
-    The plan still schedules and executes (mechanics checks run one harness against itself); only an analysis that could
-    report a difference between the arms is refused, because that difference would be noise.
+    A control that runs one harness against itself and finds no effect keeps its analysis; only a positive claim is refused.
+    The plan still schedules and executes, so mechanics checks and A/A controls can run.
     """
-    if RULES[ARMS_IDENTICAL](None, None, spec.baseline_hash, spec.candidate_hash):
-        return dict(status='blocked', reason=ARMS_IDENTICAL, vacuity=receipt([ARMS_IDENTICAL]), automatic_promotion=False)
-    return None
+    if result.get('status') == 'supported' and RULES[ARMS_IDENTICAL](None, None, spec.baseline_hash, spec.candidate_hash):
+        return dict(result, status='blocked', reason=ARMS_IDENTICAL, vacuity=receipt([ARMS_IDENTICAL]), automatic_promotion=False)
+    return result

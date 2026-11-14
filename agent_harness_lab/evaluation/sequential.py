@@ -251,7 +251,12 @@ def _missing_identification(spec, records, binding, cohorts):
         input_authority='caller_declared_unverified',automatic_promotion=False,publication_allowed=False)
 
 
-def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False):
+def analyze(spec,records,binding,**options):
+    """The sequential analysis; a supported result for arms with one harness hash is blocked as noise (#805)."""
+    return vacuity.refuse_noise(spec,_analyze(spec,records,binding,**options))
+
+
+def _analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False):
     spec.validate();validate_binding(spec,binding,current_engine=False)
     cohorts=membership(spec,cohort_json);groups=channels(spec,cohorts)
     expected=schedule(spec,binding);byid={r['trial_id']:r for r in expected}
@@ -259,7 +264,6 @@ def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False
         sampling_sha256=hashed(binding),sampling_authority='unverified_numeric_declaration',power='not_estimated',future_expected_quality='unknown',
         root_independence='unverified',automatic_promotion=False,publication_allowed=False)
     def finish(status,reason,**extra):return dict(base,status=status,reason=reason,**extra)
-    if (identical:=vacuity.identical_arms(spec)) is not None:return finish('blocked',identical['reason'],vacuity=identical['vacuity'])
     if len({r.trial_id for r in records})!=len(records) or any(r.trial_id not in byid for r in records):
         return finish('incomplete','duplicate_or_foreign_trial')
     for r in records:

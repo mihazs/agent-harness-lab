@@ -53,6 +53,13 @@ class TestIdenticalArms:
         plan = spec()
         assert analyze(plan, candidate_wins(plan))['status'] == 'supported'
 
+    def test_an_identical_arms_control_that_finds_no_effect_keeps_its_analysis(self):
+        plan = spec(candidate_hash='b' * 64)
+        records = [TrialRecord(row['trial_id'], True, 'graded', 'executable_grader', plan.baseline_hash, plan.candidate_hash,
+                               plan.grader_hash, plan.runtime_hash) for row in schedule(plan)]
+        result = analyze(plan, records)
+        assert result['status'] != 'blocked' and 'vacuity' not in result
+
     def test_a_plan_with_equal_hashes_still_schedules_so_mechanics_checks_can_run_one_harness_against_itself(self):
         assert len(schedule(spec(candidate_hash='b' * 64))) == 60
 
