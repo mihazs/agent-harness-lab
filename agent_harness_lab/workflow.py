@@ -697,6 +697,7 @@ def _improve(args):
         deadline = started+args.timeout
         from .promotion.prerequisites import _begin
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
+        runtime_sha256 = grader_options['image_sha256']
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline,brief=getattr(args,'_analysis_brief',None))
@@ -724,6 +725,8 @@ def _improve(args):
         binary = args.codex if agent == 'codex' else args.claude
         if not shutil.which(binary):
             raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
+        from .evaluation import before_after
+        runtime_sha256 = before_after.launch_sha256(agent, shutil.which(binary), getattr(args,'inherit_env',False))
         plugin = prepare / '.harness-toolkit'
         (plugin / '.claude-plugin').mkdir(parents=True)
         write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
@@ -1147,7 +1150,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if instruction is not None:
             result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
+        from .evaluation import before_after
         single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else hashlib.sha256(manifest_raw).hexdigest(),
+                grader_sha256=grader_before, seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
+                budget_share=dict(trials=len(manifest['tasks']), timeout_seconds=manifest.get('timeout_seconds')), runtime_sha256=runtime_sha256),
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
@@ -1237,6 +1244,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         except Exception as exc:  # An explanation failure never changes the run result.
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
+        from .evaluation import before_after
+        before_after.attach(result, output, dict(single_run, bindings=bindings))
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     construction_receipt(result, args)

@@ -93,6 +93,10 @@ their previous values.
   An unreadable, irregular or oversized `results.json` binds as `unknown`; the
   trial workspaces are not hashed.
 
+A candidate whose paired score fell below its baseline additionally ends `blocked` with reason
+`candidate_regressed`; the [before/after guard](before-after-guard.md) records the paired delta, the
+frozen inputs of both arms and an investigation. The `decision` block above is unchanged.
+
 Every authority field stays false. A run without an exactly covered evaluation
 carries no block. If the explanation cannot be built, the block is
 `{"status": "unavailable"}` with the error type, and the run result is unchanged.

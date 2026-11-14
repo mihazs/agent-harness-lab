@@ -434,6 +434,7 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `interrupted` | Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID |
 | `proposal_invalid` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
 | `evaluation_run_failed` | Read the failed evaluation records in the private receipt, fix the cause they name, then rerun. |
+| `candidate_regressed` | Read investigation.json in the private run output: its cause says whether the candidate or the pipeline made the paired score worse; revise or discard the candidate, or fix a pipeline cause and add its regression test, then rerun. |
 | `run_incomplete` | Read which evidence is missing in the private receipt of the run, restore it, then rerun. |
 | `intervention_required` | Read the intervention the private receipt records, perform it, then rerun. |
 | `setup_failed` | Correct the setup problem reported on stderr, then rerun. |

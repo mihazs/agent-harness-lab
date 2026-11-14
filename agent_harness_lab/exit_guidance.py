@@ -120,7 +120,7 @@ def guidance(result):
         reason = result.get('reason')
         category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
-                    'blocked': 'Blocked by missing prerequisite',
+                    'blocked': 'Candidate regressed' if reason == 'candidate_regressed' else 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected'}.get(status, 'Inconclusive')
     if (reason is not None and reason not in REMEDIATION) or (status == 'analyzed' and reason is None):
         category = 'Inconclusive'
