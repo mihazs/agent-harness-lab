@@ -199,13 +199,13 @@ false` and `certification: unverified`.
 
 | Port | Members | Contract |
 | --- | --- | --- |
-| Evaluator | `frozen_inputs`, `evaluate(snapshot, frozen_inputs)` | `frozen_inputs` is the SHA-256 of the frozen bank, graders, seed schedule and runtime. `evaluate` returns an `Evaluation` for the snapshot. |
+| Evaluator | `frozen_inputs`, `evaluate(snapshot, frozen_inputs)`, optional `investigate(best_evaluation, candidate_evaluation)` | `frozen_inputs` is the SHA-256 of the frozen bank, graders, seed schedule and runtime. `evaluate` returns an `Evaluation` for the snapshot. `investigate` is asked about a regression only, against the evaluation of the best snapshot, and returns `candidate`, `other` or `None` for who caused it. |
 | Proposer | `baseline`, `mechanisms`, `propose(best_snapshot, mechanism)` | `baseline` is the SHA-256 of the starting snapshot and `mechanisms` the queue in priority order. `propose` returns a `Candidate` (a snapshot digest and the mechanism it addresses) staged outside the project, or `None` when it cannot stage one. |
 | Clock | a callable | Finite monotonic seconds. |
 
 An `Evaluation` holds `point`, `lower` and `upper`, an `evidence` state (`scored`,
 `provisional`, `no_evidence` or `blocked`), a `vacuity` label or `None`, per-area
-lower bounds in `areas`, a `critical` flag, a regression `cause`, the `trials` and
+lower bounds in `areas`, a `critical` flag, a regression `cause` (used only when the evaluator has no `investigate`), the `trials` and
 `seconds` it spent, and the `inputs` digest it ran on. An evaluation is `valid`
 only when it is `scored`, has no vacuity label and its interval is sound: finite
 numbers with `0 <= lower <= point <= upper <= 1`, and area bounds inside `[0, 1]`.
@@ -240,7 +240,10 @@ per-area bar is not decided by this slice and is unknown, so it stops
 best point value plus `noise_margin`; a regression is a critical flag, an area
 bound below its best by more than `regression_margin`, or a point value below the
 best by more than `regression_margin`. A candidate that omits an area the best
-scored is unknown.
+scored is unknown. Whether a regression rolls back is decided by who `investigate`
+blames: only `candidate` lets `rollback_continue` go on, and `other`, `None` and any
+other answer stop the loop. The real investigation artifact is wired in a later
+slice; the simulation test-bed answers with the cause its script gives.
 
 ### Mechanism dispositions
 

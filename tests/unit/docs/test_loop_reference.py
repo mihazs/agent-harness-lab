@@ -60,7 +60,7 @@ def test_every_simulation_preset_is_named_in_the_reference(preset):
     assert f'`{preset}`' in section('Simulation test-bed')
 
 
-@pytest.mark.parametrize('name', [*ledger.STATE, 'frozen_inputs', 'evaluate', 'baseline', 'mechanisms', 'propose', 'Evaluation', 'Candidate',
+@pytest.mark.parametrize('name', [*ledger.STATE, 'frozen_inputs', 'evaluate', 'investigate', 'baseline', 'mechanisms', 'propose', 'Evaluation', 'Candidate',
                                   'pending', 'evaluating', 'deferred', *controller.FINAL.values(), controller.RESERVE_UNAVAILABLE, 'unknown_usage_evaluations',
                                   'loop_port_invalid', 'loop_ledger_invalid', 'loop_ledger_full'])
 def test_every_controller_event_port_disposition_and_reason_is_named_in_the_controller_section(name):

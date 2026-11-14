@@ -102,6 +102,43 @@ def test_rollback_continue_proposes_the_next_round_from_the_best_snapshot_not_th
     assert result['mechanisms'][f'm{n}'] == 'rejected'
 
 
+def test_the_investigate_port_is_asked_about_a_regression_against_the_best_and_never_about_anything_else(tmp_path):
+    result, ledger, ports = go(loop_sim.regresses_on_round_n(2, on_regression='rollback_continue'), tmp_path)
+    (best, regressed), = ports.investigated
+    assert (best.point, round(regressed.point, 6), result['stop']) == (0.6, 0.45, 'acceptance_score_reached')
+    assert [payload['cause'] for kind, payload in ledger.events() if kind == 'decided'] == [None, 'candidate', None]
+    _, _, calm = go(loop_sim.converges_in_k_rounds(2), tmp_path / 'calm')
+    assert calm.investigated == []
+
+
+@pytest.mark.parametrize('answer, stop, rounds', [
+    pytest.param('candidate', 'acceptance_score_reached', 3, id='candidate-caused-rolls-back-and-continues'),
+    pytest.param('other', 'regression', 2, id='other-cause-stops'),
+    pytest.param(None, 'regression', 2, id='unknown-cause-stops'),
+    pytest.param('bogus', 'regression', 2, id='unlisted-answer-is-unknown-and-stops'),
+    pytest.param(['candidate'], 'regression', 2, id='unhashable-answer-is-unknown-and-stops'),
+    pytest.param(7, 'regression', 2, id='number-is-unknown-and-stops'),
+])
+def test_the_answer_of_the_investigate_port_not_the_evaluations_own_cause_decides_whether_a_regression_rolls_back(tmp_path, answer, stop, rounds):
+    script = loop_sim.regresses_on_round_n(2, on_regression='rollback_continue')  # its regressed evaluation says the candidate caused it
+    ports = loop_sim.ScriptedPorts(script, loop_sim.Meter())
+    ports.investigate = lambda best, candidate: answer
+    result, _, _ = go(script, tmp_path, ports=ports)
+    assert (result['stop'], result['rounds']) == (stop, rounds)
+
+
+@pytest.mark.parametrize('cause, stop', [pytest.param('candidate', 'acceptance_score_reached', id='evaluation-blames-the-candidate'),
+                                         pytest.param('other', 'regression', id='evaluation-blames-something-else'),
+                                         pytest.param(None, 'regression', id='evaluation-blames-nobody-known')])
+def test_without_an_investigate_port_the_evaluations_own_cause_is_used(tmp_path, cause, stop):
+    script = loop_sim.regresses_on_round_n(2, on_regression='rollback_continue')
+    script = replace(script, rounds=tuple(replace(item, cause=cause) for item in script.rounds))
+    ports = loop_sim.ScriptedPorts(script, loop_sim.Meter())
+    ports.investigate = None
+    result, _, _ = go(script, tmp_path, ports=ports)
+    assert result['stop'] == stop
+
+
 @pytest.mark.parametrize('cause', [pytest.param('candidate', id='candidate-caused'), pytest.param('other', id='other-cause'), pytest.param(None, id='unknown-cause')])
 @pytest.mark.parametrize('policy', ['stop', 'rollback_continue'])
 @pytest.mark.parametrize('kind', ['critical', 'area'])

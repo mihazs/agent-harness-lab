@@ -266,11 +266,17 @@ class ScriptedPorts:
     proposal is a fresh snapshot digest. asked records (best snapshot, mechanism) for every propose call."""
     def __init__(self, script, meter):
         self.script, self.meter, self.evaluations, self.asked, self.order = script, meter, ScriptedEvaluator(script, meter), [], []
+        self.investigated = []
         self.frozen_inputs, self.baseline, self.mechanisms = script.frozen_inputs, digest(script.name, script.seed, 'baseline'), script.mechanisms
 
     def evaluate(self, snapshot, frozen_inputs):
         self.order.append('evaluate')
         return self.evaluations.evaluate(frozen_inputs, Candidate(snapshot, len(self.evaluations.calls)))
+
+    def investigate(self, best_evaluation, candidate_evaluation):
+        """The simulation's investigation: it blames whoever the script says caused the regression."""
+        self.investigated.append((best_evaluation, candidate_evaluation))
+        return candidate_evaluation.cause
 
     def propose(self, best_snapshot, mechanism):
         self.order.append('propose')

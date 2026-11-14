@@ -61,6 +61,9 @@ class Evaluator(Protocol):
 
     def evaluate(self, snapshot: str, frozen_inputs: str) -> Evaluation: ...
 
+    # Optional: investigate(best_evaluation, candidate_evaluation) -> 'candidate' | 'other' | None names who a regression
+    # is blamed on. Without it the candidate evaluation's own `cause` is used. Anything else is unknown.
+
 
 class Proposer(Protocol):
     baseline: str  # SHA-256 of the harness snapshot the loop starts from
@@ -183,16 +186,23 @@ class _Loop:
     def pending(self):
         return [item for item, disposition in self.dispositions.items() if disposition == 'pending']
 
+    def blame(self, found):
+        """Who a regression is blamed on, from the investigate port when the evaluator has one, else the evaluation's own cause."""
+        investigate = getattr(self.evaluator, 'investigate', None)
+        cause = investigate(self.best_evaluation, found) if callable(investigate) else found.cause
+        return cause if cause in ('candidate', 'other') else None
+
     def decision(self, verdict, found, candidate):
         valid = verdict == 'valid'
         compared = dict(acceptance=acceptance(found, self.baseline_evaluation, self.spec, candidate=candidate) if valid else None,
                         regression=regression(found, self.best_evaluation, self.spec) if valid and candidate else None,
                         improvement=improvement(found, self.best_evaluation, self.spec) if valid and candidate else None)
+        cause = self.blame(found) if compared['regression'] not in (None, 'none') else None
         position = self.position
-        outcome, stop = decide(Inputs(baseline=self.baseline_verdict, candidate=verdict if candidate else 'absent', regression_cause=found.cause,
+        outcome, stop = decide(Inputs(baseline=self.baseline_verdict, candidate=verdict if candidate else 'absent', regression_cause=cause,
                                       mechanism='available' if self.pending() else 'none', budget=self.budget(), round=position.rounds,
                                       plateau_streak=position.plateau_streak, **compared), self.spec)
-        return outcome, stop, compared
+        return outcome, stop, dict(compared, cause=cause)
 
     def stopped(self, stop, outcome):
         self.outcome = self.outcome if outcome is None else outcome
