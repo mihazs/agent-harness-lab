@@ -57,7 +57,7 @@ def stops(_):
 
 def test_a_pass_without_a_box_runs_to_the_whole_run_deadline(tmp_path, clock):
     seen, error = author(tmp_path, clock, None, stops)
-    assert isinstance(error, Stop) and seen[0]['deadline'] == WHOLE
+    assert isinstance(error, Stop) and seen[0]['deadline'] == pytest.approx(WHOLE)  # (start + WHOLE) - start is not exact for a large monotonic start
     assert 'Time box' not in seen[0]['prompt']
 
 
