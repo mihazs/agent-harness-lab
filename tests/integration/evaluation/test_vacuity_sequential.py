@@ -18,3 +18,10 @@ def test_a_sequential_plan_with_distinct_arm_hashes_is_not_blocked_as_arms_ident
     binding = core.create_binding(plan, [])
     result = core.analyze(plan, records(plan, binding, lambda row: row['version'] == 'candidate'), binding)
     assert result['reason'] != 'arms_identical' and 'vacuity' not in result
+
+
+def test_a_sequential_identical_arms_control_that_finds_no_effect_keeps_its_analysis():
+    plan = replace(spec(), candidate_hash='b' * 64)
+    binding = core.create_binding(plan, [])
+    result = core.analyze(plan, records(plan, binding, lambda row: True), binding)
+    assert result.get('reason') != 'arms_identical' and 'vacuity' not in result
