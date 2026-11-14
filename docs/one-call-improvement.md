@@ -605,6 +605,22 @@ application path. When the same candidate also changes a skill or hook path, `co
 paths and marks an `interaction_evaluation` as `required`, because no per-surface result covers
 the combination.
 
+`instruction_validation.loading_evidence(document, baseline_events, candidate_events)` joins one
+pinned Claude capture of each version to a valid validation. A changed file is `observed_pattern`
+in a version only when an attachment names its path and the attached text hashes to that
+version's file, the test `harness_inventory.join_loading` applies to an inventory. Everything
+else stays `unknown`: a missing or empty capture, a path-only match, a file the version lacks,
+a Codex run (its rollout records no load) and any file Claude loads at launch without an
+attachment event. No event is never evidence that a file did not load. Duplicate and contested
+records are counted as `join_loading` counts them. The record carries `effective`, `outcome`
+and `independence` as `unknown`, and `sha256` over its content. Passed to `review(...,
+loading=record)`, it adds each operation's per-version observation and `loading_evidence`, and
+`review` refuses a record that does not describe the same validation or whose hash no longer
+matches. The review's own `observed_loading` stays `unknown`, because it speaks for the whole
+closure and the changed files do not cover it. The improvement workflow produces no native
+session capture of its trials, so its saved reviews keep `loading` empty until a caller supplies
+one.
+
 ## Validating staged agent and command definitions
 
 `sources/agents_validation.py` checks every created, updated or removed Claude
@@ -884,8 +900,8 @@ behavioral controller. `ahl apply` reviews every saved plan but applies only the
 independently reproduced skill-header repair; interruption tests cover only its
 application stage (planning, evaluation and review interruptions, Codex hook
 application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
-validation and operation-level review are described above; actual loading evidence and
-the composed-change interaction evaluation remain), skill lifecycle and
+validation, operation-level review and capture join are described above; a native capture
+of the trials and the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
 and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)

@@ -1537,6 +1537,10 @@ nodes themselves are unchanged and still reject any loading claim.
   count, whatever the input order, and `warnings` adds
   `duplicate_event_conflict`. An ignored record never claims an identity, so
   it cannot hide a later pinned copy.
+- `instruction_validation.loading_evidence` reuses this record selection
+  (`harness_inventory.loading_records`) for the changed instruction and rule files of a
+  [scoped instruction validation](one-call-improvement.md#scoped-instruction-rewrites-and-pruning),
+  so the two joins count duplicate, contested and foreign records alike.
 
 `effective`, `outcome` and `independence` are always `unknown`, and
 `publication_allowed` is `false`. The caller pairs the capture with the
