@@ -1,5 +1,6 @@
 """Owner-only journals with explicit size policies; controllers own transitions."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -17,6 +18,19 @@ from .read_only import require_writable
 
 MAX_EVENTS = 64
 MAX_METADATA = 256*1024
+_scratch = ContextVar('validation_scratch', default=None)
+
+
+@contextmanager
+def scratch_in(folder):
+    """Make validators place transient scratch in this caller-approved folder instead of inside an input store."""
+    token = _scratch.set(Path(folder))
+    try: yield
+    finally: _scratch.reset(token)
+
+
+def scratch_dir(default):
+    return _scratch.get() or default
 
 
 def encoded(value):
