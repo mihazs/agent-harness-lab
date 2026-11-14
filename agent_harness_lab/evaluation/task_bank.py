@@ -9,6 +9,8 @@ from .areas import check_declared, parse_registry, task_areas
 from .integrity import contained, digest, read_regular
 
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
+DESIGN_PARTITIONS = ('construction', 'development', 'calibration')  # inform design, search or calibration
+FINAL_PARTITIONS = ('certification', 'transfer')
 
 
 def identifier(value, maximum=128):
@@ -66,6 +68,22 @@ class TaskSpec:
         return value
 
 
+def _unenforced_overlaps(tasks, enforced):
+    """Final-set tasks sharing a group value with design/calibration tasks on a dimension `separate_by` does not enforce."""
+    found = []
+    for key in ('family', 'project_group', 'time_group'):
+        if key in enforced: continue  # a shared value already rejected the bank
+        groups = {}
+        for task in tasks: groups.setdefault(getattr(task, key), {}).setdefault(task.partition, []).append(task.task_id)
+        for early in DESIGN_PARTITIONS:
+            for final in FINAL_PARTITIONS:
+                shared = sorted(i for parts in groups.values() if early in parts and final in parts for i in parts[early] + parts[final])
+                if shared:
+                    found.append(dict(status='independence_unverified', reason='group_overlap_not_enforced',
+                                      dimension=key, partitions=[early, final], tasks=shared))
+    return found
+
+
 def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None, registry=None):
     if type(verify_contents) is not bool or type(analysis_only) is not bool:
         raise ValueError('content verification mode must be explicit')
@@ -108,6 +126,7 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
         if task.review_status == 'quarantined':
             issues.append(dict(task=task.task_id, status='task_quarantined'))
+    issues.extend(_unenforced_overlaps(tasks, dimensions))
     bank_sha256 = hashlib.sha256(raw).hexdigest()
     content_grouping = None
     if verify_contents:

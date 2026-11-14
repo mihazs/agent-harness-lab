@@ -46,7 +46,13 @@ oracle correction/invalidation and protected certification remain separate work.
   and the legacy `isolation_verified` keyword is a recorded declaration.
 - `TaskSpec` and bank validation freeze fixture/grader bundles, provenance,
   partitions, safety and artifact boundaries. Root leakage is always rejected;
-  optional family/project/time separation and copied-fixture checks are enforced.
+  family/project/time separation listed in `separate_by` and copied-fixture checks
+  are enforced. For a dimension the bank does not list, a certification or transfer
+  task that shares a family, project group or time group with a construction,
+  development or calibration task is reported as `independence_unverified` with
+  reason `group_overlap_not_enforced`, naming the dimension, partition pair and task
+  IDs. The report is not a rejection and the absence of one is not verified
+  independence; list the dimension in `separate_by` to reject such a bank.
   [Review declarations and certification qualification](bank-qualification.md) remain
   separate: raw labels never establish certification eligibility or verified
   independence. No current production bank-certification issuer is available. Public
