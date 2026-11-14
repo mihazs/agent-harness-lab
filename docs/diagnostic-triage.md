@@ -156,6 +156,26 @@ chosen before validation data were seen. Earlier profiles and `ahl benchmark` ar
 unchanged, and the v6 report is private and grants no certification or promotion
 authority.
 
+For a per-class calibration-size check, call `evaluate(policy, observations,
+report_version=7)`. The separate `diagnostic-triage-evaluation-v7` profile applies
+every v6 check, decision and diagnostic unchanged and requires two more policy
+fields that no earlier profile accepts: `min_calibration_roots_per_class` (a
+nonnegative integer; AHL supplies no default) and `calibration_class_roots_sha256`,
+a mapping from every declared class, and no other name, to the SHA-256 hashes of
+the calibration roots the policy author assigns to that class. Each hash must
+also appear in `calibration_roots_sha256`, be unique, and belong to one class
+only; otherwise the policy is refused. When the policy declares a
+`calibrator_sha256` and a class lists fewer roots than the minimum, the report is
+`rejected` with `class:<name>:calibration_roots_below_minimum`, one reason per
+such class, so a pooled count that passes the v6 minimum cannot hide a rare class
+calibrated on almost nothing. A policy that declares no calibrator, or a minimum
+of 0, is not affected. The report echoes the per-class counts and the minimum as
+`calibration_class_roots`. These lists are caller-supplied declarations: AHL
+cannot verify that the roots carry the class assigned to them, that the
+calibrator was fitted on them, or that the minimum was chosen before validation
+data were seen. Earlier profiles and `ahl benchmark` are unchanged, and the v7
+report is private and grants no certification or promotion authority.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,
