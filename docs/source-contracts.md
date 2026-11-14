@@ -699,8 +699,10 @@ prove that an agent loaded them. Preview includes these metadata in `git_summary
 import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
 execution's version. Declared Codex and Claude Code instruction inventories are
-described below, as are the static hook inventory and path-scoped rules. Managed
-and global instruction capture remains open in #46. Observed loading and
+described below, as are the static hook inventory and path-scoped rules. A Claude Code
+inventory can also record a caller-declared managed-policy and user `CLAUDE.md` as
+read-only influences; discovering them and governing them as a policy stay open in
+#46. Observed loading and
 independently evidenced execution bindings remain open in #58/#77–#80 (the
 Git/GitHub, Git/GitLab and Git/Gitea commit joins are below).
 
@@ -1214,8 +1216,9 @@ What the receipt declares, never verifies:
   classifies them. Launch filenames below `task_cwd` (`on_demand_subdirectory`)
   also stay unknown.
   Files below `task_cwd` are discovered by the whole-tree walk described below.
-  Managed and user files, approval decisions, the session's on-demand
-  truncation point and path-scoped rule matching are not captured. A selected
+  Approval decisions, the session's on-demand
+  truncation point and path-scoped rule matching are not captured, and a managed
+  or user file is captured only as declared below. A selected
   `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
 
 An import from the launch chain whose path crosses a symbolic link, a
@@ -1232,8 +1235,60 @@ nodes per expanded file, one per unresolved reason, and the selected files. The
 receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
 record. Observed loading stays `unknown`, and the receipt grants no edit authority.
 Content, import, cwd and profile changes invalidate it. Managed
-and global capture remains open in #46; native `InstructionsLoaded` evidence, rules
-and on-demand modeling, and execution binding remain open in #58/#77–#80.
+and user files are captured only when the caller declares their folders
+([below](#declared-managed-and-user-claude-code-instructions)); native
+`InstructionsLoaded` evidence, rules and on-demand modeling, and execution
+binding remain open in #58/#77–#80.
+
+### Declared managed and user Claude Code instructions
+
+`capture(..., claude_managed_root='managed', claude_user_home='user')` takes
+two optional, folder-relative directories that each hold one `CLAUDE.md`: the
+managed-policy directory (`/etc/claude-code` on Linux) and the user's
+`~/.claude`. Neither is ever discovered, defaulted or read from the environment,
+so an undeclared root is never opened. Only the Claude Code profile accepts
+them. A root that is, or sits inside or above, the checkout or the other root,
+contains `..`, or names `.git` is refused with an error, as is a declaration
+under any other runtime. An unsupported runtime version still returns
+`unsupported` without reading either root.
+
+Each declared file becomes one node with origin `claude_managed` or
+`claude_user` and a path identity made only of the origin and the file name, so
+the receipt carries neither folder path. The node is a read-only influence: it
+grants no edit authority, and observed loading and `ambient_state` stay
+`unknown`. Following the public memory documentation (checked 2026-11-14,
+unversioned like the mapping above):
+
+- A non-empty UTF-8 file is `declared_applicable` with reason
+  `declared_managed_policy` or `declared_user_instructions`. The managed file
+  precedes the user file and the user file precedes the first applicable
+  project launch file, each as a `parent` edge. An influence that is not
+  applicable takes no edge.
+- A missing file or folder is `missing` (`unknown`, `missing`), never an error.
+  A whitespace-only file is `unknown` (`empty`), a non-UTF-8 file `unknown`
+  (`non_utf8_instruction`) and a file over the 4 MiB runtime skip size `unknown`
+  (`runtime_size_limit_unverified`).
+- The `instruction_files` profile setting affects only the user file:
+  `managed-only` makes it `out_of_scope`
+  (`excluded_by_declared_instruction_files`) and an unknown label leaves it
+  `unknown` (`instruction_files_setting_unknown`). The managed file is never
+  excluded. Any declared `claude_md_excludes` leaves the user file `unknown`
+  (`claude_md_excludes_match_unverified`), because the runtime matches absolute
+  paths that are not declared here; they never apply to the managed file.
+- `@path` imports are never followed. A file whose text holds an import token
+  gets one content-free `external_reference` node (reason
+  `influence_imports_not_followed`) and an `imports` edge to it, so the
+  closure is flagged as incomplete rather than assumed.
+- A link, hard link or other non-regular file, or a linked folder, fails the
+  capture. A file that exists but cannot be read stays `unknown`
+  (`instruction_file_unreadable`) and the receipt is `blocked`.
+- A user `CLAUDE.md` is not a project `CLAUDE.md`, so it does not shadow a
+  project `AGENTS.md`.
+
+Changing either declared file, or declaring or dropping a root, changes the
+receipt fingerprint. Synthetic tests check this documentation-derived
+resolver; they are not native loading evidence, and a declared root says nothing
+about which files the runtime read.
 
 ### Whole-tree instruction inventory and declared instruction settings
 
