@@ -20,10 +20,13 @@ if pathlib.Path('context.json').exists():
     status = pathlib.Path(%r).read_text() if pathlib.Path(%r).exists() else 'no_change'  # a candidate is written without editing it
     proposal = dict(status=status, reason='synthetic')
     scripted = pathlib.Path(%r)
-    if scripted.exists():  # a scripted transcript: its fields replace the default; "edit" changes the candidate's instructions
-        proposal = json.loads(scripted.read_text())
-        if proposal.pop('edit', False): pathlib.Path(context['candidate'], 'AGENTS.md').open('a').write('synthetic edit\\n')
-    pathlib.Path(context['evaluation'], 'proposal.json').write_text(json.dumps(proposal))
+    text = None
+    if scripted.exists():  # a scripted transcript replaces the default proposal; "edit" changes the candidate's instructions
+        script = json.loads(scripted.read_text())
+        proposal, text = (None, None) if script['omit'] else (script['proposal'], script['raw'])
+        if script['edit']: pathlib.Path(context['candidate'], 'AGENTS.md').open('a').write('synthetic edit\\n')
+    if proposal is not None or text is not None:
+        pathlib.Path(context['evaluation'], 'proposal.json').write_text(text if text is not None else json.dumps(proposal))
 print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
 '''
 
@@ -50,9 +53,11 @@ class Home:
         """The fake preparation agent declares a candidate but leaves the candidate identical to the baseline."""
         self.proposal.write_text('candidate')
 
-    def scripts(self, **proposal):
-        """The fake preparation agent writes exactly this proposal; edit=True also edits the candidate's instructions."""
-        self.script.write_text(json.dumps(proposal))
+    def scripts(self, proposal=None, *, edit=False, raw=None, omit=False):
+        """The fake preparation agent writes exactly this proposal (``raw`` text instead, or no file with ``omit``).
+
+        ``edit`` also changes the candidate's instructions, so the candidate differs from the baseline."""
+        self.script.write_text(json.dumps(dict(proposal=proposal, raw=raw, edit=edit, omit=omit)))
 
     @property
     def model_calls(self):

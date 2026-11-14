@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Say what the preparation stage returned. Every `ahl improve` receipt whose preparation stage wrote a proposal now carries a bounded, typed `preparation` block: `outcome` (`hypothesis_supplied`, `no_change_supported`, `no_hypothesis` or `invalid_proposal`), the proposal's `reason_codes` and `missing_evidence` ids, and the `baseline_checks_passed` it reported as a count and class names, with `unrecognized` counting every entry outside the fixed vocabulary. The fields are the proposer's own declaration, matched to a closed vocabulary and not verified by AHL; free text of the proposal (reason, mechanisms, falsifiers) never reaches the receipt, `report.md` or the terminal. The terminal prints one `ahl: preparation outcome=...` line before the `ahl: outcome=` line, and `report.md` gains a "Preparation outcome" section. A proposal that is missing, malformed JSON, not an object or without a `candidate`/`no_change` status now ends with the typed `invalid_proposal` status and the same label instead of an untyped input error. A run that spent preparation and evaluated nothing keeps the single `spent_without_evaluation` label.

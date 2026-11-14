@@ -9,7 +9,7 @@ from .responses import invalid_number, run_role
 from .working_state import WorkingState, analysis_snapshot, check_deadline
 from .manifest_contract import ContractError, check_authored, contract_text, strip_authored_digests
 from .analysis_inputs import AnalysisInputs
-from .. import surfaces
+from .. import preparation, surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
 from ..diagnostics.brief import rendered
 from ..diagnostics.mechanisms import MECHANISM_GUIDANCE
@@ -75,7 +75,7 @@ or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded 
 ''' + MECHANISM_GUIDANCE + '''
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
-    if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE
+    if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE + '\n' + preparation.guidance()
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
