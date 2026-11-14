@@ -15,7 +15,8 @@ import tempfile
 from urllib.request import Request, urlopen
 
 REPOSITORY = 'mihazs/agent-harness-lab'
-SKILLS = ('harness-evaluation', 'harness-self-improvement')
+SKILLS = ('harness-self-improvement',)
+RETIRED_SKILLS = ('harness-evaluation',)  # folded into harness-self-improvement; owned links are removed on upgrade
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
 TEMPLATE = 'global-instructions.md'
 START_MARKER = '<!-- agent-harness-lab:start version={version} sha256={digest} -->'
@@ -371,6 +372,9 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs, instructio
                 raise ValueError(f'refusing to replace a foreign symlink: {link}')
             if link.exists() and not link.is_symlink() and (relative == Path('ahl') or not link.is_dir()):
                 raise ValueError(f'refusing to replace a non-skill directory: {link}')
+        # An installer-owned link to a retired skill is backed up and not recreated; foreign content stays.
+        retired = [Path(folder) / name for folder in skill_dirs for name in RETIRED_SKILLS
+                   if owned_link(Path(folder) / name, root, Path('skills') / name)]
         created = False
         if destination.exists():
             marker = destination / '.release-sha256'
@@ -390,17 +394,18 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs, instructio
             return backup
         moved, installed, files, saved_receipt, written = [], [], [], None, None
         try:
-            for link, relative in links:
-                target = destination / relative
-                if link.is_symlink() and link.resolve() == target:
+            for link, relative in [*links, *((link, None) for link in retired)]:
+                target = destination / relative if relative else None
+                if target and link.is_symlink() and link.resolve() == target:
                     continue
                 link.parent.mkdir(parents=True, exist_ok=True)
                 if link.exists() or link.is_symlink():
                     saved = backup_dir() / str(len(moved))
                     link.rename(saved)
                     moved.append((saved, link))
-                link.symlink_to(target, target_is_directory=relative != Path('ahl'))
-                installed.append(link)
+                if target:
+                    link.symlink_to(target, target_is_directory=relative != Path('ahl'))
+                    installed.append(link)
             # Keep update settings in the same rollback boundary as launcher links.
             document = dict(schema_version=1, version=version, bin_dir=str(bin_dir), skill_dirs=skill_dirs)
             if instructions:

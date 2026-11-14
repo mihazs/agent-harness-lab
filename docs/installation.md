@@ -5,7 +5,7 @@
 ## Install from a release
 
 Requires Python 3.11+, `curl`, a POSIX shell and a symlink-capable filesystem.
-Install the CLI and both skills for Codex and Claude Code with one command:
+Install the CLI and the skill for Codex and Claude Code with one command:
 
 ```sh
 curl -fsSL https://github.com/mihazs/agent-harness-lab/releases/latest/download/install.py | python3 -
@@ -17,7 +17,7 @@ No administrator privileges are required. The installer prints the exact launche
 path and a PATH command if needed; it does not edit your shell startup files.
 
 The installer downloads the versioned release archive, verifies its SHA-256 checksum,
-and installs **the CLI and both skills for Claude Code and Codex**. No Git checkout,
+and installs **the CLI and the skill for Claude Code and Codex**. No Git checkout,
 pip environment, or Node.js installation is required. The release installer source
 is [install.py](../install.py).
 
@@ -84,6 +84,23 @@ changed; every other byte of your file stays identical. See the
 If you edit the text inside the markers, the next update replaces it and prints
 `region_edited_by_user_replaced`; your edited text stays in the backup. Keep your own
 instructions outside the markers.
+
+## Moving from two skills to one
+
+Earlier releases installed two skills, `harness-evaluation` and `harness-self-improvement`.
+There is now one: `harness-self-improvement`. Asking an agent to evaluate, fix, improve
+or maintain a harness all ends at the same skill, and the evaluation methodology and
+runner it used to carry live in that skill's `references/` and `scripts/`. The name
+`harness-self-improvement` was kept so existing installs and global links stay valid.
+The activation description lists every phrase that triggered either skill, and ordinary
+coding and application testing still do not trigger it.
+
+Upgrading needs no manual step. `ahl update`, the release installer and `ahl skills`
+back up a `harness-evaluation` link that they created (the backup path is printed) and do not
+recreate it. An ordinary directory or a symlink you made yourself with that name is left
+untouched, so remove it by hand if you no longer want it. The previous release stays under
+`~/.local/share/agent-harness-lab/releases/`, so a link you kept keeps working until you delete
+it.
 
 ## Check that the installation is current
 

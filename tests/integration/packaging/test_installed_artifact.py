@@ -66,7 +66,7 @@ def test_installed_launcher_reports_the_expected_version(installed):
 
 
 def test_launcher_and_skill_links_resolve_inside_the_same_release_directory(installed):
-    assert len(installed.skill_links) == 4  # two skills in each of the codex and claude global directories
+    assert len(installed.skill_links) == 2  # the one skill in each of the codex and claude global directories
     assert installed.launcher.resolve().parent == installed.release
     for link in installed.skill_links:
         assert link.is_symlink() and link.resolve().is_relative_to(installed.release / 'skills'), link
@@ -76,7 +76,7 @@ def test_installed_skill_text_equals_the_archive_skill(installed):
     with tarfile.open(installed.archive) as archive:
         packed = {m.name.split('/', 1)[1]: archive.extractfile(m).read() for m in archive if m.isfile()
                   and m.name.split('/', 1)[1].startswith('skills/') and m.name.endswith('SKILL.md')}
-    assert len(packed) == 2
+    assert len(packed) == 1
     for name, content in packed.items():
         assert (installed.release / name).read_bytes() == content
         for link in installed.skill_links:

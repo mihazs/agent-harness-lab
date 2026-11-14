@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Replace the `harness-evaluation` and `harness-self-improvement` skills with the single `harness-self-improvement` skill (#654). It keeps both activation descriptions and carries the evaluation methodology and runner in its `references/` and `scripts/`; the evaluator-author role still receives the evaluation methodology only. The release installer, `ahl update` and `ahl skills` back up a `harness-evaluation` link they created, do not recreate it, and leave a foreign or ordinary entry of that name alone. The skill now maps the user's words to `--scope` (no scope word is `project`, "global" is `global`, "both" is `project+global`, an ambiguous request is one question or a `project` run), never edits a global file by hand once the CLI path exists, and keeps the manual fallback only for a CLI that is unavailable before any attempt. It requires `ahl` 0.192.0 or later, the release that added `--scope`.

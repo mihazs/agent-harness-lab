@@ -28,8 +28,9 @@ Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
 `--agent claude` or `--agent codex`; preparation and evaluation never mix runtimes
 within a pair. CLI executables can be selected with `--claude` or `--codex`.
 
-The installed skills also work inside an existing agent session. They discover
-improvement candidates themselves; an incident description or proposed candidate
-is optional. In Claude Code their commands are `/harness-self-improvement` and
-`/harness-evaluation`. During a CLI-managed run, the controller owns execution and
-adoption; the skills must not launch recursive improvement controllers.
+The installed skill also works inside an existing agent session. It discovers
+improvement candidates itself; an incident description or proposed candidate
+is optional. In Claude Code its command is `/harness-self-improvement`; it also
+carries the evaluation methodology ([why one skill](single-skill-rationale.md)).
+During a CLI-managed run, the controller owns execution and adoption; the skill
+must not launch recursive improvement controllers.

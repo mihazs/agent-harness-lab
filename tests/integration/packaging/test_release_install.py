@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -77,6 +78,64 @@ def test_real_archive_install_upgrade_and_repeat(rel):
     assert destination != upgraded
     assert destination.exists()
     assert (rel.bin/'ahl').resolve() == upgraded/'ahl'
+
+
+RETIRED = installer.RETIRED_SKILLS[0]
+
+
+def two_skill_install(rel):
+    """An install whose release still shipped the retired skill, with its links in both skill directories."""
+    legacy = rel.source / 'skills' / RETIRED
+    legacy.mkdir()
+    (legacy / 'SKILL.md').write_text('retired skill')
+    subprocess.run(['git', 'add', '.'], cwd=rel.source, check=True)
+    archive, checksums, _ = rel.release()
+    old, _ = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    for directory in rel.dirs:
+        (directory / RETIRED).symlink_to(old / 'skills' / RETIRED, target_is_directory=True)
+    subprocess.run(['git', 'rm', '-rq', '--cached', f'skills/{RETIRED}'], cwd=rel.source, check=True)
+    shutil.rmtree(legacy)
+    return old
+
+
+def test_fresh_install_links_only_the_unified_skill(rel):
+    archive, checksums, _ = rel.release()
+    installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    for directory in rel.dirs:
+        assert sorted(p.name for p in directory.iterdir()) == ['harness-self-improvement']
+
+
+def test_upgrade_from_two_skill_install_retires_the_owned_links_and_keeps_the_old_release(rel):
+    old = two_skill_install(rel)
+    archive, checksums, _ = rel.release('0.2.0')
+    new, backup = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    for directory in rel.dirs:
+        assert not (directory / RETIRED).is_symlink()
+        assert (directory / 'harness-self-improvement').resolve() == new / 'skills/harness-self-improvement'
+    assert [p.readlink() for p in backup.iterdir() if p.is_symlink() and p.readlink().name == RETIRED] == [old / 'skills' / RETIRED] * 2
+    assert (old / 'skills' / RETIRED / 'SKILL.md').read_text() == 'retired skill'
+    assert installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)[1] is None
+
+
+def test_upgrade_leaves_foreign_and_ordinary_retired_entries_alone(rel):
+    two_skill_install(rel)
+    foreign, ordinary = rel.dirs[0] / RETIRED, rel.dirs[1] / RETIRED
+    foreign.unlink(); foreign.symlink_to(rel.root / 'unrelated')
+    ordinary.unlink(); ordinary.mkdir(); (ordinary / 'SKILL.md').write_text('mine')
+    archive, checksums, _ = rel.release('0.2.0')
+    installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    assert foreign.readlink() == rel.root / 'unrelated'
+    assert (ordinary / 'SKILL.md').read_text() == 'mine'
+
+
+def test_receipt_failure_restores_the_retired_links(rel):
+    old = two_skill_install(rel)
+    archive, checksums, _ = rel.release('0.2.0')
+    with patch.object(Path, 'replace', side_effect=OSError('synthetic receipt failure')), pytest.raises(OSError):
+        installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    for directory in rel.dirs:
+        assert (directory / RETIRED).readlink() == old / 'skills' / RETIRED
+        assert (directory / 'harness-self-improvement').resolve() == old / 'skills/harness-self-improvement'
 
 
 def test_existing_skill_directory_is_backed_up(rel):
@@ -219,7 +278,7 @@ def test_killed_installer_releases_same_lock_inode_for_explicit_recovery(rel):
 
 def test_foreign_link_rejected_before_any_link_mutation(rel):
     rel.dirs[1].mkdir(parents=True)
-    foreign = rel.dirs[1] / installer.SKILLS[1]
+    foreign = rel.dirs[1] / installer.SKILLS[0]
     foreign.symlink_to(rel.root/'unrelated')
     archive, checksums, _ = rel.release()
     with pytest.raises(ValueError, match='foreign symlink'):
@@ -235,7 +294,7 @@ def test_partial_link_failure_restores_existing_content(rel):
     archive, checksums, _ = rel.release()
     real = Path.symlink_to
     def fail_last(path, target, **kwargs):
-        if path == rel.dirs[1]/installer.SKILLS[1]:
+        if path == rel.dirs[1]/installer.SKILLS[0]:
             raise OSError('synthetic failure')
         return real(path, target, **kwargs)
     with patch.object(Path, 'symlink_to', fail_last), pytest.raises(OSError):
@@ -263,7 +322,7 @@ def test_build_excludes_private_and_generated_files(rel):
     (rel.source/'.ai-memory.toml').write_text('PRIVATE')
     (rel.source/'artifacts').mkdir()
     (rel.source/'artifacts/private.txt').write_text('PRIVATE')
-    (rel.source/'skills/harness-evaluation/test_private.py').write_text('PRIVATE')
+    (rel.source/'skills/harness-self-improvement/test_private.py').write_text('PRIVATE')
     archive, _, _ = rel.release()
     with tarfile.open(archive) as stream:
         names = stream.getnames()

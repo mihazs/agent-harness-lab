@@ -222,9 +222,9 @@ def test_the_toolkit_copy_leaves_bytecode_caches_out_so_two_routes_start_from_id
     from agent_harness_lab import cli
     root = tmp_path / 'assets'
     shutil.copytree(cli.assets() / 'skills', root / 'skills', ignore=shutil.ignore_patterns('__pycache__'))
-    (root / 'skills/harness-evaluation/scripts/__pycache__').mkdir()
-    (root / 'skills/harness-evaluation/scripts/__pycache__/run_evaluation.cpython-314.pyc').write_bytes(b'cache')
+    (root / 'skills/harness-self-improvement/scripts/__pycache__').mkdir()
+    (root / 'skills/harness-self-improvement/scripts/__pycache__/run_evaluation.cpython-314.pyc').write_bytes(b'cache')
     monkeypatch.setattr(cli, 'assets', lambda: root)
     _, _, run, _ = stub.run(capsys, {})
-    toolkit = run / 'preparation/.harness-toolkit/skills/harness-evaluation'
+    toolkit = run / 'preparation/.harness-toolkit/skills/harness-self-improvement'
     assert (toolkit / 'SKILL.md').is_file() and not list(toolkit.rglob('__pycache__')) and not list(toolkit.rglob('*.pyc'))

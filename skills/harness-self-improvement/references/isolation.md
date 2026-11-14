@@ -12,7 +12,7 @@ lacks is removed from that workspace, so additions and deletions compare. A path
 that crosses a symlink, or a fixture entry at that path that is not a regular
 file, is refused. Each trial's `workspace_surfaces` lists the included files with
 their surface kind and SHA-256, the absent paths, and `observed_loading:
-unknown`. Use the [surface matrix](../../harness-self-improvement/references/surfaces.md)
+unknown`. Use the [surface matrix](surfaces.md)
 for what each kind is and whether a candidate may change it.
 
 ## What a trial requests

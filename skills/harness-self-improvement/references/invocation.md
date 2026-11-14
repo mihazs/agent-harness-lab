@@ -74,16 +74,11 @@ re-dispatch: ask the user the single question, then rerun the same
 `ahl skills invoke` once with the answer appended (`--agent <choice>`), without a
 second configuration step. Offer to remember the answer; append `--remember-runtime`
 only if the user says yes (`ahl config show`/`clear` manage it; the skill never
-writes a project file for it). Relay `remediation` verbatim. A request the command
-cannot satisfy, such as a historical-session evidence input, must be reported as
-unsupported, not silently dropped.
-
-User-level skills are in scope only when the user explicitly asks for them. Then add
-`--repair-contracts --scope global --agent codex|claude` (or `--scope project+global`);
-the default scope never touches them and a project file cannot select them. Without
-`--repair-contracts` the command returns `blocked` (model evaluation of the user-level
-layer is not available). Report each layer's row from the receipt, relay its `rollback`
-command, and never call a blocked, exhausted or failed layer a success.
+writes a project file for it). Relay `remediation` verbatim. To use the user's past
+sessions as evidence pass `--history [--since DATE|first]`; relay a `history_*`
+block's `remediation` verbatim and never assert recurrence the receipt does not
+report. A request the command cannot satisfy must be reported as unsupported, not
+silently dropped.
 
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its
@@ -99,6 +94,30 @@ including an ambiguous in-flight action, require intervention and are not replay
 Keep the original private artifacts. Recovery does not reset the consumed budget
 or authorize a target edit. Custom output directories cannot be resumed. A hard
 crash may leave a lock; verify its recorded PID before removing a stale lock.
+
+## Scope mapping
+
+The command's `--scope` selects the harness layers; the user's words choose it and
+the skill never widens it. Only the command line selects global scope: a project
+file cannot.
+
+| The user says | Run |
+| --- | --- |
+| nothing about scope, "this project", "my repo" | no `--scope` flag (`project`; never reads or writes user-level files) |
+| "global", "my user-level/global harness" | `--scope global --agent codex\|claude` |
+| "both", "global and project", "everywhere" | `--scope project+global --agent codex\|claude` |
+| could be either layer ("my skills", "my setup") | one question, or a `project` run |
+
+A global scope names its runtime: use the one the user stated, else ask once; never
+infer it from the invoking host. Add `--repair-contracts` only when the user asks for
+the deterministic skill-header repair (a no-model, journaled and reversible change).
+Without it a user-level layer returns `blocked` with
+`global_scope_model_evaluation_unavailable` and changes nothing: report that status,
+its `remediation` and each layer's row, and offer the repair as the user's choice.
+Never do the global work by hand once the CLI path exists; the manual rules below
+apply only before any attempt, when the CLI is unavailable. Report each layer's row
+from the receipt, relay its `rollback` command, and never call a blocked, exhausted or
+failed layer a success.
 
 ## Report integrity
 
@@ -163,9 +182,9 @@ an authenticated CLI application result. Use executable evidence for applied
 changes and name unavailable runtime/evidence prerequisites. Do not bootstrap a
 new runner or silently install tools to simulate adapter availability.
 
-Automated global scope is limited to the deterministic skill-header repair
-(`--repair-contracts --scope global|project+global --agent`); any other global task
-is manual. An explicitly authorized manual global task retains its exact named
-scope, snapshots, evaluation and rollback boundaries.
-Project invocation does not authorize global discovery links, global instructions
-or another project's changes.
+The manual fallback keeps the scope and authorization rules: the project is the
+default, and user-level files are in scope only on an explicit global request or a
+named global location, with that exact scope and its snapshot, evaluation and
+rollback boundaries. Project invocation does not authorize global discovery links,
+global instructions or another project's changes. Once any command attempt exists,
+the fallback is closed and the scope mapping above applies.

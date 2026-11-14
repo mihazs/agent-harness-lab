@@ -308,7 +308,7 @@ separate grader namespace, selected-harness-only mounts, bounded artifact
 extraction, typed grades and the existing paired schedule. Unsupported hosts
 write a blocked report before task execution. This is diagnostic infrastructure;
 it does not invoke a model or orchestrate proposer/evaluator construction. See the
-[offline execution contract](../skills/harness-evaluation/references/execution.md#offline-executor-and-separate-grader-integration).
+[offline execution contract](../skills/harness-self-improvement/references/execution.md#offline-executor-and-separate-grader-integration).
 The mock integration checks exercise both arms of all seven starter tasks, with
 broken baseline programs and complete candidate programs. Their outcomes establish
 runner wiring, not model quality or actual containment. A supported-host end-to-end
@@ -345,7 +345,7 @@ sharing one budget/client through trials and refinement. Controlled authors see
 baseline/metadata/methodology only; the controller publishes bounded authored trees
 and derives frozen grader commands. Native CLI modes remain cooperative and
 automatic promotion remains disabled. Full model-backed qualification is unknown.
-See the [settings, cap and state contract](../skills/harness-evaluation/references/execution.md#controller-owned-responses-executor).
+See the [settings, cap and state contract](../skills/harness-self-improvement/references/execution.md#controller-owned-responses-executor).
 
 Each controlled trial also records private controller observations of tool requests,
 validation decisions, reservations, backend invocation and returned output. Controller

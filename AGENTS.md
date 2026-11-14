@@ -1,8 +1,9 @@
 # Harness Improver
 
-This repository owns the project-agnostic `harness-evaluation` and
-`harness-self-improvement` skills under `skills/`. Global skill directories link
-to these sources. Preserve their activation metadata and authorization boundaries.
+This repository owns the project-agnostic `harness-self-improvement` skill under
+`skills/`; evaluation methodology lives in its `references/` and `scripts/`. Global
+skill directories link to this source. Preserve its activation metadata and
+authorization boundaries.
 
 Keep the skill entrypoints compact; put conditional methodology in references
 and repeated deterministic operations in scripts. Count independent mechanisms

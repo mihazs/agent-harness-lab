@@ -392,7 +392,7 @@ No CLI path stages a hook unit yet. A passed contract is not behavioral evidence
 Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
 canary inside a private trial workspace with no credentials in its environment,
 sandboxed by default by the bubblewrap backend without network or host home
-([hook canary validation](../skills/harness-evaluation/references/execution.md#hook-canary-validation)).
+([hook canary validation](../skills/harness-self-improvement/references/execution.md#hook-canary-validation)).
 
 ## Workflow contract
 

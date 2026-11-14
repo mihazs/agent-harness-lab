@@ -56,7 +56,7 @@ class TestStarterBank:
 
     def test_runner_rejects_changed_declared_grader_data_before_agent_launch(self, tmp_path):
         import subprocess,sys
-        runner=ROOT/'skills/harness-evaluation/scripts/run_evaluation.py'
+        runner=ROOT/'skills/harness-self-improvement/scripts/run_evaluation.py'
         root=tmp_path; export_manifest(BANK,root/'export')
         (root/'baseline').mkdir(); (root/'candidate').mkdir()
         expected=root/'export/graders/localization/expected.json'
@@ -69,7 +69,7 @@ class TestStarterBank:
         assert not (root/'output').exists()
 
     def test_typed_grader_defects_remain_distinct_from_task_failure(self):
-        spec=importlib.util.spec_from_file_location('typed_runner',ROOT/'skills/harness-evaluation/scripts/run_evaluation.py')
+        spec=importlib.util.spec_from_file_location('typed_runner',ROOT/'skills/harness-self-improvement/scripts/run_evaluation.py')
         runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)
         def grade(result,code=0):
             return dict(exit_code=code,timeout=False,stdout=json.dumps(result))
@@ -136,7 +136,7 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         root=tmp_path; export_manifest(BANK,root/'export')
         (root/'baseline').mkdir(); (root/'candidate').mkdir()
         binary=root/'fake-agent'; binary.write_text(fake_code); binary.chmod(0o700)
-        runner=ROOT/'skills/harness-evaluation/scripts/run_evaluation.py'
+        runner=ROOT/'skills/harness-self-improvement/scripts/run_evaluation.py'
         run=subprocess.run([sys.executable,str(runner),'--manifest',str(root/'export/manifest.json'),
             '--baseline',str(root/'baseline'),'--candidate',str(root/'candidate'),'--output',str(root/'results'),
             '--codex',str(binary)],capture_output=True,text=True)

@@ -794,7 +794,7 @@ def _improve(args):
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
                 candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
-            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and its references/evaluation.md.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from the bounded, content-free brief {output / 'analysis-brief.json'}
 (coverage, methods run and not run, top mechanism summaries, weak-outcome signals, missing evidence),
@@ -819,7 +819,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+            command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -975,7 +975,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
                 **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+            evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior

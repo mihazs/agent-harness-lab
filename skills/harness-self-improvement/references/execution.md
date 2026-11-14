@@ -6,7 +6,7 @@ contains the named skill directories. Fixtures are small trusted workspaces, not
 copies of home directories or credential stores. Symlink inputs are rejected.
 
 ```sh
-python /path/to/harness-evaluation/scripts/run_evaluation.py \
+python /path/to/harness-self-improvement/scripts/run_evaluation.py \
   --manifest /path/to/manifest.json \
   --baseline /path/to/baseline --candidate /path/to/candidate \
   --output /path/to/new-results-directory
@@ -16,7 +16,7 @@ Minimal manifest (paths for fixtures resolve beside the manifest):
 
 ```json
 {
-  "skills": ["harness-evaluation", "harness-self-improvement"],
+  "skills": ["harness-self-improvement"],
   "timeout_seconds": 180,
   "max_trials": 24,
   "budget_seconds": 2700,
@@ -81,7 +81,7 @@ rollback snapshots. Record any unobserved effective settings as unknown.
 Run helper checks with:
 
 ```sh
-python -m unittest discover -s /path/to/harness-evaluation/scripts -p 'test_*.py'
+python -m unittest discover -s /path/to/harness-self-improvement/scripts -p 'test_*.py'
 ```
 
 For a real behavior change, inspect failures, repeat the decisive pair in fresh

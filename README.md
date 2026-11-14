@@ -140,7 +140,7 @@ Change plans list the surfaces they leave for later as deferred.
 `ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` prints this
 matrix for the declared runtime, and none for a version other than the pin.
 See the [surface reference](skills/harness-self-improvement/references/surfaces.md)
-for paths, version pins and unverified items, and [trial isolation](skills/harness-evaluation/references/isolation.md)
+for paths, version pins and unverified items, and [trial isolation](skills/harness-self-improvement/references/isolation.md)
 for what an evaluation trial still inherits.
 
 ## Try it without credentials
@@ -201,7 +201,7 @@ Read the [full output, controls and interpretation](docs/getting-started.md).
 
 [Evaluation contracts and pending safeguards](docs/evaluation-foundation.md) ·
 [Implemented and pending experiments](docs/controlled-experiments.md) ·
-[Scientific sources](skills/harness-evaluation/references/evidence-to-design.md) ·
+[Scientific sources](skills/harness-self-improvement/references/evidence-to-design.md) ·
 [Initial validation](docs/validation.md) · [Scientific roadmap](https://github.com/mihazs/agent-harness-lab/issues/3)
 
 ## Contribute

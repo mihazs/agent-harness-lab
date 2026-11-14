@@ -102,7 +102,7 @@ the same client/request/tool/deadline budget covers proposer, evaluator author,
 paired task execution and any refinement. Roles receive separate bounded views;
 the author receives baseline/curated metadata and methodology. The original source
 project and prior held-out feedback stay outside those views. Native discovery or
-execution never becomes a fallback. Read the [role, receipt and resource contract](../skills/harness-evaluation/references/execution.md#controlled-improvement-roles)
+execution never becomes a fallback. Read the [role, receipt and resource contract](../skills/harness-self-improvement/references/execution.md#controlled-improvement-roles)
 before using an API account. Model compatibility/quality and independent
 certification remain unverified; behavioral repairs still require review.
 
@@ -192,9 +192,9 @@ Repetition alone does not establish waste. Tool errors can be expected negative
 tests. Fewer calls qualify as an improvement only when required behavior and
 completion remain intact. No model is promoted on an easy synthetic smoke test.
 
-- [Primary scientific sources and their limits](../skills/harness-evaluation/references/evidence-to-design.md)
-- [Diagnosis and measurement criteria](../skills/harness-evaluation/references/trace-diagnosis.md)
-- [Evaluation contract](../skills/harness-evaluation/references/execution.md)
+- [Primary scientific sources and their limits](../skills/harness-self-improvement/references/evidence-to-design.md)
+- [Diagnosis and measurement criteria](../skills/harness-self-improvement/references/trace-diagnosis.md)
+- [Evaluation contract](../skills/harness-self-improvement/references/execution.md)
 - [Initial validation](validation.md)
 
 ## Privacy

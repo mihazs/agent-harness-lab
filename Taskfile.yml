@@ -19,7 +19,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
   test:cli:help:
     desc: Verify recursive agent-facing CLI guidance and side-effect-free help routes
     cmds:
@@ -231,7 +231,7 @@ tasks:
   test:evaluator:
     desc: Run evaluator tests with pytest
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest skills/harness-evaluation/scripts'
+      - '{{.PYTHON | shellQuote}} -m pytest skills/harness-self-improvement/scripts'
   test:workflow:one-call:
     desc: Verify public configured improvement, deterministic repair and rollback
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -506,7 +506,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k TestControllerSource'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 4 --dist worksteal -k TestControllerSource'
   test:sources:harness-binding:
     desc: Run synthetic Git harness snapshot binding, ownership and location controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -540,7 +540,7 @@ tasks:
       AHL_TEST_CGROUP_ROOT: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k live_controller_sources'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 0 -k live_controller_sources'
   test:sources:contracts:
     desc: Run source identity, execution metadata and complete normalized export contracts
     cmds:
@@ -992,7 +992,7 @@ tasks:
       PYTHONDONTWRITEBYTECODE: '1'
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
@@ -1079,7 +1079,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
   test:evaluation:recovery-gap:
     desc: Probe durable trial binding and ambiguous-request refusal without provider calls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -1087,7 +1087,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

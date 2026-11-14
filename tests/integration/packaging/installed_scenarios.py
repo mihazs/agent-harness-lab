@@ -211,7 +211,7 @@ def scenario_doctor_finds_a_consistent_installation(installed, sb):
     assert code == 0 and state['warnings'] == [] and state['network_used'] is False
     assert state['version'] == state['launcher_release'] == installed.version
     assert Path(state['launcher_resolves_to']) == installed.release / 'ahl'
-    assert len(state['skill_links']) == 4 and {link['release'] for link in state['skill_links']} == {installed.version}
+    assert len(state['skill_links']) == 2 and {link['release'] for link in state['skill_links']} == {installed.version}
     assert all(link['minimum_cli'] is None or link['minimum_cli'] <= installed.version for link in state['skill_links'])  # same-width X.Y.Z
     assert next(c['status'] for c in report['checks'] if c['check_id'] == 'installation') == 'pass'
     assert next(c['status'] for c in report['checks'] if c['check_id'] == 'authentication') == 'unknown'

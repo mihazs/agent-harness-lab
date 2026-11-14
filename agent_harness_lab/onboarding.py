@@ -35,7 +35,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
     safe = project.is_dir() and not any(p.is_symlink() for p in (project, *project.parents))
     add('project', 'pass' if safe else 'blocked', True, 'filesystem_metadata',
         'regular_directory' if safe else 'unavailable_or_symlink', 'Select an existing project directory without symlink ancestors.')
-    installed = all((assets()/name).is_file() for name in ('skills/harness-evaluation/SKILL.md', 'skills/harness-evaluation/scripts/run_evaluation.py', 'skills/harness-self-improvement/SKILL.md'))
+    installed = all((assets()/name).is_file() for name in ('skills/harness-self-improvement/SKILL.md', 'skills/harness-self-improvement/scripts/run_evaluation.py'))
     add('assets', 'pass' if installed else 'blocked', True, 'filesystem_metadata',
         'present' if installed else 'missing', 'Reinstall AHL from a verified release or use a complete source checkout.')
     from . import installation
