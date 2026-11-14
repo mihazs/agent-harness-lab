@@ -132,7 +132,7 @@ def test_entrypoint_links_are_plain_files_an_installed_link_can_open():
 
 def test_nothing_in_the_repository_points_at_the_retired_skill():
     skip = {'.git', 'node_modules', 'artifacts', '__pycache__', '.venv', 'dist'}
-    allowed = {'install.py', 'tools/link_skills.py', 'CHANGELOG.md', 'docs/installation.md', 'docs/single-skill-rationale.md',
+    allowed = {'install.py', 'tools/link_skills.py', 'scripts/build_release.py', 'CHANGELOG.md', 'docs/installation.md', 'docs/single-skill-rationale.md',
                'tests/unit/docs/test_unified_skill.py'}
     found = []
     for folder, directories, files in os.walk(ROOT):

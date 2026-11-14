@@ -95,12 +95,20 @@ runner it used to carry live in that skill's `references/` and `scripts/`. The n
 The activation description lists every phrase that triggered either skill, and ordinary
 coding and application testing still do not trigger it.
 
-Upgrading needs no manual step. `ahl update`, the release installer and `ahl skills`
-back up a `harness-evaluation` link that they created (the backup path is printed) and do not
-recreate it. An ordinary directory or a symlink you made yourself with that name is left
-untouched, so remove it by hand if you no longer want it. The previous release stays under
-`~/.local/share/agent-harness-lab/releases/`, so a link you kept keeps working until you delete
-it.
+Upgrade in two steps. An update runs the installer of the release you already have, and
+that older installer insists on finding `harness-evaluation` in the new archive. The archive
+therefore carries an empty placeholder with that name, so the older installer finishes.
+
+1. Run `ahl update`. It installs the new release, repoints the `harness-self-improvement`
+   link and links the placeholder, a skill with no instructions that only says it was retired.
+2. Run `ahl update` once more. The new release's installer backs up the `harness-evaluation`
+   link it finds there (the backup path is printed) and does not recreate it.
+
+The release installer (`curl ... | python3 -`) and `ahl skills` are already the new code, so they
+do this in one run. An ordinary directory or a symlink you made yourself with that name is left
+untouched, so remove it by hand if you no longer want it. `ahl rollback install-NAME` puts back
+a `harness-evaluation` link that an update moved, unless something new now occupies its path,
+and the previous release stays under `~/.local/share/agent-harness-lab/releases/`.
 
 ## Check that the installation is current
 

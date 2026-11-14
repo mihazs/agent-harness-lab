@@ -29,8 +29,11 @@ job is to run the single CLI command and report its real result.
 
 ## Migration
 
-`ahl update`, the release installer and `ahl skills` back up a `harness-evaluation` link they
-created and do not recreate it; a directory or a symlink you made yourself is left alone. See
+The release installer and `ahl skills` back up a `harness-evaluation` link they created and do
+not recreate it; a directory or a symlink you made yourself is left alone. `ahl update` runs the
+installer of the release already installed, which requires that skill in the new archive, so the
+archive carries an empty placeholder and the second `ahl update` retires its link. `ahl rollback`
+restores a link an update moved. See
 [moving from two skills to one](installation.md#moving-from-two-skills-to-one).
 
 ## Limits

@@ -73,9 +73,11 @@ def test_launcher_and_skill_links_resolve_inside_the_same_release_directory(inst
 
 
 def test_installed_skill_text_equals_the_archive_skill(installed):
+    linked = {link.name for link in installed.skill_links}  # the archive also carries a placeholder for the retired skill
     with tarfile.open(installed.archive) as archive:
         packed = {m.name.split('/', 1)[1]: archive.extractfile(m).read() for m in archive if m.isfile()
-                  and m.name.split('/', 1)[1].startswith('skills/') and m.name.endswith('SKILL.md')}
+                  and m.name.split('/', 1)[1].startswith('skills/') and m.name.endswith('SKILL.md')
+                  and m.name.split('/')[-2] in linked}
     assert len(packed) == 1
     for name, content in packed.items():
         assert (installed.release / name).read_bytes() == content

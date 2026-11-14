@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -83,16 +84,26 @@ def test_real_archive_install_upgrade_and_repeat(rel):
 RETIRED = installer.RETIRED_SKILLS[0]
 
 
+def previous_installer(rel):
+    """The installer of a two-skill release: this one without the retirement, requiring and linking both skills.
+
+    An update runs the installer of the release already installed, so this is what meets the new archive."""
+    text = (ROOT / 'install.py').read_text()
+    two = f'SKILLS = {(*installer.RETIRED_SKILLS, *installer.SKILLS)!r}\nRETIRED_SKILLS = ()'
+    previous = re.sub(r'^SKILLS = .*\nRETIRED_SKILLS = .*$', two, text, flags=re.M)
+    assert previous != text
+    (rel.root / 'previous_install.py').write_text(previous)
+    return load('previous_installer', rel.root / 'previous_install.py')
+
+
 def two_skill_install(rel):
-    """An install whose release still shipped the retired skill, with its links in both skill directories."""
+    """An install made by the previous installer from a release that still shipped the retired skill."""
     legacy = rel.source / 'skills' / RETIRED
     legacy.mkdir()
     (legacy / 'SKILL.md').write_text('retired skill')
     subprocess.run(['git', 'add', '.'], cwd=rel.source, check=True)
     archive, checksums, _ = rel.release()
-    old, _ = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
-    for directory in rel.dirs:
-        (directory / RETIRED).symlink_to(old / 'skills' / RETIRED, target_is_directory=True)
+    old, _ = previous_installer(rel).install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
     subprocess.run(['git', 'rm', '-rq', '--cached', f'skills/{RETIRED}'], cwd=rel.source, check=True)
     shutil.rmtree(legacy)
     return old
@@ -126,6 +137,50 @@ def test_upgrade_leaves_foreign_and_ordinary_retired_entries_alone(rel):
     installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
     assert foreign.readlink() == rel.root / 'unrelated'
     assert (ordinary / 'SKILL.md').read_text() == 'mine'
+
+
+def test_previous_installer_upgrades_to_the_single_skill_archive_then_update_retires_the_placeholder(rel):
+    """`ahl update` runs the installed release's installer, which requires every skill it knows in the new archive."""
+    two_skill_install(rel)
+    archive, checksums, _ = rel.release('0.2.0')
+    new, _ = previous_installer(rel).install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    for directory in rel.dirs:
+        assert (directory / 'harness-self-improvement').resolve() == new / 'skills/harness-self-improvement'
+        assert 'Retired placeholder' in (directory / RETIRED / 'SKILL.md').read_text()
+    assert (rel.bin / 'ahl').resolve() == new / 'ahl'
+    with tarfile.open(archive) as stream:
+        assert [n for n in stream.getnames() if f'skills/{RETIRED}' in n] == [f'agent-harness-lab-0.2.0/skills/{RETIRED}/SKILL.md']
+    # The next update runs the new installer, which removes the placeholder link and can be rolled back.
+    again, backup = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    assert again == new
+    assert [d for d in rel.dirs if os.path.lexists(d / RETIRED)] == []
+    installer.rollback(rel.install_root, backup.name)
+    assert [(d / RETIRED).readlink() for d in rel.dirs] == [new / 'skills' / RETIRED] * 2
+
+
+def test_rollback_restores_the_retired_links(rel):
+    old = two_skill_install(rel)
+    archive, checksums, _ = rel.release('0.2.0')
+    new, backup = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    installer.rollback(rel.install_root, backup.name)
+    assert (rel.bin / 'ahl').resolve() == old / 'ahl'
+    for directory in rel.dirs:
+        assert (directory / RETIRED).readlink() == old / 'skills' / RETIRED
+        assert (directory / 'harness-self-improvement').resolve() == old / 'skills/harness-self-improvement'
+    assert new.exists()
+
+
+def test_rollback_refuses_when_something_took_a_retired_path(rel):
+    two_skill_install(rel)
+    archive, checksums, _ = rel.release('0.2.0')
+    new, backup = installer.install(archive, checksums, rel.install_root, rel.bin, rel.dirs)
+    (rel.dirs[0] / RETIRED).mkdir()
+    with pytest.raises(ValueError, match='changed since the installation') as failure:
+        installer.rollback(rel.install_root, backup.name)
+    assert str(rel.dirs[0] / RETIRED) in str(failure.value)
+    assert (rel.dirs[1] / 'harness-self-improvement').resolve() == new / 'skills/harness-self-improvement'
+    assert not os.path.lexists(rel.dirs[1] / RETIRED)
+    assert (backup / 'manifest.json').is_file()
 
 
 def test_receipt_failure_restores_the_retired_links(rel):
