@@ -401,6 +401,7 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/optimization/test_optimization_history.py -v'
       - '{{.PYTHON | shellQuote}} -m pytest tests/integration/optimization/test_search_history.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/integration/optimization/test_strategy_guarded.py -v'
   test:evaluation:grader-controls:
     desc: Run native proposal-wrapper and shared controlled grader-audit cases
     cmds:

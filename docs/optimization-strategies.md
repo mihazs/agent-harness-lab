@@ -17,7 +17,7 @@ never imports modules, entry points, files or callbacks because they exist on a
 path. Unknown IDs or versions raise `ValueError`. A third-party adapter needs its
 own reviewed registration; none is included, and the core stays standard-library only.
 
-## Running a strategy
+## Running a strategy on the callback route
 
 ```python
 run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify,
@@ -41,9 +41,32 @@ run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify,
   raises `ValueError` when they exceed the ceiling, or exceed the ceiling less the
   reserve before the final-reserve charge, or when the state records no charges.
 - The result adds `strategy` (ID, version, configuration, identity, state path).
-  Results from this route carry `evidence_source: "unverified_callback"`: the
+  Results from the callback route carry `evidence_source: "unverified_callback"`: the
   callback `safe` and metric values are not controller-verified evidence, and
   development points are selection heuristics, not proof of benefit.
+
+## Running through the guarded controller route
+
+```python
+run_strategy(strategy_id, version, path, baseline, proposer, None, None, budget,
+             allowed_files, evidence, controller=context, parent_deadline=None)
+```
+
+Pass a `HistorySearchContext` as `controller` to run the strategy through
+[guarded development search](guarded-search.md) instead of the callback route. The
+actual controller executes and independently verifies every candidate and the fresh
+development confirmation, so `evaluate` and `certify` must be `None`: a raw callback
+result cannot rank or select there, and passing one raises `ValueError`. The callback
+route in turn needs both callbacks, and `parent_deadline` is valid only with a
+controller. Everything above still applies (development-only evidence, the slot
+kinds, derived seeds, per-configuration state paths, the no-op that never calls the
+proposer). The guarded contracts also apply: baseline must be the unchanged
+authorized context, `variants` is at most 3, the state directory must be owner-only
+and a repeat must pass exactly the same ceiling and reserve or it raises
+`ValueError`. The result carries `evidence_source: "controller_verified_development_only"`
+with automatic promotion, publication and adoption authority all `False`. A favorable
+status is `development_recommended_for_review`: development evidence after a fresh
+confirmation, not untouched certification.
 
 ## Comparing strategies under one budget
 
@@ -63,6 +86,19 @@ charges exceed raises `ValueError` instead of reporting that budget as matched, 
 nothing further runs. A larger budget resumes the saved result without re-running
 it, so the report shows the larger budget over charges made under the smaller one.
 To compare under a different budget, use a new `directory`.
+
+`compare_strategies(..., controller=context, parent_deadline=None)` runs every listed
+strategy through the guarded controller route with `evaluate` as `None`. Each row is
+built from the guarded state: `charges` come from its durable stage charges
+(including `development_confirmation`), `rejections` list the invalid and duplicate
+attempts with their reasons, and `disposition` is the guarded status
+(`development_recommended_for_review`, `no_change`, `rejected_or_inconclusive`,
+`interrupted`, `budget_exhausted` or `blocked`). `selected` and `finalists` hold only
+candidates recommended for review after a fresh confirmation; a candidate whose
+confirmation fails, or whose run was interrupted, is not a finalist. The report's
+`evidence_source` is `controller_verified_development_only`. On this route a repeat
+with a different ceiling or reserve is refused by the guarded state, and an interrupted
+strategy stays `interrupted` without redispatching or refunding its charges.
 
 The report has one row per strategy and never only the winner:
 
@@ -86,6 +122,7 @@ comparator, which this report does not provide.
 
 ## Not covered yet
 
-A supported model-backed reflective proposer, measured token or cost accounting and
-the guarded controller route for strategies remain separate work. Successive halving,
+A supported model-backed reflective proposer and measured token or cost accounting
+remain separate work: the controller route charges stage units, not tokens or currency,
+and `measured_usage` stays `None`. The equal-budget retry comparator, successive halving,
 recombination and optional DSPy adapters remain opt-in experiments.
