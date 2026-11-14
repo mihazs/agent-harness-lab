@@ -596,9 +596,9 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/unit/sources/test_source_claude_mem_tools.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
   test:sources:mem0:
-    desc: Run offline Mem0 OSS v2.2.1 and Platform v3 memory/history export controls with synthetic invented exports
+    desc: Run offline Mem0 OSS v2.2.1 and Platform v3 export controls and the read-only REST/API client controls with synthetic fixtures
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_mem0.py tests/unit/sources/test_source_mem0_platform.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_mem0.py tests/unit/sources/test_source_mem0_platform.py tests/unit/sources/test_source_mem0_api.py -v'
   test:sources:hindsight:
     desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
     cmds:

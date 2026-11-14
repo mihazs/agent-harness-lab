@@ -23,7 +23,7 @@ remaining, reset) as JSON, and records it in the shared file. It never spends co
 
 ## Tune a run
 
-Optional keys of a manifest's `limits` object (GitHub, Gitea and GitLab):
+Optional keys of a manifest's `limits` object (GitHub, Gitea, GitLab and Mem0):
 
 | Key | Default | Meaning |
 | --- | --- | --- |

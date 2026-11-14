@@ -15,6 +15,7 @@ class ConfiguredAPI:
     """One manifest-declared remote reader; subclasses name the provider, selection and reader."""
     provider = selection_type = reader = None
     environment_authorization = False
+    planes = ('contextual_assertion', 'development_artifact')
 
     def __init__(self, manifest, *, authorization_file=None, authorization_env=None):
         if authorization_env is not None and (not self.environment_authorization or not isinstance(authorization_env, str)

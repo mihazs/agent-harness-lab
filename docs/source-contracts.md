@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -4547,10 +4547,9 @@ the export record, checked before mapping), `max_fields` 64 per row,
 4,000,000. `limits` may only lower them. `task test:sources:mem0` runs the
 synthetic controls.
 
-Still open in #49: a read-only OSS REST client and a read-only hosted Platform
-client with explicit origin, token source, retry and 401/403/404/429 stops, and
-verifying both envelopes against real captures. The offline Platform v3 profile
-is [documented below](#offline-mem0-platform-v3-exports).
+The offline Platform v3 profile is [documented below](#offline-mem0-platform-v3-exports),
+and the read-only [REST and Platform clients](#explicit-mem0-oss-rest-and-platform-v3-reads)
+reuse this envelope. Still open in #49: verifying both envelopes against real captures.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
@@ -4564,7 +4563,7 @@ namespace and claim type (`Mem0PlatformClaim`), so a Platform memory and an OSS
 memory never share a native ID. The descriptor is the OSS one with
 `api_version: "v3"` in place of `mem0_version`, and `limits` also accepts
 `max_pages` (ceiling 1,000). The reader opens one file and never calls the hosted
-API, so no origin, token or retry exists yet.
+API; the [read-only client](#explicit-mem0-oss-rest-and-platform-v3-reads) does.
 
 ```json
 {"exported_at": "2031-06-01T00:00:00Z", "api_version": "v3", "filters": {"user_id": "u1"},
@@ -4594,6 +4593,117 @@ other claim, expiry, tombstone, no-outcome and publication rules, summary
 fields, bounds and warnings are the OSS ones, and the summary reports
 `platform_v3: offline_export`. `task test:sources:mem0` runs the synthetic
 controls for both sources.
+
+## Explicit Mem0 OSS REST and Platform v3 reads
+
+`sources.mem0_api` reads the same pinned envelopes as the two offline exports
+above, directly from a Mem0 server, so a memory, a history row and their scope
+checks mean the same thing on either path. It is opt-in: no manifest, no read.
+Two separate API sources exist, each with its own provider, profile, selection
+and credential rule, because the OSS server and the hosted Platform do not share
+a request shape:
+
+| | OSS REST (`api/mem0-oss-rest/v1`) | Platform v3 (`api/mem0-platform-api/v1`) |
+| --- | --- | --- |
+| Selection | `Mem0Selection`, `release: "2.2.1"` | `Mem0PlatformSelection`, `release: "v3"` |
+| Listing | `GET /memories?...` with the filter as query parameters, plus `top_k` and `show_expired` | `POST /v3/memories/?page=N&page_size=100`; the filter is the JSON body, a read despite the verb |
+| History | `GET /memories/{id}/history` | `GET /v1/memories/{id}/history/` |
+| Filter | flat `user_id`, `agent_id`, `run_id` (ANDed) | flat object, or `{"OR": [flat, ...]}` / `{"AND": [flat, ...]}` of `user_id`, `agent_id`, `app_id`, `run_id` |
+| Credential | the API key, sent as `X-API-Key` (`auth_mode: "none"` reads an open development server) | the complete header value, for example `Token ...`, sent as `Authorization`; `auth_mode: "configured"` is required |
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "mem0-oss-rest", "version": "v1", "...": "..."},
+ "endpoint": "https://mem0.example.test",
+ "selection": {"base_url": "https://mem0.example.test", "instance": "laptop-a", "release": "2.2.1",
+               "filters": {"user_id": "u1"}, "show_expired": true, "max_memories": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+The manifest has the GitHub, Gitea and GitLab configuration shape. Pass the key
+with `--authorization-file PRIVATE_FILE` or `--authorization-env NAME`; only the
+named file or variable is read, and never by `probe` or `status`. `source.project_sha256` must be
+`selection.project_sha256`, a digest of the provider, `instance`, host, path and
+the exact filter, so another scope or server is another project. `scope_sha256`
+is `selection.sha256`. `endpoint` must equal `base_url`, a canonical HTTPS origin
+without a trailing slash or a route suffix. The shared transport is HTTPS only,
+so a local OSS server on plain `http://` needs a TLS proxy or the
+[offline export](#offline-mem0-oss-memory-and-history-exports).
+
+### What is never read or sent
+
+The readers build every path from the two fixed templates above. They never call
+an add, update, delete, reset, reprocess or create-export route, never use the
+unscoped admin listing, and never read `GET /memories/{id}` (the listing carries
+the same fields). A selection is refused when its filter is empty, names a key
+outside the surface's scopes, holds an operator, a padded value or the `*`
+wildcard that would match every tenant, or when `release` is not the pinned one.
+A memory ID is interpolated into a history path only when it is a plain token
+(`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`); another ID is `not_observed:
+unsafe_memory_id`. A listed row the filter would not return is excluded, and its
+history is never requested. A Platform `next` link is validated for the next page
+number but never followed, so a hostile link cannot redirect the credential.
+
+### Pagination, limits and stops
+
+`get_all` has no cursor and its default `top_k` is 20, so the OSS reader always
+sends `top_k=max_memories` (1 to 1,000, the server's ceiling). A result that
+fills `top_k` may have been cut off and is `pagination_incomplete:
+top_k_reached`; narrow the filter (for example with `run_id`) rather than
+guessing completeness. The Platform reader requests 100 rows per page until
+`next` is null, stopping between pages once `max_memories` (1 to 10,000) rows
+were read (`max_memories_reached`; the last page is kept whole). A page that
+skips or repeats a page number, has a link without a `page` parameter, carries an
+unknown envelope field, an empty page with a link or more than 100 rows fails the
+capture. A last page whose `count` disagrees with the rows read is
+`pagination_incomplete: count_mismatch` (`listing_count_mismatch`).
+
+History is one request per listed, in-scope memory, so a scope with N memories
+needs N+1 requests. `max_pages` (default 1,000), `max_bytes` (256 MiB), `seconds`
+(900) and `timeout` bound the whole capture, each response is limited to 8 MiB,
+and a spent budget is `budget_exhausted` partial coverage. There is no retry of a
+failed request: HTTP 401, 403, 404 and 429 become coverage states
+(`unauthorized`, `forbidden`, `not_found`, `rate_limited`) and other statuses,
+malformed JSON and non-JSON content fail the capture without a snapshot. A 404
+on one memory's history is only that memory's gap; a 401, 403, 429 or spent
+budget ends every later request. A 429 is never retried for the listing POST, and
+a GET waits only when `max_wait` allows it, as in the
+[forge rate-limit guide](forge-rate-limits.md), whose shared limiter state these
+readers use. Any non-captured coverage, including a truncated listing, makes the
+snapshot `checkpoint_ready: false`: the registry refuses to commit it and
+`ahl sources import` prints `status: "blocked"`, commits nothing and exits 3.
+
+### Claims and summary
+
+Claims, identities, lifecycle statuses (asserted, expired, replaced, deleted,
+current, superseded, tombstone), edits as versions, `run_id` as a scoped
+identifier rather than a task root, scores as relevance only and the
+no-outcome rule are the offline ones, applied by the same code. Native IDs equal
+the offline export's for the same `instance`, so the two paths dedup, but the
+sources are separate: the provider and root differ. The capture instant stands in
+for `exported_at` when deciding whether a dated memory has expired. The record
+`mem0_capture` (`mem0_platform_capture`) takes the place of the export file's
+record: its revision hashes the whole assembled response, so a change to an
+unmodelled field is a new capture. Because the profile is
+`mem0-oss-rest-v1` or `mem0-platform-api-v1`, `public_export_allowed` rejects the
+summary, which `ahl sources preview` prints as `mem0_summary` with
+`network_used: true`, `read_methods`, `coverage`, `history_memories` and
+`history_captured`. Memory and history text is fingerprinted, never stored or
+printed. A memory saying a test passed is still not a verified outcome.
+
+Reads are not atomic: a memory edited between the listing and its history read
+can disagree (`history_head_mismatch`). The summary warns `reads_non_atomic`.
+`version_attestation` is `caller_declared`: the OSS server does not report the
+SDK release, so `release` states what the operator believes it runs. Unsupported
+lifecycle fields (`lifecycle_state`, `structured_attributes`, `synthesized`,
+embeddings, `input`) are accepted but not interpreted, and the hosted Platform
+export job (`POST /v1/exports/`) is not called because it creates server-side
+state; import its output through the offline source instead.
+
+`task test:sources:mem0` runs the synthetic controls against a fake HTTPS wire on
+`mem0.example.test`: request-method and route allowlist, credential headers,
+scope and boundary exclusion, `top_k` and page truncation, hostile pages and
+IDs, 401/403/404/429 and budget stops, idempotent import and the CLI flow. Live
+OSS and Platform compatibility is not established by these fixtures.
 
 ## Offline Hindsight bank archives
 
