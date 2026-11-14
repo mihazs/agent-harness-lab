@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; step localization and competing hypotheses over constraint results; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`); bounded `constraint-localization-v1` step localization of violated constraints with competing causes, negative controls and unverified draft records (`diagnostics/localization.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; localization from #58 event links and a replay of the falsifying intervention; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, not connected to any hook | A live run proving the bridge hook executes in the supported runtime, a controller-owned relay from the hook to the worker, and independently graded adapter effectiveness; no runtime flags are invented |
@@ -150,6 +150,38 @@ The earliest visible violation is not the root cause; localization, competing
 hypotheses and routing remain separate steps, and a reviewed constraint is
 evidence a `MechanismRecord` may cite, not a replacement for its boundary,
 competing explanation and falsifier.
+
+`diagnostics/localization.py` is that localization step. `localize(definitions,
+events, scope=..., capture=...)` runs the constraint report and returns a private
+`constraint-localization-v1` report that lists every constraint result and drops
+none. For a `violated` result it names the symptom events, the earliest visible
+ones (several when the capture declares no order between them; `earliest_is_unique`
+is true only when the rest are declared after one), and a bounded candidate set.
+A candidate is an event that carries an enumerated `basis` and a `relation` to every
+symptom: `call_result_link` (the call is upstream of its result and the result is
+downstream of its call), `declared_mutation` (state consistency), `required_event`
+(a prerequisite call, which is `downstream` when it follows its dependent) and
+`declared_later_outcome` (a later graded outcome, the downstream failure). A relation
+is `upstream` or `downstream` only when the capture declared that order on every
+symptom; otherwise it is `unordered`. No total order is built from timestamps and no
+transitive order is inferred. When nothing upstream was captured (`upstream:
+not_established`, localization `symptom_only`) the report says so and adds
+`upstream_cause_not_captured` to the competing causes; a prerequisite that never
+appears is listed as `absent_upstream`. An `unknown` result is `unresolved` and is not
+localized. Each kind carries a fixed list of competing causes (for example
+`evaluator_or_label_defect` for outcome integrity, so a broken grader is a candidate
+evaluator repair and not a verdict on the agent or its instructions) and the
+controlled replay that could falsify the localization. The report also lists negative
+controls: a `recovered_error` (an error result with a later returned result of the same
+tool and input) and a `repeat_over_changing_state` (the same read returning at
+different state revisions). Necessary exploration cannot be detected from events and
+needs a reviewed label. `mechanism_records` turns an untampered report (its digest must
+match) into one draft `MechanismRecord` per violated constraint, with the boundary,
+the symptom, candidate and control references, the competing causes and the
+falsifying replay; the component stays `insufficient_evidence` and the disposition
+`proposed`, so routing still needs a reviewer (`route(...)`/`dispositions(...)` hold it
+as `route_requires_review`). Nothing here is a diagnosis, a route or a validation, and
+the report is private, not publishable and never a causal claim.
 
 `run_queue` treats a record's component as its reviewed route and checks it
 through `route()` with the same held dispositions as `dispositions`. A
