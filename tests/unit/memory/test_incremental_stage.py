@@ -66,3 +66,20 @@ def test_the_miner_is_not_run_for_a_reused_output(monkeypatch):
     assert analyze(iter(rows), reused_process_mining={'profile': 'stub'})['process_mining'] == {'profile': 'stub'}
     with pytest.raises(AssertionError):
         analyze(iter(rows))
+
+
+def test_collect_names_the_reuse_seam_only_when_a_result_is_supplied(tmp_path, monkeypatch):
+    """The frozen reference analyzer takes no such keyword: without the flags the call to analyze must stay unchanged."""
+    events = tmp_path / 'events.jsonl'
+    events.write_text(GOLDEN_EVENTS)
+    seen = []
+
+    def spy(rows, **options):
+        seen.append(options)
+        return analyze(rows, **options)
+
+    monkeypatch.setattr('agent_harness_lab.evidence.analyze', spy)
+    first = collect(tmp_path, events=events)
+    assert 'reused_process_mining' not in seen[0]
+    collect(tmp_path, events=events, reused_process_mining=first['analysis']['process_mining'])
+    assert seen[1]['reused_process_mining'] == first['analysis']['process_mining']
