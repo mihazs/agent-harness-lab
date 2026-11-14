@@ -397,7 +397,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl instruction-adherence', description='Report where captured sessions ignored harness rules or user-prompt instructions. '
         'Deterministic, offline and read-only toward its inputs; no model, network or inference. Findings are observed patterns with digests and turn indexes, never causes.',
         epilog='Exit: 0 report printed; 2 invalid input. Output is private JSON; a short summary goes to stderr. Redacted by default.')
-    parser.add_argument('sessions', type=Path, help='Existing JSON {"profile":"%s","sessions":[...]} of explicitly captured sessions' % SESSIONS_PROFILE)
+    parser.add_argument('sessions', type=Path, nargs='+', help='Existing JSON {"profile":"%s","sessions":[...]} of explicitly captured sessions; with --native, native session files instead' % SESSIONS_PROFILE)
+    parser.add_argument('--native', choices=('claude', 'codex'), help='Read each path as a native Claude Code or Codex session file (JSONL) of --project; a capture that cannot be attributed is refused, not skipped')
+    parser.add_argument('--project', type=Path, help='With --native: the project directory the sessions belong to (default: current directory)')
     parser.add_argument('--rules', action='append', default=[], metavar='LAYER=FILE', help='Existing harness instruction file for layer project or global; repeatable')
     parser.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Layers whose rule files may be read (default: project)')
     parser.add_argument('--output', type=Path, help='New private file for the JSON report instead of stdout')
@@ -406,6 +408,8 @@ def main(argv=None):
     from ..evaluation.integrity import read_regular
     from ..private_journal import record, write_bytes
     try:
+        if args.native is None and args.project is not None or args.native is None and len(args.sessions) != 1:
+            raise ValueError('pass one sessions file, or --native RUNTIME with session files (--project belongs to --native)')
         harness = []
         for entry in args.rules:
             layer, _, name = entry.partition('=')
@@ -414,7 +418,12 @@ def main(argv=None):
             harness.append(dict(layer=layer, name=Path(name).name, text=read_regular(Path(name), rules.MAX_SOURCE_BYTES).decode('utf-8')))
         if len({(h['layer'], h['name']) for h in harness}) != len(harness) or len(harness) > 16:
             raise ValueError('rule files need distinct layer and file name pairs, at most 16')
-        report = build(load_sessions(record(args.sessions, MAX_BYTES)[0]), harness, detail=args.private_detail)
+        if args.native:
+            from .adherence_native import sessions_document
+            document = sessions_document(args.sessions, args.native, args.project or Path('.'))
+        else:
+            document = record(args.sessions[0], MAX_BYTES)[0]
+        report = build(load_sessions(document), harness, detail=args.private_detail)
         text = json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + '\n'
         if args.output:
             write_bytes(args.output, text.encode())
