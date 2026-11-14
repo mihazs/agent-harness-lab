@@ -115,6 +115,25 @@ def test_an_oversized_message_is_classified_from_its_head_without_failing():
     assert classify(MESSAGES['read_before_edit'] + ' ' * 5_000_000 + 'x', RUNTIME) == UNCLASSIFIED
 
 
+END_ANCHORED = ('read_before_edit', 'file_changed_since_read', 'permission_denied', 'user_interrupted')
+
+
+@pytest.mark.parametrize('name', END_ANCHORED)
+def test_a_message_cut_exactly_at_its_end_but_followed_by_more_text_is_unclassified(name, monkeypatch):
+    message = MESSAGES[name]
+    monkeypatch.setattr(error_catalog, 'HEAD', len(message))
+
+    assert classify(message + ' It is a lie.', RUNTIME) == UNCLASSIFIED
+
+
+@pytest.mark.parametrize('name', END_ANCHORED)
+def test_a_complete_message_that_fills_the_head_exactly_is_still_classified(name, monkeypatch):
+    message = MESSAGES[name]
+    monkeypatch.setattr(error_catalog, 'HEAD', len(message))
+
+    assert classify(message, RUNTIME) == name
+
+
 def test_every_catalog_runtime_is_a_release_the_native_adapter_accepts():
     assert RUNTIMES and set(RUNTIMES) <= set(claude_native.VERIFIED)
 
