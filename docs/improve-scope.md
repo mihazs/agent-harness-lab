@@ -1,7 +1,7 @@
 # Improve the project, the user-level skills, or both
 
 Use `--scope` when the harness you want to repair is not only the project's. The
-default stays the project; the user-level layer is opt-in, per run, and named by you.
+default stays the project; the user-level layer is opt-in, per run or through a saved default, and named by you.
 
 ```sh
 ahl improve . --repair-contracts                                          # project only (default)
