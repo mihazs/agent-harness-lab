@@ -11,6 +11,7 @@ from agent_harness_lab.sources.execution import RecordRef
 from agent_harness_lab.sources.lineage import LineageClaim, LineageReview, LineageStore
 from agent_harness_lab.sources.schema import digest
 from tests.integration.diagnostics.test_diagnostic_corpus import label, sample
+from tests.integration.diagnostics.test_diagnostic_corpus_protected_access import FAILURE, MODEL, policy, scored
 from tests.integration.sources import test_source_store as fixtures
 
 SUMMARIES = {
@@ -110,6 +111,43 @@ def test_exposure_retirement_does_not_let_a_protected_member_join_a_development_
     retired = store.update(held['case_id'], held['event_sha256'], 'exposed', reason='Synthetic exposure')
     assert retired['partition'] == 'development'
     reviewed(store, lineage.incident(0, 'fitting'))  # development (retired) and fitting members of one group
+    with pytest.raises(ValueError, match='lineage group'):
+        export(store)
+
+
+def test_exposing_one_member_of_a_bound_group_declared_in_one_partition_blocks_export_and_protected_inputs(lineage, store):
+    lineage.link(0, 1)
+    first = reviewed(store, lineage.incident(0, 'validation')); reviewed(store, lineage.incident(1, 'validation'))
+    store.bind_lineage(lineage.grouping())  # both members are declared and effectively validation: no crossing yet
+    assert export(store)['records'] == [] and len(store.protected_inputs()['cases']) == 2
+    store.update(first['case_id'], first['event_sha256'], 'exposed', reason='Synthetic exposure')  # now development against validation
+    with pytest.raises(ValueError, match='lineage group'):
+        export(store)
+    with pytest.raises(ValueError, match='lineage group'):
+        store.protected_inputs()
+
+
+def test_binding_refuses_a_grouping_whose_members_share_a_declared_partition_but_split_by_exposure(lineage, store):
+    lineage.link(0, 1)
+    first = reviewed(store, lineage.incident(0, 'validation')); reviewed(store, lineage.incident(1, 'validation'))
+    store.update(first['case_id'], first['event_sha256'], 'exposed', reason='Synthetic exposure')
+    before = store.snapshot()['revision_sha256']
+    with pytest.raises(ValueError, match='lineage group'):
+        store.bind_lineage(lineage.grouping())
+    assert store.snapshot()['revision_sha256'] == before and not (store.root/'lineage_groupings').exists()
+
+
+def test_protected_evaluation_retiring_a_labeled_member_blocks_later_use_while_an_unlabeled_member_stays_protected(lineage, store):
+    lineage.link(0, 1)
+    labeled = reviewed(store, lineage.incident(0, 'validation')); store.enqueue(lineage.incident(1, 'validation'))  # b is unreviewed
+    store.bind_lineage(lineage.grouping())
+    plan = store.protected_inputs()
+    result = store.evaluate_protected(plan['plan_sha256'], policy(), MODEL, {c['case_id']: scored(FAILURE) for c in plan['cases']})
+    assert result['access']['retired_case_ids'] == [labeled['case_id']] and result['access']['unlabeled_cases'] == 1
+    with pytest.raises(ValueError, match='lineage group'):
+        store.protected_inputs()
+    with pytest.raises(ValueError, match='lineage group'):
+        store.evaluate_protected(plan['plan_sha256'], policy(), MODEL, {c['case_id']: scored(FAILURE) for c in plan['cases']})
     with pytest.raises(ValueError, match='lineage group'):
         export(store)
 
