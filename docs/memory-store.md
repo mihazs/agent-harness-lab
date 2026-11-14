@@ -5,9 +5,10 @@
 `ahl memory` manages an opt-in, local evidence store. Immutable, hash-addressed
 objects are authoritative; a SQLite index is derived from them and can always be
 rebuilt. This slice provides the store, its integrity checks and its maintenance
-commands. Nothing populates it yet and no planner reads it. The store never modifies a
-`HistoryStore`: a row here is never proof that an original store was updated. The separate
-`history` command only reads selected stores.
+commands. Only [`ahl analyze --incremental`](incremental-analysis.md) populates it so far,
+with stage records the [reuse planner](stage-reuse-planner.md) reads back. The store never
+modifies a `HistoryStore`: a row here is never proof that an original store was updated. The
+separate `history` command only reads selected stores.
 
 ## Create and check a store
 
@@ -103,8 +104,10 @@ durable but before the index commits is reported by `verify` as an unindexed man
 **Reads.** Every read refuses symlinks, hardlinks, special files and directories, enforces
 the byte bound and re-hashes the content. Planted links or odd entries are reported by `verify`.
 
-**Schema.** Version 1 has `projects`, `artifacts`, `dependencies`, `snapshots`, `stages`,
-`evaluations`, `metrics`, `comparisons`, `findings` and `finding_links`, with enforced enums,
+**Schema.** Version 2 has `projects`, `artifacts`, `dependencies`, `snapshots`, `stages`,
+`stage_records`, `evaluations`, `metrics`, `comparisons`, `findings` and `finding_links`
+(version 2 added `stage_records`; an older index upgrades on its first write and reads as
+empty until then), with enforced enums,
 valid-JSON detail objects of at most 4,096 bytes, foreign keys and one scoped index per
 common lookup. Migrations are forward-only and append-only. Unknowns stay unknown: a metric
 is `measured` with a value or `unknown` without one, a stage is `complete` only with an
@@ -119,7 +122,7 @@ invalidation tables are added when a later slice needs them.
 | Manifest size / rows per publication | 1 MiB / 1,000 |
 | Files in the store | 200,000 (two per artifact) |
 | Total artifact bytes | 4 GiB |
-| Rows per project, per table (schema triggers) | 10,000 snapshots; 100,000 artifacts, stages, evaluations, comparisons and findings; 500,000 dependencies, metrics and finding links |
+| Rows per project, per table (schema triggers) | 10,000 snapshots; 100,000 artifacts, stages, stage records, evaluations, comparisons and findings; 500,000 dependencies, metrics and finding links |
 | Rows returned by a list | 1,000 |
 
 **Cleanup.** `gc` derives references from the durable manifests, never from the rebuildable

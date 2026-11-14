@@ -4,9 +4,10 @@
 
 Reference for `agent_harness_lab.memory.reuse`, the pure planner that decides, per
 deterministic stage, whether a prior output may replace recomputation, and explains
-every hit and miss with a typed reason. It is a library module in this release: it reads
-no store, calls no model, has no CLI and authenticates nothing. The caller supplies the
-prior records and the results of live authority checks; the planner only decides.
+every hit and miss with a typed reason. The planner reads no store, calls no model and
+authenticates nothing: the caller supplies the prior records and the results of live
+authority checks, and the planner only decides. `ahl analyze --incremental` is the first
+caller; see [reuse analysis work on unchanged input](incremental-analysis.md).
 
 ## Node key
 
@@ -76,5 +77,22 @@ lists (each row: `stage`, `reason`, `node_key`, and `output` when reused), plus
 `reused_live_trials: 0`, `source_freshness` (`verified` or `unknown`) and
 `publication_allowed: false`. Every graph stage appears exactly once.
 
-Not yet implemented: committing a receipt or stage output into the store under its exact
-key with a bounded per-project lock, and a command that runs the planner.
+## Stage records and the analyze integration
+
+`agent_harness_lab.memory.incremental` runs the planner for `diagnostic_process_mining`
+only, as a one-stage graph whose inputs are exact digests: the capture bytes and the
+project's harness identity (a domain-separated digest of every harness file's content and
+mode). The stage version is `process-graph-1`; a golden test pins the stage output per
+version, so a change to normalization or the miner cannot ship without a new version.
+
+A committed run is two artifacts in the [memory store](memory-store.md): the stage output
+(the `process_mining` result in the stage's own key order, compact UTF-8 JSON that must
+re-encode to itself) and a stage record (`ahl-stage-record-v1`: stage, node key, components,
+status, output digest, sequence). The index row lives in the `stage_records` table. Reuse
+looks up the exact node key first, so an earlier run is hit again after a change is undone,
+and falls back to the newest complete record only to explain a miss. Reads re-hash both
+objects; a row alone never proves reuse. A failed or interrupted run keeps an `incomplete`
+record without an output, and the planner never treats it as a prior. Committing runs under
+the store's single-writer lock, and publishing identical bytes is idempotent.
+
+Not yet reused: the other stages of the graph and the commit of whole-run receipts.

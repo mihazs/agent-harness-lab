@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `ahl analyze --events FILE --memory-store DIR --incremental [--explain-reuse]`: the second run on an unchanged capture and project harness reuses the verified process-mining output from an opt-in private memory store instead of recomputing it, and `--explain-reuse` adds the typed `ahl-stage-reuse-v1` receipt. The reused output is hash-verified, must re-encode to itself and is cross-checked against the events counted in the same run; the capture is hashed before and while it is read, and any discrepancy stops the run with exit 2. A changed event, or a changed, added or removed instruction or skill file (a new harness identity), recomputes the stage; an interrupted run leaves a never-reusable `incomplete` record. Counters keep local stage reuse apart from provider caching and historical reuse, and billing savings stay `unknown`. The memory index schema moves to version 2 with a `stage_records` table (older indexes upgrade on their first write). Without the flags `ahl analyze` is unchanged. Part of #629.
