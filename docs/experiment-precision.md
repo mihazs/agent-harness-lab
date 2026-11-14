@@ -131,10 +131,11 @@ gives each disposition's count, rate and Wilson 95% Monte Carlo interval, the
 reason counts, the plan and model SHA-256, declared roots separately from
 repetitions, and the simulated trial count. `supported_rate` is labeled `power`
 for a beneficial declared effect, `false_recommendation_rate` for a null or
-harmful one, and `mixed_family_effects` otherwise. Plans with a cohort pin or a
-sequential profile are refused, and one call is capped at 10000 simulations,
-100,000 planned trials per simulation and 2,000,000 simulated trials, checked
-before any schedule is built. A completed simulation exits 0.
+harmful one, and `mixed_family_effects` otherwise. Plans with a cohort pin are
+refused, and one call is capped at 10000 simulations, 100,000 planned trials per
+simulation and 2,000,000 simulated trials, checked before any schedule is built. A
+completed simulation exits 0. A plan with a sequential profile is routed to the
+sequential simulation described next.
 
 The offline tests predeclare their criteria before running: 300 null simulations
 with heterogeneous roots and correlated repeats keep the Wilson upper bound of the
@@ -142,6 +143,45 @@ false-recommendation rate at or below .05, a large benefit has a Wilson lower bo
 of power at or above .9, a small effect with 100 roots stays inconclusive, known
 or one-family harms are rejected and any critical regression rejects a large
 benefit. These checks hold for the synthetic model only.
+
+### Sequential profile beside its fixed comparator
+
+The same command accepts a frozen plan that declares the sequential profile. It
+then draws one set of synthetic potential outcomes per simulation and judges it
+twice with the unchanged engines: `sequential.analyze` after every observed root
+block, under the controller's own stopping rule (a supported, rejected, blocked or
+incomplete result, an empty running intersection or the first critical trial
+ends the run), and `statistics.analyze` over every declared task as the fixed
+comparator. Roots are visited in a seeded uniform permutation that stands in for
+the controller's system-random draw.
+
+The private report (profile `sequential-root-power-simulation-v1`) gives each
+profile's disposition counts, rates with Wilson 95% intervals and reason counts;
+the number of roots and trials inspected before stopping, with a normal-approximation
+95% interval on the mean, overall and per disposition; and the mean fraction of the
+fixed comparator's trials that the sequential run needed. Declared roots,
+maximum roots and repetitions are reported separately. Its `finite_bank_claims`
+block compares each stop with the drawn bank's realized family-weighted mean of
+root-block differences, because the sequential claim concerns that finite bank, not the
+model's expectation. Only `false_support` (a supported stop whose realized
+criteria were not met) and `false_harm_call` measure a wrong sequential claim; a
+random null draw can place the realized mean above the margin, so a supported stop
+under a null model is not automatically false.
+
+The offline tests predeclare their criteria before running: 300 null simulations
+with heterogeneous roots and correlated repeats under repeated inspection keep the
+Wilson upper bound of false support and of false harm calls at or below .05, a
+large benefit has a Wilson lower bound of support at or above .9 and stops before
+the fixed comparator finishes, a large harm has a Wilson lower bound of rejection
+at or above .9 with no false harm call, a harm in one family hidden by a large
+primary gain is never supported, a family below the root minimum never supports
+and any critical regression rejects at its first trial. A partial-inspection null
+plan can only return `maximum_roots` inconclusive results. Every simulated trial
+is graded: unknown outcomes, partial roots and time-budget exhaustion are not
+simulated. The two profiles estimate different targets under different
+assumptions, so matching dispositions are not equivalent claims, and simulated
+roots stay independent by construction. The report stays private, runs no worker,
+model or grader, changes no plan, margin or budget and cannot authorize promotion.
 
 A separate fixed-interval check draws 100 paired root differences of −1 or +1
 with true mean zero, 1,000 times with seed 394. With independent roots, the

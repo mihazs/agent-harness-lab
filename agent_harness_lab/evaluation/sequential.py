@@ -160,6 +160,11 @@ def schedule(spec,binding=None):
     return result
 
 
+def terminal(analysis):
+    """Whether an inspected root ends execution; shared by the controller and its simulation."""
+    return analysis['status'] in ('supported','rejected','blocked','incomplete') or analysis['reason']=='empty_running_intersection'
+
+
 def log_upper(alpha):
     with localcontext(Context(prec=60,rounding=ROUND_CEILING)):
         ratio=Decimal(2*alpha.denominator)/Decimal(alpha.numerator)
