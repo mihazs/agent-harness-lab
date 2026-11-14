@@ -94,6 +94,11 @@ typed `reason` and the exact next step in `remediation`:
 | `history_source_ai_memory_unsupported` | `ahl improve` reads native sessions only and opens no network connection. Use `ahl analyze . --memory-manifest MANIFEST --authorization-file FILE` for ai-memory evidence. |
 | `history_no_matching_sessions` | No captured events matched this project, `--since` and `--session`. |
 | `history_not_found_for_worktree` | No session was recorded under this path and the project is a linked Git worktree, so the main checkout's history was not read. See [Try it in a worktree](#try-it-in-a-worktree). |
+| `no_outcome_evidence` | Sessions were captured and show findings, but no verified outcome relates them to a failure and no `--focus` or `--from-audit` hypothesis was supplied. No model call was made; `findings_not_candidates` counts why no finding became a candidate. |
+
+When you see `no_outcome_evidence`, add verified evidence (an executable-grader evaluation under `artifacts/`),
+run `ahl audit .`, or pass `--focus` with a hypothesis to test; rerunning unchanged repeats the same result at no cost.
+A run that did call the model and evaluated nothing is labelled `spent_without_evaluation`.
 
 Malformed requests exit 2 before any run starts: `--since` or `--source` without
 `--history`, an invalid `--since` or `--session`, or `--history` together with `--events` or
