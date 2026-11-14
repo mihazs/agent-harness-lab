@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Stage a reviewed adapter version through the promotion journal and roll it back without overwriting later work (part of #13). `evaluation.adapter_deployment.stage` reviews the candidate against the authorized spec, rechecks the adapter bytes, requires the candidate to name the deployed bytes as its parent and prepares one journaled deployment of `.ahl/adapters/<id>/adapter.py` and `spec.json`; nothing is written until the caller applies it. `preview_rollback` changes nothing and `rollback` restores the exact previous state as a new journal event, replays idempotently and stops with a conflict when a file was edited, re-moded, replaced by a symlink or deleted, or a newer deployment exists. A rollback that would restore a version the current authorization no longer covers is refused. `AdapterJournal` owns only those two artifacts, never writes an execute bit and rejects unsafe adapter IDs. Nothing calls the module by default: no command, hook or runtime is touched, no behavioral rollout is automatic, and no effectiveness or runtime-support claim is made.
