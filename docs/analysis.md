@@ -370,7 +370,9 @@ candidate identical to the baseline, `candidate_identical_to_baseline`), while `
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
 never an independence or severity claim. `ahl improve --history` returns `no_outcome_evidence` before any preparation call when no
-verified executable-grader outcome exists and no hypothesis source (`--from-audit` or `--focus`) was supplied;
+verified executable-grader outcome exists and no hypothesis source was supplied (`--from-audit`, `--focus`, or an eligible static convention
+that a Codex or Claude run stages itself, see [static audit](static-audit.md#staging-static-conventions-on-a-first-run)); when that audit ran and
+staged nothing, `findings_not_candidates.static_audit` says why (`no_eligible_convention`, `instruction_totals_unsettled` or `audit_inventory_<reason>`).
 `next_steps` then lists the evidence that would unlock a candidate. Runs with explicit `--events` or `--source-root`
 input (and the closed input profile) never read evaluation results, so no added outcome could unlock them: they are
 not blocked and still reach preparation. A run whose preparation called the model and
@@ -484,7 +486,6 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
 | `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
-| `no_change_no_evaluable_candidate` | The history has findings but no verified outcome supports a repair, and the static audit found no eligible convention or could not settle one, so no model call was made. Run a paired evaluation with a configured task bank so verified outcomes exist, change project instructions the audit can check, or test one named hypothesis with --focus; see causes and next_steps in the receipt. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |

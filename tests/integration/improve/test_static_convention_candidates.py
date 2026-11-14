@@ -79,6 +79,15 @@ def verified_failure(project):
         grader=dict(exit_code=1, timeout=False, valid=True, grader_id='synthetic', grader_version='1', outcome=False))])))
 
 
+def assert_unverified_spend_label(result):
+    """The single receipt of the first-use gate: the label, the stage, the unverified spend and no evaluated trial."""
+    assert result['spend_label'] == 'spent_without_evaluation'
+    spent = result['spent_without_evaluation']
+    assert spent['stages'] == ['preparation'] and spent['provider_reported_spend'] == 'unverified'
+    assert type(spent['preparation_seconds']) is float
+    assert not list(Path(result['output']).glob('evaluation-*/results.json'))
+
+
 @pytest.mark.parametrize('shape, reason', [pytest.param(over_limit, 'instruction_chain_truncated_at_default_project_doc_bytes', id='over-limit-instruction-file'),
                                            pytest.param(colliding_skills, 'skill_routing_collision', id='routing-collision')])
 def test_findings_without_verified_outcomes_stage_a_labelled_convention_candidate_evaluated_in_pairs(first_use, shape, reason):
@@ -103,13 +112,13 @@ def test_findings_without_verified_outcomes_and_no_eligible_convention_end_with_
     first_use.mode('no_change')
     code, result, err = first_use.improve()
     assert first_use.calls() == 0
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_no_evaluable_candidate')
-    assert 'outcome=no_change' in err and 'category="Evidence insufficient"' in err
-    assert result['remediation'] and result['changed_files'] == []
-    causes = {row['source']: row for row in result['causes']}
-    assert causes['history']['findings'] > 0 and causes['history']['verified_outcomes'] == 0
-    assert causes['history']['why'] == 'no_verified_outcome_for_any_finding'
-    assert causes['static_audit']['why'] == 'no_eligible_convention'
+    assert (result['status'], result['reason']) == ('blocked', 'no_outcome_evidence')
+    assert 'outcome=blocked' in err and 'category="Blocked by missing prerequisite"' in err
+    assert result['remediation'] and result['changed_files'] == [] and 'spend_label' not in result
+    explained = result['findings_not_candidates']
+    assert explained['findings'] > 0 and explained['causes']['no_outcome_evidence'] == explained['findings']
+    assert 'no_hypothesis_source' in explained['causes']
+    assert explained['static_audit']['why'] == 'no_eligible_convention'
     assert 'audit_hypothesis' not in result
 
 
@@ -121,13 +130,13 @@ def test_unsettled_instruction_totals_end_with_their_own_typed_cause_and_list_on
     first_use.mode('no_change')
     code, result, err = first_use.improve()
     assert first_use.calls() == 0
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_no_evaluable_candidate')
-    audit = {row['source']: row for row in result['causes']}['static_audit']
+    assert (result['status'], result['reason']) == ('blocked', 'no_outcome_evidence')
+    audit = result['findings_not_candidates']['static_audit']
     assert audit['why'] == 'instruction_totals_unsettled' and audit['why'] != 'no_eligible_convention'
     assert 'project_root_unsettled' in audit['instruction_totals_reasons'] and audit['remediation']
     assert {'instruction_launch_lines_above_soft_budget', 'instruction_procedure_section_detected'} <= set(audit['unsettled'])
     assert not set(audit['unsettled']) & set(audit['checked']) and 'skill_routing_collision' in audit['checked']
-    assert 'outcome=no_change' in err and 'category="Evidence insufficient"' in err
+    assert 'outcome=blocked' in err and 'category="Blocked by missing prerequisite"' in err
 
 
 def test_static_candidate_the_proposer_declines_is_labelled_spent_without_evaluation_with_unverified_spend(first_use):
@@ -135,7 +144,7 @@ def test_static_candidate_the_proposer_declines_is_labelled_spent_without_evalua
     first_use.mode('no_change')
     code, result, _ = first_use.improve()
     assert result['audit_hypothesis']['hypothesis_source'] == 'static_convention'
-    assert result['spent_without_evaluation'] == dict(stage='candidate_preparation', evaluated_trials=0, provider_reported_spend='unverified')
+    assert_unverified_spend_label(result)
 
 
 @pytest.mark.parametrize('with_verified_outcome', [pytest.param(False, id='static-candidate'), pytest.param(True, id='verified-outcome-model-driven')])
@@ -145,7 +154,7 @@ def test_a_completed_paired_evaluation_is_not_labelled_spent_without_evaluation(
     code, result, _ = first_use.improve()
     assert first_use.calls() >= 1
     assert (Path(result['output'])/'evaluation-0/results.json').is_file()
-    assert 'spent_without_evaluation' not in result
+    assert 'spent_without_evaluation' not in result and 'spend_label' not in result
 
 
 def test_run_with_a_verified_outcome_keeps_the_model_driven_path_without_static_candidates(first_use):
@@ -155,10 +164,11 @@ def test_run_with_a_verified_outcome_keeps_the_model_driven_path_without_static_
     code, result, _ = first_use.improve()
     assert first_use.calls() >= 1
     assert 'audit_hypothesis' not in result and 'causes' not in result
+    assert 'static_audit' not in result['findings_not_candidates']
     assert result['provenance']['agent_supplied_hypothesis'] == []
     assert 'static_convention' not in json.dumps(result)
     assert json.loads((Path(result['output'])/'preparation/context.json').read_text())['focus'] is None
-    assert result['spent_without_evaluation'] == dict(stage='candidate_preparation', evaluated_trials=0, provider_reported_spend='unverified')
+    assert_unverified_spend_label(result)
 
 
 def test_explicit_focus_keeps_the_model_driven_path_without_static_candidates(first_use):
@@ -166,7 +176,8 @@ def test_explicit_focus_keeps_the_model_driven_path_without_static_candidates(fi
     first_use.mode('no_change')
     code, result, _ = first_use.improve('--focus', 'synthetic focus')
     assert first_use.calls() >= 1 and 'audit_hypothesis' not in result and 'causes' not in result
-    assert result['spent_without_evaluation']['provider_reported_spend'] == 'unverified'
+    assert 'static_audit' not in result['findings_not_candidates']
+    assert_unverified_spend_label(result)
 
 
 def test_claude_instruction_chain_above_the_line_convention_is_discovered_read_only_with_a_labelled_source(tmp_path):

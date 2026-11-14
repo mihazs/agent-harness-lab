@@ -96,14 +96,13 @@ then audits the project itself (the read-only, model-free static audit of the se
   `static_convention_candidates` (the selection and the eligible conventions it left for a later
   run) and a `provenance` entry whose source is `static_audit`. It is a convention check, never a
   diagnosis; nothing is applied, and the promotion rules are unchanged.
-- If none is eligible, the run ends with `status: no_change`,
-  `reason: no_change_no_evaluable_candidate`, `causes` and `remediation`, and no model call. A
-  `static_audit` cause that says `instruction_totals_unsettled` means the instruction chain could not be
-  settled, so some conventions were not evaluated; it is not a finding that they are clean.
-- Any run that returned a preparation model call and evaluated no trial (for example the proposer
-  declines the staged convention) carries `spent_without_evaluation` with
-  `provider_reported_spend: unverified`; the provider's own usage figure is not read. A run that evaluated
-  trials, a paired evaluation or a fixed-bank comparison, never carries it.
+- If none is eligible, the run ends with the existing `status: blocked`, `reason: no_outcome_evidence` and
+  no model call, and `findings_not_candidates.static_audit` states what the audit checked and why none became a
+  candidate. A `why` of `instruction_totals_unsettled` means the instruction chain could not be settled, so some
+  conventions were not evaluated; it is not a finding that they are clean.
+- If the proposer declines the staged convention, so no trial is evaluated, the run carries the one
+  `spent_without_evaluation` label described under `no_outcome_evidence` below; a run that evaluated trials, a paired
+  evaluation or a fixed-bank comparison, never carries it.
 
 A run with a verified outcome, `--focus` or `--from-audit` keeps its existing path.
 See [static audit](static-audit.md#staging-static-conventions-on-a-first-run) for the eligible conventions.

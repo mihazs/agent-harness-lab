@@ -59,3 +59,16 @@ def test_the_spend_label_keeps_the_provider_spend_unverified():
     result = {}
     first_use.spend_label(result, argparse.Namespace(), prepared=True, evaluated=False)
     assert result['spent_without_evaluation']['provider_reported_spend'] == 'unverified'
+
+
+def test_an_automatic_static_convention_seed_is_the_only_declared_source_and_lifts_the_block():
+    """The focus and hypothesis a static seed sets are not the user's, so they are not counted as a second source."""
+    staged = argparse.Namespace(history=True, focus='convention focus', _audit_hypothesis=dict(), _static_automatic=True)
+    assert first_use.hypothesis_sources(staged) == ['static_convention']
+    assert first_use.blocked(data(3), staged) is False
+
+
+@pytest.mark.parametrize('audit', [dict(why='no_eligible_convention', checked=['c']), None], ids=['audit_ran', 'audit_not_run'])
+def test_the_static_audit_cause_reaches_the_explanation_only_when_the_audit_ran(audit):
+    explained = first_use.explain(data(2), argparse.Namespace(**(dict(_static_audit=audit) if audit else {})), prepared=False)
+    assert explained.get('static_audit') == audit

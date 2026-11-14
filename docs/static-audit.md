@@ -483,8 +483,8 @@ One convention is staged per run so the paired evaluation tests one change; the 
 as `not_selected` in `static_convention_candidates`. The hypothesis is labelled
 `hypothesis_source: static_convention` with `selection: automatic_no_trace_candidate`, kept
 distinct from trace evidence. It never lowers the evidence bar and is never applied by default.
-When nothing is eligible the receipt states `no_change_no_evaluable_candidate` with a cause
-per source and no model call. The `static_audit` cause lists `checked` (the conventions the audit
+When nothing is eligible the run ends with the first-use `no_outcome_evidence` block and no model
+call, and `findings_not_candidates.static_audit` carries the audit's cause. It lists `checked` (the conventions the audit
 evaluated) and `unsettled` (applicable conventions it could not evaluate), and `why` is one of
 `no_eligible_convention` (every applicable convention was checked and none applies),
 `instruction_totals_unsettled` (the instruction chain could not be settled, for example Codex without
