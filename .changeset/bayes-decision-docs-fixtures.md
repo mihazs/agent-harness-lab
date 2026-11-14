@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": patch
+---
+
+Document the paired Bayesian decision score in the Diataxis layout: the design page becomes an explanation, with a how-to for adding `bayes_decision` to a plan and reading the block, and a reference for the spec field, the output block (each field names the recorded input it traces to), the reasons, the verdict meanings and the fixtures. The pages state that no peer-reviewed work applies the method to agent harness scoring, that the source research report was not available, and the limits. Add six seeded synthetic fixtures (clear win, clear loss, tie, mixed with unknowns, critical regression veto and a six-root starter bank) with committed expected verdicts, built by `scripts/build_bayes_fixtures.py` and checked end to end through `ahl experiment`, plus docs tests that compare the output-block table with the produced block in both directions and run the documented commands. No behavior of the score, the fixed analysis or the promotion policy changes.
