@@ -317,9 +317,9 @@ Labels are unauthenticated, and capture outside the frame is unknown.
 This first slice of #75 covers the frame, plan, receipt and fixed-window
 estimates. Later sections cover fixed and stratified budgets, corpus review
 linkage and observe-only monitoring, and the logged budget and adaptive
-decisions below, and the versioned summary at the end. The issue still tracks
-cluster designs beyond the declared unit and review-queue export. Prediction-powered
-e-values remain an experimental extension for later.
+decisions below, the versioned summary and the requirement gate at the end. The issue
+still tracks cluster designs beyond the declared unit and review-queue export.
+Prediction-powered e-values remain an experimental extension for later.
 
 ## Opt-in fixed-size hard-budget design
 
@@ -427,3 +427,43 @@ authority, forbids publication and automatic policy updates and rollback, and
 leaves a recalibrated policy to a new revision and a new evaluation. It is
 descriptive evidence, not a drift detector or a causal claim. This is a library API
 with no CLI.
+
+## Preregistered requirement gate
+
+`agent_harness_lab.diagnostics.audit_gate.evaluate(summary, policy, requirement)` is the
+first reader of an `audit-summary-v1`. The caller declares the requirement before any label
+is read, as `audit-gate-requirement-v1`: `min_reviewed` (an integer of at least 1),
+`max_missed_incident_rate` (a number in [0, 1]), `min_triage_recall` (a number in [0, 1], or
+`null` to leave recall unconstrained) and `require_decision_log` (a boolean). AHL supplies no
+default and never selects or adjusts a value. The gate first runs `audit_summary.check`, so
+an altered summary or one for another triage policy or model is refused, and it refuses an
+invalid requirement and a summary whose estimate intervals are malformed. The requirement
+hash and the summary hash are carried in the result, so a changed requirement is visible.
+
+The result `audit-gate-v1` has one of four statuses. A limit is met only when the whole 95%
+interval clears it and broken only when the whole interval breaks it: the missed-incident
+rate interval must end at or below `max_missed_incident_rate` and the triage recall interval
+must start at or above `min_triage_recall`. An interval that straddles a limit leaves the
+status `inconclusive`. The statuses are:
+
+- `requirement_met`: every declared limit is met, the summary is `estimated`, enough draws
+  were reviewed and a required decision log was supplied.
+- `requirement_not_met`: at least one limit is broken by its whole interval.
+- `inconclusive`: pending or nonresponding reviews, too few reviewed draws, a required
+  decision log that was not supplied, an undefined recall (no incident was sampled) or an
+  interval that straddles a limit. Missing-label bounds are never used to pass or fail a
+  requirement, and `criteria` is `null` while a precondition is unmet.
+- `invalid`: the summary is `invalid` because a budget or adaptive decision was logged at or
+  after the first label. No design-based estimate stands.
+
+Each reason names its cause, for example `pending_labels`, `reviewed_below_minimum`,
+`decision_log_not_supplied`, `missed_incident_rate_not_met` or
+`triage_recall_interval_straddles_limit`. Poisson, fixed-size and stratified summaries
+are read through the same fields of their estimates. The result keeps the summary's
+limitations and adds `requirement_preregistration_unverified` and
+`intervals_conditional_on_declared_design`: the gate cannot verify that the requirement was
+fixed before labels were seen or that the sampling assumptions hold. It is `observe_only`,
+grants no promotion authority, issues no certification, forbids publication and automatic
+policy updates and rollback, and a recalibrated policy still needs a new revision and a new
+evaluation. This is a library API with no CLI, and no existing promotion or monitor step
+calls it yet.
