@@ -154,6 +154,20 @@ cooperative child can remove it. Missing parent context requires reporting that
 gap, not inventing paths or permission. Synthetic child tests establish routing
 behavior only, not native-host compliance.
 
+## Review and apply a saved plan
+
+A repair run that stopped before writing (`interrupted`, `budget_exhausted`) or was rolled back keeps its
+`change-plan.json` in the run directory its receipt names. `ahl apply RUN --project PROJECT` prints a review packet
+and writes nothing; it makes no model call and spends no budget. Relay its `status`, `blockers`, `operations`,
+`binding` and `evaluation` as printed: `evaluation` is the saved report's own claim, never verified here.
+
+Pass `--authorize-plan PLAN_SHA256` only after the user, having seen the packet, confirms that exact plan. The
+original request, a resume or a passing check is not that confirmation, and approval is not certification: a
+behavioral plan stays `blocked`. `applied_verified` means the file set and modes were re-read; activation and
+behavior stay unknown. Report `stale` or `blocked` as printed; do not edit files to make a plan match. An
+interrupted authorization prints the command to repeat (it applies once, or reports `stale` when the reviewed
+bytes are already installed) and any unfinished deployment to finish with `ahl promotion`.
+
 ## Assisted fallback before dispatch
 
 If the CLI or adapter is unavailable before any attempt, report this and follow

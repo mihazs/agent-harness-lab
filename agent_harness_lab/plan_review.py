@@ -143,6 +143,24 @@ def review(run, project, authorize=None):
     return dict(packet, status=receipt['status'], receipt=receipt)
 
 
+def _interrupted(project, plan):
+    """Guidance after an interruption. A review writes nothing; an authorization may have started a journaled write."""
+    if plan is None:
+        return 'ahl apply: interrupted; a review writes nothing, repeat the command'
+    from .workflow import identity, state_root
+    project = Path(project).resolve()
+    try:  # the scan only guides the reader: an unreadable record must not hide the interruption
+        records = (json.loads(path.read_text()) for path in (state_root() / 'promotions' / identity(project)).glob('*.json') if path.name != 'active.json')
+        started = sorted(r['deployment'] for r in records if r.get('status') == 'applying' and (r.get('metadata') or {}).get('plan_sha256') == plan)
+    except (OSError, ValueError, KeyError, AttributeError):
+        started = []
+    advice = ('ahl apply: interrupted during an authorized application. Repeat the same command: it applies once when the project is unchanged '
+              'and reports stale when the reviewed bytes are already installed.')
+    if started:
+        advice += f' Finish an unfinished deployment with: ahl promotion {project} --deployment ID --action recover (unfinished: {", ".join(started)})'
+    return advice
+
+
 def main(argv=None):
     import argparse
     parser = argparse.ArgumentParser(prog='ahl apply',
@@ -150,7 +168,7 @@ def main(argv=None):
         epilog='Without --authorize-plan this is read-only: it prints a review packet (operations with hashes, modes and line counts; binding checks; blockers; the saved report\'s declared evaluation and prerequisite statuses) and changes nothing. '
                'With the exact plan SHA-256 it writes only a deterministic skill-header repair that is recomputed from the staged bytes, through the private rollback journal; a project ahl.json keeps every plan recommendation-only. '
                'Behavioral candidates stay blocked: a saved report cannot recreate certification and an authorization is not certification. A changed project, configuration, baseline, candidate or policy makes the plan stale. No model call, network or commit. '
-               'Exit: 0 awaiting review, no change or applied and verified; 1 execution error; 2 invalid input or an authorization naming another plan; 3 stale, blocked or applied but unverified. '
+               'Exit: 0 awaiting review, no change or applied and verified; 1 execution error or an interruption; 2 invalid input or an authorization naming another plan; 3 stale, blocked or applied but unverified. '
                'Example: ahl apply RUN_DIRECTORY --project . --authorize-plan PLAN_SHA256')
     parser.add_argument('run', type=Path, help='Run output directory printed by ahl improve (holds change-plan.json, baseline and candidate)')
     parser.add_argument('--project', type=Path, default=Path.cwd(), help='Existing project directory the plan was made for (default: current directory)')
@@ -166,6 +184,9 @@ def main(argv=None):
         print(f'ahl apply: {error}', file=sys.stderr)
         if receipt is not None:
             print(json.dumps(receipt, indent=2))
+        return 1
+    except KeyboardInterrupt:
+        print(_interrupted(args.project, args.authorize_plan), file=sys.stderr)
         return 1
     print(json.dumps(packet, indent=2, allow_nan=False))
     return 0 if packet['status'] in ('awaiting_review', 'no_change', 'applied_verified') else 3
