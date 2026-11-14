@@ -67,5 +67,6 @@ def test_the_test_bed_imports_nothing_from_the_workflow_or_outside_the_loop_pack
     tree = ast.parse(Path(loop_sim.__file__).read_text())
     imported = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
     imported += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
-    assert [name for name in imported if name.startswith('agent_harness_lab')] == ['agent_harness_lab.loop', 'agent_harness_lab.loop.machine', 'agent_harness_lab.loop.spec']
+    assert [name for name in imported if name.startswith('agent_harness_lab')] == ['agent_harness_lab.loop', 'agent_harness_lab.loop.controller', 'agent_harness_lab.loop.ledger', 'agent_harness_lab.loop.machine',
+                                                                                    'agent_harness_lab.loop.spec']
     assert not {'subprocess', 'socket', 'time', 'requests', 'urllib'} & {name.split('.')[0] for name in imported}

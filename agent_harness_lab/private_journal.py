@@ -231,13 +231,13 @@ class PrivateJournal:
         if not events: raise ValueError('case journal is empty')
         return events
 
-    def append(self, case, events, kind, state, payload, *, before_publish=None):
+    def append(self, case, events, kind, state, payload, *, before_publish=None, recorded_at=None):
         previous = events[-1] if events else None
         if not self._transition(previous[0]['state'] if previous else None, kind, state, previous[0]['kind'] if previous else None):
             raise ValueError('invalid case lifecycle transition')
         if self.max_events is not None and len(events) >= self.max_events: raise ValueError('case journal operation bound exceeded')
         value = dict(schema_version=1, index=len(events), previous_sha256=previous[1] if previous else None,
-            kind=kind, state=state, payload=payload, recorded_at=datetime.now(timezone.utc).isoformat())
+            kind=kind, state=state, payload=payload, recorded_at=recorded_at or datetime.now(timezone.utc).isoformat())
         if self.max_metadata is not None and len(encoded(value)) > self.max_metadata: raise ValueError('complete case event exceeds metadata bound')
         path = case/'events'/f'{len(events):04d}.json'
         if path.exists(): raise ValueError('immutable case event already exists')
