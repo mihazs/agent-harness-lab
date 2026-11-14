@@ -1,4 +1,5 @@
 """A synthetic fixed comparison cannot recommend against a stale project snapshot."""
+# fixed-in: 54947726 -k fixed_comparison_rejects_configuration_change
 from types import SimpleNamespace
 from unittest.mock import Mock,patch
 

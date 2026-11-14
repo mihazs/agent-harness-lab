@@ -1,4 +1,5 @@
 """Controlled construction: typed shape rejection right after the author, and one bounded repair pass."""
+# fixed-in: 0690a077 -k authored_digests_are_dropped_before_the_output
 import json
 from pathlib import Path
 from unittest.mock import patch

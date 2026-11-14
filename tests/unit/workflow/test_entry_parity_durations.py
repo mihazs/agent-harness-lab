@@ -1,4 +1,5 @@
 """#758: every receipt field a clock produces is an allowed CLI/skill difference, derived from the code and not hand-listed."""
+# fixed-in: daa30269
 import ast
 from fnmatch import fnmatchcase
 from pathlib import Path

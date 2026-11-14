@@ -1,4 +1,5 @@
 """Real `ahl improve` entry with a stub runtime on PATH: authored digests never reach an integrity check."""
+# fixed-in: 0690a077
 import json
 import os
 import stat
