@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.204.0
+
+### Minor Changes
+
+- b373193: `ahl compare --public` adds a separate, explicit public export of the static review page. The input must declare `provenance` that the benchmark exporter's rule accepts (`source_kind` synthetic or public, `approved_publication` true, `derived_from_private` false, a short `source_ref`); a missing, private, unapproved or possibly private-derived declaration, a trial that carries a failing declaration of its own, a supplied analysis labelled private, or any resource decision or cost view refuses the whole input and creates no output directory. An export keeps every verdict, count and usage total but drops all event metadata and event mappings, leaving only counts, and its page and `report.json` say `explicit_public_export` with the declaration. The tool still publishes nothing: `publication_allowed` stays false, files keep private modes, and without `--public` a report is private as before. The private page's limitation line now points to `--public` instead of saying public export is unsupported.
+- 2efebee: Add the opt-in `api/hindsight-rest/v1` source, an explicit read-only listing of one selected Hindsight v1.1.0 bank over HTTPS. It requests only `GET /version` (the server must report the pinned release before any bank is read) and the bank's `memories/list` for the live and the curated-out state, never `retain`, `recall`, `reflect`, an export, a per-memory read or the bank listing, so no other bank is discovered. Rows become the same hash-only `extracted_fact`, `consolidated_observation` and `invalidated_fact` claims as the offline archive, with recorded, mentioned, validity and invalidation times kept apart and the creation time left unknown because the pinned list view has none. A denied, rate-limited, truncated, moving or unsupported-release read is blocked or incomplete coverage that never checkpoints, scores and counts never become outcomes, and the profile is not public-exportable. The route eligibility rests on the pinned upstream source, not a live server, so the profile stays `unverified`. The shared validity-window judgement is now one helper used by both Hindsight readers, with unchanged offline results.
+- d2066c4: Add `sources.knowledge_facets`, an offline mapper from the declared `status`, `valid_from`, `valid_until`, `open_ended`, `supersedes` and `superseded_by` fields of knowledge-bundle pages to the temporal facets `temporal.resolve` takes. Knowledge time comes only from the caller, a page with an unreadable field is withheld with a finding instead of being guessed, and a supersession naming a page the bundle lacks keeps the declaring page unknown rather than in force. Part of #47.
+
 ## 0.203.0
 
 ### Minor Changes

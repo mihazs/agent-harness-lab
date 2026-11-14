@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-`ahl compare --public` adds a separate, explicit public export of the static review page. The input must declare `provenance` that the benchmark exporter's rule accepts (`source_kind` synthetic or public, `approved_publication` true, `derived_from_private` false, a short `source_ref`); a missing, private, unapproved or possibly private-derived declaration, a trial that carries a failing declaration of its own, a supplied analysis labelled private, or any resource decision or cost view refuses the whole input and creates no output directory. An export keeps every verdict, count and usage total but drops all event metadata and event mappings, leaving only counts, and its page and `report.json` say `explicit_public_export` with the declaration. The tool still publishes nothing: `publication_allowed` stays false, files keep private modes, and without `--public` a report is private as before. The private page's limitation line now points to `--public` instead of saying public export is unsupported.
