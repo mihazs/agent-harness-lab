@@ -2,6 +2,7 @@
 
 Synthetic checkouts only: a few planted harness files beside a bulk tree larger than a monkeypatched entry bound.
 """
+# fixed-in: c0944a6c
 import json
 
 import pytest

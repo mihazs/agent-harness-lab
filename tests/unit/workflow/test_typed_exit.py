@@ -10,7 +10,7 @@ import urllib.error
 
 import pytest
 
-from agent_harness_lab import typed_exit
+from agent_harness_lab import budget_stages, typed_exit
 from agent_harness_lab.evaluation import manifest_contract
 from agent_harness_lab.monitoring.state import EXIT_CODES
 
@@ -67,6 +67,20 @@ def test_no_budget_is_invented_when_the_invocation_fixed_none():
 def test_a_fixed_timeout_adds_the_stage_budget_to_the_receipt():
     sealed = typed_exit.seal(dict(status='budget_exhausted'), argparse.Namespace(timeout=60))
     assert sealed['budget_stages']['total_seconds'] == 60
+
+
+@pytest.mark.parametrize('timeout', [0, -5, True, 'x', None, float('nan')],
+                         ids=['zero', 'negative', 'boolean', 'text', 'null', 'not-a-number'])
+def test_no_budget_is_invented_for_a_timeout_that_is_not_a_positive_number(timeout):
+    assert typed_exit.budget(argparse.Namespace(timeout=timeout)) is None
+    assert 'budget_stages' not in typed_exit.seal(dict(status='budget_exhausted'), argparse.Namespace(timeout=timeout))
+
+
+@pytest.mark.parametrize('fraction', [5, -1, 0.0, 'x', True], ids=['above-one', 'negative', 'zero', 'text', 'boolean'])
+def test_an_invalid_construction_fraction_never_stops_the_receipt_from_carrying_the_budget(fraction):
+    # The exit path must not raise on the option that may itself have caused the exit; the default split is reported instead.
+    found = typed_exit.budget(argparse.Namespace(timeout=60, construction_fraction=fraction))
+    assert found['total_seconds'] == 60 and found['construction_fraction'] == budget_stages.DEFAULT_CONSTRUCTION_FRACTION
 
 
 def test_an_unregistered_reason_still_exits_nonzero_with_the_fallback_next_step():
