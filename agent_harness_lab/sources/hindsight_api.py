@@ -79,8 +79,8 @@ class HindsightRestAPI:
         if type(selection) is not HindsightSelection: raise TransportError('explicit Hindsight selection required')
         self.selection = HindsightSelection.parse(selection.to_dict())
         if base_url != self.selection.base_url: raise TransportError('Hindsight endpoint must equal the selected server root')
-        self.transport = bounded_api(base_url, limits)
         self.authorization = authorization
+        self.transport = bounded_api(base_url, limits)
 
     def read(self, source, *, prior=None):
         selection = self.selection
