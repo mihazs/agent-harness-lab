@@ -59,6 +59,15 @@ def assert_typed(receipt, tmp_path, status, reason, stage, code):
     assert str(tmp_path) not in text and tmp_path.name not in text and SENTINEL not in text
 
 
+def assert_private_receipt_in_step(receipt, run=None):
+    """The run's private `workflow.json` carries the same typed fields as stdout, not the untyped result it was first written as.
+
+    An exit raised out of the run prints no `output` locator, so its one run directory is passed in.
+    """
+    private = json.loads(((Path(receipt['output']) if run is None else run) / 'workflow.json').read_text())
+    assert (private['reason'], private['exit_receipt']) == (receipt['reason'], receipt['exit_receipt'])
+
+
 def test_a_tiny_budget_that_cuts_the_preparation_ends_with_a_typed_budget_reason(stub, capsys, tmp_path):
     stub.mode.write_text(json.dumps(dict(cut=100)))
     code, receipt, _ = improve(stub, capsys, timeout='3')
@@ -66,6 +75,7 @@ def test_a_tiny_budget_that_cuts_the_preparation_ends_with_a_typed_budget_reason
     assert_typed(receipt, tmp_path, 'budget_exhausted', 'budget_exhausted', 'preparation', 1)
     assert receipt['budget_stages']['stages']['preparation']['spent_seconds'] >= 3
     assert '--timeout' in receipt['exit_receipt']['next_step']
+    assert_private_receipt_in_step(receipt)
 
 
 def test_a_symlinked_instruction_file_ends_with_a_typed_unsupported_input_reason(stub, capsys, tmp_path):
@@ -77,6 +87,8 @@ def test_a_symlinked_instruction_file_ends_with_a_typed_unsupported_input_reason
     assert code == 2
     assert_typed(receipt, tmp_path, 'invalid_input', 'unsupported_instruction_layout', 'harness_discovery', 2)
     assert 'regular file' in receipt['exit_receipt']['next_step']
+    [run] = (stub.root / 'state/runs').glob('*/run-*')
+    assert_private_receipt_in_step(receipt, run)
 
 
 def test_resume_with_execution_options_names_the_corrected_command_shape(stub, capsys, tmp_path):
@@ -185,6 +197,7 @@ def test_watch_once_with_a_tiny_budget_ends_with_a_typed_budget_reason(stub, cap
     code, receipt, _ = watch_once(stub, capsys)
     assert code == 1
     assert_typed(receipt, tmp_path, 'budget_exhausted', 'budget_exhausted', 'preparation', 1)
+    assert_private_receipt_in_step(receipt)
 
 
 def test_watch_once_on_a_symlinked_instruction_file_ends_with_a_typed_unsupported_input_reason(stub, capsys, tmp_path):
