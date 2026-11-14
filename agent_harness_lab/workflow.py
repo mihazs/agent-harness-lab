@@ -1174,9 +1174,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
         from .evaluation import before_after
         single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
-            frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else hashlib.sha256(manifest_raw).hexdigest(),
-                grader_sha256=grader_before, seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
-                budget_share=dict(trials=len(manifest['tasks']), timeout_seconds=manifest.get('timeout_seconds')), runtime_sha256=runtime_sha256),
+            frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else before_after.bank_sha256(manifest, manifest_path.parent),
+                grader_sha256=grader_fingerprint(manifest_path, portable=True), seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
+                budget_share=dict(trials=len(manifest['tasks'])), runtime_sha256=runtime_sha256),
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))

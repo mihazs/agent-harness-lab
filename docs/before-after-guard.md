@@ -59,6 +59,13 @@ and the run keeps its own status. If the guard cannot be computed the block is
 Both arms carry one identity: `bank_sha256`, `grader_sha256`, `seed_schedule_sha256`,
 `budget_share`, `runtime_sha256` and the `identity_sha256` of those five. A field the
 controller could not observe is `null`, which is unknown and never a match.
+`bank_sha256` is the project bank digest, or for a constructed manifest the digest of its
+task content without the run's own budget fields; `grader_sha256` is the grader boundary
+digest (argv, files, bundles and self-tests). Both name the run folder by a placeholder, so
+the same inputs have the same identity in another run. `seed_schedule_sha256` covers the
+ordered task ids, repeats and declared seed, and `budget_share` is the number of trials each
+arm ran; the per-trial timeout is derived from the remaining budget, so it is not part of
+the identity, and both arms always run under the one value in the manifest.
 `runtime_sha256` is the sandbox image identity for controlled runs and the launch
 configuration both arms shared (agent, resolved executable, environment policy) for native
 runs; it binds neither the served model nor the runtime build.

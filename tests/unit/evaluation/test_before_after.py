@@ -259,3 +259,11 @@ def test_neither_block_is_publicly_exportable_whatever_its_publication_flag_says
     for value in (block, guard.investigate(pairs, block)):
         assert not public_export_allowed([exportable(receipt=value)])
         assert not public_export_allowed([exportable(receipt=dict(value, publication_allowed=True))])
+
+
+def test_the_bank_identity_ignores_the_run_budget_and_the_run_folder_but_sees_a_task_change(tmp_path):
+    manifest = dict(tasks=[dict(id='a', fixture='a', grader=['python3', str(tmp_path / 'one' / 'grade.py')])], budget_seconds=29.5, timeout_seconds=14.0)
+    moved = dict(tasks=[dict(id='a', fixture='a', grader=['python3', str(tmp_path / 'two' / 'grade.py')])], budget_seconds=12.0, timeout_seconds=6.0)
+    changed = dict(moved, tasks=[dict(id='b', fixture='a', grader=['python3', str(tmp_path / 'two' / 'grade.py')])])
+    assert guard.bank_sha256(manifest, tmp_path / 'one') == guard.bank_sha256(moved, tmp_path / 'two')
+    assert guard.bank_sha256(moved, tmp_path / 'two') != guard.bank_sha256(changed, tmp_path / 'two')
