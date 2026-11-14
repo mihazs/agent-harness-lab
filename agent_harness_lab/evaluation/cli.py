@@ -36,7 +36,7 @@ def main(argv):
     experiment_mode.add_argument('--records', type=Path,help='Existing JSON array of TrialRecord objects to analyze; cannot be combined with --preflight')
     experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
     experiment_mode.add_argument('--prepare-root-similarity',action='store_true',help='Print a new private plan and evidence for explicit pre-trial review; does not write files')
-    experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate fixed-analysis disposition rates without running workers or models')
+    experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate the frozen plan\'s disposition rates (fixed-final, or sequential beside its fixed comparator) without running workers or models')
     experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight or sequential recorded analysis')
     experiment.add_argument('--sequential-binding',type=Path,help='Caller-declared sequential sampling binding for unverified numeric analysis of --records')
     experiment.add_argument('--root-similarity',type=Path,help='Private root similarity evidence pinned by the frozen plan')
@@ -130,8 +130,10 @@ def main(argv):
                 if args.cohorts:raise ValueError('--cohorts requires --preflight')
                 from agent_harness_lab.private_journal import record
                 from .cohorts import MAX_BYTES
-                from .power import simulate
+                from .power import simulate as simulate_fixed
+                from .sequential_power import simulate as simulate_sequential
                 spec=ExperimentSpec.parse(record(args.spec,MAX_BYTES)[0])
+                simulate=simulate_fixed if spec.sequential is None else simulate_sequential
                 result=simulate(spec,record(args.power_model,MAX_BYTES)[0],
                     simulations=200 if args.simulations is None else args.simulations,
                     seed=0 if args.simulation_seed is None else args.simulation_seed)
