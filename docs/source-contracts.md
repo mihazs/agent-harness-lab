@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -4960,16 +4960,114 @@ later file is decoded.
 | `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
 
 `limits` may only lower these ceilings. `task test:sources:hindsight` runs the
-synthetic controls. Still open in #51, and not implementable offline: an optional
-bank-specific read mode over a verified read-only API with an explicit URL and
-least-privilege token, verifying the shape against a real archive, and further
-releases. The pinned OpenAPI lists GET operations for `memories/list`, `documents`
-and `mental-models`, but whether they are free of side effects and inference cost,
-and which token scopes they need, can be shown only against a Hindsight server.
+synthetic controls. Still open in #51: verifying the archive shape against a real
+v1.1.0 export, and further releases. The optional bank-specific read mode is
+[below](#explicit-hindsight-rest-reads).
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
+
+## Explicit Hindsight REST reads
+
+`api/hindsight-rest/v1` reads one selected bank of a running Hindsight server and
+maps its memory units to the same claims, times and assertion statuses as the
+[offline archive](#offline-hindsight-bank-archives). It is opt-in: no manifest,
+no read. The manifest has the GitHub, Gitea and GitLab configuration shape, with
+an `endpoint` that equals the selection's `base_url`, a canonical HTTPS origin
+(a sub-path is allowed; a trailing slash or a `/v1` suffix is not):
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "hindsight-rest", "version": "v1", "...": "..."},
+ "endpoint": "https://hindsight.example.test",
+ "selection": {"base_url": "https://hindsight.example.test", "instance": "laptop-a", "release": "1.1.0",
+               "bank_id": "team-notes", "max_memories": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+`source.project_sha256` must be `selection.project_sha256`, a digest of the
+provider, `instance`, host, path and `bank_id`, so another server or bank is another
+project. It deliberately differs from the archive's project fingerprint: the two
+sources are separate, and whether a listed `id` equals an exported `source_id` is
+unverified, so the paths do not dedup. `scope_sha256` is `selection.sha256`.
+Pass the credential with `--authorization-file PRIVATE_FILE` or
+`--authorization-env NAME`; it is the complete `Authorization` header value, for
+example `Bearer ...`, read only from that named file or variable and never by `probe`
+or `status`. `auth_mode: "none"` reads an open development server. The shared
+transport is HTTPS only.
+
+### What is requested and why it is eligible
+
+Two routes are ever requested, both `GET`, both built from fixed templates. A bank ID
+becomes a path segment only when it is one plain token (`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`).
+
+| Request | Purpose |
+| --- | --- |
+| `GET /version` | The server must report `api_version` equal to the selected `release` (`1.1.0`) before any bank is read. |
+| `GET /v1/default/banks/{bank_id}/memories/list?limit=N&offset=M&state=valid` | Live facts and observations. |
+| the same route with `state=invalidated` | The archive of facts a person curated out. |
+
+The eligibility finding is from reading the [pinned source](https://github.com/vectorize-io/hindsight/tree/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5),
+not from a live server. At that commit `list_memories` authenticates, authorizes a
+bank read, requires the bank to exist (a missing bank is a 404, never a creation)
+and runs `SELECT` statements over the live or archive table; its `q` filter is an
+`ILIKE` scan and is never sent. The reader sends no filter other than `limit`,
+`offset` and `state`. No embedding, LLM or write is on that path. This holds for the
+stock server; a deployment that adds a tenant or validator extension can run its own
+code on a read, and the extension and its token scopes are the operator's to
+audit. The reader therefore sends only the credential you name, and the claim stays
+`compatibility: unverified`.
+
+The reader never calls `retain`, `recall` (it can use inference), `reflect`, the
+asynchronous transfer, document or knowledge-base export operations (they create
+server-side state), the document, mental-model, directive, entity, graph or webhook
+reads, a per-memory `GET` or history route, or the bank listing, so no other bank is
+discovered. A selection is refused when `bank_id` is not a plain token, `release` is
+not pinned, the origin is not canonical HTTPS, or `max_memories` is outside
+1 to 10,000.
+
+### Pagination, stops and coverage
+
+Each curation state is read by offset, 100 rows per page (fewer for the last page
+under `max_memories`), until the reported `total`. The reply must be exactly
+`items`, `total`, `limit` and `offset`, and must echo the requested `limit` and
+`offset`; a row that disagrees with its listing's `state` fails the capture. A
+total that changes between pages is `pagination_incomplete: total_count_changed`, a
+repeated ID is `listing_moved`, an empty page before the total is `short_page`, and
+a total beyond `max_memories` is `max_memories_reached`. HTTP 401, 403, 404 and 429
+become the coverage states `unauthorized`, `forbidden`, `not_found` and
+`rate_limited`; a spent budget is `budget_exhausted`; there is no retry. A server
+that reports another release or an unrecognized `/version` answer is
+`unsupported_release` (`release_mismatch` or `unrecognized`) and nothing else is
+requested. A denied live listing ends the capture without claims. Other statuses,
+non-JSON replies and malformed shapes fail the capture without a snapshot. Any
+state other than `captured` makes the snapshot `checkpoint_ready: false`: the
+registry commits nothing and `ahl sources import` prints `status: "blocked"` and
+exits 3. Reads are not atomic (`reads_non_atomic`).
+
+### Claims and what the list view cannot say
+
+Rows become `extracted_fact` (`world`, `experience`), `consolidated_observation` and
+`invalidated_fact` claims, hash-only, with the archive's derivations, provenance and
+the five `false` flags that `BankClaim` enforces. Validity windows are judged at the
+capture instant, which stands in for the archive's `exported_at`, with the same
+statuses and placeholders. An observation counts only the `source_memory_ids` that
+appear in the same capture (`observation_source_unresolved` otherwise). The list view
+of the pinned server carries no creation time, only a write watermark, so `recorded_at`
+is always unknown (`recorded_at_unavailable`) rather than borrowed from another field.
+Documents, relations, mental models, knowledge pages, directives, history and
+attachments are not read (`documents_not_read`, `relations_not_read`), `proof_count` and
+any score are never used, and `native_session_correlation` stays `not_attempted`.
+The `hindsight_summary` printed by `ahl sources preview` carries `network_used: true`,
+`read_methods: ["GET"]`, the `operations` table, `coverage`, `requests` and
+`checkpoint_ready`; the profile `hindsight-rest-v1` is rejected by
+`public_export_allowed`.
+
+`task test:sources:hindsight` runs the controls against a fake HTTPS wire on
+`hindsight.example.test`: the route and method allowlist, the credential header,
+pagination and truncation, hostile pages, release, 401/403/404/429 and budget stops,
+idempotent import and the CLI flow. Live compatibility, the real token scopes a
+deployment needs and a real v1.1.0 archive remain unverified.
 
 ## Offline Cognee graph exports
 
