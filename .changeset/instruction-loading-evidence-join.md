@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Record native loading evidence beside a scoped instruction review (part of #79). `instruction_validation.loading_evidence` joins one pinned Claude capture of the baseline and one of the candidate to the changed instruction and rule files of a valid validation: a file is `observed_pattern` in a version only when an attachment names its path and the attached text hashes to that version's file, and everything else stays `unknown` (no capture, a path-only match, a file the version lacks, a Codex run, or a file loaded at launch without an attachment event). The record keeps `effective`, `outcome` and `independence` at `unknown`, carries a content hash, and `instruction_validation.review(..., loading=record)` adds each operation's per-version observation and refuses a record of another validation or a changed one. The record selection shared with `harness_inventory.join_loading` moved to `harness_inventory.loading_records`; its results are unchanged. The improvement workflow still produces no native capture of its trials, so its saved reviews keep `loading` empty.
