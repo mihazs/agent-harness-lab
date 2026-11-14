@@ -685,6 +685,40 @@ body-insensitive metadata fingerprint that detects changed telemetry, and a dupl
 differs is still the same idempotent duplicate. This is separate from the `input_fingerprint` a caller-supplied normalized
 ledger declares, which is hashed with the rest of that ledger.
 
+## Edit fingerprints
+
+A pinned native Claude `Write` or `Edit` tool call whose input names a whole state carries up to three content-free
+fingerprints, so the edit-then-revert signal can be computed without a recorded state revision:
+
+| Field | Hashes | Present |
+| --- | --- | --- |
+| `edit_target_fingerprint` | the target path | with `edit_after_fingerprint` |
+| `edit_after_fingerprint` | the state after the call: a `Write`'s `content`, or an `Edit`'s `new_string` | `Write` and `Edit` |
+| `edit_before_fingerprint` | the state before the call: an `Edit`'s `old_string` | `Edit` only |
+
+Each is the first 16 hex characters of SHA-256 over the case ID, a NUL byte and a JSON list of a kind tag, the path and
+(for a state) the text. The kind tag separates targets, `Write` states and `Edit` fragments, so a write and an edit of the
+same text never match. Nothing is inferred from the tool name or from text: a `Write` without string `content`, an `Edit`
+whose `old_string` is empty (it creates a file) or equals `new_string`, a multi-edit, a notebook edit, a shell command,
+and every Codex `apply_patch` call carry no edit fields and leave the signal `unknown` for that capture.
+A patch is not decomposed because one patch names several files and context lines, not whole states.
+
+**Comparison.** The brief keeps, per case and target, the last two states. A known `edit_before_fingerprint` that is not the
+state held restarts the chain there. A call whose state returns to the one before the latest change counts once as an
+`edit_then_revert` observed pattern, so `A, B, A` counts one and `A, B, A, B` counts two. Writing the same content again
+changes nothing and is skipped. Only same-case, same-target, same-kind states compare, so a revert expressed through a
+different tool or spelling of the path is missed: zero is `not_observed_capture_unverified`, never a clean result. At most
+256 targets are tracked per case, so the count is a lower bound.
+
+**What it does not show.** An `Edit` fingerprint covers the replaced fragment, not the whole file. When any `Edit` pair is
+captured the signal adds the competing explanation that the file as a whole may differ from its earlier state, besides the
+usual deliberate experiment, rollback or formatter restoring a prior state. It is an observed pattern, never a cause.
+
+**Privacy.** The case salt makes equal states in different cases unlinkable, but anyone holding the private ledger who can
+guess a path or a text can confirm it by hashing the guess with the case ID, as for an
+[input fingerprint](#input-fingerprints). The fields live only in the private run ledger and never reach the brief,
+mechanism summaries or role views, and they stay out of duplicate checks and the body-insensitive metadata fingerprint.
+
 ## Tool error classes
 
 A structured tool error carries no text in the ledger, so counts alone cannot tell a failure the harness can

@@ -19,6 +19,7 @@ MAX_REFS = 5
 MAX_GROUPS = 2000
 MAX_IDS = 5000
 MAX_MESSAGES = 256
+MAX_TARGETS = 256
 OVERFLOW = 'other'
 BUCKETS = 4
 # Fixed vocabulary; captured events carry only the structured error flag, so the category is never inferred from text.
@@ -46,7 +47,7 @@ class Scan:
     def __init__(self):
         self.groups, self.calls, self.cases, self.events, self.width = {}, {}, {}, 0, 1
         self.signals = dict(user_turn_after_tool_error=0, consecutive_user_turns=0, interrupts=0,
-                            same_call_retries=0, fingerprinted_calls=0, edit_reverts=0, revision_events=0,
+                            same_call_retries=0, fingerprinted_calls=0, edit_reverts=0, revision_events=0, edit_events=0, edit_pairs=0,
                             restated_instructions=0, fingerprinted_messages=0)
 
     def _settle(self, state, action):
@@ -67,7 +68,7 @@ class Scan:
         signals, case, activity = self.signals, event['case_id'], event['activity']
         bucket = self._bucket()
         self.events += 1
-        state = self.cases.setdefault(case, dict(pending=None, pending_tool=None, pending_input=None, last=None, last_kind=None, calls={}, revisions=[], messages=set()))
+        state = self.cases.setdefault(case, dict(pending=None, pending_tool=None, pending_input=None, last=None, last_kind=None, calls={}, revisions=[], messages=set(), edits={}))
         if activity == 'tool_call':
             tool = _label(event.get('tool_name'))[0]
             fingerprint = event.get('input_fingerprint')
@@ -138,7 +139,25 @@ class Scan:
             del revisions[:-3]
             if len(revisions) == 3 and revisions[0] == revisions[2] != revisions[1]:
                 signals['edit_reverts'] += 1
+        target = event.get('edit_target_fingerprint')
+        if target is not None:
+            signals['edit_events'] += 1
+            signals['edit_pairs'] += 'edit_before_fingerprint' in event
+            self._edit(state['edits'], target, event.get('edit_before_fingerprint'), event['edit_after_fingerprint'])
         state['last_kind'] = _AGENT_KINDS.get(activity, state['last_kind'])
+
+    def _edit(self, edits, target, before, after):
+        # Per target, the last two states. A known `before` that is not the state we hold restarts the chain there; a return
+        # to the state before the latest change counts. The set of targets is capped, so the count is a lower bound.
+        if target not in edits and len(edits) >= MAX_TARGETS:
+            return
+        previous, current = edits.get(target, (None, None))
+        if before is not None and before != current:
+            previous, current = None, before
+        if after != current:
+            self.signals['edit_reverts'] += after == previous
+            previous, current = current, after
+        edits[target] = (previous, current)
 
     def result(self):
         for state in self.cases.values():
@@ -208,9 +227,12 @@ def _signals(signals):
         row('same_call_retries', signals['same_call_retries'], 'consecutive identical tool and input fingerprint',
             ['Polling an unchanged resource.', 'Retry of a transient condition that then succeeded.'])
         if signals['fingerprinted_calls'] else unknown('same_call_retries', 'input fingerprints on tool calls'),
-        row('edit_then_revert', signals['edit_reverts'], 'mutation state revision returning to the earlier value',
-            ['Deliberate experiment or rollback.', 'Formatter or generator restoring a prior state.'])
-        if signals['revision_events'] else unknown('edit_then_revert', 'state revisions on mutating events'),
+        row('edit_then_revert', signals['edit_reverts'], 'mutation state revision or edit fingerprint returning to the earlier value',
+            ['Deliberate experiment or rollback.', 'Formatter or generator restoring a prior state.',
+             *(['An edit pair covers the replaced fragment, not the whole file, so the file as a whole may differ from its earlier state.']
+               if signals['edit_pairs'] else [])])
+        if signals['revision_events'] or signals['edit_events'] else
+        unknown('edit_then_revert', 'state revisions on mutating events, or edit fingerprints (edit_target_fingerprint, edit_after_fingerprint); the capture carries none'),
         row('restated_instructions', signals['restated_instructions'], 'same content-free message fingerprint twice in one case',
             ['User repeating a short confirmation or an answer to a repeated question.', 'Agent asked the same question twice.',
              'Fingerprints match on normalized wording, so a quoted or pasted block can match without being a restated instruction.'])
