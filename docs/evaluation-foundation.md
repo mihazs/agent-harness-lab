@@ -509,7 +509,7 @@ satisfies a postcondition. Clarification topics and stop reasons are identifiers
 that a trusted runner assigns to observed events; the grader does not judge free
 text, and semantic adjudication remains a separate step. Receipts never authorize
 publication or promotion. The synthetic pair controls below exercise the grader;
-evaluator integration remains later work under the same issue.
+[action-specific counts](#action-specific-counts-across-trials) summarize its results.
 
 Six paired control families (ambiguous versus specified, already-correct versus
 defective, prohibited versus authorized, infeasible versus feasible, ask then
@@ -573,6 +573,33 @@ verification the declarations are checked for shape only and the files are not r
 
 This binds identity and separation; it does not run `run_evaluation.py`, deliver the
 reply, grade an episode, or establish that a declared oracle was reviewed.
+
+### Action-specific counts across trials
+
+`interaction_metrics.summarize(trials)` takes a bounded list of `(contract, evidence)`
+pairs, grades each with `interaction_contract.evaluate` and returns counts only: no
+rate and no single score. `passed`, `interaction_requirement_satisfied` and
+`whole_task_completed` each report `true`, `false` and `unknown` trial counts, so a
+completed boundary is not a completed task and an unobserved trial is never a failure.
+`state_preserved` adds `not_applicable` for contracts that protect no path.
+`deliberate_stop` counts trials whose contract declares a stop reason (`declared`) and
+those where the full interaction requirement held (`correct`). `violations` and
+`unknowns` count trials by grader reason:
+
+| Reported separately | Where it appears |
+| --- | --- |
+| Unnecessary action | `violations.prohibited_mutation`, `violations.protected_state_changed` |
+| Action before the reply | `violations.acted_before_clarification` |
+| Missed necessary clarification | `violations.missed_necessary_clarification` |
+| Unnecessary clarification | `violations.unnecessary_clarification` |
+| Unjustified stop or refusal | `violations.stop_not_deliberate_or_not_authorized` |
+| Crash, timeout, cancellation, provider error | `violations.abnormal_termination` |
+| Unobserved evidence | `unknowns.*` |
+
+The caller supplies the evidence and its completeness declarations; the summary does
+not authenticate them, does not grant publication or promotion, and is not wired into
+`run_evaluation.py` because no supported runtime yet produces this evidence. Valid
+non-action episodes as diagnostic controls (#73) are not part of this summary.
 
 ## Offline validation and limits
 
