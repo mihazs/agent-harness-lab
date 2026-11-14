@@ -90,3 +90,10 @@ def test_the_command_writes_the_section_and_keeps_the_input_unchanged(tmp_path):
     assert SECTION in (tmp_path / 'review' / 'report.html').read_text() and source.read_bytes() == before
     saved = json.loads((tmp_path / 'review' / 'report.json').read_text())
     assert saved['analysis']['bayesian_decision']['verdict'] == 'better' and saved['publication_allowed'] is False
+
+
+def test_a_bayesian_block_and_a_resource_decision_render_together_and_neither_hides_the_other():
+    from tests.unit.evaluation.test_compare_resource import favorable
+    document = page(dict(with_block(block_for('clear_win')), resource_decision=favorable()))
+    assert SECTION in document and 'Resource decision (supplied, not recomputed here)' in document
+    assert document.index(SECTION) < document.index('Resource decision')

@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+`ahl compare` now accepts an optional `resource_decision` (a `resource_decision.decide` result) and `resource_success_cost` (a list of `success_cost` views) in the experiment record and shows them on the private review page: per endpoint the scope, horizon, margin, status, mean difference with lower and upper bound, independent roots, capped observations and unknown reasons, and per arm the all-assigned mean beside the success-conditional mean and the cost per success. Unknown values render as `unknown` or `not computed` and a zero-success arm as `undefined`, never zero. A block that would make an unverified input look favorable is refused with the whole input: a favorable decision without `supported` quality or with an unknown or regressed required endpoint, an unknown endpoint with a bound, promotion or publication authority, a gate-eligible cost view, or a zero-success cost. Nothing is recomputed, and records without these fields produce the same page as before.

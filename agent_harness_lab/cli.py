@@ -59,6 +59,9 @@ def _improve_summary(result, elapsed, budget=None):
     artifact = json.dumps(str(output), ensure_ascii=True) if isinstance(output, (str, Path)) else 'unavailable'
     category, coverage, action = guidance(result)
     spent, remaining = (f'{budget[0]:.1f}', f'{budget[1]:.1f}') if budget is not None else ('unknown', 'unknown')
+    if isinstance(result.get('preparation'), dict):
+        from . import preparation
+        print(preparation.line(result['preparation']), file=sys.stderr, flush=True)
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
@@ -279,8 +282,8 @@ def main(argv=None):
             command.add_argument('--history-from', type=Path, help='Another checkout of the same repository (same git common directory) whose recorded sessions are read read-only instead of this path\'s, for a worktree; the receipt labels it source_project_path_differs; excludes --events/--source-root')
             command.add_argument('--incident-corpus', type=Path, help='Explicit local JSON list of reviewed Incident records declaring approved=true; requires --incident-query; declarations are unverified and results remain private untrusted evidence')
             command.add_argument('--incident-query', help='Explicit nonempty lexical query paired with --incident-corpus; no inferred query, corpus discovery or model calls')
-            command.add_argument('--history-store', type=Path, help='Explicit existing owner-only HistoryStore for read-only saved comparison analysis; requires --history-run; supports unbound fixed history only, no trials, retries or promotion; output and state paths must stay outside it')
-            command.add_argument('--history-run', help='Exact existing controller run SHA-256 paired with --history-store; current sealed unbound fixed history is analyzed conditionally; advanced profiles fail explicitly, incomplete or quarantined runs keep their dispositions')
+            command.add_argument('--history-store', type=Path, help='Explicit existing owner-only HistoryStore for read-only saved comparison analysis; requires --history-run; supports fixed history, optionally bound to its bank, no trials, retries or promotion; output, state and temporary paths must stay outside it and its bank store')
+            command.add_argument('--history-run', help='Exact existing controller run SHA-256 paired with --history-store; current sealed fixed history is analyzed conditionally; advanced profiles fail explicitly, incomplete or quarantined runs keep their dispositions')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized',help='Explicit capture adapter for --events/--source-root; normalized expects event JSONL (default: %(default)s)')
         command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316 (accepts every fixture-verified Claude Code release; see ahl sources claude pin-check --help)')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
@@ -288,6 +291,9 @@ def main(argv=None):
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')
             command.add_argument('--source-project-sha256',help='Exact project identity SHA-256 used to select metadata from --source-cache')
             command.add_argument('--source-scope-sha256',help='Exact authorized scope SHA-256 paired with --source-project-sha256 for the private journal')
+            command.add_argument('--memory-store', type=Path, help='Explicit absolute private store from ahl memory init, used only with --incremental; it never enables discovery, scanning or retrieval')
+            command.add_argument('--incremental', action='store_true', help='Reuse the verified process-mining output of an unchanged --events capture and harness, and commit it after a miss; no model call')
+            command.add_argument('--explain-reuse', action='store_true', help='With --incremental: add the typed reuse receipt (reused, executed, excluded and unknown stages with reasons) to the output')
         if name != 'analyze':
             if name=='improve':
                 command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
@@ -354,6 +360,9 @@ def main(argv=None):
                     raise ValueError('--memory-manifest requires --authorization-file and excludes capture format/version/session overrides')
             elif args.authorization_file is not None:
                 raise ValueError('--authorization-file requires --memory-manifest')
+            if args.incremental or args.memory_store is not None or args.explain_reuse:
+                from .memory.incremental import require
+                require(args)
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve

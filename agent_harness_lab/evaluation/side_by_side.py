@@ -4,12 +4,14 @@ Pairs records by task/root/family/repeat identity, never by array position, and
 aligns timelines by stable event IDs or explicit mappings only. Events are
 projected onto an allowlist of metadata fields, so message bodies, tool
 arguments/results and reasoning never reach the report. Missing data is unknown,
-not failure; a supplied backend analysis is copied verbatim, never recomputed.
+not failure; a supplied backend analysis is copied verbatim, never recomputed. A supplied resource
+decision or cost-per-success view is validated, then copied the same way (#124).
 """
 from collections import Counter
 import json
 import math
 
+from . import resource_report
 from .regressions import sha256
 
 PROFILE = 'ahl-side-by-side-experiment-v1'
@@ -179,6 +181,9 @@ def build(experiment, *, public=False):
     if analysis is not None:
         if not isinstance(analysis, dict) or not _text(analysis.get('status')): raise ValueError('analysis object with status required')
         analysis = json.loads(json.dumps(analysis, allow_nan=False))
+    resource = {name: None if experiment.get(key) is None else check(experiment[key])
+                for name, key, check in (('decision', 'resource_decision', resource_report.decision),
+                                         ('success_cost', 'resource_success_cost', resource_report.success_costs))}
     grouped, invalid_records = {key: {arm: [] for arm in ARMS} for key in planned}, []
     for index, raw in enumerate(trials_raw):
         key = _key(raw)
@@ -218,6 +223,8 @@ def build(experiment, *, public=False):
                      coverage_gaps=sum(1 for pair in pairs if pair['coverage_gap']), usage=_usage_summary(pairs)),
         pairs=pairs, invalid_records=invalid_records, invalid_mappings=sorted(invalid_mappings, key=lambda item: item['index']),
         analysis=analysis, analysis_source='supplied_verbatim' if analysis is not None else 'not_supplied',
+        resource_decision=resource['decision'], resource_success_cost=resource['success_cost'],
+        resource_source='supplied_verbatim' if any(value is not None for value in resource.values()) else 'not_supplied',
         pooled_treatment_effect=None, causal_attribution='none', publication='private', publication_allowed=False,
         automatic_promotion=False, trace_bodies='omitted_metadata_only',
         bounds=dict(max_trials=MAX_TRIALS, max_events_per_trial=MAX_EVENTS, max_mappings=MAX_MAPPINGS, max_text=MAX_TEXT),

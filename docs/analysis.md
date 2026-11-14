@@ -135,6 +135,31 @@ gigabytes on a history of thousands of sessions. The role views given to control
 `analysis-summary.json` (unlimited analysis admission is unchanged) and additionally receive `analysis-brief.json`,
 which their instructions name as the place to start.
 
+### Imported text is data, never instructions
+
+Captured and imported records are untrusted. The role views and the role instruction
+strings are built from counts, hashes and closed labels, so imported sentences do not
+reach a model as instructions. One slot copies capture text into a view: an activity
+name, which the `normalized`, `ai-memory` and descriptive native readers (and an unknown
+session-observation `kind`) take verbatim. A name that is not a short label
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}`) appears in `analysis-summary.json` as
+`withheld-activity-<16 hex of SHA-256>` everywhere it occurred, and `limitations` says how
+many names were replaced. The placeholder keeps distinct names distinct and the counts
+unchanged; it does not claim the withheld text was malicious. Label-shaped names are
+unchanged. The pinned Codex and Claude readers map a closed vocabulary and never need it.
+
+The one deliberate text pass-through is an operator-approved incident summary, which
+carries `authority: untrusted_evidence_only` and is named untrusted evidence in
+`limitations`. `analysis.json` still holds the verbatim names for private review; only
+the model-facing views are filtered.
+
+A synthetic canary sweep (`tests/integration/sources/test_source_injection_canaries.py`)
+plants one instruction-shaped sentence in each string slot of each adapter's synthetic
+capture and requires that no role view carries it. A rejected capture counts as safe; the
+clean-capture and placeholder controls keep the sweep from passing vacuously. It covers
+those synthetic shapes only and does not show that every real capture or future adapter
+field is safe.
+
 ## Evidence-based method selection
 
 `method_selection` records the versioned structural prerequisite policy after
@@ -317,17 +342,25 @@ behavior.
 
 Supported contract, which fails closed:
 
-- Only schema-1 unbound fixed histories are read. Bank-bound, protected, derived,
-  sequential and preservation/cohort histories fail explicitly before their
+- Only fixed histories are read: schema 1 (unbound) and schema 2 (bound to a
+  bank revision). A bound history re-checks that the bank revision is still
+  current and eligible, and a revoked, retired or changed bank fails explicitly
+  instead of reporting current authority. Protected, derived, behavior-policy,
+  cohort, sequential and responses-bound histories fail explicitly before their
   transitive validators run, because those validators may create dependency locks
-  or signature-verification scratch inside the store. Their standalone commands
-  keep their own contracts.
+  inside the store. Their standalone commands keep their own contracts.
+- Validation scratch, such as the temporary directory used to verify an
+  authenticated bank review signature, is created inside the private analysis
+  output and never inside the history or the bank store.
 - The store must already be initialized, owner-only and hold its existing lock
   file; a missing lock fails without being recreated.
 - The resolved `--output`, the default run directory and the lock directory under
-  the state root must not equal, contain or sit inside the store. Symlink aliases
-  are resolved first. The check runs before any lock, directory or scratch exists,
-  for both `analyze` and `improve`.
+  the state root must not equal, contain or sit inside the store, or inside the
+  bank store a bound history declares; the temporary directory must not sit inside
+  either. Symlink aliases are resolved first. The check runs before any lock,
+  directory or scratch exists, for both `analyze` and `improve`. The declared bank
+  location is only a claim used to widen this refusal; bank validation still
+  decides authority.
 - The check is a path comparison at start. Output and state paths must stay stable
   and trusted; a concurrent replacement of a directory ancestor, or a concurrent
   writer to the store, is outside this contract and is not prevented.
@@ -380,6 +413,21 @@ input (and the closed input profile) never read evaluation results, so no added 
 not blocked and still reach preparation. A run whose preparation called the model and
 evaluated no trial carries `spend_label: spent_without_evaluation` (also in the `ahl: outcome=` line as `label=`)
 and a `spent_without_evaluation` object with `preparation_seconds` and `provider_reported_spend: unverified`.
+
+A receipt whose preparation stage wrote a proposal, or failed to write a usable one, carries a `preparation` block (profile
+`ahl-preparation-outcome-v1`): `outcome` is `hypothesis_supplied` (a candidate that changes the baseline), `no_change_supported`
+(`no_change` with at least one recognized `reason_codes` entry), `no_hypothesis` (`no_change` without one, or a candidate identical to the
+baseline) or `invalid_proposal` (native CLI-runtime preparation only: no proposal file, malformed JSON, not an object, or neither
+`candidate` nor `no_change`; the run status is then `invalid_proposal`). A controlled or configured-inference preparation stage still
+rejects such a proposal before the workflow reads it, so that run ends `invalid_input` with no `preparation` block. A candidate may carry
+the three lists below beside its mechanisms; they never count as unknown proposal fields in the mechanism admission. `reason_codes`
+come from a closed list (`no_verified_outcome`, `pattern_not_recurring`, `too_few_independent_roots`, `capture_unverified`, `cause_outside_harness`, `baseline_conforms`, `evidence_ambiguous`), `missing_evidence`
+holds only ids listed in the run's `analysis-brief.json`, and `baseline_checks_passed` is a `count` and the `classes` of the static audit
+conventions the proposer reported as conforming. Each list reads at most 32 entries; `unrecognized` counts every entry outside the
+vocabulary, which is discarded, never echoed. The fields are the proposer's declaration (`declared_by: proposer`, `controller_verified: false`):
+`no_change_supported` is not a claim that the harness is correct. The proposal's free text never reaches the receipt, `report.md` or the
+terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evidence=... baseline_checks_passed=N` line before the
+`ahl: outcome=` line. A run that stopped before any model call carries no block.
 
 | Reason | Remediation |
 | --- | --- |

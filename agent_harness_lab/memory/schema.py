@@ -25,11 +25,15 @@ def _detail(column='detail_json'):
     return column + ' ' + DETAIL.format(c=column)
 
 
+IDENT = "TEXT NOT NULL CHECK (length({c}) BETWEEN 1 AND 128 AND {c} NOT GLOB '*[^A-Za-z0-9._-]*')"
+DIGEST = "TEXT NOT NULL CHECK (length({c})=64 AND {c} NOT GLOB '*[^0-9a-f]*')"
+ART = 'FOREIGN KEY (project_id, {c}) REFERENCES artifacts (project_id, digest) DEFERRABLE INITIALLY DEFERRED'
+
+
 def _v1():
-    ident = "TEXT NOT NULL CHECK (length({c}) BETWEEN 1 AND 128 AND {c} NOT GLOB '*[^A-Za-z0-9._-]*')"
-    digest = "TEXT NOT NULL CHECK (length({c})=64 AND {c} NOT GLOB '*[^0-9a-f]*')"
+    ident, digest = IDENT, DIGEST
     pid, d = ident.format(c='project_id'), digest
-    art = 'FOREIGN KEY (project_id, {c}) REFERENCES artifacts (project_id, digest) DEFERRABLE INITIALLY DEFERRED'
+    art = ART
     statements = [
         "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID",
         f"CREATE TABLE projects (project_id {pid.replace('NOT NULL', 'PRIMARY KEY', 1)})",
@@ -79,8 +83,27 @@ def _v1():
     return statements
 
 
+def _v2():
+    """Stage records: one row per committed stage run, found by exact node key. Complete rows name a verified output."""
+    pid, d = IDENT.format(c='project_id'), DIGEST
+    statements = [
+        f"CREATE TABLE stage_records (project_id {pid}, record {d.format(c='record')}, stage {IDENT.format(c='stage')},"
+        f" node_key {d.format(c='node_key')}, status TEXT NOT NULL CHECK (status {_in('stage_status')}),"
+        " output TEXT CHECK (output IS NULL OR (length(output)=64 AND output NOT GLOB '*[^0-9a-f]*')),"
+        " sequence INTEGER NOT NULL CHECK (sequence >= 1), CHECK (status <> 'complete' OR output IS NOT NULL),"
+        f" PRIMARY KEY (project_id, record), {ART.format(c='record')}, {ART.format(c='output')}) WITHOUT ROWID",
+        "CREATE INDEX stage_records_by_key ON stage_records (project_id, stage, node_key)",
+    ]
+    for table, limit in V2_ROW_LIMITS.items():
+        statements.append(
+            f"CREATE TRIGGER {table}_ceiling BEFORE INSERT ON {table} WHEN (SELECT count(*) FROM {table} WHERE project_id = NEW.project_id) >= {limit} "
+            f"BEGIN SELECT RAISE(ABORT, '{table} row ceiling reached for this project'); END")
+    return statements
+
+
+V2_ROW_LIMITS = {'stage_records': 100_000}
 # Append-only: a released step is never edited. Each step takes the schema from user_version N-1 to N.
-MIGRATIONS = (_v1(),)
+MIGRATIONS = (_v1(), _v2())
 VERSION = len(MIGRATIONS)
 
 
