@@ -5,8 +5,9 @@
 `ahl memory` manages an opt-in, local evidence store. Immutable, hash-addressed
 objects are authoritative; a SQLite index is derived from them and can always be
 rebuilt. This slice provides the store, its integrity checks and its maintenance
-commands. Nothing populates it yet, no planner reads it, and it never reads or
-modifies a `HistoryStore`: a row here is never proof that an original store was updated.
+commands. Nothing populates it yet and no planner reads it. The store never modifies a
+`HistoryStore`: a row here is never proof that an original store was updated. The separate
+`history` command only reads selected stores.
 
 ## Create and check a store
 
@@ -39,6 +40,36 @@ directory named by `AHL_MEMORY_STORE` is refused before any read, so the two sto
 Every command prints JSON on stdout; `--json` is accepted for uniformity and changes nothing.
 Exit codes: 0 completed, 2 invalid input or refused path, 3 blocked (read-only store,
 busy writer, unusable index) or `verify` found problems.
+
+## List existing evaluation histories
+
+`ahl memory history` shows runs that already exist in sealed evaluation `HistoryStore`s
+without copying any of their authority. It needs no memory store, scans nothing on its own
+and writes nothing: you name every store with `--history-store` (absolute path, repeatable).
+
+```sh
+ahl memory history --history-store /abs/path/history
+```
+
+Each row references the original (`authority_store_ref`, a digest of the store location, and
+`original_run_id`) and carries the spec, bank, bank revision, oracle, baseline, candidate,
+grader and runtime digests the original recorded. Rows are recomputed on every call by the
+HistoryStore's own validators, so changes in authority show up at the next read:
+
+| `current_validity` | Meaning | `comparison_eligibility` |
+| --- | --- | --- |
+| `current` | Sealed, oracles active, bank authority still eligible | `eligible` unless provenance is missing |
+| `invalidated_by_oracle_quarantine` | A dependent oracle was quarantined; the result is historical evidence only | `not_comparable` |
+| `authority_not_current` | Sealed, but the bank authority or sealed evidence no longer validates | `not_comparable` |
+| `incomplete` | Not sealed | `not_comparable` |
+| `unreadable` | The original run does not validate; nothing else is claimed | `unknown` |
+
+A run lacking bank binding, a harness snapshot, grader provenance or runtime is
+`legacy_unverified`, listed with the reasons (`bank_binding_missing`, `snapshot_missing`,
+`grader_provenance_missing`, `runtime_missing`) and null fields; nothing is inferred from path
+names or timestamps. Isolated sandbox roles (`AHL_SANDBOX_ROLE` set) are refused with exit 3.
+Exit 0 listed, 2 invalid input, 3 blocked or busy. The `evaluations` table in the index is
+unchanged; incremental writes into the memory store are a later slice.
 
 ## Recover from damage
 
