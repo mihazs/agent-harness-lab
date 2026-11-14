@@ -11,7 +11,7 @@ from agent_harness_lab import cli, entry_parity
 PACKAGE = Path(agent_harness_lab.__file__).parent
 # The modules that write the compared run artifacts: receipt, invocation context, construction repairs and trial results.
 WRITERS = (PACKAGE/'workflow.py', PACKAGE/'one_call.py', PACKAGE/'evaluation/construction.py',
-           cli.assets()/'skills/harness-evaluation/scripts/run_evaluation.py')
+           cli.assets()/'skills/harness-self-improvement/scripts/run_evaluation.py')
 DURATION = re.compile(r'(_seconds|_elapsed)$|^elapsed_')
 CLOCKS = {'monotonic', 'time', 'perf_counter'}
 

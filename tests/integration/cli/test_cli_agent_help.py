@@ -24,7 +24,7 @@ PARSER_FILES={
         'evaluation/bank_qualification.py','evaluation/oracle_history.py','evaluation/grader_correction.py',
         'diagnostics/annotation_plan.py','evaluation/compare.py','plan_review.py','evaluation/interchange.py','evaluation/image.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py','memory/cli.py')}
 PARSER_FILES.update(('tools/diagnose.py','tools/benchmark_models.py','tools/link_skills.py',
-    'skills/harness-evaluation/scripts/mine_traces.py','skills/harness-evaluation/scripts/run_evaluation.py',*SCRIPTS))
+    'skills/harness-self-improvement/scripts/mine_traces.py','skills/harness-self-improvement/scripts/run_evaluation.py',*SCRIPTS))
 
 
 class Captured(BaseException):
@@ -141,7 +141,7 @@ def test_all_routed_help_is_available_without_operations_or_input(route):
 
 def test_parser_module_inventory_has_no_unreviewed_or_unexercised_entrypoint():
     discovered=set()
-    for directory in ('agent_harness_lab','tools','scripts','skills/harness-evaluation/scripts'):
+    for directory in ('agent_harness_lab','tools','scripts','skills/harness-self-improvement/scripts'):
         for path in (ROOT/directory).rglob('*.py'):
             if 'tests' in path.parts:continue
             raw=path.read_text()

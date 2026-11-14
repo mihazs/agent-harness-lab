@@ -1,11 +1,11 @@
 ---
 name: harness-self-improvement
-description: Evaluate and improve agent instructions and skills when the user explicitly asks to improve, fix, or maintain a harness. Handles natural-language requests and named invocation; never runs unsolicited during ordinary coding.
+description: Evaluate and improve agent instructions and skills when the user explicitly asks to improve, fix, or maintain a harness. Also build and run baseline/candidate evaluations for agent instructions and skills, diagnose evaluation failures, and measure supported improvements. Handles natural-language requests and named invocation. Use for harness maintenance, not ordinary coding or application testing; never runs unsolicited.
 ---
 
 # Harness self-improvement
 
-Requires `ahl` 0.169.0 or later. If `ahl --version` is older, or `ahl doctor` prints an
+Requires `ahl` 0.192.0 or later. If `ahl --version` is older, or `ahl doctor` prints an
 `installation` WARNING, tell the user to run `ahl update` before dispatching.
 
 ## Invocation mode
@@ -18,42 +18,42 @@ Choose the mode before following the manual steps below. Read
   the skill adapter, improve, watch, evaluate or nested trials, or write the real
   project. The parent owns execution and application. The presence of
   `AHL_MANAGED_PREPARATION` denies recursive entry; it grants no authority.
-- For an explicit standalone project invocation, run `ahl skills invoke [PROJECT]`
-  once using that project's existing configuration, authentication and shared
-  budget. PROJECT defaults to the current directory. Preserve the command's
-  stdout, stderr and exit status, then report its actual result. After dispatch,
-  do not start a manual loop or repeat the invocation to bypass a blocked,
-  failed, exhausted or ambiguous result. One exception: a `blocked` preflight
-  that spent nothing and whose `remediation` is a user choice (for example
-  `select_one_runtime_with_agent`) is not a failed run. Ask the user that one
-  question (offer to remember it; add `--remember-runtime` only on a yes), then
-  re-dispatch once with the answer using the exact command in `remediation`; a second block is final. Say that an explicit invocation
-  authorizes the bounded default run and that `execution_authority: false`
-  on a blocked plan means only that nothing was dispatched. To use the user's
-  past sessions as evidence, pass `--history [--since DATE|first]`; relay a
-  `history_*` block's `remediation` verbatim and never assert recurrence it
-  does not report.
-- Automated global improvement is limited to the deterministic skill-header
-  repair: only on an explicit user request, add `--repair-contracts --scope
-  global|project+global --agent codex|claude` (see the invocation reference).
-  Any other global request or named global location retains the manual scope
-  and authorization rules below; do not route it through the project adapter.
+- For an explicit standalone invocation, map the request to a scope (below) and run
+  `ahl skills invoke [PROJECT] [--scope SCOPE]` once using that project's existing configuration,
+  authentication and shared budget. PROJECT defaults to the current directory. Preserve the command's
+  stdout, stderr and exit status, then report its actual result. After dispatch, do not start a manual loop
+  or repeat the invocation to bypass a blocked, failed, exhausted or ambiguous result. One exception: a
+  `blocked` preflight that spent nothing and whose `remediation` is a user choice (for example
+  `select_one_runtime_with_agent`) is not a failed run. Ask the user that one question (offer to remember it;
+  add `--remember-runtime` only on a yes), then re-dispatch once with the answer using the exact command in
+  `remediation`; a second block is final. Say that an explicit invocation authorizes the bounded default run
+  and that `execution_authority: false` on a blocked plan means only that nothing was dispatched. To use the
+  user's past sessions as evidence, pass `--history [--since DATE|first]`; relay a `history_*` block's
+  `remediation` verbatim and never assert recurrence it does not report.
 - If the CLI is unavailable before any attempt, use the assisted manual fallback
   in the reference and state its verification limits.
 
-Complete the improvement loop: diagnose from evidence, construct an evaluation,
-execute baseline and candidate, repair failures, and apply supported improvements.
-A failure description or proposed candidate is optional. Discover improvement
-candidates from available traces, evaluation failures, current instructions and
-source contracts yourself. Do not require the user to identify what went wrong
-before beginning. An optional focus hint does not replace coverage of other
-material mechanisms. When capture is missing, investigate current behavior and
-mark historical recurrence unknown rather than inventing it.
+Complete the improvement loop: diagnose from evidence, construct an evaluation, execute baseline and
+candidate, repair failures, and apply supported improvements. A failure description or proposed candidate
+is optional. Discover improvement candidates from available traces, evaluation failures, current
+instructions and source contracts yourself. Do not require the user to identify what went wrong before
+beginning. An optional focus hint does not replace coverage of other material mechanisms. When capture
+is missing, investigate current behavior and mark historical recurrence unknown rather than inventing it.
 
 A request to improve the harness authorizes this reversible work within its named
 scope. Do not ask again to build tests, run local evaluations, refine a candidate,
 or apply an eligible edit. Missing evaluation infrastructure is work to do, not a
-reason to return a proposal. Load `harness-evaluation` for the execution procedure.
+reason to return a proposal. Follow the [evaluation methodology](references/evaluation.md) for the execution procedure.
+
+## Scope mapping
+
+The user's words choose the scope; nothing widens it (rules: "Scope mapping" in [invocation routing](references/invocation.md)).
+With the CLI available, never edit a global file by hand instead of its `--scope` path.
+
+- No scope word, "this project", "my repo": omit `--scope` (`project`, no user-level files).
+- "global", "my user-level harness": `--scope global --agent codex|claude`.
+- "both", "global and project": `--scope project+global --agent codex|claude`.
+- Either layer could be meant ("my skills", "my setup"): ask one question or run `project`; never guess toward global.
 
 ## Scope and evidence
 
@@ -85,7 +85,7 @@ redundant; do not accumulate advice merely because it sounds useful.
 ## Diagnose the portfolio before selecting a repair
 
 For a broad audit or historical request, map distinct failure mechanisms before
-editing. Use [trace diagnosis](../harness-evaluation/references/trace-diagnosis.md)
+editing. Use [trace diagnosis](references/trace-diagnosis.md)
 when history contains multiple sessions or repeated interactions. Keep a compact
 coverage table: mechanism, independent case support, source/trace evidence,
 competing explanation, responsible harness component, candidate, falsifier and
@@ -121,7 +121,7 @@ small corrections over a quota of edits or a wholesale rewrite.
    or simplification; change one causal component at a time unless callers must
    change together. Retain unique useful behavior. Test interaction regressions
    before adopting a combination of independently eligible edits.
-4. Run baseline and candidate with comparable resources using `harness-evaluation`.
+4. Run baseline and candidate with comparable resources using the [evaluation methodology](references/evaluation.md).
    Inspect failures, traces and artifacts. Repair the evaluator if it is wrong,
    version it, and rerun both sides; never relax a criterion to make a patch pass.
 5. Refine a failed candidate from the observed failure. Reject regressions, apply
@@ -143,7 +143,7 @@ use controlled fixtures and count all child trials in the same budget.
 
 ## Evaluation recovery and adoption
 
-Follow the evaluation skill's recovery ladder before declaring an execution path
+Follow the evaluation methodology's recovery ladder before declaring an execution path
 unavailable. No benchmark, empty memory, unavailable labels, an unrelated connector
 error, or inability to replay the exact historical model is not a terminal condition.
 Build the smallest valid experiment and narrow the claim to what it measures.
@@ -167,8 +167,8 @@ failed or did not run, remaining uncertainty, and exact rollback locations. Use
 `APPLIED`, `PARTIALLY APPLIED`, or `NO CHANGE JUSTIFIED` for the change disposition;
 report execution errors separately. For broad work, include mechanism coverage,
 remaining deferred families and why analysis did or did not yield more changes.
-A no-change result needs the actual evaluated
-candidates and reasons, not merely the absence of a pre-existing benchmark.
+A no-change result needs the actual evaluated candidates and reasons, not merely
+the absence of a pre-existing benchmark.
 Report a controller `no_change_evidence_insufficient` as "evidence insufficient", never as
 "the harness is fine", and relay its ranked `next_steps` with their commands. Say the harness is
 supported only for `no_change_harness_supported`, and only for the examined behaviors.
@@ -179,8 +179,7 @@ entire file. Keep sanitized evaluation artifacts outside active skill discovery.
 
 ## Report from the receipt
 
-Quote the controller's fields verbatim; they carry no model judgment. See "Report integrity" in
-[invocation routing](references/invocation.md).
+Quote the controller's fields verbatim; they carry no model judgment ("Report integrity" in [invocation routing](references/invocation.md)).
 
 - A hint, `--focus` or a staged static convention (`static_audit`) is an `agent_supplied_hypothesis`: with
   `independent_corroboration: false` a matching candidate is never an independent finding.
@@ -191,7 +190,7 @@ Quote the controller's fields verbatim; they carry no model judgment. See "Repor
 
 ## Objective diagnosis gate
 
-Use the operational criteria in the evaluation skill's trace-diagnosis reference.
+Use the operational criteria in the [trace diagnosis](references/trace-diagnosis.md) reference.
 Separate an observed pattern, a supported diagnosis, and a validated improvement.
 Every candidate needs event references, an exposure denominator when known,
 competing explanations, a responsible component, and a falsifiable outcome check.

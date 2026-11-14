@@ -5,7 +5,7 @@
 ## Install from a release
 
 Requires Python 3.11+, `curl`, a POSIX shell and a symlink-capable filesystem.
-Install the CLI and both skills for Codex and Claude Code with one command:
+Install the CLI and the skill for Codex and Claude Code with one command:
 
 ```sh
 curl -fsSL https://github.com/mihazs/agent-harness-lab/releases/latest/download/install.py | python3 -
@@ -17,7 +17,7 @@ No administrator privileges are required. The installer prints the exact launche
 path and a PATH command if needed; it does not edit your shell startup files.
 
 The installer downloads the versioned release archive, verifies its SHA-256 checksum,
-and installs **the CLI and both skills for Claude Code and Codex**. No Git checkout,
+and installs **the CLI and the skill for Claude Code and Codex**. No Git checkout,
 pip environment, or Node.js installation is required. The release installer source
 is [install.py](../install.py).
 
@@ -84,6 +84,31 @@ changed; every other byte of your file stays identical. See the
 If you edit the text inside the markers, the next update replaces it and prints
 `region_edited_by_user_replaced`; your edited text stays in the backup. Keep your own
 instructions outside the markers.
+
+## Moving from two skills to one
+
+Earlier releases installed two skills, `harness-evaluation` and `harness-self-improvement`.
+There is now one: `harness-self-improvement`. Asking an agent to evaluate, fix, improve
+or maintain a harness all ends at the same skill, and the evaluation methodology and
+runner it used to carry live in that skill's `references/` and `scripts/`. The name
+`harness-self-improvement` was kept so existing installs and global links stay valid.
+The activation description lists every phrase that triggered either skill, and ordinary
+coding and application testing still do not trigger it.
+
+Upgrade in two steps. An update runs the installer of the release you already have, and
+that older installer insists on finding `harness-evaluation` in the new archive. The archive
+therefore carries an empty placeholder with that name, so the older installer finishes.
+
+1. Run `ahl update`. It installs the new release, repoints the `harness-self-improvement`
+   link and links the placeholder, a skill with no instructions that only says it was retired.
+2. Run `ahl update` once more. The new release's installer backs up the `harness-evaluation`
+   link it finds there (the backup path is printed) and does not recreate it.
+
+The release installer (`curl ... | python3 -`) and `ahl skills` are already the new code, so they
+do this in one run. An ordinary directory or a symlink you made yourself with that name is left
+untouched, so remove it by hand if you no longer want it. `ahl rollback install-NAME` puts back
+a `harness-evaluation` link that an update moved, unless something new now occupies its path,
+and the previous release stays under `~/.local/share/agent-harness-lab/releases/`.
 
 ## Check that the installation is current
 

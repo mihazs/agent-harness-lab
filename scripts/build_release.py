@@ -2,12 +2,21 @@
 """Build an allowlisted release: application code and skills, never local data."""
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import tarfile
+
+# Releases before the single skill require this file in every archive, so their installer can still upgrade to this one.
+# It links the placeholder until the next update retires it. Never tracked, so skills/ keeps one skill.
+PLACEHOLDER = ('skills/harness-evaluation/SKILL.md', b"""---
+name: harness-evaluation
+description: Retired placeholder that carries no instructions; its work moved to the harness-self-improvement skill. Run ahl update again and this link is removed.
+---
+""")
 
 
 def build(root, output):
@@ -45,6 +54,11 @@ def build(root, output):
             info.mode = 0o755 if path.name == 'ahl' else 0o644
             with path.open('rb') as source:
                 stream.addfile(info, source)
+        name, content = PLACEHOLDER
+        if not any(path.relative_to(root).as_posix() == name for path in files):  # a source tracking the skill ships it
+            info = tarfile.TarInfo(f'{prefix}/{name}')
+            info.size, info.mode = len(content), 0o644
+            stream.addfile(info, io.BytesIO(content))
     installer = output / 'install.py'
     shutil.copyfile(root / 'install.py', installer)
     checksums = output / 'SHA256SUMS'

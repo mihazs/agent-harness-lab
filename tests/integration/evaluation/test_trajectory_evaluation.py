@@ -161,7 +161,7 @@ def test_report_rejects_malformed_structures(invalid):
 
 
 def test_frozen_baseline_ignores_policy_that_current_runner_enforces(fx):
-    baseline=Path(__file__).resolve().parents[3]/'artifacts/trajectory-assertions/baseline/skills/harness-evaluation/scripts/run_evaluation.py'
+    baseline=Path(__file__).resolve().parents[3]/'artifacts/trajectory-assertions/baseline/skills/harness-self-improvement/scripts/run_evaluation.py'
     if not baseline.exists(): pytest.skip('requires explicitly frozen ignored baseline')
     spec=importlib.util.spec_from_file_location('_trajectory_baseline_runner',baseline)
     module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

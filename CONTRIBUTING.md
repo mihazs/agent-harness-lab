@@ -90,7 +90,7 @@ Application tests live in the `tests/` package: `tests/unit/<area>/` and
 `tests/integration/<area>/`, where the area mirrors the code under test, with shared
 helpers in `tests/support/`. The [layout rule](.agents/skills/pytest-patterns/SKILL.md#repository-adaptation)
 says which tree a test belongs to. Evaluator tests live beside the owned evaluator in
-`skills/harness-evaluation/scripts/test_*.py`. Add discoverable cases to these existing
+`skills/harness-self-improvement/scripts/test_*.py`. Add discoverable cases to these existing
 native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
@@ -184,10 +184,10 @@ review blocker.
 | --- | --- |
 | CLI and orchestration | `ahl`, `agent_harness_lab/cli.py`, `workflow.py` |
 | Evidence and diagnosis | `agent_harness_lab/evidence.py`, `telemetry/`, `tools/diagnose.py`, `tools/observations.py` |
-| Task bank and evaluation | `agent_harness_lab/evaluation/`, `skills/harness-evaluation/scripts/` |
+| Task bank and evaluation | `agent_harness_lab/evaluation/`, `skills/harness-self-improvement/scripts/` |
 | Controlled experiments | `optimization/`, `experiments/`, `diagnostics/` under `agent_harness_lab/` |
 | Monitoring and recovery | `agent_harness_lab/monitoring/`, `promotion/` |
-| Agent skills and contracts | `skills/harness-evaluation/`, `skills/harness-self-improvement/` |
+| Agent skills and contracts | `skills/harness-self-improvement/` |
 | Tests and public inputs | `tests/`, evaluator `test_*.py`, `examples/`, evaluation `fixtures/` |
 | Distribution | `install.py`, `pyproject.toml`, `scripts/`, `.github/workflows/`, `.changeset/` |
 

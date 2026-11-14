@@ -95,7 +95,7 @@ class _VersionAction(argparse.Action):
 
 
 def evaluator():
-    path = assets() / 'skills/harness-evaluation/scripts/run_evaluation.py'
+    path = assets() / 'skills/harness-self-improvement/scripts/run_evaluation.py'
     spec = importlib.util.spec_from_file_location('ahl_evaluator', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -175,8 +175,8 @@ def main(argv=None):
     if argv and argv[0] in ('bank', 'experiment', 'regression', 'sandbox-check'):
         from agent_harness_lab.evaluation.cli import main as evaluation_main
         return evaluation_main(argv)
-    commands = {'mine': assets() / 'skills/harness-evaluation/scripts/mine_traces.py',
-                'evaluate': assets() / 'skills/harness-evaluation/scripts/run_evaluation.py'}
+    commands = {'mine': assets() / 'skills/harness-self-improvement/scripts/mine_traces.py',
+                'evaluate': assets() / 'skills/harness-self-improvement/scripts/run_evaluation.py'}
     tool_commands = {'diagnose': 'diagnose.py', 'benchmark': 'benchmark_models.py'}
     if argv and argv[0] in commands.keys() | tool_commands.keys():
         import tools

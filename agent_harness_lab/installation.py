@@ -6,7 +6,7 @@ import re
 import runpy
 import shutil
 
-SKILLS = ('harness-evaluation', 'harness-self-improvement')
+SKILLS = ('harness-self-improvement',)
 SKILL_DIRS = ('.agents/skills', '.claude/skills')
 MINIMUM = re.compile(r'Requires `ahl` (\d+\.\d+\.\d+) or later')
 FIX = 'ahl update'

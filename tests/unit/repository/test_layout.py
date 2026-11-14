@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 # The evaluator's own checks run beside its scripts wherever the skill is installed (references/execution.md);
 # sources/test_results.py is the test-report source adapter, not a test module.
-EXCEPTIONS = ('skills/harness-evaluation/scripts/test_*.py', 'agent_harness_lab/sources/test_results.py')
+EXCEPTIONS = ('skills/harness-self-improvement/scripts/test_*.py', 'agent_harness_lab/sources/test_results.py')
 
 
 def ignored_directories(root):
@@ -54,14 +54,14 @@ def test_every_tests_directory_is_a_package():
 @pytest.mark.parametrize('path', [pytest.param('tools/tests/test_new.py', id='old-tools-tests'),
                                   pytest.param('agent_harness_lab/test_inline.py', id='beside-code'),
                                   pytest.param('test_top.py', id='repository-root'),
-                                  pytest.param('skills/harness-evaluation/test_beside_skill.py', id='skill-outside-scripts')])
+                                  pytest.param('skills/harness-self-improvement/test_beside_skill.py', id='skill-outside-scripts')])
 def test_a_misplaced_test_module_is_reported(tmp_path, path):
     root = make_tree(tmp_path, 'tests/unit/area/test_kept.py', path)
     assert misplaced_test_modules(root) == [path]
 
 
 @pytest.mark.parametrize('path', [pytest.param('tests/integration/area/test_kept.py', id='integration-tree'),
-                                  pytest.param('skills/harness-evaluation/scripts/test_run_evaluation.py', id='evaluator'),
+                                  pytest.param('skills/harness-self-improvement/scripts/test_run_evaluation.py', id='evaluator'),
                                   pytest.param('agent_harness_lab/sources/test_results.py', id='source-adapter'),
                                   pytest.param('dist/archive/tools/tests/test_old.py', id='ignored-build-output'),
                                   pytest.param('tools/tests/helper.py', id='not-a-test-module')])
