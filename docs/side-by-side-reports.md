@@ -101,5 +101,23 @@ is unknown is shown as `unknown`, never zero.
 
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without
-JavaScript. Not yet covered: browser-driven keyboard and network-interception
-checks, packaging checks of the viewer inside the wheel, and a public-export mode.
+JavaScript.
+
+Offline checks of the page, without a browser: `tests/unit/evaluation/test_compare_viewer_audit.py`
+parses the rendered page and requires that hostile text in every displayed field
+(identities, event metadata, the verbatim analysis object, its keys) can only
+become text. It allows only the tags and attributes the viewer emits, only
+in-page links to an `id` that exists, no `tabindex`, one `h1`, no skipped
+heading level, a `summary` first in every `details`, a `scope` on every table
+header and a focus style for links and summaries. A mutation that stops escaping
+must fail it. The installed-launcher scenario in
+`tests/integration/packaging/installed_scenarios.py` runs `ahl compare` from the
+release archive and requires the same bytes as the golden page, only
+`report.html` and `report.json` in the output and no existing output overwritten.
+`tests/integration/packaging/test_installed_layout.py` makes the same check in the source, wheel and
+archive layouts of the full suite.
+
+Not yet covered: browser-driven keyboard and network-interception checks (this
+audit proves structure, not rendering or focus order in a browser), a
+public-export mode with negative tests, and the optimization, controller and
+review panels.

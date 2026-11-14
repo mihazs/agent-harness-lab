@@ -2,11 +2,13 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
 from agent_harness_lab.cli import version
 import agent_harness_lab
+from tests.unit.evaluation.test_compare_viewer import GOLDEN, fixture
 
 
 def test_application_is_loaded_from_the_selected_layout():
@@ -71,3 +73,14 @@ def test_offline_onboarding_preview_and_exclusive_creation(tmp_path):
     assert invoke('init', folder, '--non-interactive', '--write').returncode == 2
     assert path.read_bytes() == before
     assert b'SYNTHETIC_SECRET_CANARY' not in before
+
+
+def test_compare_viewer_writes_the_golden_report_from_the_selected_layout(tmp_path):
+    source, output = tmp_path / 'experiment.json', tmp_path / 'review'
+    source.write_text(json.dumps(fixture()))
+    result = invoke('compare', '--experiment', str(source), '--output', str(output))
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in output.iterdir()) == ['report.html', 'report.json']
+    assert (output / 'report.html').read_text() == GOLDEN.read_text()
+    assert not re.search(r'https?://|<script|<link', (output / 'report.html').read_text())
+    assert invoke('compare', '--experiment', str(source), '--output', str(output)).returncode == 2
