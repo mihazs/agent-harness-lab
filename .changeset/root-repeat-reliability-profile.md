@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add a descriptive `repeat_reliability` profile (`root-repeat-reliability-v1`) to the complete fixed-sample analysis printed by `ahl experiment --records` (and `statistics.analyze(..., include_reliability=True)`); sealed controller histories, decision receipts and `ahl improve` keep their pinned legacy analysis bytes. Beside the interval it counts, per arm and per frozen family, the roots whose recorded trials all passed, all failed or disagreed across repeats of a task, the lowest per-root pass fraction and the worst and best per-root paired difference, so two candidates with the same mean lift can be told apart and a harmed root is not averaged away. It counts roots only (repeats and related tasks never become samples), reports `not_measurable_single_repeat` when the plan does not repeat tasks, is absent when any trial is missing, ungraded or vetoed (nothing is imputed), and is not a decision input: statuses, intervals and `automatic_promotion=false` are unchanged. New docs describe the fields and state that an `inconclusive` result is the expected outcome for small banks.
