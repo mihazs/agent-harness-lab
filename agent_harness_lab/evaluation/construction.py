@@ -11,7 +11,7 @@ from .responses import invalid_number, run_role
 from .working_state import WorkingState, analysis_snapshot, check_deadline
 from .manifest_contract import ContractError, check_authored, contract_text, strip_authored_digests
 from .analysis_inputs import AnalysisInputs
-from .. import preparation, surfaces
+from .. import preparation, refinement_reuse, surfaces
 from ..sources.instruction_validation import PROPOSER_GUIDANCE
 from ..diagnostics.brief import rendered
 from ..diagnostics.mechanisms import MECHANISM_GUIDANCE
@@ -117,7 +117,7 @@ class ConstructionTimeout(TimeoutError):
     """The evaluation author overran its construction time box while the whole improvement budget still had seconds left (#739)."""
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True,ignored=None,box=None):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False,bank_qualification=False,repairs=None,repair_allowed=True,ignored=None,box=None,reuse=None):
     if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
@@ -181,6 +181,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if box is not None:  # seconds each agent pass may take; the controller work after it keeps the whole-run deadline
         prompt += (f'\nTime box: this construction pass is stopped after {max(0,int(box))} seconds; write manifest.json early, '
                    'then refine. An overrun ends the pass as evaluation_construction_timeout.')
+    if reuse is not None: prompt += '\n' + refinement_reuse.prompt_line(reuse)  # a refinement: the controller keeps the frozen tasks and merges them after
     def run_pass(folder, text):
         stop = deadline if box is None else min(deadline, time.monotonic()+box)
         try: return run_role(client,backend,folder,inputs,'evaluator_author',instructions,text,stop)
@@ -192,7 +193,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     check_deadline(deadline)
     if repairs is not None: _drop_authored_digests(state,ignored)  # before the shape check, publication and any seal; bank conversion stays strict
     try:
-        if repairs is not None:_check_shape(state)  # only the improve pipeline consumes the authored shape
+        if repairs is not None:_check_shape(state,reuse)  # only the improve pipeline consumes the authored shape
     except ContractError as error:
         if not error.repairable or not repair_allowed or repairs:raise
         # One bounded repair pass in the same workspace and budget; the typed reason is recorded in the receipt.
@@ -201,7 +202,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         state,more = run_pass(workspace,prompt+'\n'+error.repair_instruction())
         commands=[*commands,*more]; check_deadline(deadline)
         _drop_authored_digests(state,ignored)
-        _check_shape(state); repairs[-1]['outcome']='repaired'
+        _check_shape(state,reuse); repairs[-1]['outcome']='repaired'
     state.snapshot=normalize_author_snapshot(state.snapshot,destination,deadline=deadline)
     published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
     if derivation is not None:
@@ -222,13 +223,14 @@ def _drop_authored_digests(state,ignored=None):
     if ignored is not None: ignored.append(count)
 
 
-def _check_shape(state):
-    """Validate the authored manifest shape right after the author finishes, before any other stage."""
+def _check_shape(state,reuse=None):
+    """Validate the authored manifest shape right after the author finishes, before any other stage; a refinement must also keep to fresh held-out tasks."""
     raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
     if raw is None: raise ContractError('evaluation_manifest_unreadable','evaluation_construction')
     try: manifest=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     except (ValueError,RecursionError) as exc: raise ContractError('evaluation_manifest_unreadable','evaluation_construction') from exc
     check_authored(manifest,stage='evaluation_construction')
+    if reuse is not None: refinement_reuse.check_fresh(reuse,manifest,[name for name,_,_ in state.snapshot.files])
 
 
 def normalize_author_snapshot(snapshot,destination,*,deadline=None,drop_digests=False):

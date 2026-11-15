@@ -51,17 +51,22 @@ def prompt_line(reuse):
             f'(reserved: {", ".join(sorted(reuse["frozen"]))}). The controller adds the reused tasks after you finish.\n')
 
 
-def merge(reuse, destination, manifest):
-    """Check that the author wrote only fresh held-out tasks, copy the frozen parts in and return (merged manifest, facts)."""
-    destination, source = Path(destination).resolve(), reuse['source']
+def check_fresh(reuse, manifest, names=()):
+    """The author wrote only fresh held-out tasks, with ids and files that no reused part uses; a repairable typed defect otherwise."""
     reused = {task['id'] for task in reuse['tasks']}
     for index, task in enumerate(manifest['tasks']):
         if task['split'] != FRESH:
             raise ContractError('evaluation_manifest_field_invalid', STAGE, f'tasks[{index}].split')
         if task['id'] in reused:
             raise ContractError('evaluation_manifest_field_invalid', STAGE, f'tasks[{index}].id')
-    if any((destination / name).exists() for name in reuse['frozen']):
+    if any(name == kept or name.startswith(kept + '/') for name in names for kept in reuse['frozen']):
         raise ContractError('evaluation_manifest_field_invalid', STAGE, 'tasks[*].fixture')  # a fresh path collides with a reused one
+
+
+def merge(reuse, destination, manifest):
+    """Check that the author wrote only fresh held-out tasks, copy the frozen parts in and return (merged manifest, facts)."""
+    destination, source = Path(destination).resolve(), reuse['source']
+    check_fresh(reuse, manifest, [name for name in reuse['frozen'] if (destination / name).exists()])
     for name in reuse['frozen']:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
