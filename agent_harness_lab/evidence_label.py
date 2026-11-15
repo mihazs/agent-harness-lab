@@ -85,10 +85,11 @@ def evidence_strength(manifest, trials, *, inputs_unchanged, grader_changed=Fals
                 authority='descriptive_only', model_judgment=False)
 
 
-def grader_fingerprint(manifest_path):
+def grader_fingerprint(manifest_path, portable=False):
     """Digest of the acceptance boundary: grader argv, grader files, bundles and self-test declarations.
 
-    ``None`` when the manifest or a declared bundle cannot be read, which compares unequal to any digest.
+    ``None`` when the manifest or a declared bundle cannot be read, which compares unequal to any digest. ``portable``
+    names the manifest's own folder by a placeholder, so the same grader in another run folder has the same digest.
     """
     from .evaluation.integrity import contained, digest
     base = Path(manifest_path).parent
@@ -105,7 +106,10 @@ def grader_fingerprint(manifest_path):
                         self_tests=manifest.get('grader_self_tests', []))
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return None
-    return hashlib.sha256(json.dumps(boundary, sort_keys=True).encode()).hexdigest()
+    text = json.dumps(boundary, sort_keys=True)
+    if portable:
+        for folder in {str(base), str(base.resolve())}: text = text.replace(json.dumps(folder)[1:-1], '<evaluation>')
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def pre_edit_check(project, paths):
