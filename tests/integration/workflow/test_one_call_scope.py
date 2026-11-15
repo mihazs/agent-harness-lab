@@ -150,7 +150,10 @@ def test_project_and_global_layers_are_attributed_in_the_runtimes_documented_ord
     assert [row['layer'] for row in result['layers']] == result['precedence']['layer_order'] == ['global', 'project']
     assert result['precedence']['documented_load_order'] == LOAD_ORDER[runtime]
     assert result['precedence']['out_of_scope'] == (['managed', 'local'] if runtime == 'claude' else [])
-    assert result['precedence']['shared_skill_names'] == ['shared'] and result['precedence']['same_name_skills'] == 'effective_layer_unknown'
+    assert result['precedence']['shared_skill_names'] == ['shared']
+    # The project copy sits in .agents/skills: codex documents that both stay available, claude documents nothing for it.
+    documented = {'claude': ('unknown', 'effective_layer_unknown'), 'codex': ('both_kept', 'documented_rule')}[runtime]
+    assert (result['precedence']['shared_skills'][0]['resolution'], result['precedence']['same_name_skills']) == documented
     assert rows['global']['changed_files'] == sorted([f'skills/{runtime_skill}/SKILL.md' for runtime_skill in ('shared', 'user-' + runtime)])
     assert rows['project']['changed_files'] == ['.agents/skills/example/SKILL.md', '.agents/skills/shared/SKILL.md']
     assert result['layers_changed'] == ['global', 'project']
@@ -166,6 +169,17 @@ def test_project_and_global_layers_are_attributed_in_the_runtimes_documented_ord
         with contextlib.redirect_stdout(io.StringIO()):
             assert main(['rollback', row['deployment'], '--project', row['root']]) == 0
     assert one.skill.read_bytes() == BOM + one.valid
+
+
+def test_claude_receipt_names_the_user_copy_as_the_documented_winner_and_still_repairs_both_copies(one, home):
+    home.add(home.claude / 'skills/shared/SKILL.md', BOM + skill('shared'))
+    home.add(one.project / '.claude/skills/shared/SKILL.md', BOM + skill('shared'))
+    code, result = one.invoke('--repair-contracts', '--scope', 'project+global', '--agent', 'claude')
+    assert (code, result['status']) == (0, 'applied')
+    (shared,) = result['precedence']['shared_skills']
+    assert (shared['effective_layer'], shared['shadowed_layer'], shared['project_locations']) == ('global', 'project', ['.claude/skills'])
+    assert result['precedence']['same_name_skills'] == 'documented_rule'
+    assert 'global:skills/shared/SKILL.md' in result['changed_files'] and '.claude/skills/shared/SKILL.md' in result['changed_files']
 
 
 def test_project_configuration_cannot_select_global_scope(one, home, capsys):

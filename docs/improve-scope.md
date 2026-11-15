@@ -103,6 +103,13 @@ own plan, deployment and rollback command. A blocked, inconclusive, exhausted or
 layer is reported as such and gives the run that status and exit code; it is never
 folded into a success.
 
+When a `project+global` run finds the same skill name in both layers, `precedence.shared_skills`
+says which copy the runtime documents as the one it uses: with `claude` your user-level skill
+wins over a project skill in `.claude/skills`, and with `codex` both stay available. A copy the
+runtime does not document that way is reported as `unknown`, not guessed. Every file is still
+repaired in the layer that holds it; see the
+[scope receipt reference](one-call-improvement.md#harness-scope-receipt) for the fields.
+
 ## Undo a user-level repair
 
 Use the rollback command printed in that layer's row. It names the user-level
