@@ -129,14 +129,16 @@ compare_strategies(..., retry_comparator=True)
 A search that evaluates several candidates and keeps the best can look better than the
 baseline from selection alone. With `retry_comparator=True` every strategy that
 selected a finalist also gets the unchanged baseline re-evaluated through the same
-`evaluate` callback, so the report shows what the same number of draws of the
-unchanged baseline would have produced. A strategy with no finalist, and `no-op`, get
-`retry_comparator: None` and run no retries.
+`evaluate` callback (or, on the controller route, the same controller), so the report
+shows what the same number of draws of the unchanged baseline would have produced. A
+strategy with no finalist, and `no-op`, get `retry_comparator: None` and run no retries.
 
-- **Count.** One retry per non-final stage unit the strategy charged (baseline and
-  proposal slots, development trials), counted from its durable charges and fixed before
-  the first retry runs. It is not matched on tokens or currency, which stay unmeasured,
-  so this is not an equal-cost claim.
+- **Count.** Callback route: one retry per non-final stage unit the strategy charged
+  (baseline and proposal slots, development trials), counted from its durable charges and
+  fixed before the first retry runs. Controller route: one retry per non-final controller
+  run the strategy made (the baseline run and every development run, not the fresh
+  confirmation), counted from its durable attempts and fixed the same way. It is not
+  matched on tokens or currency, which stay unmeasured, so this is not an equal-cost claim.
 - **Unconditional.** Every retry runs whatever the earlier ones found: no retrying only
   failures and no early stop, which would bias the comparator upward.
 - **Own budget.** The retries spend a fresh `Budget(ceiling, reserve)` under the kind
@@ -159,15 +161,44 @@ unchanged baseline would have produced. A strategy with no finalist, and `no-op`
   selection-inflated development observations, not a treatment effect, and a `True`
   never turns `advantage_claim` on. Comparing the candidate's best-of-N with the
   baseline's single pass would be a different estimand and is not offered.
-- **Route.** Callback route only. With a `controller` the call is refused with a
-  `ValueError` before any state exists, as is a flag that is not exactly `True` or
-  `False`. Re-running the baseline through the guarded controller needs a controller
-  stage kind that does not exist yet.
+- **Route.** Both routes. A flag that is not exactly `True` or `False` is refused with a
+  `ValueError` before any state exists.
+
+#### On the guarded controller route
+
+```python
+compare_strategies(..., controller=context, retry_comparator=True)
+```
+
+Each retry is the unchanged baseline compared with itself through the same
+`HistorySearchContext`, under the `baseline_retry` controller stage: the empty patch
+against the frozen baseline harness, on its own custody and receipt, never reusing a
+search run. A patched candidate is refused for that stage before anything runs.
+
+- **Metric.** The observed primary effect of that unchanged comparison, which is what
+  the selected candidate's effect has to beat. The baseline arm of the search stays fixed
+  at `0.0`; a retry reports what was measured. A retry whose effect is missing or not a
+  finite number is unqualified: it carries no metric and, like any unqualified retry,
+  leaves `exceeds_best_retry` as `None`. It is never read as zero.
+- **No returned label.** Every retry is re-verified from its controller receipt when it
+  completes and again on every repeat, so a revoked or forged receipt turns the saved
+  comparison `blocked` instead of being trusted. Each row in `attempts` also carries its
+  `run_id` and `receipt_sha256`.
+- **Failure.** Retries are charged before dispatch under `retry_trial` and saved to a
+  private state file beside the strategy state. An exception from the controller, a
+  baseline changed during a retry or an exhausted preparation bound ends the comparison as
+  `blocked`, and a stop between the charge and the result as `interrupted`; neither is
+  redispatched. The controller prepares at most 16 attempts per frozen context, shared by
+  every search and retry on it, so the default three strategies use at most 15 and a
+  larger comparison ends `blocked` at that bound.
+- **Estimand.** The selected development candidate against the unchanged baseline
+  compared with itself through the same controller, repeated unconditionally for a count
+  fixed in advance, both sides controller-verified development observations and not a
+  treatment effect. `advantage_claim` stays `False`.
 
 ## Not covered yet
 
 A supported model-backed reflective proposer and measured token or cost accounting
 remain separate work: the controller route charges stage units, not tokens or currency,
-and `measured_usage` stays `None`. The retry comparator is not available on the guarded
-controller route. Successive halving, recombination and optional DSPy adapters remain
-opt-in experiments.
+and `measured_usage` stays `None`. Successive halving, recombination and optional DSPy
+adapters remain opt-in experiments.

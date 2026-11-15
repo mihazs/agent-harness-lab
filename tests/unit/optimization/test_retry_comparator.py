@@ -133,8 +133,8 @@ def test_a_baseline_mutated_during_a_retry_blocks_the_comparison(tmp_path):
     assert retry['exceeds_best_retry'] is None
 
 
-def test_the_guarded_controller_route_refuses_the_retry_comparator_before_any_state_exists(tmp_path):
-    with pytest.raises(ValueError, match='callback route'):
+def test_the_retry_comparator_with_a_forged_controller_is_refused_before_any_state_exists(tmp_path):
+    with pytest.raises(ValueError, match='actual history controller'):
         compare(tmp_path, evaluate=None, controller=object(), retry_comparator=True)
     assert list(tmp_path.iterdir()) == []
 
