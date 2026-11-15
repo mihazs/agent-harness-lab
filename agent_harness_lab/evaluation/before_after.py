@@ -17,6 +17,8 @@ import re
 from agent_harness_lab.sources.schema import digest
 from .plan import schedule
 
+from . import vacuity
+
 
 PROFILE = 'ahl-before-after-guard-v1'
 INVESTIGATION_PROFILE = 'ahl-regression-investigation-v1'
@@ -251,6 +253,10 @@ def attach(result, output, run, *, margin=None):
         pairs = run_pairs(run['manifest'], run['trials'])
         arm = frozen_inputs(**run['frozen'])
         guard = dict(decide(pairs, baseline=arm, candidate=dict(arm), margin=DEFAULT_MARGIN if margin is None else margin), bindings=dict(run['bindings']))
+        labels = run.get('vacuity')
+        if labels:  # an evaluation that proves nothing reports no score, delta or verdict that favors either arm (#805)
+            guard.update(verdict='inconclusive', reasons=['evaluation_vacuous', *labels], adoption_blocked=False, scores=None, delta=None,
+                         vacuity=vacuity.receipt(labels))
         _record(result, output, pairs, guard, inputs_unchanged=run['inputs_unchanged'],
                 relabel=run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed')
     except Exception as exc:  # An advisory guard never changes the run result.

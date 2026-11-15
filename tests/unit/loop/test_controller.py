@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_harness_lab.evaluation import vacuity
 from agent_harness_lab.loop import controller, ledger as ledger_module
 from agent_harness_lab.loop.controller import Candidate, Evaluation
 from agent_harness_lab.loop.errors import LoopError
@@ -224,6 +225,46 @@ def test_an_unsound_score_is_incomplete_is_still_recorded_and_never_accepts_or_i
 ])
 def test_classify_is_valid_only_for_a_scored_sound_evaluation_without_a_vacuity_label(evaluation, verdict):
     assert controller.classify(evaluation) == verdict
+
+
+MALFORMED_VACUITY = [
+    pytest.param(['zero_trials'], id='list-of-a-listed-label'),
+    pytest.param([], id='empty-list'),
+    pytest.param({}, id='empty-dict'),
+    pytest.param({'zero_trials'}, id='set-of-a-listed-label'),
+    pytest.param(('zero_trials',), id='tuple-of-a-listed-label'),
+    pytest.param(7, id='number'),
+    pytest.param('', id='empty-text'),
+]
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+def test_classify_calls_a_vacuity_value_that_is_not_one_label_incomplete_and_does_not_raise(malformed):
+    assert controller.classify(score(0.9, vacuity=malformed)) == 'incomplete'
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+@pytest.mark.parametrize('where', ['baseline', 'candidate'])
+def test_a_run_with_a_malformed_vacuity_value_stops_as_evidence_insufficient_with_a_stop_event(tmp_path, where, malformed):
+    bad = score(0.95, vacuity=malformed)
+    result, ledger, ports = go(build('malformed-vacuity', [bad] if where == 'baseline' else [0.5, bad]), tmp_path)
+    assert (result['outcome'], result['stop'], result['best']['snapshot']) == ('inconclusive', 'evidence_insufficient', ports.baseline)
+    assert values(ledger, 'stopped') == ['evidence_insufficient'] and kinds(ledger)[-1] == 'stopped'
+    assert not {'accepted', 'improved'} & set(values(ledger, 'decided'))
+
+
+@pytest.mark.parametrize('label', vacuity.LABELS)
+def test_every_label_of_the_shared_closed_set_is_vacuous_for_the_loop(label):
+    assert controller.classify(score(0.9, vacuity=label)) == 'vacuous'
+
+
+@pytest.mark.parametrize('change, label, verdict', [
+    pytest.param(lambda labels: labels | {'a_future_label'}, 'a_future_label', 'vacuous', id='label-added-to-the-set'),
+    pytest.param(lambda labels: labels - {'zero_trials'}, 'zero_trials', 'incomplete', id='label-removed-from-the-set'),
+])
+def test_the_loop_follows_the_closed_set_of_the_vacuity_module_and_keeps_no_copy_of_it(monkeypatch, change, label, verdict):
+    monkeypatch.setattr(vacuity, 'LABEL_SET', frozenset(change(vacuity.LABEL_SET)))
+    assert controller.classify(score(0.9, vacuity=label)) == verdict
 
 
 MARGINS = build('margins', [0.5], declaration=dict(regression_margin=0.25, noise_margin=0.25)).spec  # 0.25 is exact in binary
