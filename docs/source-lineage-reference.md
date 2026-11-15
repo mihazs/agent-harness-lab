@@ -102,9 +102,43 @@ Git/GitHub [commit join](source-contracts.md#offline-gitgithub-commit-join) and
 [PR commit-role join](source-contracts.md#offline-pr-commit-role-join) are
 separate: their candidate receipts do not enter these components or reviews. The
 [preregistered utility study](source-contracts.md#preregistered-utility-study-against-a-session-only-baseline)
-scores resolver outputs against a session-only baseline on a fixture. Broader native
-cross-source resolution, corpus integration and immutable regression admission remain
-work under #58/#8.
+scores resolver outputs against a session-only baseline on a fixture. The
+[near-duplicate review queue](#near-duplicate-review-queue) lists lexically similar
+records for review. Broader native cross-source resolution, corpus integration and
+immutable regression admission remain work under #58/#8.
+
+<a id="near-duplicate-review-queue"></a>
+
+## Near-duplicate review queue
+
+`ahl sources lineage ... near-duplicates` lists pairs of distinct source records whose
+caller-supplied text is lexically near-identical (`cross-source-near-duplicate-queue-v1`,
+rule `word-punctuation-3gram-jaccard-v1`). The text file is private operator input: it is
+read once, never fetched, stored or printed, and its binding to a record is
+`caller_declared`, because cache revisions hash adapter metadata rather than the raw text.
+
+| Field | Meaning |
+| --- | --- |
+| `threshold_permille` | 800 by default; a pair is listed at or above this word/punctuation 3-gram Jaccard overlap (NFC, case-folded) |
+| `pairs[].content_relation` | `exact` (same bytes), `normalized` (same word/punctuation sequence) or `near` |
+| `pairs[].cautions` | `negation_differs` (English negation cues differ) and `identifiers_differ` (tokens containing a digit differ) |
+| `pairs[].cross_source` | Whether the two records come from different sources |
+| `pairs[].queue_status` | `pending_review`, `covered_by_reviewed_link`, `adjudicated_independent_case` or `conflicting_review` |
+| `pairs[].evidence_class` | Always `heuristic_candidate` |
+| `counts` | Items, candidate and exposed-item counts, per-status and per-relation counts, cautioned pairs and skipped same-record revisions |
+| `lineage_grouping_revision_sha256` | The `query` revision the statuses were computed against; null while the review store does not exist yet |
+| `lineage` | `store` (`read` or `absent`) with the query's conflict and stale-case counts |
+
+Revisions of one native record are history, not duplicates, and are skipped and counted.
+A reviewed component or independent-case assertion changes only a pair's status: the
+candidate set and its similarity do not change, so repeated text exposure stays reported
+after a reviewer decides the records are independent. A review recorded against a different
+revision of a record does not cover the current revision. The report never creates a link,
+merges components, changes a component count or sets `independent_roots`; those stay a
+reviewer's `propose`/`review` decision. A paraphrase that shares no wording is not found,
+and the negation cues cover English only, so an empty queue does not show independence.
+The pair search has no implicit item ceiling. Exit status 3 means pairs await review or the
+query found stale cases or conflicts.
 
 ## Persistence, limits and privacy
 

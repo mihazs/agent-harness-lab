@@ -85,21 +85,25 @@ def transition(state, kind, target, previous_kind=None):
     return kind == target and target in ('quarantined', 'retired', 'rejected') and state not in (target, 'retired', 'rejected')
 
 
-def members(state, claim, evidence=()):
+def checker(state):
+    """A check(ref, what) that rejects any reference not a present, unsuperseded, unambiguous revision of the frozen cache."""
     records = { (r['record']['source_sha256'], r['record']['native_id_sha256'], r['record']['revision_sha256']):
                 EvidenceRecord.parse(r['record']) for r in state['records'] }
     superseded = {tuple(edge[:3]) for edge in state['supersessions']}
     leaves = {}
     for key, value in records.items():
         if key not in superseded: leaves.setdefault(key[:2], set()).add(key)
-    for endpoint in (claim.left, claim.right):
-        if (endpoint.key not in records or records[endpoint.key].state != 'present' or endpoint.key in superseded
-                or len(leaves.get(endpoint.key[:2], ())) != 1):
-            raise ValueError('lineage endpoint is missing, removed, superseded or ambiguous')
-    for ref in (*claim.evidence, *evidence):
+    def check(ref, what):
         if (ref.key not in records or records[ref.key].state != 'present' or ref.key in superseded
                 or len(leaves.get(ref.key[:2], ())) != 1):
-            raise ValueError('lineage evidence is missing, removed, superseded or ambiguous')
+            raise ValueError(f'lineage {what} is missing, removed, superseded or ambiguous')
+    return check
+
+
+def members(state, claim, evidence=()):
+    check = checker(state)
+    for endpoint in (claim.left, claim.right): check(endpoint, 'endpoint')
+    for ref in (*claim.evidence, *evidence): check(ref, 'evidence')
 
 
 def representative(parent, key):
@@ -295,6 +299,23 @@ class LineageStore(PrivateJournal):
         return result
 
 
+    def near_duplicates(self, cache_path, texts_path):
+        """Queue lexically near-identical record texts for review; texts are caller-held, private and never reported."""
+        value, _ = record(texts_path, None)
+        if (not isinstance(value, dict) or set(value) != {'schema_version', 'items'} or value['schema_version'] != 1
+                or not isinstance(value['items'], list)
+                or any(not isinstance(i, dict) or set(i) != {'record', 'text'} for i in value['items'])):
+            raise ValueError('near-duplicate texts need schema_version 1 and items of exactly record and text')
+        items = [(RecordRef.parse(i['record']), i['text']) for i in value['items']]
+        result = self.query(cache_path) if self.root.is_dir() else None  # no store yet means no reviews, not an error
+        _, state, _, cache_hash = self.cache(cache_path)
+        if result is not None and cache_hash != result['cache_sha256']: raise ValueError('source cache changed during near-duplicate review')
+        check = checker(state)
+        for ref, _ in items: check(ref, 'record')
+        from .near_duplicates import queue
+        return dict(queue(items, lineage=result), cache_sha256=cache_hash, lineage=dict(store='read' if result is not None else 'absent',
+            conflicts=len(result['conflicts']) if result is not None else 0, stale_cases=len(result['stale_cases']) if result is not None else 0))
+
     def coverage(self, cache_path):
         """Bounded evidence-coverage report: what the cache holds, what is missing, which joins were tried and what stays unproven."""
         result = self.query(cache_path)
@@ -336,23 +357,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl sources lineage', description=__doc__,
         epilog='Claims and reviews bind exact source-cache revisions and operator identities; they never authorize execution or prove independent roots. '
         'All commands print private JSON metadata. Exit 0: completed; 2: rejected input/binding; '
-        '3: busy store, or query/coverage with stale cases/conflicts. '
+        '3: busy store, query/coverage with stale cases/conflicts, or near-duplicates with pairs awaiting review. '
         'Example: ahl sources lineage --store /private/lineage --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH '
         'propose --cache /private/sources.json --claim claim.json. Then inspect the returned case/event/cache hashes before preparing a review.')
     parser.add_argument('--store', type=Path, required=True,help='Private lineage journal directory, separate from the source cache')
     parser.add_argument('--project-sha256', required=True,help='Expected 64-hex project identity of the selected source cache')
     parser.add_argument('--scope-sha256', required=True,help='Expected 64-hex selection/scope identity of the selected source cache')
     commands = parser.add_subparsers(dest='action', required=True,help='Choose one explicit claim, review or read-only query operation')
-    for name in ('propose', 'review', 'show', 'query', 'coverage'):
+    for name in ('propose', 'review', 'show', 'query', 'coverage', 'near-duplicates'):
         purpose={'propose':'Record an unsigned claim and freeze its exact source-cache snapshot',
             'review':'Append an operator-attested decision bound to the case, event and cache hashes',
             'show':'Read a recorded case summary without checking current cache applicability',
             'query':'Read reviewed links and structured outcome contradictions in the selected cache',
-            'coverage':'Report source kinds, missing data, attempted joins, contradicted claims and unproven independence for the selected cache'}
+            'coverage':'Report source kinds, missing data, attempted joins, contradicted claims and unproven independence for the selected cache',
+            'near-duplicates':'Queue record pairs whose caller-supplied text is lexically near-identical for review; a pair is never a link or an independence claim'}
         action = commands.add_parser(name,help=purpose[name],description=purpose[name],
             epilog='Output is private JSON metadata, not native execution proof. Use the parent --help for scope identities and exit states.')
         if name in ('review', 'show'): action.add_argument('--case', required=True,help='Exact case ID returned by propose; not a file path')
         if name != 'show': action.add_argument('--cache', type=Path, required=True,help='Explicit private SourceStore journal file with matching project/scope identities')
+        if name == 'near-duplicates': action.add_argument('--texts', type=Path, required=True,
+            help='Private JSON {"schema_version": 1, "items": [{"record": RecordRef, "text": str}]} of caller-held text for present cache records; never copied into the output')
         if name == 'propose': action.add_argument('--claim', type=Path, required=True,
             help='LineageClaim schema-1 JSON: left/right RecordRefs, relation, author and nonempty evidence references')
         if name == 'review': action.add_argument('--record', type=Path, required=True,
@@ -364,8 +388,12 @@ def main(argv=None):
         elif args.action == 'review': result = store.review(args.case, args.cache, args.record)
         elif args.action == 'show': result = store.show(args.case)
         elif args.action == 'coverage': result = store.coverage(args.cache)
+        elif args.action == 'near-duplicates': result = store.near_duplicates(args.cache, args.texts)
         else: result = store.query(args.cache)
         print(json.dumps(result, sort_keys=True, allow_nan=False))
+        if args.action == 'near-duplicates':
+            unreviewed = result['counts']['statuses']['pending_review'] + result['counts']['statuses']['conflicting_review']
+            return 3 if unreviewed or result['lineage']['conflicts'] or result['lineage']['stale_cases'] else 0
         found = result['claims'] if args.action == 'coverage' else result
         return 3 if args.action in ('query', 'coverage') and (found['conflicts'] or found['stale_cases']) else 0
     except BlockingIOError:

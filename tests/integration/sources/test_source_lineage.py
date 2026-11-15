@@ -379,6 +379,64 @@ class TestLineageReview:
         assert code == 0; assert result['state'] == 'proposed'
         assert not result['execution_authorized']; assert result['independent_roots'] is None
 
+    def texts(self, *entries, name='texts.json'):
+        path = self.fixture.root/name
+        path.write_text(json.dumps(dict(schema_version=1, items=[dict(record=self.refs[i].to_dict(), text=t) for i, t in entries])))
+        return str(path)
+
+    def test_cli_near_duplicates_queue_pairs_until_reviewed_and_never_print_text(self):
+        body = 'SYNTHETIC_PRIVATE_TEXT the nightly import failed after the schema migration changed the column order and every row was rejected'
+        cache = str(self.fixture.store.path)
+        texts = self.texts((0, body), (1, body), (2, body+' again'))
+        code, result = self.cli(['near-duplicates','--cache',cache,'--texts',texts])
+        assert code == 3; assert result['counts']['statuses']['pending_review'] == 3
+        assert result['independent_roots'] is None; assert result['lineage'] == dict(store='absent', conflicts=0, stale_cases=0)
+        assert result['lineage_grouping_revision_sha256'] is None
+        assert 'SYNTHETIC_PRIVATE' not in json.dumps(result); assert str(self.fixture.root) not in json.dumps(result)
+        self.review(self.propose(0,1,'same_observation')); self.review(self.propose(0,2,'derived_from'))
+        self.review(self.propose(1,2,'independent_case'))
+        code, result = self.cli(['near-duplicates','--cache',cache,'--texts',texts])
+        assert code == 3; assert result['counts']['statuses']['conflicting_review'] == 1
+        assert result['counts']['candidate_pairs'] == 3; assert result['counts']['exposed_items'] == 3
+        queried = self.store.query(self.fixture.store.path)
+        assert result['lineage_grouping_revision_sha256'] == queried['grouping_revision_sha256']
+        assert len(queried['components']) == 1; assert queried['independent_roots'] is None
+
+    def test_cli_near_duplicates_exit_zero_once_every_pair_is_reviewed(self):
+        body = 'the nightly import failed after the schema migration changed the column order and every row was rejected'
+        texts = self.texts((0, body), (1, body), (2, 'a wholly different note about release scheduling and changelog wording'))
+        self.review(self.propose(0,1,'same_observation'))
+        code, result = self.cli(['near-duplicates','--cache',str(self.fixture.store.path),'--texts',texts])
+        assert code == 0; assert result['counts']['statuses']['covered_by_reviewed_link'] == 1
+        assert result['counts']['candidate_pairs'] == 1
+
+    @pytest.mark.parametrize('damage', [
+        pytest.param(lambda value, refs: value['items'][0].update(record=dict(refs[0], revision_sha256='f'*64)), id='unknown-revision'),
+        pytest.param(lambda value, refs: value['items'][0].update(extra=1), id='extra-field'),
+        pytest.param(lambda value, refs: value.update(schema_version=2), id='unsupported-version'),
+        pytest.param(lambda value, refs: value['items'].append(value['items'][0]), id='duplicate-record')])
+    def test_cli_near_duplicates_reject_unusable_text_files(self, damage):
+        path = Path(self.texts((0, 'one two three four'), (1, 'one two three four')))
+        value = json.loads(path.read_text()); damage(value, [r.to_dict() for r in self.refs]); path.write_text(json.dumps(value))
+        from agent_harness_lab.cli import main
+        f = self.fixture
+        with pytest.raises(SystemExit) as exit:
+            main(['sources','lineage','--store',str(self.store.root),'--project-sha256',f.source.project_sha256,
+                '--scope-sha256',f.source.scope_sha256,'near-duplicates','--cache',str(f.store.path),'--texts',str(path)])
+        assert exit.value.code == 2
+
+    def test_cli_near_duplicates_refuse_a_superseded_or_stale_cache_binding(self):
+        from dataclasses import replace
+        from agent_harness_lab.sources.schema import digest
+        f = self.fixture
+        texts = self.texts((0, 'one two three four'), (1, 'one two three four'))
+        f.store.ingest(f.source, [replace(self.records[0], revision_sha256=digest('newer'))])
+        from agent_harness_lab.cli import main
+        with pytest.raises(SystemExit) as exit:
+            main(['sources','lineage','--store',str(self.store.root),'--project-sha256',f.source.project_sha256,
+                '--scope-sha256',f.source.scope_sha256,'near-duplicates','--cache',str(f.store.path),'--texts',texts])
+        assert exit.value.code == 2
+
     @pytest.mark.skipif(not Path('/proc/self/fd').is_dir(), reason='requires Linux descriptor fault injection')
     def test_snapshot_fsync_failure_cannot_commit_a_lineage_claim(self):
         sync = os.fsync
