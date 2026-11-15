@@ -56,8 +56,8 @@ baseline reproduction session. The arms are sessions files of the detector. The 
 `change_authorized: false`.
 
 The grader is the adherence detector. Per session it judges every checkable rule, and a rule is credited
-or faulted only when the agent had it: a harness rule not recorded `loaded`, a pass that rests only on
-calls before its loading turn (a pass is judged over the turns from the loading turn on), and any rule of a
+or faulted only when the agent had it: a harness rule not recorded `loaded`, a pass or a fault that rests only on
+calls or triggers before its loading turn (both are judged over the turns from the loading turn on), and any rule of a
 session with unknown capture are `unknown`. A root's outcome is the worst over its
 sessions; a session with no declared `root` is excluded and counted in `unknown_lineage_excluded`.
 
@@ -66,12 +66,13 @@ Verdicts, decided in this order:
 1. `rejected` with `rule_removed` when the candidate harness lacks a checkable rule the baseline had, and with `regression` when a rule that was satisfied in a paired root of the preserved arm, or of the reproduction arm for every other rule, is violated under the candidate.
 2. `inconclusive` with `no_decided_baseline_roots` when no baseline root was decided.
 3. `recommendation_only` with `not_reproduced` when the baseline arm shows no violation.
-4. `inconclusive` with `no_decided_candidate_roots`, `preserved_not_supplied`, `preserved_incomplete` (a baseline preserved root is missing or unpaired in the candidate arm), `control_undecided` or `preserved_undecided` (a root that was satisfied for a control rule, or for a rule of a preserved task, under the baseline and is unknown under the candidate, for example a partial capture, or a rule moved to a file the sessions never record as loaded) or `interval_overlap`.
-5. `supported_by_recorded_pair` when the lower 95% Wilson bound of the candidate's followed roots exceeds the upper bound of the baseline's and no control or preserved root was lost or left unresolved. An unknown root counts as followed in the baseline and as not followed in the candidate, and an unresolved control or preserved root blocks the verdict, so unknown never helps the repair.
+4. `inconclusive` with `no_decided_candidate_roots`, `preserved_not_supplied`, `control_incomplete` or `preserved_incomplete` (a baseline root of the reproduction arm, for the control rules, or of the preserved arm is missing or unpaired in the candidate arm), `control_undecided` or `preserved_undecided` (a root where the candidate may have lost a control rule or a rule of a preserved task: it was satisfied under the baseline and is unknown under the candidate, for example a partial capture, or a rule moved to a file the sessions never record as loaded; or the baseline could not decide it and the candidate violates it or cannot decide it either) or `interval_overlap`.
+5. `supported_by_recorded_pair` when the lower 95% Wilson bound of the candidate's followed roots exceeds the upper bound of the baseline's and no control or preserved root was lost, missing or left unresolved or unproven. An unknown root counts as followed in the baseline and as not followed in the candidate, and an incomplete, unresolved or unproven control or preserved root blocks the verdict, so unknown never helps the repair. A rule the baseline could not decide blocks only when the candidate does not demonstrably follow it.
 
 `reproduction`, `controls` and `preserved` report `lost` and `recovered` roots apart, `undecided` roots
 where either side is unknown and, for `controls` and `preserved`, `unresolved` roots that were satisfied
-in the baseline and are unknown in the candidate.
+in the baseline and are unknown in the candidate and `unproven` roots where the baseline could not decide a
+rule and the candidate violates it or cannot decide it either.
 
 ## Analysis wiring
 

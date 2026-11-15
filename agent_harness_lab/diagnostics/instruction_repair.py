@@ -155,11 +155,12 @@ def _arm(roots, excluded, key):
 
 
 def _pairs(before, after, skip=None):
-    """Lost, recovered, undecided and unresolved roots of two arms paired by declared root, over every rule but skip.
+    """Lost, recovered, undecided, unresolved and unproven roots of two arms paired by declared root, over every rule but skip.
 
-    A root is unresolved when a rule satisfied before is unknown after: the candidate may have lost it, so it cannot support a repair.
+    A root is unresolved when a rule satisfied before is unknown after: the candidate may have lost it. It is unproven when the baseline
+    could not decide a rule and the candidate neither follows it nor is decided either: a loss cannot be excluded. Neither can support a repair.
     """
-    lost = recovered = undecided = unresolved = 0
+    lost = recovered = undecided = unresolved = unproven = 0
     for root, outcomes in before.items():
         if root not in after:
             continue
@@ -168,8 +169,9 @@ def _pairs(before, after, skip=None):
         recovered += ('violated', 'satisfied') in moves
         undecided += any('unknown' in move for move in moves)
         unresolved += ('satisfied', 'unknown') in moves
+        unproven += ('unknown', 'unknown') in moves or ('unknown', 'violated') in moves
     return dict(paired_roots=len(before.keys() & after.keys()), missing_in_candidate=len(before.keys() - after.keys()), lost=lost, recovered=recovered,
-                undecided=undecided, unresolved=unresolved)
+                undecided=undecided, unresolved=unresolved, unproven=unproven)
 
 
 def _target_key(target, rows, session_list):
@@ -209,6 +211,9 @@ def judge(target, baseline, candidate, *, reproduction, preserved=None):
     if controls['lost'] or kept and kept['lost']:
         reasons.append('regression')
     decided = lambda arm: arm['followed'] + arm['violated']
+    # A control or preserved arm holds only when every baseline root is paired and no rule it could have lost is left unresolved or unproven.
+    incomplete = lambda arm: arm['missing_in_candidate'] or not arm['paired_roots']
+    not_proven = lambda arm: arm['unresolved'] or arm['unproven']
     if reasons:
         verdict = 'rejected'
     elif not decided(b):
@@ -219,10 +224,10 @@ def judge(target, baseline, candidate, *, reproduction, preserved=None):
         verdict, reasons = 'inconclusive', ['no_decided_candidate_roots']
     elif kept is None:
         verdict, reasons = 'inconclusive', ['preserved_not_supplied']
-    elif kept['missing_in_candidate'] or not kept['paired_roots']:
-        verdict, reasons = 'inconclusive', ['preserved_incomplete']
-    elif controls['unresolved'] or kept['unresolved']:
-        verdict, reasons = 'inconclusive', [name for name, arm in (('control_undecided', controls), ('preserved_undecided', kept)) if arm['unresolved']]
+    elif any(incomplete(arm) for arm in (controls, kept)):
+        verdict, reasons = 'inconclusive', [name for name, arm in (('control_incomplete', controls), ('preserved_incomplete', kept)) if incomplete(arm)]
+    elif any(not_proven(arm) for arm in (controls, kept)):
+        verdict, reasons = 'inconclusive', [name for name, arm in (('control_undecided', controls), ('preserved_undecided', kept)) if not_proven(arm)]
     elif not arms['candidate']['followed_interval95'][0] > arms['baseline']['followed_interval95'][1]:
         verdict, reasons = 'inconclusive', ['interval_overlap']
     return dict(profile=VERDICT_PROFILE, authority='screen_only', causal_diagnosis=False, validated_improvement=False, change_authorized=False,

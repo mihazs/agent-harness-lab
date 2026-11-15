@@ -84,8 +84,10 @@ activation is listed as not assessed because the report holds no such evidence.
 Only a controlled comparison can show that a repair works, and a comparison that grades itself is not
 one. The screen is deliberately weaker: it applies the same detector to recorded arms, credits a rule only
 when it was loaded and only for the turns after it was loaded, and counts unknown roots against the repair.
-A control or preserved root that was satisfied before the repair and cannot be decided after it, because a
-capture is partial or a moved rule is not recorded as loaded, blocks a supported verdict. It rejects a
+A control or preserved root where the candidate may have lost a rule blocks a supported verdict: the rule held
+before the repair and cannot be decided after it (a partial capture, or a moved rule not recorded as loaded), or the
+baseline could not decide it and the candidate breaks it or cannot decide it either. A root missing from the
+candidate arm blocks it too, so an undecided arm never reads as a pass. It rejects a
 repair that deletes a checkable rule or loses a preserved task, so a fix that makes the violation vanish by
 removing the rule cannot pass.
 Its best verdict says the recorded pair separates the arms and names the next step, the paired experiment.

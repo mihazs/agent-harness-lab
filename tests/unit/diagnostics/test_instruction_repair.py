@@ -213,6 +213,22 @@ def test_outcomes_never_credit_a_rule_for_calls_made_before_the_agent_had_it(rul
     assert list(outcomes(raw, rules).values()) == [expected]
 
 
+QUIET = [agent('Working.')] * 4
+
+
+@pytest.mark.parametrize('before', ['unknown', 'not_loaded'])
+@pytest.mark.parametrize('turns, begin, expected', [
+    pytest.param([user('Fix it.'), edit('src/a.py'), *QUIET], 4, 'unknown', id='trigger-only-before-the-rule-was-loaded'),
+    pytest.param([user('Fix it.'), edit('src/a.py'), *QUIET], 6, 'unknown', id='trigger-before-a-rule-loaded-after-the-last-turn'),
+    pytest.param([user('Fix it.'), agent('Plan.'), agent('Go.'), agent('Go.'), edit('src/a.py'), agent('Done.')], 4, 'violated', id='trigger-on-the-loading-turn'),
+    pytest.param([user('Fix it.'), edit('src/a.py'), *QUIET, edit('src/b.py')], 4, 'violated', id='trigger-before-and-after-loading'),
+    pytest.param([user('Fix it.'), edit('src/a.py'), *QUIET], 0, 'violated', id='rule-in-force-from-the-first-turn'),
+])
+def test_outcomes_never_fault_a_required_step_for_a_trigger_made_before_the_agent_had_the_rule(turns, begin, expected, before):
+    raw = session('s1', turns, loaded={SOURCE: dict(state='loaded', turn=begin, before=before)}, root='r1')
+    assert list(outcomes(raw, LINT).values()) == [expected]
+
+
 def test_a_prompt_rule_is_in_force_without_any_loading_state():
     raw = session('s1', [user('Do not edit `a.txt`.'), call('Edit', path='a.txt')], root='r1')
     assert list(outcomes(raw, rules='').values()) == ['violated']
@@ -318,6 +334,7 @@ def test_a_preserved_task_the_baseline_could_not_decide_is_not_a_loss_when_the_c
     baseline = arm(kept, CONTROL_CLEAN, prefix='pb', capture='partial')
     verdict = judged(preserved=(baseline, arm(kept, CONTROL_BROKEN, prefix='pc')))
     assert verdict['preserved']['lost'] == 0 and verdict['preserved']['undecided'] == 1
+    assert verdict['verdict'] == 'inconclusive' and verdict['reasons'] == ['preserved_undecided']
 
 
 EXTRA = 'project:EXTRA.md'
@@ -358,6 +375,58 @@ def test_a_root_the_baseline_could_not_decide_is_not_unresolved_when_the_candida
     kept = ['p0']
     verdict = judged(preserved=(arm(kept, CONTROL_CLEAN, prefix='pb', capture='partial'), arm(kept, CONTROL_CLEAN, prefix='pc', capture='partial')))
     assert (verdict['preserved']['unresolved'], verdict['preserved']['undecided']) == (0, 1)
+    assert verdict['verdict'] == 'inconclusive' and verdict['reasons'] == ['preserved_undecided']
+
+
+@pytest.mark.parametrize('baseline, candidate, verdict, reasons', [
+    pytest.param(dict(capture='partial'), CONTROL_BROKEN, 'inconclusive', ['preserved_undecided'], id='partial-baseline-candidate-breaks-the-rule'),
+    pytest.param(dict(capture='unknown'), CONTROL_BROKEN, 'inconclusive', ['preserved_undecided'], id='unknown-baseline-candidate-breaks-the-rule'),
+    pytest.param(dict(loaded=None), CONTROL_BROKEN, 'inconclusive', ['preserved_undecided'], id='unrecorded-baseline-loading-candidate-breaks-the-rule'),
+    pytest.param(dict(capture='partial'), None, 'inconclusive', ['preserved_undecided'], id='both-arms-partial-nothing-decided'),
+    pytest.param(dict(capture='partial'), CONTROL_CLEAN, 'supported_by_recorded_pair', [], id='partial-baseline-candidate-follows-the-rule'),
+])
+def test_a_preserved_rule_the_baseline_could_not_decide_supports_a_repair_only_when_the_candidate_demonstrably_follows_it(baseline, candidate, verdict, reasons):
+    roots = [f'p{n}' for n in range(3)]
+    second = arm(roots, candidate, prefix='pc') if candidate else arm(roots, CONTROL_CLEAN, prefix='pc', **baseline)
+    judgement = judged(preserved=(arm(roots, CONTROL_CLEAN, prefix='pb', **baseline), second))
+    assert (judgement['verdict'], judgement['reasons'], judgement['preserved']['lost']) == (verdict, reasons, 0)
+
+
+MOVED = harness(RULE) + harness(CONTROL, name='EXTRA.md')
+BOTH_LOADED = {SOURCE: 'loaded', EXTRA: 'loaded'}
+
+
+def moved_control(turns, loaded):
+    """The control rule sits in EXTRA.md, which the baseline sessions never record as loaded; the preserved arms record it."""
+    roots, kept = [f'r{n}' for n in range(5)], ['p0']
+    return judged(baseline=MOVED, candidate=MOVED, reproduction=(arm(roots, BROKEN, prefix='b'), arm(roots, turns, prefix='c', loaded=loaded)),
+                  preserved=(arm(kept, CONTROL_CLEAN, prefix='pb', loaded=BOTH_LOADED), arm(kept, CONTROL_CLEAN, prefix='pc', loaded=BOTH_LOADED)))
+
+
+@pytest.mark.parametrize('turns, loaded', [
+    pytest.param(COMPLIANT + [shell('rm -rf build')], BOTH_LOADED, id='candidate-breaks-the-control'),
+    pytest.param(COMPLIANT, {SOURCE: 'loaded'}, id='candidate-does-not-record-the-control-file-either'),
+])
+def test_a_control_rule_the_baseline_could_not_decide_blocks_a_supported_verdict_unless_the_candidate_follows_it(turns, loaded):
+    verdict = moved_control(turns, loaded)
+    assert (verdict['verdict'], verdict['reasons']) == ('inconclusive', ['control_undecided'])
+    assert (verdict['controls']['lost'], verdict['controls']['undecided']) == (0, 5)
+
+
+def test_a_control_rule_the_baseline_could_not_decide_does_not_block_when_the_candidate_follows_it():
+    verdict = moved_control(COMPLIANT, BOTH_LOADED)
+    assert verdict['verdict'] == 'supported_by_recorded_pair' and verdict['controls']['undecided'] == 5
+
+
+@pytest.mark.parametrize('candidate_roots, missing, paired', [
+    pytest.param([f'c{n}' for n in range(5)], 5, 0, id='disjoint-root-labels'),
+    pytest.param([f'r{n}' for n in range(4)], 1, 4, id='one-baseline-root-missing-from-the-candidate-arm'),
+])
+def test_a_reproduction_root_missing_from_the_candidate_arm_cannot_hide_a_control_regression(candidate_roots, missing, paired):
+    roots = [f'r{n}' for n in range(5)]
+    verdict = judged(reproduction=(arm(roots, BROKEN, prefix='b'), arm(candidate_roots, COMPLIANT, prefix='c')))
+    assert (verdict['verdict'], verdict['reasons']) == ('inconclusive', ['control_incomplete'])
+    assert (verdict['controls']['missing_in_candidate'], verdict['controls']['paired_roots']) == (missing, paired)
 
 
 def test_an_unknown_target_is_refused():

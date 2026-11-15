@@ -60,5 +60,5 @@ def judged(*, baseline=RULE + CONTROL, candidate=RULE + CONTROL, target=None, re
         kept = [f'p{n}' for n in range(3)]
         preserved = (arm(kept, CONTROL_CLEAN, prefix='pb'), arm(kept, CONTROL_CLEAN, prefix='pc'))
     files = candidate if isinstance(candidate, list) else harness(candidate)
-    return repair.judge(target or target_ref(), harness(baseline), files, reproduction=tuple(map(sessions, reproduction)),
+    return repair.judge(target or target_ref(), baseline if isinstance(baseline, list) else harness(baseline), files, reproduction=tuple(map(sessions, reproduction)),
                         preserved=tuple(map(sessions, preserved)) if preserved else None)
