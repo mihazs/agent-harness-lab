@@ -943,13 +943,22 @@ unchanged and keeps its saved plan, so the same review and authorized apply then
 interrupted while planning has no plan, and `ahl apply` rejects it with exit 2. These stage cases are covered by
 `tests/integration/workflow/test_stage_interruptions.py`.
 
+A behavioral run interrupted while its paired trials run, or after they finish but before the decision, writes
+`workflow.json` with `status: interrupted` and leaves the project unchanged. Trials that ended stay in
+`evaluation-0/results.json`; when the evaluation itself was cut short that file has no `inputs_unchanged` or
+`elapsed_seconds`, so it is not a finished evaluation. The run has no `change-plan.json`, so `ahl apply` rejects it with
+exit 2, and `--resume` reports `blocked` / `resume_requires_intervention`: only a completed no-change proposal can be
+finalized without a model action, so a lost or finished trial is never replayed. Run the command again for a new run
+with a new output directory; it pays for its own trials and leaves the interrupted run as it was. These cases are
+covered by `tests/integration/workflow/test_evaluation_interruption.py`.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. `ahl apply` reviews every saved plan but applies only the
 independently reproduced skill-header repair; interruption tests cover the planning,
-journaling, review and application stages of that repair (interruption during a behavioral evaluation, Codex
-hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
+journaling, review and application stages of that repair, and an interrupted behavioral evaluation is pinned to
+leave the target unchanged with nothing to apply or replay (Codex hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation, operation-level review and capture join are described above; a native capture
 of the trials and the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
