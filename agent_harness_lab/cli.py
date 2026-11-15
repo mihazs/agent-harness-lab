@@ -117,6 +117,9 @@ def main(argv=None):
     if argv[:2] == ['skills', 'activation-receipt']:
         from .evaluation.skills import activation_receipt_main
         return activation_receipt_main(argv[2:])
+    if argv[:2] == ['skills', 'report']:
+        from .evaluation.skill_report import report_main
+        return report_main(argv[2:])
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
