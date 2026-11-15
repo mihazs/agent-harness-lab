@@ -1,0 +1,2526 @@
+{
+ "description": "Synthetic outcome models only. tuning_initial ran at the default p_cut .95 and failed one required cell; tuning_adjusted and held_out ran after the one registered raise of p_cut to .99.",
+ "profile": "bayesian-calibration-record-v1",
+ "protocol_sha256": "00b16f5deccbd21d638c228466a40b08f900643eef69be8a6e4b2048fae700c0",
+ "runs": {
+  "held_out": {
+   "accepted": true,
+   "cells": [
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 0,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ca51102a6d5d03ed369f948990d9b5b6f159f9c71e8f8971fbe25c384de57acc",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 5,
+      "cross_check_disagrees": 13,
+      "family_regression": 10,
+      "posterior_cut_not_met": 272
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiwiiiiiiiiiiieiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiieiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiwiiiiwiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 4100,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 285,
+       "rate": 0.95,
+       "wilson_95": [
+        0.9191529665272558,
+        0.9694683593706526
+       ]
+      },
+      "worse": {
+       "count": 10,
+       "rate": 0.03333333333333333,
+       "wilson_95": [
+        0.018204947338854808,
+        0.06026182580405482
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 1,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "98abafe406a83e7510d1ac08d1ce01a1535ff2f66973a50d2d10592495b03032",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 4,
+      "cross_check_disagrees": 12,
+      "family_regression": 7,
+      "posterior_cut_not_met": 277
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiwiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiwiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwi",
+     "simulation_seed": 4101,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 4,
+       "rate": 0.013333333333333334,
+       "wilson_95": [
+        0.005196961739358858,
+        0.03377553025253262
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 289,
+       "rate": 0.9633333333333334,
+       "wilson_95": [
+        0.9355461518281071,
+        0.979404694837147
+       ]
+      },
+      "worse": {
+       "count": 7,
+       "rate": 0.023333333333333334,
+       "wilson_95": [
+        0.011347660299125234,
+        0.04737197226827532
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 2,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "family_regression": 1,
+      "posterior_cut_not_met": 299
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 4102,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 299,
+       "rate": 0.9966666666666667,
+       "wilson_95": [
+        0.9813633063054688,
+        0.9994113422781489
+       ]
+      },
+      "worse": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 3,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "97760d5a144d9ceec4de3739ab4c593acdd7d635c2e218340b0754c8cb516d39",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 1,
+      "posterior_cut_not_met": 298,
+      "posterior_worse_cut_met": 1
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 4103,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 298,
+       "rate": 0.9933333333333333,
+       "wilson_95": [
+        0.9760224167496929,
+        0.9981698516420882
+       ]
+      },
+      "worse": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 4,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ca51102a6d5d03ed369f948990d9b5b6f159f9c71e8f8971fbe25c384de57acc",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 3,
+      "cross_check_disagrees": 10,
+      "family_regression": 13,
+      "posterior_cut_not_met": 274
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiwiiiwiiiwiiiiiiiiiiiiibiiiiiiiiiiiieiiiiiiiiiwiiiiiiieiiiiiiiiiwiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiw",
+     "simulation_seed": 4104,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 284,
+       "rate": 0.9466666666666667,
+       "wilson_95": [
+        0.9151308582251687,
+        0.9669080874809034
+       ]
+      },
+      "worse": {
+       "count": 13,
+       "rate": 0.043333333333333335,
+       "wilson_95": [
+        0.025496448084407243,
+        0.07271746563401146
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 5,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "98abafe406a83e7510d1ac08d1ce01a1535ff2f66973a50d2d10592495b03032",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 2,
+      "cross_check_disagrees": 17,
+      "family_regression": 7,
+      "posterior_cut_not_met": 274
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwi",
+     "simulation_seed": 4105,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 291,
+       "rate": 0.97,
+       "wilson_95": [
+        0.943977460858359,
+        0.9841381461905676
+       ]
+      },
+      "worse": {
+       "count": 7,
+       "rate": 0.023333333333333334,
+       "wilson_95": [
+        0.011347660299125234,
+        0.04737197226827532
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 6,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 2,
+      "monte_carlo_margin": 1,
+      "posterior_cut_not_met": 297
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 4106,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 298,
+       "rate": 0.9933333333333333,
+       "wilson_95": [
+        0.9760224167496929,
+        0.9981698516420882
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 7,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "97760d5a144d9ceec4de3739ab4c593acdd7d635c2e218340b0754c8cb516d39",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "monte_carlo_margin": 1,
+      "posterior_cut_not_met": 299
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 4107,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 300,
+       "rate": 1.0,
+       "wilson_95": [
+        0.9873570287754537,
+        1.0
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": null,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 1,
+      "rate": 0.0033333333333333335,
+      "wilson_95": [
+       0.0005886577218511591,
+       0.018636693694531237
+      ]
+     },
+     "index": 8,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.3,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "beneficial/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 97,
+      "cross_check_disagrees": 1,
+      "monte_carlo_margin": 19,
+      "posterior_cut_not_met": 183
+     },
+     "repeats": 1,
+     "role": "power",
+     "roots": 40,
+     "sequence": "ibbbiiiiibiiiiibbiibiiiiibibiiiibiiiiiibiibiiiibbbbiiiiiiiibiiiiiiiibiiiiiiiiiibiibbiiiibbiiiiiiiibbibibiibiiiiibbibbiibiibibibbbiibiibibiiiiiiiibiiiibbibbiibbiibbibiibibiibiiiiiiibiiibbbbiibiiibbiiibibbiibiibbbiiiiiibiiiiiiibbiibiibiiiibiibiiiiibbiiiibibiiiibibiibibibiibibibbibbiiibiibiiiibbiiibibi",
+     "simulation_seed": 4108,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 97,
+       "rate": 0.3233333333333333,
+       "wilson_95": [
+        0.27292539608374755,
+        0.37820845374892526
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 203,
+       "rate": 0.6766666666666666,
+       "wilson_95": [
+        0.6217915462510746,
+        0.7270746039162524
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": null,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 9,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.3,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "beneficial/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "97760d5a144d9ceec4de3739ab4c593acdd7d635c2e218340b0754c8cb516d39",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 113,
+      "cross_check_disagrees": 1,
+      "monte_carlo_margin": 26,
+      "posterior_cut_not_met": 160
+     },
+     "repeats": 5,
+     "role": "power",
+     "roots": 40,
+     "sequence": "bbiiiiibbiibibiiibbbbibibiiiibbbiiibiibiiibibibiibbbibbbbbbiibbbbibibiibibibiiiiibbbiiiiiibibibbbibibiiiiibibibibiiibiiibibiiiiiibibiiiibiibbibiiiiibibiiibiiibbbbiiiibiiibiibibbbiibbiibbbbbibiiiibibbiiiibbiiiiiiibiiiiibibbibiiiibbbiiiiibiiiiiiibiiiiiiiibibiibbibbibiiibiibiiibiiiiiibiiibbiiiibiiiibbi",
+     "simulation_seed": 4109,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 113,
+       "rate": 0.37666666666666665,
+       "wilson_95": [
+        0.32372036507022545,
+        0.4327315678318291
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 187,
+       "rate": 0.6233333333333333,
+       "wilson_95": [
+        0.5672684321681707,
+        0.6762796349297745
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": null,
+     "automatic_promotion": false,
+     "cluster": 4,
+     "hoeffding_supported": {
+      "count": 2,
+      "rate": 0.006666666666666667,
+      "wilson_95": [
+       0.001830148357911785,
+       0.023977583250306973
+      ]
+     },
+     "index": 10,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "clusters_of_4/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 20,
+      "family_regression": 11,
+      "monte_carlo_margin": 1,
+      "posterior_cut_not_met": 243,
+      "posterior_worse_cut_met": 25
+     },
+     "repeats": 1,
+     "role": "dependent",
+     "roots": 40,
+     "sequence": "ibiiiiiiiwiwiiwiiiiiiiiwiwbiiiwiwiiiiiwiiiiiwiiiiiiibiiiiiwiiiiiiiiiiiiiiiwiiwiiiiiibiiiwbbiiiiiiwwiiiiiwbiiiiiiiiiiiibiiiiiiiiiiiibiiiwbbiiiiiiiiiiiiiiiiiiiiiiiibwwwiiiiiiwiiiiwiiiiiiiiiiiiiiiiiiiiiiibiiiiwibiiiiiibiiiiwiiiiiiiiiiiiiwbiiwbiwibiwiiiiiiiiwwiiiiwiiiiiiiwwiiiiiwiiiwiiiiibiiiiiibiiiwiii",
+     "simulation_seed": 4110,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 20,
+       "rate": 0.06666666666666667,
+       "wilson_95": [
+        0.043567515545158274,
+        0.10072305951611496
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 244,
+       "rate": 0.8133333333333334,
+       "wilson_95": [
+        0.7653812201652491,
+        0.8533625178673686
+       ]
+      },
+      "worse": {
+       "count": 36,
+       "rate": 0.12,
+       "wilson_95": [
+        0.0879508443036389,
+        0.16165781382701602
+       ]
+      }
+     }
+    },
+    {
+     "accepted": null,
+     "automatic_promotion": false,
+     "cluster": 40,
+     "hoeffding_supported": {
+      "count": 70,
+      "rate": 0.23333333333333334,
+      "wilson_95": [
+       0.18902823823172718,
+       0.284381346421364
+      ]
+     },
+     "index": 11,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "one_cluster/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 231,
+      "posterior_worse_cut_met": 69
+     },
+     "repeats": 1,
+     "role": "dependent",
+     "roots": 40,
+     "sequence": "weeeeeweebeebewbwbwbewweeewbbwwwbebeebeeeeweewbbbeeewbwbeeeeeewweeeebeeeewbeeeeeeeeebweeweewwwwbeeeeebebbbbbbweweeeeeeewbwweweeewbbeeeweeeewebweeweeeeeebbebeebeebbeeeeeeeweewbbebwbbewbwbewebebwbbeewweeebwebeeeeeweeeweeeeeebeeeewwbeebewewweeebbeewbbebebeeewweebewwwwwbwwebweeebebbbeeeeebbwewwbebwbwwee",
+     "simulation_seed": 4111,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 70,
+       "rate": 0.23333333333333334,
+       "wilson_95": [
+        0.18902823823172718,
+        0.284381346421364
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 161,
+       "rate": 0.5366666666666666,
+       "wilson_95": [
+        0.4801320652390866,
+        0.5922741168711133
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "worse": {
+       "count": 69,
+       "rate": 0.23,
+       "wilson_95": [
+        0.18597181807303015,
+        0.28085538638822466
+       ]
+      }
+     }
+    }
+   ],
+   "limitations": [
+    "Rates hold only under the declared synthetic outcome models and plan, not for real tasks.",
+    "Simulated roots are independent except in the dependent cells, which are reported, not required.",
+    "The precision floor is set to 1 so it never withholds; a tighter floor can only lower a rate.",
+    "The power cells carry no pass or fail; the Wilson lower bound of the better rate is their power."
+   ],
+   "profile": "bayesian-calibration-v1",
+   "protocol_sha256": "00b16f5deccbd21d638c228466a40b08f900643eef69be8a6e4b2048fae700c0",
+   "split": "held_out"
+  },
+  "tuning_adjusted": {
+   "accepted": true,
+   "cells": [
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 0,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ca51102a6d5d03ed369f948990d9b5b6f159f9c71e8f8971fbe25c384de57acc",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 1,
+      "cross_check_disagrees": 13,
+      "family_regression": 10,
+      "posterior_cut_not_met": 276
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "wiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiewiiiiiiiiiiiiiiiiiiiiiiwiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiwiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3100,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 289,
+       "rate": 0.9633333333333334,
+       "wilson_95": [
+        0.9355461518281071,
+        0.979404694837147
+       ]
+      },
+      "worse": {
+       "count": 10,
+       "rate": 0.03333333333333333,
+       "wilson_95": [
+        0.018204947338854808,
+        0.06026182580405482
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 1,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "98abafe406a83e7510d1ac08d1ce01a1535ff2f66973a50d2d10592495b03032",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 3,
+      "cross_check_disagrees": 11,
+      "family_regression": 11,
+      "posterior_cut_not_met": 275
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiwiiiiiiiiiiiiiwiiwiiiiiiiiiiiieiiiiiiiiiiiiiiiwwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiieiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiwiiiiiiiiwiiiwiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3101,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 3,
+       "rate": 0.01,
+       "wilson_95": [
+        0.003406618437715286,
+        0.02898349336233983
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 286,
+       "rate": 0.9533333333333334,
+       "wilson_95": [
+        0.923202639772079,
+        0.9720010663176659
+       ]
+      },
+      "worse": {
+       "count": 11,
+       "rate": 0.03666666666666667,
+       "wilson_95": [
+        0.02059530516285303,
+        0.06445384817189295
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 2,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "posterior_cut_not_met": 300
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3102,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 300,
+       "rate": 1.0,
+       "wilson_95": [
+        0.9873570287754537,
+        1.0
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 3,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "97760d5a144d9ceec4de3739ab4c593acdd7d635c2e218340b0754c8cb516d39",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "posterior_cut_not_met": 300
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3103,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 300,
+       "rate": 1.0,
+       "wilson_95": [
+        0.9873570287754537,
+        1.0
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 4,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ca51102a6d5d03ed369f948990d9b5b6f159f9c71e8f8971fbe25c384de57acc",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 6,
+      "cross_check_disagrees": 12,
+      "family_regression": 6,
+      "posterior_cut_not_met": 276
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiibeiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3104,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 288,
+       "rate": 0.96,
+       "wilson_95": [
+        0.9313957879613599,
+        0.9769726785120576
+       ]
+      },
+      "worse": {
+       "count": 6,
+       "rate": 0.02,
+       "wilson_95": [
+        0.009197631557703615,
+        0.042939620817860576
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 5,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "98abafe406a83e7510d1ac08d1ce01a1535ff2f66973a50d2d10592495b03032",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 5,
+      "cross_check_disagrees": 18,
+      "family_regression": 8,
+      "posterior_cut_not_met": 269
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiieiwiiiiiiiiiiiiiiiiiiiiiiiiiieiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiieiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiwiiiwiiiiiiiwwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiii",
+     "simulation_seed": 3105,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 287,
+       "rate": 0.9566666666666667,
+       "wilson_95": [
+        0.9272825343659885,
+        0.9745035519155927
+       ]
+      },
+      "worse": {
+       "count": 8,
+       "rate": 0.02666666666666667,
+       "wilson_95": [
+        0.013573069808647083,
+        0.05172894295058982
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 6,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "6a0cd924472f0c0c85320b1bb57f8c65a9a3bc8f898f3a974b967ced790cda96",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "posterior_cut_not_met": 300
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3106,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 300,
+       "rate": 1.0,
+       "wilson_95": [
+        0.9873570287754537,
+        1.0
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 7,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.01,
+      "p_cut": 0.99,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "97760d5a144d9ceec4de3739ab4c593acdd7d635c2e218340b0754c8cb516d39",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 3,
+      "family_regression": 1,
+      "monte_carlo_margin": 1,
+      "posterior_cut_not_met": 295
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiii",
+     "simulation_seed": 3107,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 3,
+       "rate": 0.01,
+       "wilson_95": [
+        0.003406618437715286,
+        0.02898349336233983
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 296,
+       "rate": 0.9866666666666667,
+       "wilson_95": [
+        0.9662244697474673,
+        0.9948030382606412
+       ]
+      },
+      "worse": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      }
+     }
+    }
+   ],
+   "limitations": [
+    "Rates hold only under the declared synthetic outcome models and plan, not for real tasks.",
+    "Simulated roots are independent except in the dependent cells, which are reported, not required.",
+    "The precision floor is set to 1 so it never withholds; a tighter floor can only lower a rate.",
+    "The power cells carry no pass or fail; the Wilson lower bound of the better rate is their power."
+   ],
+   "profile": "bayesian-calibration-v1",
+   "protocol_sha256": "00b16f5deccbd21d638c228466a40b08f900643eef69be8a6e4b2048fae700c0",
+   "split": "tuning"
+  },
+  "tuning_initial": {
+   "accepted": false,
+   "cells": [
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 0,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "5f08129b8ebe43089d9cbcd3bc812c9a82cf84181e8823943318143454e3fc68",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 3,
+      "cross_check_disagrees": 29,
+      "family_regression": 1,
+      "posterior_cut_not_met": 264,
+      "posterior_worse_cut_met": 3
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiwiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3100,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 293,
+       "rate": 0.9766666666666667,
+       "wilson_95": [
+        0.9526280277317246,
+        0.9886523397008747
+       ]
+      },
+      "worse": {
+       "count": 4,
+       "rate": 0.013333333333333334,
+       "wilson_95": [
+        0.005196961739358858,
+        0.03377553025253262
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 1,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "bd6d5128c6bfe4634e15823be927d8f5e9c6c1ffb77c6206e0cb1e23113c3df9",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 5,
+      "cross_check_disagrees": 34,
+      "posterior_cut_not_met": 260,
+      "posterior_worse_cut_met": 1
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3101,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 3,
+       "rate": 0.01,
+       "wilson_95": [
+        0.003406618437715286,
+        0.02898349336233983
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 294,
+       "rate": 0.98,
+       "wilson_95": [
+        0.9570603791821393,
+        0.9908023684422964
+       ]
+      },
+      "worse": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 2,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ce0e1d0597fa7c25784593d866512e9f2084d3df10bb5f048699b988654afb84",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "family_regression": 4,
+      "posterior_cut_not_met": 295,
+      "posterior_worse_cut_met": 1
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3102,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 295,
+       "rate": 0.9833333333333333,
+       "wilson_95": [
+        0.9615846051669054,
+        0.9928605226493665
+       ]
+      },
+      "worse": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 3,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.0,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "null/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "773a0bac857e5040dcc1342e1e3f8a5314a3dee04b427f7779680f045e3ba45b",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 1,
+      "family_regression": 5,
+      "monte_carlo_margin": 2,
+      "posterior_cut_not_met": 291,
+      "posterior_worse_cut_met": 1
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiwiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3103,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 293,
+       "rate": 0.9766666666666667,
+       "wilson_95": [
+        0.9526280277317246,
+        0.9886523397008747
+       ]
+      },
+      "worse": {
+       "count": 6,
+       "rate": 0.02,
+       "wilson_95": [
+        0.009197631557703615,
+        0.042939620817860576
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 4,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "5f08129b8ebe43089d9cbcd3bc812c9a82cf84181e8823943318143454e3fc68",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 8,
+      "cross_check_disagrees": 24,
+      "posterior_cut_not_met": 266,
+      "posterior_worse_cut_met": 2
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiieiibeiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3104,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 3,
+       "rate": 0.01,
+       "wilson_95": [
+        0.003406618437715286,
+        0.02898349336233983
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 290,
+       "rate": 0.9666666666666667,
+       "wilson_95": [
+        0.9397381741959452,
+        0.9817950526611452
+       ]
+      },
+      "worse": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 5,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots8/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "bd6d5128c6bfe4634e15823be927d8f5e9c6c1ffb77c6206e0cb1e23113c3df9",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 8,
+      "cross_check_disagrees": 36,
+      "posterior_cut_not_met": 256
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 8,
+     "sequence": "iiiiiiiiiiiiieiiiiiiiiiiiiiiiiiiiiiiiiiiiieiieiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiieiiiiiiieibiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3105,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 3,
+       "rate": 0.01,
+       "wilson_95": [
+        0.003406618437715286,
+        0.02898349336233983
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 5,
+       "rate": 0.016666666666666666,
+       "wilson_95": [
+        0.007139477350633333,
+        0.0384153948330945
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 292,
+       "rate": 0.9733333333333334,
+       "wilson_95": [
+        0.9482710570494102,
+        0.986426930191353
+       ]
+      },
+      "worse": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      }
+     }
+    },
+    {
+     "accepted": true,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 6,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 0.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats1-corr0",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "ce0e1d0597fa7c25784593d866512e9f2084d3df10bb5f048699b988654afb84",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 6,
+      "family_regression": 1,
+      "monte_carlo_margin": 1,
+      "posterior_cut_not_met": 292
+     },
+     "repeats": 1,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiii",
+     "simulation_seed": 3106,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 6,
+       "rate": 0.02,
+       "wilson_95": [
+        0.009197631557703615,
+        0.042939620817860576
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 293,
+       "rate": 0.9766666666666667,
+       "wilson_95": [
+        0.9526280277317246,
+        0.9886523397008747
+       ]
+      },
+      "worse": {
+       "count": 1,
+       "rate": 0.0033333333333333335,
+       "wilson_95": [
+        0.0005886577218511591,
+        0.018636693694531237
+       ]
+      }
+     }
+    },
+    {
+     "accepted": false,
+     "automatic_promotion": false,
+     "cluster": 1,
+     "hoeffding_supported": {
+      "count": 0,
+      "rate": 0.0,
+      "wilson_95": [
+       0.0,
+       0.012642971224546036
+      ]
+     },
+     "index": 7,
+     "model": {
+      "baseline_success": 0.5,
+      "candidate_effect": 0.05,
+      "critical_regression_probability": 0.0,
+      "family_effects": {},
+      "repeat_correlation": 1.0,
+      "root_spread": 0.3,
+      "schema": "synthetic-paired-outcome-model-v1"
+     },
+     "name": "half_epsilon/roots40/repeats5-corr1",
+     "parameters": {
+      "cross_check_alpha": 0.05,
+      "p_cut": 0.95,
+      "posterior_draws": 20000,
+      "regression_margin": 0.05,
+      "root_floor": 8,
+      "rope_epsilon": 0.1
+     },
+     "plan_sha256": "773a0bac857e5040dcc1342e1e3f8a5314a3dee04b427f7779680f045e3ba45b",
+     "profile": "bayesian-calibration-v1",
+     "publication_allowed": false,
+     "reasons": {
+      "all_gate_stages_passed": 9,
+      "family_regression": 1,
+      "monte_carlo_margin": 4,
+      "posterior_cut_not_met": 285,
+      "posterior_worse_cut_met": 1
+     },
+     "repeats": 5,
+     "role": "required",
+     "roots": 40,
+     "sequence": "iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiibiiibbiiiiiiiiiiiiiiiwiiiiiiiiiiiiiiiiiiiiiiibiiiiiiiiiiiibbiiiiiiiiiiiiibiiiiiiiiiiiiiiiwbiii",
+     "simulation_seed": 3107,
+     "simulations": 300,
+     "verdicts": {
+      "better": {
+       "count": 9,
+       "rate": 0.03,
+       "wilson_95": [
+        0.01586185380943231,
+        0.05602253914164095
+       ]
+      },
+      "blocked": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "equivalent": {
+       "count": 0,
+       "rate": 0.0,
+       "wilson_95": [
+        0.0,
+        0.012642971224546036
+       ]
+      },
+      "insufficient_evidence": {
+       "count": 289,
+       "rate": 0.9633333333333334,
+       "wilson_95": [
+        0.9355461518281071,
+        0.979404694837147
+       ]
+      },
+      "worse": {
+       "count": 2,
+       "rate": 0.006666666666666667,
+       "wilson_95": [
+        0.001830148357911785,
+        0.023977583250306973
+       ]
+      }
+     }
+    }
+   ],
+   "limitations": [
+    "Rates hold only under the declared synthetic outcome models and plan, not for real tasks.",
+    "Simulated roots are independent except in the dependent cells, which are reported, not required.",
+    "The precision floor is set to 1 so it never withholds; a tighter floor can only lower a rate.",
+    "The power cells carry no pass or fail; the Wilson lower bound of the better rate is their power."
+   ],
+   "profile": "bayesian-calibration-v1",
+   "protocol_sha256": "00b16f5deccbd21d638c228466a40b08f900643eef69be8a6e4b2048fae700c0",
+   "split": "tuning"
+  }
+ }
+}

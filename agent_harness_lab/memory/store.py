@@ -34,7 +34,7 @@ MAX_RECORDS = 1000
 MAX_FILES = 200_000
 MAX_TOTAL_BYTES = 4 * 1024 ** 3
 MAX_RESULTS = 1000
-RECORD_TABLES = ('snapshots', 'stages', 'evaluations', 'metrics', 'comparisons', 'findings', 'finding_links')
+RECORD_TABLES = ('snapshots', 'stages', 'stage_records', 'evaluations', 'metrics', 'comparisons', 'findings', 'finding_links')
 
 
 class MemoryStoreError(ValueError):
@@ -229,12 +229,17 @@ class MemoryStore:
     def read(self, digest):
         return self._read_object(digest)
 
+    def project_lock(self, project_id):
+        """Bounded exclusive lock serializing the committers of one project. Projects hash into 256 lock files, so
+        two projects may share one (over-serialized, never under); always taken before the writer lock."""
+        return self._writer('project-' + hashlib.sha256(str(project_id).encode()).hexdigest()[:2] + '.lock')
+
     @contextmanager
-    def _writer(self):
+    def _writer(self, name='writer.lock'):
         if self.read_only_reason:
             raise ReadOnlyStore(self.read_only_reason)
         require_writable(self.root)
-        descriptor = open_beneath(self.root / 'locks/writer.lock', os.O_RDWR | os.O_CREAT, 0o600)
+        descriptor = open_beneath(self.root / 'locks' / name, os.O_RDWR | os.O_CREAT, 0o600)
         deadline = time.monotonic() + self.busy_seconds
         try:
             while True:
@@ -377,6 +382,21 @@ class MemoryStore:
             rows = db.execute('SELECT digest, kind, size FROM artifacts WHERE project_id=? ORDER BY digest LIMIT ?',
                               (project_id, limit + 1)).fetchall()
         return {'artifacts': [dict(digest=d, kind=k, size=s) for d, k, s in rows[:limit]], 'truncated': len(rows) > limit}
+
+    def stage_rows(self, project_id, stage, *, node_key=None, status=None, limit=100):
+        """Index rows of one stage, newest first. A derived hint: the caller reads and verifies the record object."""
+        limit = min(max(int(limit), 1), MAX_RESULTS)
+        where, values = ['project_id=?', 'stage=?'], [project_id, stage]
+        for column, value in (('node_key', node_key), ('status', status)):
+            if value is not None:
+                where.append(f'{column}=?')
+                values.append(value)
+        with self._db() as db:
+            if db.execute('PRAGMA user_version').fetchone()[0] < 2:  # an index from before stage records holds none
+                return []
+            rows = db.execute('SELECT record, node_key, status, output, sequence FROM stage_records WHERE ' + ' AND '.join(where)
+                              + ' ORDER BY sequence DESC, record DESC LIMIT ?', (*values, limit)).fetchall()
+        return [dict(zip(('record', 'node_key', 'status', 'output', 'sequence'), row)) for row in rows]
 
     def backup(self, destination):
         """Consistent copy of the index with SQLite's online backup; objects are immutable and copied by the caller."""

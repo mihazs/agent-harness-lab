@@ -47,13 +47,13 @@ def layout(tmp_path, monkeypatch):
 
 def test_matching_versions_give_no_warning(layout):
     state = layout('0.2.0', '0.2.0')
-    assert state['warnings'] == [] and state['launcher_release'] == '0.2.0' and len(state['skill_links']) == 4
+    assert state['warnings'] == [] and state['launcher_release'] == '0.2.0' and len(state['skill_links']) == 2
     assert {link['release'] for link in state['skill_links']} == {'0.2.0'}
 
 
 def test_skill_links_at_another_release_warn_with_the_exact_fix(layout):
     state = layout('0.2.0', '0.1.0')
-    assert {w['code'] for w in state['warnings']} == {'launcher_skill_version_mismatch'} and len(state['warnings']) == 4
+    assert {w['code'] for w in state['warnings']} == {'launcher_skill_version_mismatch'} and len(state['warnings']) == 2
     assert {w['fix'] for w in state['warnings']} == {'ahl update'}
     assert all('0.2.0' in w['message'] and '0.1.0' in w['message'] for w in state['warnings'])
 

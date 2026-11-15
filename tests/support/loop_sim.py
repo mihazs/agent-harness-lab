@@ -5,8 +5,8 @@ offer, a declaration, limits and a seed. play() runs it through the evaluator an
 and drives agent_harness_lab.loop.machine step by step, returning a canonical trace. replay() feeds a trace back through
 the machine. No model, subprocess, sleep, network or real clock is involved: spend and time come from the Meter.
 
-play() is a stand-in for the loop controller (LOOP-3) and classify() for the validity gate (LOOP-4); the Script, the
-Evaluator and the Proposer protocols are what the controller will consume.
+play() is a self-contained stand-in that predates the controller; drive() runs the same scripts through the real
+agent_harness_lab.loop.controller over ScriptedPorts and a LoopLedger, and classify() stands in for the validity gate (LOOP-4).
 """
 from dataclasses import dataclass, replace
 import hashlib
@@ -14,33 +14,13 @@ import json
 import random
 from typing import Protocol
 
-from agent_harness_lab.loop import machine
+from agent_harness_lab.loop import controller, machine
+from agent_harness_lab.loop.controller import VACUITY, Evaluation
+from agent_harness_lab.loop.ledger import LoopLedger
 from agent_harness_lab.loop.machine import Inputs, Run, decide, step
 from agent_harness_lab.loop.spec import resolve
 
-VACUITY = ('no_eligible_cases', 'all_outcomes_unknown', 'arms_identical', 'grader_not_executed', 'zero_trials')
 MECHANISMS = ('m1', 'm2', 'm3', 'm4', 'm5')
-
-
-@dataclass(frozen=True, slots=True)
-class Evaluation:
-    """One scripted evaluation: an interval score and the evidence around it.
-
-    evidence: scored | provisional | no_evidence | blocked. vacuity: one of VACUITY or None. areas: per-area interval lower
-    bounds. cause: who a regression is blamed on, candidate or other; None is unknown. inputs: the frozen-inputs digest the
-    evaluation says it ran on, None meaning the one it was asked for. trials and seconds are what it spends.
-    """
-    point: float
-    lower: float
-    upper: float
-    evidence: str = 'scored'
-    vacuity: str | None = None
-    areas: tuple[tuple[str, float], ...] = ()
-    critical: bool = False
-    cause: str | None = None
-    trials: int = 4
-    seconds: float = 10.0
-    inputs: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +46,7 @@ class Meter:
     """The injected clock and trial counter: the only time and spend the bed knows."""
     def __init__(self): self.trials, self.seconds = 0, 0.0
 
-    def spend(self, trials, seconds): self.trials, self.seconds = self.trials + trials, self.seconds + seconds
+    def spend(self, trials, seconds): self.trials, self.seconds = self.trials + (trials or 0), self.seconds + (seconds or 0)  # an unreported usage is unobserved here
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -118,7 +98,7 @@ class ScriptedProposer:
 
 
 def score(point, half=0.05, **fields):
-    return Evaluation(point, point - half, point + half, **fields)
+    return Evaluation(point, point - half, point + half, **{'trials': 4, 'seconds': 10.0, **fields})
 
 
 def build(name, rounds, *, declaration=None, mechanisms=MECHANISMS, **options):
@@ -275,3 +255,55 @@ def replay(spec, text):
     trace = json.loads(text)
     if trace['spec'] != spec.digest: raise ValueError('the trace was recorded under a different declaration')
     return machine.replay(spec, [(event['event'], event['value']) for event in trace['events']])
+
+
+def digest(*parts):
+    return hashlib.sha256(':'.join(map(str, parts)).encode()).hexdigest()
+
+
+class ScriptedPorts:
+    """The controller's Evaluator and Proposer over a script: the k-th evaluation is the script's round k, and each
+    proposal is a fresh snapshot digest. asked records (best snapshot, mechanism) for every propose call."""
+    def __init__(self, script, meter):
+        self.script, self.meter, self.evaluations, self.asked, self.order = script, meter, ScriptedEvaluator(script, meter), [], []
+        self.investigated = []
+        self.frozen_inputs, self.baseline, self.mechanisms = script.frozen_inputs, digest(script.name, script.seed, 'baseline'), script.mechanisms
+
+    def evaluate(self, snapshot, frozen_inputs):
+        self.order.append('evaluate')
+        return self.evaluations.evaluate(frozen_inputs, Candidate(snapshot, len(self.evaluations.calls)))
+
+    def investigate(self, best_evaluation, candidate_evaluation):
+        """The simulation's investigation: it blames whoever the script says caused the regression."""
+        self.investigated.append((best_evaluation, candidate_evaluation))
+        return candidate_evaluation.cause
+
+    def propose(self, best_snapshot, mechanism):
+        self.order.append('propose')
+        self.asked.append((best_snapshot, mechanism))
+        return controller.Candidate(digest(self.script.name, self.script.seed, len(self.asked), mechanism), mechanism)
+
+
+class InterruptedLedger(LoopLedger):
+    """Raises KeyboardInterrupt once, just before the nth event is written (counting from 0)."""
+    def __init__(self, root, project, before):
+        super().__init__(root, project)
+        self.before = before
+
+    def write(self, kind, payload, **options):
+        if self.before is not None and self.count == self.before:
+            self.before = None
+            raise KeyboardInterrupt
+        super().write(kind, payload, **options)
+
+
+def drive(script, base, *, ledger=None, clock=None, ports=None, scale=1.0):
+    """Run the script through controller.run into a ledger in base/store, outside the project base/project.
+
+    clock overrides the injected clock, which otherwise reads the meter's seconds times scale; ports overrides the scripted ports.
+    Returns (result, ledger, ports).
+    """
+    ports = ports or ScriptedPorts(script, Meter())
+    (base/'project').mkdir(parents=True, exist_ok=True)
+    ledger = ledger or InterruptedLedger(base/'store', base/'project', script.interrupt_after)
+    return controller.run(script.spec, ports, ports, ledger, clock or (lambda: ports.meter.seconds*scale)), ledger, ports

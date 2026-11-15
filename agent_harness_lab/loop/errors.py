@@ -14,6 +14,9 @@ REASONS = {
     'loop_on_regression_invalid': 'Set on_regression to stop or rollback_continue, or omit it for stop.',
     'loop_alpha_invalid': 'Set alpha to a number above 0 and below 1, or omit it for 0.05.',
     'loop_limits_invalid': 'Pass the project limits as seconds above 0 and a whole number of trials above 0.',
+    'loop_port_invalid': 'This is an AHL adapter defect: the evaluator, proposer or clock returned something outside its port contract; report it with the named field.',
+    'loop_ledger_invalid': 'Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again.',
+    'loop_ledger_full': 'The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run.',
     'loop_order_violation': 'This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event.',
 }
 

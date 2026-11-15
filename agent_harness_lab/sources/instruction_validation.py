@@ -193,7 +193,7 @@ def _files(root):
     files = {}
     if root is None: return files
     for path in sorted(Path(root).rglob('*')):
-        if path.is_symlink(): raise ValueError('instruction closure contains a symlink')
+        if path.is_symlink(): raise _Blocked('symlink_in_staged_tree')
         if path.is_file(): files[path.relative_to(root).as_posix()] = path.read_bytes()
     return files
 
@@ -388,8 +388,9 @@ def validate(baseline, candidate, plan, *, runtime=None, project=None, deadline=
     if pair not in (instructions.CODEX, instructions.CLAUDE):
         return _document('unsupported', ['runtime_version_unsupported'], scope=None, **identity)
     fallback = tuple(profile.get('fallback_filenames', ()))
-    staged_before, staged_after = _files(baseline), _files(candidate)
-    try: ambient = _project_files(project, profile) if project is not None else {}
+    try:
+        staged_before, staged_after = _files(baseline), _files(candidate)
+        ambient = _project_files(project, profile) if project is not None else {}
     except _Blocked as error:
         remedy = {} if error.remedy is None else dict(inventory_remedy=error.remedy)
         return _document('blocked', [str(error)], scope=None, **identity, **remedy)

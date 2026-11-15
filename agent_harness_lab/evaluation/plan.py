@@ -30,6 +30,12 @@ class ExperimentSpec:
     root_similarity_sha256: str | None = None
     resource_contract_sha256: str | None = None
     resource_quality_policy_sha256: str | None = None
+    bayes_decision: dict | None = None
+
+    def __post_init__(self):
+        if self.bayes_decision is not None:  # freeze the resolved declaration, never the caller's object
+            from .bayes_spec import resolve
+            object.__setattr__(self, 'bayes_decision', resolve(self.bayes_decision, self.effect_margin, self.family_margin))
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -85,6 +91,9 @@ class ExperimentSpec:
         if quality is not None and (self.resource_contract_sha256 is None or not isinstance(quality,str)
                 or len(quality)!=64 or any(c not in '0123456789abcdef' for c in quality)):
             raise ValueError('resource quality policy requires a pinned contract and exact lowercase SHA-256')
+        if self.bayes_decision is not None:
+            from .bayes_spec import validate
+            validate(self)
 
     def to_dict(self):
         value = asdict(self)
@@ -94,6 +103,7 @@ class ExperimentSpec:
         if self.root_similarity_sha256 is None: value.pop('root_similarity_sha256')
         if self.resource_contract_sha256 is None: value.pop('resource_contract_sha256')
         if self.resource_quality_policy_sha256 is None: value.pop('resource_quality_policy_sha256')
+        if self.bayes_decision is None: value.pop('bayes_decision')
         return value
 
     @property

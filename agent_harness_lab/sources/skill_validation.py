@@ -5,7 +5,8 @@ being adoptable (surfaces.classify) never makes the bundle valid. A bundle is a 
 folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills). Its candidate membership must:
 
 - keep SKILL.md (missing_entry_point): deleting only the entry point would orphan the remaining files; deleting
-  every file is a valid removal.
+  every file is a removal that needs no membership check, but a remaining file that names the bundle blocks it
+  (removed_bundle_referenced).
 - open SKILL.md with a frontmatter fence on line 1 that the bounded reader parses (missing_frontmatter,
   bad_frontmatter) and give a text description (missing_description). A name is required outside .claude/skills,
   where Codex rejects a skill without one (missing_name); any name must be the directory name in lowercase
@@ -16,6 +17,10 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
   below it; URLs, anchors and absolute paths are not bundle references.
 - not shadow, or be shadowed by, a bundle of the same name in the same kind of skills folder (.claude/skills,
   .agents/skills or a bare skills) at the same, an enclosing or a nested directory (shadowed_name); only newly created bundles are compared, and a different kind of folder is not a collision.
+- on a complete removal, leave no remaining file outside the bundle that links into it or names its folder as a
+  whole path, as a project-relative path or one relative to that file's folder (removed_bundle_referenced); the
+  candidate state is judged, so a reference the same candidate deletes does not count, and a bare skill name in
+  prose is not a reference.
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
   the text as a whole name; ambiguous basenames require a bundle-relative path.
 
@@ -28,7 +33,7 @@ whose membership is unknown, so an edit to any file or mode inside the bundle ch
 
 Findings carry fixed labels and bundle paths only, never file text. With configured harness_paths the
 snapshot holds only the listed files, so the membership checks (missing_entry_point, dangling_reference,
-orphan_asset and the create/remove action) are skipped. References from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
+orphan_asset, removed_bundle_referenced and the create/remove action) are skipped. Candidate code is read as bytes and never run.
 """
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -178,6 +183,23 @@ def _reasons(bundle, files, added, complete=True):
     return sorted(set(reasons))
 
 
+def _names_bundle(path, text, bundle):
+    """True when a file outside the bundle links into it or names its folder as a whole path (project-relative or relative to the file)."""
+    folder = posixpath.dirname(path)
+    inside = lambda target: target == bundle or target.startswith(bundle + '/')
+    if path.endswith(('.md', '.markdown')) and any(inside(posixpath.normpath(posixpath.join(folder, target)))
+                                                   for target in _references(text)): return True
+    return any(re.search(r'(?<![\w./-])(?:\./)?' + re.escape(form) + r'(?![\w-]|\.(?=[\w-]))', text)
+               for form in {bundle, posixpath.relpath(bundle, folder or '.')})
+
+
+def _read(candidate, name, proposed):
+    """The candidate file's bytes, which must still be the ones the proposed state hashed."""
+    raw = (candidate / name).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != proposed[name][0]: raise ValueError('Candidate changed during skill bundle review')
+    return raw
+
+
 def _shadowed(bundle, others):
     """True when another bundle with this name sits in the same kind of skills folder at the same, an enclosing or a nested directory."""
     def place(path):
@@ -201,20 +223,19 @@ def review_tree(baseline, candidate, original, proposed, scoped=False):
     changed = sorted(name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name))
     bundles = sorted({bundle for bundle in map(bundle_of, changed) if bundle})
     rows = []
+    texts = None  # read once, and only when a bundle is removed
     existing = set() if scoped else {bundle for bundle in map(bundle_of, proposed) if bundle}
     for bundle in bundles:
         prefix = bundle + '/'
         before = {name for name in original if name.startswith(prefix)}
-        files = {}
-        for name in (name for name in proposed if name.startswith(prefix)):
-            raw = (candidate / name).read_bytes()
-            if hashlib.sha256(raw).hexdigest() != proposed[name][0]:
-                raise ValueError('Candidate changed during skill bundle review')
-            files[name[len(prefix):]] = raw
+        files = {name[len(prefix):]: _read(candidate, name, proposed) for name in proposed if name.startswith(prefix)}
         action = 'scoped' if scoped else 'create' if not before else 'remove' if not files else 'update'
         added = [name[len(prefix):] for name in proposed if name.startswith(prefix) and name not in original]
         reasons = [] if action == 'remove' or not files else _reasons(bundle, files, added, not scoped)
         if action == 'create' and _shadowed(bundle, existing): reasons = sorted({*reasons, 'shadowed_name'})
+        if action == 'remove':  # proposed holds no file of the removed bundle, so every remaining file is outside it
+            texts = texts or {name: _read(candidate, name, proposed).decode('utf-8', 'replace') for name in proposed}
+            if any(_names_bundle(name, text, bundle) for name, text in texts.items()): reasons = ['removed_bundle_referenced']
         known = action != 'scoped'
         rows.append(Finding(bundle, action, tuple(reasons), _placement(bundle),
                             _identity(original, bundle) if known else None, _identity(proposed, bundle) if known else None))

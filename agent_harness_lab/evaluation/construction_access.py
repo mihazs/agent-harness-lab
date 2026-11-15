@@ -214,7 +214,7 @@ class WorkflowAccess:
             attach(closed,self)
             _SCOPES[self]['closed_domain']=closed
 
-    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False,bank_conversion=None):
+    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False,bank_conversion=None,box=None):
         if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
         if bank_conversion is not None and (role!='evaluator_author' or type(bank_conversion) is not dict
                 or set(bank_conversion)!={'metadata','controls_manifest','output','review_store','declaration'}):
@@ -302,6 +302,7 @@ class WorkflowAccess:
                 _,_,commands=construction.propose(*args,focus=focus,exposure=handle,**({'analysis':True} if analysis else {}))
             else:
                 options={'analysis':True} if analysis else {}
+                if box is not None:options['box']=box
                 if bank_conversion is not None:options['bank_qualification']=True
                 made=[]; dropped=[]; options['ignored']=dropped
                 if bank_conversion is None:options.update(repairs=made,repair_allowed=closed is None)  # sealed closed-input stages allow no second pass
@@ -390,8 +391,8 @@ class WorkflowAccess:
             raise ValueError('focus is unsupported by the closed input profile')
         return self._run('proposer',context,destination,candidate=candidate,focus=focus,analysis=analysis)
 
-    def author(self,context,destination,*,analysis=False,bank_conversion=None):
-        return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion)
+    def author(self,context,destination,*,analysis=False,bank_conversion=None,box=None):
+        return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion,box=box)
 
     def ignored_digests(self):
         return sum(_scope(self)['ignored'])
