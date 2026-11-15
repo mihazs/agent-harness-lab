@@ -83,6 +83,7 @@ def read_corpus_manifest(path, limit=None):
                  text=item['record']['summary'], label=BINARY_OUTCOMES[item['annotation']['outcome']],
                  project=item['record']['project_id'], case_id=item['case_id'], outcome=item['annotation']['outcome'],
                  declared_partition=item['record']['partition'], retired=item['retirement'] is not None,
+                 review_approval=item['review_approval'],
                  label_provenance='adjudicated') for item in items]
     return rows, manifest
 
@@ -466,7 +467,8 @@ def main():
             result.update(profile=CORPUS_PROFILE, corpus_revision_sha256=manifest['revision_sha256'],
                 manifest_sha256=manifest['manifest_sha256'], publication_allowed=False, classifier_selection_allowed=False,
                 root_independence=manifest['root_independence'], reviewer_independence='unverified',
-                label_authority='operator_attested', binary_label_mapping=BINARY_OUTCOMES,
+                label_authority='operator_attested', binary_label_mapping=BINARY_OUTCOMES, review_approval_verification='not_performed',
+                review_approval_counts={split: dict(Counter(r['review_approval'] for r in rows if r['split'] == split)) for split in SPLITS},
                 outcome_counts={split: dict(Counter(r['outcome'] for r in rows if r['split'] == split)) for split in SPLITS},
                 partitions=partition_disclosure(rows), metric_weighting=dict(splits='row', root_weighted='declared_root'),
                 root_weighted={split: root_weighted([r for r in rows if r['split'] == split],
