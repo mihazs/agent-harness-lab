@@ -176,6 +176,27 @@ calibrator was fitted on them, or that the minimum was chosen before validation
 data were seen. Earlier profiles and `ahl benchmark` are unchanged, and the v7
 report is private and grants no certification or promotion authority.
 
+For population-level and severity-level counts, call `evaluate(policy, observations,
+report_version=8)`. The separate `diagnostic-triage-evaluation-v8` profile takes
+the v7 policy fields and applies every v7 check, decision and diagnostic unchanged.
+It adds `population_metrics`, computed over labeled declared roots only (repeated
+rows count once; unlabeled roots count toward coverage but not here), and
+`metric_scopes`, which names the per-class entries in `classes` as `class_conditional`
+and the new block as `population_over_labeled_roots`. `by_severity` repeats the
+per-class TP/FP/FN/TN, precision and end-to-end recall at the level of the declared
+class severity (`severe`, `normal`, `none`), so a wrong class inside one severity
+is not a severity error. `alert` treats every class whose severity is not `none` as
+an alert: `alert_precision` is the share of alerted roots that carry an incident
+label, `incident_recall` the share of incident roots that were alerted (abstained
+incident roots stay in the denominator and are counted in
+`abstained_incident_roots`), and `accepted_negative_error_rate` the share of roots
+accepted as no-incident that carry an incident label. A metric with no root behind
+it is null, never 0 or 1. These values are descriptive: no constraint reads them,
+so a high population recall cannot rescue a failed class precision, and a
+99% accurate all-negative classifier still shows `incident_recall` 0. AHL supplies
+no target for them. The v8 report is private and grants no certification or
+promotion authority.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,
