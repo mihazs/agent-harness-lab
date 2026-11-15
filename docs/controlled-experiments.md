@@ -11,7 +11,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`); bounded `constraint-localization-v1` step localization of violated constraints with competing causes, negative controls and unverified draft records (`diagnostics/localization.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; localization from #58 event links and a replay of the falsifying intervention; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes; evaluator trials record `skill_shadowing` candidates from a read-only scan of the runtime's user-level skill folder, and a shadowed copy makes `paired_transfer` inconclusive | Observed activation evidence, Codex skill signals, effective-path resolution and managed/plugin-layer shadowing, wiring activation signals into reports, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, not connected to any hook; journaled staging and conflict-safe rollback of a reviewed adapter version (`evaluation.adapter_deployment`), not exposed through any command | A live run proving the bridge hook executes in the supported runtime, a controller-owned relay from the hook to the worker, and independently graded adapter effectiveness; no runtime flags are invented |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, not connected to any hook; journaled staging and conflict-safe rollback of a reviewed adapter version (`evaluation.adapter_deployment`), exposed only through the opt-in `ahl adapters` command under a controller-owned authorization manifest | A live run proving the bridge hook executes in the supported runtime, a controller-owned relay from the hook to the worker, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
@@ -411,9 +411,36 @@ replays idempotently. A later edit, mode change, symlink, deletion or newer
 deployment is a conflict that preserves the user's file, and a rollback that would
 restore a version the current authorization no longer covers (another tool, or
 the adapter ID removed) is refused. Removing a first deployment always passes
-because it only removes capability. The journal folder should be separate from the
-project's promotion journal. Nothing calls this module by default, no command
-exposes it, nothing is rolled out automatically and no runtime or hook is touched.
+because it only removes capability. `check(project, authorized, authorization,
+candidate, adapter_bytes)` runs every refusal `stage` makes without a journal and
+without writing. The journal folder should be separate from the project's
+promotion journal. Nothing calls this module by default, nothing is rolled out
+automatically and no runtime or hook is touched.
+
+`ahl adapters` is the only command that calls it, and only when asked. Its
+authority is one controller-owned manifest, `ahl.adapter-authorization.v1`, with
+exactly the fields `schema`, `project` (the project identity AHL derives from its
+resolved path), `version`, `tools` and `adapters` (one authorized `AdapterSpec` per
+adapter ID). The manifest is refused when it lives inside the project, where an
+optimizer can edit it, when group or others can write it, when it is a symlink or
+over 256 KiB, when it names another project, repeats an adapter or carries an
+unknown field. The adapter IDs and tools it lists are the `Authorization` that
+`review_candidate_spec` and rollback use, so removing an adapter from the manifest
+also forbids restoring one of its versions. `ahl adapters stage` reads an
+untrusted candidate spec and its bytes and reports `awaiting_review` with the
+`candidate_spec_sha256` and the command that deploys it, `blocked` with the
+review's reasons (exit 3) or, with `--authorize-spec` naming that exact digest,
+`deployed`. Without the manifest option the command is a usage error, and a blocked
+candidate stays blocked whatever digest is named. `ahl adapters rollback` previews
+by default and restores only with `--execute`; a later edit, a newer deployment or
+a manifest that no longer covers the restored version is a `conflict` (exit 3) that
+keeps every file. Both actions keep their journal under the AHL state directory,
+apart from the promotion journal, and a preview creates nothing. Before a deployment
+or rollback starts and after one fails or is interrupted, every unfinished
+deployment of that journal returns to its previous state as one unit, or reports
+what remains. The packet always carries `executes_adapter_code: false`,
+`automatic_promotion: false`, `certification: not_established` and the runtime
+capability, which stays `unsupported`. See [stage a presentation adapter](stage-an-adapter.md).
 
 Lexical retrieval accepts only approved reviewed summaries, retains sampling
 provenance and returns untrusted evidence, including any injection text. It never

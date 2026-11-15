@@ -63,9 +63,10 @@ Both claims are documentation reads. None was exercised against a live runtime.
 - Staging and rollback of an adapter version reuse the promotion journal
   (`evaluation.adapter_deployment`): the candidate is reviewed against the
   controller's authorized spec, only the two declared artifacts are owned, and a
-  rollback is a conflict, not an overwrite, after any later edit or deployment. It
-  is not connected to any command or hook, so no adapter is deployed or rolled out
-  automatically.
+  rollback is a conflict, not an overwrite, after any later edit or deployment. Only
+  the opt-in `ahl adapters` command calls it, under a controller-owned manifest
+  ([how to](stage-an-adapter.md)); no hook is installed and no adapter is deployed
+  or rolled out automatically.
 - A required bridge stops the affected execution (`continue: false`) on any
   malformed, oversized, unauthorized, mismatched or conflicting event. An
   optional bridge may only fall back to identity, the policy is frozen before the
