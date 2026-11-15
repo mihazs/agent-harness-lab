@@ -21,7 +21,7 @@ def test_empty_batch_reports_zero_counts_without_any_rate():
     result = metrics.summarize([])
     assert result['trials'] == 0 and result['violations'] == {} and result['unknowns'] == {}
     assert tally(result, 'passed') == dict(true=0, false=0, unknown=0)
-    assert not any('rate' in key for key in result)
+    assert not any(key == 'rate' or key.endswith('_rate') or key == 'score' for key in result)
 
 
 def test_always_edit_policy_is_reported_as_separate_action_failures():
