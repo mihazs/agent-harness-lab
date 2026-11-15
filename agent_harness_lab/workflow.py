@@ -1276,7 +1276,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
         from .evaluation import before_after
-        before_after.attach(result, output, dict(single_run, bindings=bindings))
+        before_after.attach(result, output, dict(single_run, bindings=bindings), margin=getattr(args, 'regression_margin', None))
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     if returned:

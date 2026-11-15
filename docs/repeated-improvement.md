@@ -94,7 +94,10 @@ there is no second monitor. Saved result JSON cannot create a live completion.
 The workflow reports the verified decision and analysis. A conditionally supported
 analysis produces `recommendation: review_candidate`; other complete analyses produce
 `candidate_not_supported`. The overall status remains `inconclusive` because
-certification prerequisites are unverified. Missing artifacts, unknown observations,
+certification prerequisites are unverified, unless the candidate scored worse than its baseline
+beyond the request's `family_margin`: the run then ends `blocked` with reason
+`candidate_regressed`, no recommendation and an `investigation.json` beside `workflow.json`
+(see the [before/after guard](before-after-guard.md#the-fixed-repeated-bank-lane)). Missing artifacts, unknown observations,
 unresolved requests, incomplete custody or expired budgets cannot produce a favorable
 decision. No ambiguous request is automatically retried, and cold execution resume is
 unsupported. Tampered sealed inputs, results, custody or receipt bytes fail verification.

@@ -595,6 +595,13 @@ class HistoryStore(PrivateJournal):
             result['cohort_qualification']='current_membership_only'
         return attach(spec,records,result,root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
 
+    def sealed_trials(self, run_id):
+        """The frozen plan and graded trial records of a current sealed fixed comparison, or None; explanation input, never authority."""
+        with self.locked():
+            _, _, inputs, spec, result, validity = self.checked(run_id)
+            if result is None or validity != 'current' or spec.sequential is not None: return None
+            return spec, self.trials(inputs, spec, result)
+
     def decision(self, run_id):
         """Persist private recomputed analysis evidence, never adoption authority."""
         from .decision_receipts import create

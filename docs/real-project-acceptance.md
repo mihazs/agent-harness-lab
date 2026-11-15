@@ -74,9 +74,10 @@ set of inputs. Read `decision.bindings` and `decision.observed`:
 - FAIL: equal arm digests (that is the `arms_identical` [label](vacuity-labels.md)), a missing frozen-input hash, or a
   candidate that scored worse (`pairs.baseline_only_passed` above `pairs.candidate_only_passed`) yet still carries a `plan` or a
   `recommendation`.
-- KNOWN_GAP: a worse candidate that ends without the typed `candidate_regressed` block and its investigation record (slice
-  FU-2, #804), and a project whose own case list cannot be turned into an executable bank (#838). Record the gap; do not call
-  it a pass.
+- FAIL: a worse candidate (`pairs.baseline_only_passed` above `pairs.candidate_only_passed`, equivalently a negative
+  `before_after.delta.mean` beyond `before_after.margin`) whose receipt is not `blocked` with reason `candidate_regressed`, or that has
+  no `investigation.json` beside `workflow.json` ([before/after guard](before-after-guard.md)).
+- KNOWN_GAP: a project whose own case list cannot be turned into an executable bank (#838). Record the gap; do not call it a pass.
 
 <a id="no-fake-results"></a>
 
@@ -181,5 +182,5 @@ failing recorded sessions, a stub runtime and the same check around `ahl improve
 | private outputs | `test_every_private_output_sits_under_one_directory_and_deleting_it_leaves_nothing_behind` |
 
 The synthetic project covers the procedure and the criteria a current release meets. The two things it cannot cover yet are
-marked `KNOWN_GAP` and `FAIL` above (typed `candidate_regressed`, a second run that reports the first); they join the synthetic
-project when FU-2 (#804) and FU-4 (#806) ship.
+marked `KNOWN_GAP` (a project case list that cannot become a bank, #838) and `FAIL` (a second run that reports the first, FU-4, #806)
+above; the second joins the synthetic project when FU-4 ships.

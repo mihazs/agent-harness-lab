@@ -6,6 +6,7 @@ as a match. The paired unit is the root (the task unless declared), so repeats i
 independent. ``candidate_regressed`` blocks adoption on the observed paired delta alone, so a small bank cannot hide a
 loss; ``improved`` also needs the interval to clear the margin, so a gain inside noise stays ``inconclusive``.
 """
+import argparse
 from fractions import Fraction
 import hashlib
 import json
@@ -14,6 +15,7 @@ from pathlib import Path
 import re
 
 from agent_harness_lab.sources.schema import digest
+from .plan import schedule
 
 
 PROFILE = 'ahl-before-after-guard-v1'
@@ -29,6 +31,17 @@ NEXT_STEP = {
 }
 _HEX = re.compile(r'[0-9a-f]{64}')
 _SHA_FIELDS = tuple(name for name in IDENTITY_FIELDS if name.endswith('_sha256'))
+
+
+def margin_option(text):
+    """argparse type: the tolerated loss for ``ahl improve --regression-margin``, a number from 0 up to but not including 1."""
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError('regression margin must be a number') from None
+    if not math.isfinite(value) or not 0 <= value < 1:
+        raise argparse.ArgumentTypeError('regression margin must be at least 0 and less than 1')
+    return value
 
 
 def _bool_or_none(value, name):
@@ -114,13 +127,16 @@ def _flips(rows):
     return (sum(r['baseline'] and not r['candidate'] for r in rows), sum(r['candidate'] and not r['baseline'] for r in rows))
 
 
-def decide(pairs, *, baseline, candidate, margin=DEFAULT_MARGIN, alpha=DEFAULT_ALPHA):
+def decide(pairs, *, baseline, candidate, margin=DEFAULT_MARGIN, alpha=DEFAULT_ALPHA, gain_margin=None):
     """The receipt block: both scores with intervals, the paired delta, the frozen identity of each arm and a verdict.
 
     ``pairs`` hold ``task``, ``baseline`` and ``candidate`` outcomes (True, False or None) and optionally ``root``, ``repeat``,
-    ``areas`` and ``split``. ``baseline`` and ``candidate`` are ``frozen_inputs`` identities.
+    ``areas`` and ``split``. ``baseline`` and ``candidate`` are ``frozen_inputs`` identities. ``margin`` is the tolerated loss;
+    ``gain_margin`` is the bar the interval must clear for ``improved`` and defaults to ``margin``.
     """
-    if type(margin) not in (int, float) or not math.isfinite(margin) or not 0 <= margin < 1: raise ValueError('margin must be in [0, 1)')
+    gain = margin if gain_margin is None else gain_margin
+    for name, value in (('margin', margin), ('gain_margin', gain)):
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value < 1: raise ValueError(f'{name} must be in [0, 1)')
     if type(alpha) not in (int, float) or not 0 < alpha < 1: raise ValueError('alpha must be in (0, 1)')
     rows = _rows(pairs)
     eligible = _known(rows)
@@ -133,7 +149,7 @@ def decide(pairs, *, baseline, candidate, margin=DEFAULT_MARGIN, alpha=DEFAULT_A
     frozen = dict(baseline=baseline, candidate=candidate, comparison=comparison)
     block = dict(profile=PROFILE, claim='observed_pattern', margin=margin, alpha=alpha, unit='root', independence='unverified',
                  pairs=pair_counts, frozen_inputs=frozen, scores=None, delta=None, adoption_authority=False,
-                 automatic_promotion=False, publication_allowed=False)
+                 automatic_promotion=False, publication_allowed=False, **({} if gain_margin is None else dict(gain_margin=gain)))
     if not roots:
         return dict(block, verdict='inconclusive', reasons=['no_paired_outcomes'], adoption_blocked=False)
     count = len(roots)
@@ -145,7 +161,7 @@ def decide(pairs, *, baseline, candidate, margin=DEFAULT_MARGIN, alpha=DEFAULT_A
     if pair_counts['unknown']: reasons.append('unknown_outcomes')
     if comparison['mismatched']: reasons.append('frozen_inputs_mismatch')
     elif comparison['unknown']: reasons.append('frozen_inputs_unverified')
-    if not interval['low'] > margin: reasons.append('interval_not_above_margin')
+    if not interval['low'] > gain: reasons.append('interval_not_above_margin')
     verdict = 'candidate_regressed' if regressed else 'improved' if not reasons else 'inconclusive'
     return dict(block, verdict=verdict, adoption_blocked=regressed,
                 reasons=['delta_below_negative_margin'] if regressed else ['interval_above_margin'] if not reasons else reasons,
@@ -211,24 +227,79 @@ def run_pairs(manifest, trials):
             for task in manifest['tasks']]
 
 
-def attach(result, output, run, *, margin=DEFAULT_MARGIN):
+def _record(result, output, pairs, guard, *, inputs_unchanged, relabel):
+    """Put the block on the receipt; a blocked candidate becomes ``blocked`` / ``candidate_regressed`` with its investigation beside it."""
+    from agent_harness_lab.monitoring.state import atomic_json
+    update = dict(before_after=guard)
+    if guard['adoption_blocked'] and relabel:
+        artifact = investigate(pairs, guard, grader_changed=False, inputs_unchanged=inputs_unchanged)
+        path = Path(output) / 'investigation.json'
+        atomic_json(path, artifact)
+        update.update(status='blocked', reason='candidate_regressed', investigation=dict(
+            path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(), cause=artifact['cause']['class']))
+        result.pop('recommendation', None)
+    result.update(update)
+
+
+def attach(result, output, run, *, margin=None):
     """Add the guard block to the receipt of a covered single-run evaluation.
 
     A candidate that regressed on the final attempt and ended as the bare ``evaluation_failed`` becomes ``blocked`` with reason
     ``candidate_regressed`` and an ``investigation.json`` beside the receipt. Any failure leaves the run result unchanged.
     """
-    from agent_harness_lab.monitoring.state import atomic_json
     try:
         pairs = run_pairs(run['manifest'], run['trials'])
         arm = frozen_inputs(**run['frozen'])
-        guard = dict(decide(pairs, baseline=arm, candidate=dict(arm), margin=margin), bindings=dict(run['bindings']))
-        update = dict(before_after=guard)
-        if guard['adoption_blocked'] and run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed':
-            artifact = investigate(pairs, guard, grader_changed=False, inputs_unchanged=run['inputs_unchanged'])
-            path = Path(output) / 'investigation.json'
-            atomic_json(path, artifact)
-            update.update(status='blocked', reason='candidate_regressed', investigation=dict(
-                path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(), cause=artifact['cause']['class']))
-        result.update(update)
+        guard = dict(decide(pairs, baseline=arm, candidate=dict(arm), margin=DEFAULT_MARGIN if margin is None else margin), bindings=dict(run['bindings']))
+        _record(result, output, pairs, guard, inputs_unchanged=run['inputs_unchanged'],
+                relabel=run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed')
+    except Exception as exc:  # An advisory guard never changes the run result.
+        result['before_after'] = dict(status='unavailable', reason=type(exc).__name__, adoption_authority=False)
+
+
+def experiment_inputs(spec, records, *, bank_sha256, tasks=()):
+    """Pairs and one frozen-inputs identity per arm of a sealed fixed-bank comparison.
+
+    A fact is known for an arm only when every scheduled trial of it has a record and the records agree on it, so a partial arm is
+    unverified and never a match. An outcome that is not an executable graded pass or fail is unknown. The declared family is the area.
+    """
+    plan = schedule(spec)
+    by_id = {record.trial_id: record for record in records}
+    splits = {task.get('id'): task.get('split') for task in tasks if isinstance(task, dict)}
+    cells = {}
+    for row in plan:
+        record = by_id.get(row['trial_id'])
+        known = record is not None and record.status == 'graded' and record.provenance == 'executable_grader' and type(record.outcome) is bool
+        cell = cells.setdefault((row['task'], row['repetition']), dict(task=row['task'], root=row['root'], repeat=row['repetition'],
+                                                                         areas=[row['family']], split=splits.get(row['task'])))
+        cell[row['version']] = record.outcome if known else None
+    def arm(version):
+        rows = [row for row in plan if row['version'] == version]
+        seen = [by_id[row['trial_id']] for row in rows if row['trial_id'] in by_id]
+        whole = len(seen) == len(rows)
+        def agreed(field):
+            values = {getattr(record, field) for record in seen}
+            return values.pop() if whole and len(values) == 1 else None
+        return frozen_inputs(bank_sha256=bank_sha256, grader_sha256=agreed('grader_hash'), runtime_sha256=agreed('runtime_hash'),
+                             seed_schedule_sha256=schedule_sha256([dict(id=task) for task in dict.fromkeys(row['task'] for row in rows)], spec.repeats, spec.seed) if whole else None,
+                             budget_share=dict(trials=len(rows)) if whole else None)
+    return list(cells.values()), arm('baseline'), arm('candidate')
+
+
+def attach_experiment(result, output, store, run_id, *, bank_sha256, tasks=()):
+    """Add the guard block to the receipt of a sealed fixed-bank comparison, with the margins its request declared.
+
+    The tolerated loss is the request's ``family_margin``, the bar for ``improved`` its ``effect_margin``. A candidate beyond the
+    tolerated loss turns the receipt into ``blocked`` / ``candidate_regressed`` and withholds the recommendation. Any failure leaves
+    the run result unchanged.
+    """
+    try:
+        sealed = store.sealed_trials(run_id)
+        if sealed is None: return
+        spec, records = sealed
+        pairs, baseline, candidate = experiment_inputs(spec, records, bank_sha256=bank_sha256, tasks=tasks)
+        guard = dict(decide(pairs, baseline=baseline, candidate=candidate, margin=spec.family_margin, gain_margin=spec.effect_margin, alpha=spec.alpha),
+                     bindings=dict(controller_run_id=run_id, describes_final_attempt=True))
+        _record(result, output, pairs, guard, inputs_unchanged=True, relabel=True)
     except Exception as exc:  # An advisory guard never changes the run result.
         result['before_after'] = dict(status='unavailable', reason=type(exc).__name__, adoption_authority=False)
