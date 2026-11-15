@@ -678,3 +678,26 @@ class TrialWorkspaceTests(unittest.TestCase):
         self.assertEqual(data['isolation']['status'], 'inherited_unverified')
         self.assertEqual(data['isolation']['runtime'], 'claude-code')
         self.assertTrue(all(row['requested'] for row in data['isolation']['requests']))
+
+
+class UndecodableOutputTests(unittest.TestCase):
+    """A runtime that writes bytes that are not text still returns a result; it never raises into the caller (#807)."""
+    def execute(self, code):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('runner_undecodable_output', RUNNER)
+        runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runner)
+        return runner.execute([sys.executable, '-c', code], Path.cwd(), 30)
+
+    def test_stdout_bytes_that_are_not_utf8_are_replaced_and_the_exit_status_is_kept(self):
+        run = self.execute('import sys; sys.stdout.buffer.write(b"a" + bytes(range(128, 256))); sys.exit(3)')
+        self.assertEqual((run['exit_code'], run['timeout']), (3, False))
+        self.assertTrue(run['stdout'].startswith('a') and '�' in run['stdout'])
+
+    def test_stderr_bytes_that_are_not_utf8_are_replaced(self):
+        run = self.execute('import sys; sys.stderr.buffer.write(b"\\xff\\xfe")')
+        self.assertEqual((run['exit_code'], run['stderr']), (0, '��'))
+
+    def test_empty_output_stays_empty(self):
+        run = self.execute('pass')
+        self.assertEqual((run['exit_code'], run['stdout'], run['stderr']), (0, '', ''))
