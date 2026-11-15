@@ -98,5 +98,5 @@ Each of these ended typed but wrongly, or untyped, and now has a regression test
 ```
 python -m pytest tests/integration/improve/test_stress_matrix.py \
   tests/unit/workflow/test_harness_files.py tests/unit/workflow/test_writable_candidate.py
-python -m pytest skills/harness-evaluation/scripts/test_run_evaluation.py -k UndecodableOutput
+python -m pytest skills/harness-self-improvement/scripts/test_run_evaluation.py -k UndecodableOutput
 ```
