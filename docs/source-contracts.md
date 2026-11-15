@@ -2859,7 +2859,9 @@ only is `in_force` for A (the correction is out of scope) and `superseded` for B
 predecessor whose declared successor has an undeclared scope is `unknown` with
 `successor_status_unknown`. A later revision of one record that leaves the requested scope
 makes the earlier revision `unknown` with `revision_scope_changed` rather than
-leaving it in force. Scope never overrides knowledge time: a scoped correction first
+leaving it in force; revisions of that record stay ordered through the out-of-scope
+revision, so a later in-scope revision is the current one and no `ambiguous_revisions`
+conflict is reported. Scope never overrides knowledge time: a scoped correction first
 recorded after the instant stays under `not_known_at_instant` in a historical replay.
 Results carry `scope_requested`, and the query scope is part of `inputs_sha256`. A
 declared scope is an author claim: it does not establish that the statement is true

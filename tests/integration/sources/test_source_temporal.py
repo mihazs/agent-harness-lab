@@ -316,6 +316,19 @@ class TestDeclaredScope:
         kept = resolve([first, second], self.AT, revisions=[edge], scope=SCOPE_A)
         assert (status(kept, 'page', 'r1')[0], status(kept, 'page', 'r2')[0]) == ('superseded', 'in_force')
 
+    @pytest.mark.parametrize('last_scopes', [pytest.param((SCOPE_A, SCOPE_B), id='returns-to-both-scopes'),
+                                             pytest.param((SCOPE_B,), id='moves-to-the-requested-scope-only')])
+    def test_a_middle_revision_that_leaves_the_scope_keeps_the_later_in_scope_revision_current(self, last_scopes):
+        first = facet('page', 'r1', scopes=(SCOPE_A, SCOPE_B)); middle = facet('page', 'r2', scopes=(SCOPE_A,))
+        last = facet('page', 'r3', scopes=last_scopes)
+        edges = [[SOURCE, digest('page'), rec('page', a).revision_sha256, rec('page', b).revision_sha256]
+                 for a, b in (('r1', 'r2'), ('r2', 'r3'))]
+        result = resolve([first, middle, last], self.AT, revisions=edges, scope=SCOPE_B)
+        assert 'ambiguous_revisions' not in {row['kind'] for row in result['conflicts']}
+        assert status(result, 'page', 'r1') == ('unknown', ['revision_scope_changed'])
+        assert status(result, 'page', 'r3') == ('in_force', ['open_ended_by_declaration'])
+        assert result['out_of_scope'] == [rec('page', 'r2').to_dict()]
+
     def test_scope_does_not_let_a_later_correction_into_a_historical_replay(self):
         rule = facet('rule', scopes=(SCOPE_B,))
         fix = facet('fix', recorded_at='2026-03-01T00:00:00Z', scopes=(SCOPE_B,), supersedes=(rec('rule'),))

@@ -213,6 +213,13 @@ def resolve(facets, at, *, revisions=(), knowledge='historical', scope=None):
             if kind == 'revision': blocked.setdefault(before, set()).add('revision_scope_changed')
             continue
         adjacency.setdefault(before, set()).add(after)
+    # Ordering only: a revision edge through an out-of-scope revision still orders its record's revisions;
+    # supersession (adjacency) does not apply across the scope change.
+    order = {k: set(v) for k, v in adjacency.items()}
+    for before, after, _, kind in edges:
+        if kind == 'revision' and (before in out or after in out) and before in index and after in index \
+                and not {before, after} & future:
+            order.setdefault(before, set()).add(after)
     conflicts = []
     for members in cyclic(adjacency):
         conflicts.append(dict(kind='supersession_cycle', members=[ref(k) for k in members]))
@@ -222,7 +229,7 @@ def resolve(facets, at, *, revisions=(), knowledge='historical', scope=None):
     for _, members in sorted(groups.items()):
         # A revision is a leaf of its record unless another revision of the same record is reachable from it;
         # edges to other records do not order revisions of this record.
-        leaves = [k for k in members if not any(o != k and reaches(adjacency, k, o) for o in members)]
+        leaves = [k for k in members if not any(o != k and reaches(order, k, o) for o in members)]
         if len(leaves) > 1:
             conflicts.append(dict(kind='ambiguous_revisions', members=[ref(k) for k in leaves]))
             for key in leaves: structural.setdefault(key, set()).add('ambiguous_revisions')
