@@ -714,7 +714,7 @@ def test_population_metrics_belong_to_v8_only():
     assert 'population_metrics' not in triage.evaluate(_v6_policy(), rows, report_version=6)
     assert 'population_metrics' not in triage.evaluate(_v7_policy(), rows, report_version=7)
     with pytest.raises(ValueError, match='unsupported triage report version'):
-        triage.evaluate(_v7_policy(), rows, report_version=9)
+        triage.evaluate(_v7_policy(), rows, report_version=10)
 
 
 def test_v8_keeps_v7_policy_scope_and_role_refusals():
