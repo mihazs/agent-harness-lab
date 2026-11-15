@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from . import reuse
+from . import commit as stage_commit, reuse
 from .store import MemoryStore, MemoryStoreError
 
 STAGE = 'diagnostic_process_mining'
@@ -18,7 +18,6 @@ STAGE = 'diagnostic_process_mining'
 STAGE_VERSION = 'process-graph-1'
 PROFILE = 'ahl-analysis-process-graph-v1'
 GRAPH = {STAGE: ()}  # the one stage this slice reuses; its upstream inputs enter as exact digests
-RECORD_SCHEMA = 'ahl-stage-record-v1'
 SUMMARY_SCHEMA = 'ahl-incremental-analysis-v1'
 ROLE_VARIABLE = 'AHL_SANDBOX_ROLE'  # isolated sandbox roles (worker, proposer, evaluator author, grader)
 HARNESS_DOMAIN = b'ahl-harness-identity-v1\x00'
@@ -118,14 +117,11 @@ class Incremental:
                 {STAGE: {'bytes': value is not None, 'role': True}}, value)
 
     def _record(self, row):
+        """The verified record of an index row (the layout and its checks belong to `commit`), or None when unsound."""
         try:
-            record = json.loads(self.store.read(row['record']))
-        except (MemoryStoreError, OSError, ValueError):
+            return stage_commit.verified(self.store, row, STAGE)
+        except (MemoryStoreError, OSError):
             return None
-        sound = (isinstance(record, dict) and record.get('schema') == RECORD_SCHEMA and record.get('stage') == STAGE
-                 and record.get('node_key') == row['node_key'] and record.get('output') == row['output']
-                 and record.get('status') == 'complete' and isinstance(record.get('components'), dict))
-        return record if sound else None
 
     def _output(self, record):
         """The stored stage output, only when its bytes verify and re-encode to themselves (versioned canonical form)."""
@@ -174,27 +170,16 @@ class Incremental:
         try:
             if self.store.stage_rows(self.project_id, STAGE, node_key=self.key, status='complete', limit=1):
                 return 'already_committed'  # a concurrent run committed this exact key first
-            output = self.store.publish(self.project_id, 'analysis', raw)
-            return self._record_run('complete', output)
+            stage_commit.commit_stage(self.store, self.project_id, self.parts, raw, graph=GRAPH)
+            return 'committed'
         except (MemoryStoreError, OSError) as error:  # busy, read-only or full: the analysis result is still valid
             return f'failed: {error}'
-
-    def _record_run(self, status, output):
-        latest = self.store.stage_rows(self.project_id, STAGE, limit=1)
-        sequence = latest[0]['sequence'] + 1 if latest else 1
-        raw = encode({'schema': RECORD_SCHEMA, 'stage': STAGE, 'node_key': self.key, 'components': self.parts,
-                      'status': status, 'output': output, 'sequence': sequence}, sort=True)
-        row = {'record': hashlib.sha256(raw).hexdigest(), 'stage': STAGE, 'node_key': self.key, 'status': status,
-               'output': output, 'sequence': sequence}
-        self.store.publish(self.project_id, 'manifest', raw, dependencies=[output] if output else [],
-                           records=[{'table': 'stage_records', 'row': row}])
-        return 'committed' if status == 'complete' else 'diagnostic_recorded'
 
     def interrupted(self):
         """The stage did not complete: keep a diagnostic record that is never reusable. A reuse hit executed nothing."""
         if self.cached is None and not self.done:
             with contextlib.suppress(MemoryStoreError, OSError):
-                self._record_run('incomplete', None)
+                stage_commit.record_event(self.store, self.project_id, self.parts, 'interrupted', 'analysis_not_completed', graph=GRAPH)
 
     def _summary(self, commit, elapsed):
         counts = self.receipt['counts']

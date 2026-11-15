@@ -5,7 +5,7 @@ import pytest
 
 from agent_harness_lab.evaluation import construction
 
-SKILLS = ('harness-evaluation', 'harness-self-improvement')
+SKILLS = ('harness-self-improvement',)
 
 
 @pytest.fixture
@@ -35,4 +35,4 @@ def test_views_leave_bytecode_caches_out_and_keep_the_sources(assets, tmp_path, 
     views = build_views(assets, tmp_path)
     for role, folder in views.items():
         assert not list(folder.rglob('*.pyc')) and not list(folder.rglob('__pycache__')), role
-        assert (folder / 'methodology/harness-evaluation/scripts/helper.py').read_text() == 'VALUE = 1\n'
+        assert (folder / 'methodology/harness-self-improvement/scripts/helper.py').read_text() == 'VALUE = 1\n'

@@ -38,7 +38,8 @@ ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
-                      'decision.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
+                      'decision.bindings.manifest_sha256', 'before_after.bindings.results_sha256',
+                      'before_after.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
                       # An application mints a new deployment ID; its rollback command embeds it.
                       'deployment', 'rollback', 'layers.*.deployment', 'layers.*.rollback', 'layers.*.plan_sha256'),
     # The recovery record embeds the receipt it will return.
@@ -62,6 +63,9 @@ ALLOWED_DIFFERENCES = {
     'preparation/context.json': ('invocation.origin', 'invocation.parent_run_id', *_RUN_TIMING),
     'preparation/evaluation-*/context.json': ('invocation.origin', 'invocation.parent_run_id', *_RUN_TIMING),
 }
+# Dotted key patterns that depend on which route ran first, not on the route: the incremental block (#806) describes the
+# previous run in the private run store, so the later of two routes on one project carries it and the earlier does not.
+ORDER_DEPENDENT = {'workflow.json': ('incremental', 'incremental.*'), 'recovery.json': ('receipt.incremental', 'receipt.incremental.*')}
 RECEIPT = 'workflow.json'
 
 # Progress lines on stderr report elapsed wall time.
@@ -113,8 +117,9 @@ def document_differences(artifact, first, second, first_run, second_run):
     left = dict(_flatten(_normalized(first, first_run)))
     right = dict(_flatten(_normalized(second, second_run)))
     return sorted(key for key in left.keys() | right.keys()
-                  if key not in left or key not in right
-                  or left[key] != right[key] and not allowed(artifact, key))
+                  if (key not in left or key not in right or left[key] != right[key] and not allowed(artifact, key))
+                  and not any(fnmatchcase(artifact, pattern) and any(fnmatchcase(key, field) for field in fields)
+                              for pattern, fields in ORDER_DEPENDENT.items()))
 
 
 def run_differences(first_run, second_run):

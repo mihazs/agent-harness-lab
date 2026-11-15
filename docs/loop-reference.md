@@ -382,7 +382,7 @@ so that only the vacuity branch can stop it. These presets are in `PRESETS`:
 
 ## Typed reasons
 
-Each reason has one remediation in the [exit reason table](analysis.md#exit-reasons-and-next-actions). The errors name the reason, the field and the source and never repeat the value.
+Each reason has one remediation in the [exit reason table](analysis.md#exit-reasons-and-next-actions). The errors name the reason, the field and the source and never repeat the value. A field or area name that comes from the project is named only when it is a plain identifier (letters, digits, underscore, hyphen and dot, up to 64 characters); any other key, including one with a control or escape character, is reported as `<unknown>`, so a hostile `ahl.json` cannot write to the terminal.
 
 | Reason | Raised for |
 | --- | --- |

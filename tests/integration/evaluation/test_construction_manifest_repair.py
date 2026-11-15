@@ -21,10 +21,10 @@ if Path('manifest.json').exists() and sys.argv[2]!='drop-always':
 '''
 VARIANT = REPAIR + fixtures.AUTHOR.replace(
     "Path('manifest.json').write_text(", "if sys.argv[2].startswith('drop'): tasks[0].pop('prompt')\n"
-    "Path('manifest.json').write_text(").replace("grader_bundles={task['id']:dict(path='oracle') for task in tasks}",
-    "grader_bundles={task['id']:dict(path='oracle',**({'digest':'0'*64} if sys.argv[2]=='digest' else {})) for task in tasks}").replace(
-    "controls.append(dict(task=split,state=status,fixture=str(control)))",
-    "controls.append(dict(task=split,state=status,fixture=str(control),**({'digest':'f'*64} if sys.argv[2]=='digest' else {})))")
+    "Path('manifest.json').write_text(").replace("grader_bundles={task['id']:dict(path=prefix+'oracle') for task in tasks}",
+    "grader_bundles={task['id']:dict(path=prefix+'oracle',**({'digest':'0'*64} if sys.argv[2]=='digest' else {})) for task in tasks}").replace(
+    "controls.append(dict(task=name,state=status,fixture=str(control)))",
+    "controls.append(dict(task=name,state=status,fixture=str(control),**({'digest':'f'*64} if sys.argv[2]=='digest' else {})))")
 
 
 @pytest.fixture(params=['store', 'plain'])

@@ -52,14 +52,17 @@ cannot establish a recurring sequence under the implemented threshold.
 
 ## Analysis brief and mechanism summaries
 
-Each analysis run writes two additional private artifacts beside `analysis.json`.
-Both are descriptive observed patterns; neither is a diagnosis, an outcome label or
+Each analysis run writes two additional private artifacts beside `analysis.json`, and a third
+when it read a native capture it could attribute to the project (see
+[instruction adherence](instruction-adherence.md#analysis-and-improve)).
+All are descriptive observed patterns; none is a diagnosis, an outcome label or
 an independence claim.
 
 | Artifact | Purpose | Bound |
 | --- | --- | --- |
 | `analysis-brief.json` | What the cooperative preparation stage reads instead of `analysis.json` | Hard cap of 32 KiB on the file, independent of history size |
 | `mechanism-summaries.json` | Ranked groups with at most five evidence references each | At most 200 groups; omitted groups are counted in `truncated` |
+| `instruction-adherence.json` | Where the read Claude Code or Codex sessions ignored a project rule or a prompt instruction; digests only | At most 5,000 findings; written only when at least one native session was read; the brief's `instruction_adherence` section holds its counts |
 
 Structured tool errors are grouped by tool class and a fixed error category. A tool
 class is a documented built-in tool name or a stable opaque label; free-text error
@@ -502,6 +505,8 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `interrupted` | Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID |
 | `proposal_invalid` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
 | `evaluation_run_failed` | Read the failed evaluation records in the private receipt, fix the cause they name, then rerun. |
+| `candidate_regressed` | Read investigation.json in the private run output: its cause says whether the candidate or the pipeline made the paired score worse; revise or discard the candidate, or fix a pipeline cause and add its regression test, then rerun. |
+| `candidate_already_regressed` | Read the incremental block and the earlier run named in the private receipt: this exact candidate on this baseline already measured worse; change the focus or the harness so preparation proposes a different candidate, then rerun. |
 | `run_incomplete` | Read which evidence is missing in the private receipt of the run, restore it, then rerun. |
 | `intervention_required` | Read the intervention the private receipt records, perform it, then rerun. |
 | `setup_failed` | Correct the setup problem reported on stderr, then rerun. |

@@ -196,7 +196,10 @@ def evidence(args, output, source_context=None, *, progress=None):
     write_json(output / 'analysis.json', data_view)
     scanned = observed.result()
     write_json(output / 'mechanism-summaries.json', brief.mechanism_summaries(scanned))
-    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store))
+    from .diagnostics import adherence_native
+    adherence_section, adherence_report = adherence_native.for_analysis(args, data)
+    if adherence_report is not None: write_json(output / adherence_native.ARTIFACT, adherence_report)
+    data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store), adherence=adherence_section)
     write_json(output / 'analysis-brief.json', data_brief)
     args._analysis_next_steps, args._analysis_brief = next_steps, data_brief
     report_text = report(data_view['analysis'], source_context=source_context) + execution_report(data['execution'])
@@ -339,6 +342,14 @@ def bounded_fixture(folder, runner):
             if count > MAX_FILES or total > MAX_BYTES:
                 raise ValueError('Evaluation fixture exceeds its file/byte limit')
     return runner.digest(folder)
+
+
+def merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading):
+    """Copy the frozen development and regression tasks beside the fresh held-out ones the author wrote and rewrite the manifest (#739)."""
+    merged, facts = refinement_reuse.merge(reused, evaluation, authored)
+    manifest_contract.check_authored(merged, stage='evaluation_construction', controller_grader=False, grading=grading is not None)
+    write_json(manifest_path, merged)
+    args._evaluation_reuse = dict(attempt=attempt, **facts)
 
 
 def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None, bank_sha256=None):
@@ -698,6 +709,8 @@ def _improve(args):
             raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
+    from . import incremental
+    args._incremental = incremental.begin(args, output, original, None if allowed_paths(args) is None else sorted(allowed_paths(args)))
     if getattr(args,'_audit_hypothesis',None) is not None:
         from .audit.recheck import discover, select
         if getattr(args,'_static_automatic',False):
@@ -717,6 +730,7 @@ def _improve(args):
         deadline = started+args.timeout
         from .promotion.prerequisites import _begin
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
+        runtime_sha256 = grader_options['image_sha256']
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline,brief=getattr(args,'_analysis_brief',None))
@@ -744,6 +758,8 @@ def _improve(args):
         binary = args.codex if agent == 'codex' else args.claude
         if not shutil.which(binary):
             raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
+        from .evaluation import before_after
+        runtime_sha256 = before_after.launch_sha256(agent, shutil.which(binary), getattr(args,'inherit_env',False))
         plugin = prepare / '.harness-toolkit'
         (plugin / '.claude-plugin').mkdir(parents=True)
         write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
@@ -814,7 +830,7 @@ def _improve(args):
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
                 candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
-            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and its references/evaluation.md.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from the bounded, content-free brief {output / 'analysis-brief.json'}
 (coverage, methods run and not run, top mechanism summaries, weak-outcome signals, missing evidence),
@@ -840,7 +856,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+            command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -914,6 +930,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
+        incremental.froze(args._incremental, attempt, proposed)
+        finished = incremental.repeats_regression(args._incremental, proposed, runtime_sha256)
+        if finished:
+            incremental.block_repeat(result, args._incremental, finished)  # an earlier run measured this very candidate worse on this baseline
+            break
         if repeated is not None:
             repeated.protect([baseline,candidate,frozen,*role_views.values()],settings)
             manifest_path=repeated.bind(baseline,frozen,grader_options['image_sha256'])
@@ -978,8 +999,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             dropped = []; seen = access.ignored_digests() if access is not None else 0
             try:
                 if access is None:
+                    reused = reuse if attempt else None  # the evaluation-store route (custody-sealed outputs) still rebuilds the whole evaluation
                     manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped,box=box)
+                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped,box=box,reuse=reused)
+                    if reused: merge_reuse(args, reused, evaluation, manifest_path, json.loads(manifest_path.read_text()), attempt, grading)
                 else:
                     try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True,box=box)
                     finally: made[:] = access.repair_log(); dropped[:] = [access.ignored_digests() - seen]
@@ -997,7 +1020,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
                 **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+            evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
@@ -1062,11 +1085,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     authored, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,
                         controller_grader=False, grading=grading is not None)
                     args._authored_digest_ignored += ignored
-                    if reused:  # only fresh held-out tasks were written; the frozen ones are copied in beside them
-                        merged, facts = refinement_reuse.merge(reused, evaluation, authored)
-                        manifest_contract.check_authored(merged, stage='evaluation_construction', controller_grader=False, grading=grading is not None)
-                        write_json(manifest_path, merged)
-                        args._evaluation_reuse = dict(attempt=attempt, **facts)
+                    if reused: merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading)  # only fresh held-out tasks were written
                     break
                 except manifest_contract.ContractError as error:
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
@@ -1082,7 +1101,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
         with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
             checked = (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
-        if access is None and not controlled and bank is None and not attempt:
+        if access is None and bank is None and not attempt:
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
         if instruction is not None:
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
@@ -1171,7 +1190,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if instruction is not None:
             result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
+        from .evaluation import before_after
         single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else before_after.bank_sha256(manifest, manifest_path.parent),
+                grader_sha256=grader_fingerprint(manifest_path, portable=True), seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
+                budget_share=dict(trials=len(manifest['tasks'])), runtime_sha256=runtime_sha256),
             vacuity=labels,
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
@@ -1268,12 +1291,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         except Exception as exc:  # An explanation failure never changes the run result.
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
+        from .evaluation import before_after
+        before_after.attach(result, output, dict(single_run, bindings=bindings), margin=getattr(args, 'regression_margin', None))
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     if returned:
         result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
                                                   brief=getattr(args, '_analysis_brief', None))
         with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
+    incremental.attach(result, args._incremental, original)
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
@@ -1323,7 +1349,7 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
     if hasattr(args,'_automatic_focus'): args.focus = None
-    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots'):
+    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started

@@ -17,6 +17,7 @@ REPORT_PROFILE_V4 = 'diagnostic-triage-evaluation-v4'
 REPORT_PROFILE_V5 = 'diagnostic-triage-evaluation-v5'
 REPORT_PROFILE_V6 = 'diagnostic-triage-evaluation-v6'
 REPORT_PROFILE_V7 = 'diagnostic-triage-evaluation-v7'
+REPORT_PROFILE_V8 = 'diagnostic-triage-evaluation-v8'
 BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8)  # fixed descriptive grid, never a tuned or accepted value
 MIN_BIN_ROOTS = 10  # below this a reliability bin is reported as sparse, not as evidence
 SEVERITIES = ('severe', 'normal', 'none')
@@ -182,7 +183,7 @@ def evaluate(policy, observations, *, report_version=2):
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
-    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6, 7):
+    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6, 7, 8):
         raise ValueError('unsupported triage report version')
     names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4, require_scope=report_version >= 6,
                                   require_class_calibration=report_version >= 7)
@@ -296,7 +297,7 @@ def evaluate(policy, observations, *, report_version=2):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')
-    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6,7:REPORT_PROFILE_V7}[report_version], role='validate',
+    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6,7:REPORT_PROFILE_V7,8:REPORT_PROFILE_V8}[report_version], role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',
@@ -319,11 +320,45 @@ def evaluate(policy, observations, *, report_version=2):
     if report_version >= 7:
         result['calibration_class_roots'] = dict(minimum=policy['min_calibration_roots_per_class'],
                                                  counts={name: len(policy['calibration_class_roots_sha256'][name]) for name in names})
+    if report_version >= 8:
+        result['metric_scopes'] = dict(classes='class_conditional', population_metrics='population_over_labeled_roots')
+        result['population_metrics'] = _population_metrics(confusion, classes, decided)
     if report_version >= 5:
         result['score_diagnostics'] = _score_diagnostics(sums, roots, names)
         if result['score_diagnostics']['reliability']['sparse_bins']:
             result['reasons'].insert(len(failed)+len(missing), 'reliability_bins_sparse')
     return result
+
+
+def _population_metrics(confusion, classes, decided):
+    """Severity-level and alert-level descriptive metrics over labeled roots; nothing here is a gate.
+
+    A metric with no root behind it is None, never 0 or 1.
+    """
+    grid = {t: dict.fromkeys((*SEVERITIES, ABSTAINED), 0) for t in SEVERITIES}
+    for label, outcomes in confusion.items():
+        for outcome, count in outcomes.items():
+            grid[classes[label]['severity']][ABSTAINED if outcome == ABSTAINED else classes[outcome]['severity']] += count
+    by_severity = {}
+    for kind in SEVERITIES:
+        tp = grid[kind][kind]
+        fn = sum(grid[kind][other] for other in SEVERITIES if other != kind)
+        fp = sum(grid[other][kind] for other in SEVERITIES if other != kind)
+        held = grid[kind][ABSTAINED]
+        support = tp+fn+held
+        by_severity[kind] = dict(roots=support, tp=tp, fp=fp, fn=fn, tn=decided-tp-fp-fn, abstained=held,
+                                 precision=tp/(tp+fp) if tp+fp else None, recall=tp/support if support else None)
+    incident = SEVERITIES[:2]  # every severity but 'none' is an incident, and a decision on it an alert
+    alerts = sum(grid[t][a] for t in SEVERITIES for a in incident)
+    caught = sum(grid[t][a] for t in incident for a in incident)
+    incidents = sum(sum(grid[t].values()) for t in incident)
+    quiet = sum(grid[t]['none'] for t in SEVERITIES)
+    missed = sum(grid[t]['none'] for t in incident)
+    alert = dict(incident_roots=incidents, abstained_incident_roots=sum(grid[t][ABSTAINED] for t in incident),
+                 alert_roots=alerts, alert_precision=caught/alerts if alerts else None,
+                 incident_recall=caught/incidents if incidents else None,
+                 accepted_negative_roots=quiet, accepted_negative_error_rate=missed/quiet if quiet else None)
+    return dict(unit='declared_root', scope='labeled_roots', by_severity=by_severity, alert=alert, authority='descriptive_only')
 
 
 def _score_diagnostics(sums, roots, names):

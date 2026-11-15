@@ -1,7 +1,7 @@
 # Improve the project, the user-level skills, or both
 
 Use `--scope` when the harness you want to repair is not only the project's. The
-default stays the project; the user-level layer is opt-in, per run, and named by you.
+default stays the project; the user-level layer is opt-in, per run or through a saved default, and named by you.
 
 ```sh
 ahl improve . --repair-contracts                                          # project only (default)
@@ -10,7 +10,8 @@ ahl improve . --repair-contracts --scope project+global --agent codex    # your 
 ```
 
 Both routes, `ahl improve` and `ahl skills invoke`, take the same option and return
-the same receipt.
+the same receipt. To make a user-level scope the default of your own runs, see
+[save a default scope](#save-a-default-scope).
 
 ## Choose what to repair
 
@@ -39,6 +40,59 @@ the same receipt.
    `status: blocked` with `reason: global_scope_model_evaluation_unavailable`, exit 3,
    and nothing is written or evaluated.
 
+## Save a default scope
+
+A user-level default is optional, per user and never part of a project. It lets runs
+that name no `--scope` use `global` or `project+global` without repeating the flags.
+
+```sh
+ahl config set-scope project+global --agent claude   # runs without --scope now use it
+ahl config show                                      # default_scope: path, scope, agent, reason
+ahl improve . --scope project                        # one run that ignores the saved default
+ahl config clear-scope                               # back to the project default
+```
+
+1. Run `ahl config set-scope SCOPE --agent codex|claude`. Only `global` and
+   `project+global` can be saved, because `project` is already the default, and the
+   runtime is required: AHL never picks which of your personal directories to edit.
+2. Run `ahl improve` as usual. Without `--scope` the saved value is used, with the saved
+   runtime unless the run passes its own `--agent`. An explicit `--scope` on the command
+   line, `project` included, always wins for that run.
+3. Read `scope_source` in the receipt: `user_configuration` when the saved default chose
+   the scope, `command_line` when `--scope` did and `default` when nothing did.
+4. Expect `blocked` without `--repair-contracts`. A user-level layer is still changed
+   only by the deterministic skill-header repair, so a saved default makes a plain
+   `ahl improve .` stop with `global_scope_model_evaluation_unavailable`, exit 3, and
+   write nothing. Its `remediation` names both ways out: `--scope project` for one run
+   and `ahl config clear-scope` for good.
+
+The file is `user-scope.json` beside the remembered-runtime file (see
+[remember the runtime choice](one-call-improvement.md#remember-the-runtime-choice) for
+its location and safety rules) and has the same limits: owner-only, regular, at most
+1 KiB and never read from or written to a project. A corrupt, oversized, non-regular or
+not owner-only file is ignored and the run stays on the project; `ahl config show` names
+the `reason`. `ahl config clear` deletes the remembered-runtime file (the runtime and any loop object) and leaves the saved default scope alone.
+
+## Ask an agent instead of typing flags
+
+The installed `harness-self-improvement` skill reads your words and picks the scope for you,
+so it never widens it. It writes the scope out on every run, `project` included, so the
+command line states what you asked for:
+
+| You say | The skill runs |
+| --- | --- |
+| nothing about scope, "this project", "my repo" | `ahl skills invoke . --scope project` |
+| "global", "my user-level harness" | `ahl skills invoke . --scope global --agent claude` or `codex`, as you named it |
+| "both", "global and project" | `ahl skills invoke . --scope project+global --agent claude` or `codex` |
+| something either layer could mean ("my skills") | one question, or a `project` run; never a guess toward global |
+
+The skill never applies a [saved default scope](#save-a-default-scope): a request that names no scope runs
+`--scope project`, and the receipt's `scope_source` says `command_line`. The saved default applies to the command you type yourself.
+It asks once for the runtime when you name a global scope without one, adds `--repair-contracts`
+only when you ask for the header repair, and relays a `blocked` result as it is. It does not
+edit a user-level file by hand instead. Why the skill is a single one is explained in
+[why one skill](single-skill-rationale.md).
+
 ## Read the receipt
 
 Every scope returns `scope`, `layers`, `layers_evaluated`, `layers_changed`,
@@ -64,7 +118,8 @@ file since; it never overwrites your edit.
 ## What stays out of reach
 
 - A project `ahl.json` cannot select a scope. A `scope` key in it is rejected with
-  exit 2 before anything is created; only the command line can add the user-level layer.
+  exit 2 before anything is created; only the command line or your own saved default
+  can add the user-level layer.
   The file still limits the project layer (its `harness_paths` and its recommendation-only
   rule) and the run's time budget, and it never limits or widens the user-level layer.
 - Instruction files, settings, hooks, permissions, secrets, credentials, memory,

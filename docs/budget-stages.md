@@ -46,8 +46,7 @@ A construction pass that ends after its box, or is stopped at it, ends the run a
 more pass only when the remaining budget covers another box plus the whole trials
 allotment; that attempt is recorded in `evaluation_construction_repairs` (reason
 `evaluation_construction_timeout`, outcome `repaired` or `requested`). A second
-overrun ends the run. The refinement reuse applies to the cooperative (Codex and
-Claude) construction path only.
+overrun ends the run.
 
 Controlled (Responses) construction gets the same box, and the same typed stop, on
 both routes (the direct route and the evaluation-store route). Each agent pass,
@@ -107,8 +106,16 @@ were frozen. Everything is then validated and frozen again before any trial, so 
 freeze-before-trial rule, the frozen graders and the fresh held-out rule (an input
 that an earlier attempt used is rejected) are unchanged. The receipt records
 `evaluation_reuse` with `reused_tasks`, `fresh_heldout_tasks` and
-`frozen_digests_verified`. Controlled (Responses) construction still rebuilds the
-whole evaluation on refinement.
+`frozen_digests_verified`.
+
+Where reuse applies:
+
+| Route | On refinement |
+| --- | --- |
+| Cooperative (Codex and Claude) | Reuses the frozen tasks; the author writes fresh held-out tasks only |
+| Controlled (Responses), direct | The same: the author's prompt asks for fresh held-out tasks only, and a task that is not held out, a reused id or a file at a reserved path gets the one repair pass, then a typed `evaluation_manifest_field_invalid` stop |
+| Controlled (Responses), evaluation store | Rebuilds the whole evaluation: the store seals each author output under its own custody record, and no reuse path into a sealed output exists yet |
+| Pinned task bank | Nothing to reuse: a pinned bank is evaluated in a single attempt and never refines |
 
 ## Receipt fields
 

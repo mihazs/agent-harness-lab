@@ -98,7 +98,7 @@ class _VersionAction(argparse.Action):
 
 
 def evaluator():
-    path = assets() / 'skills/harness-evaluation/scripts/run_evaluation.py'
+    path = assets() / 'skills/harness-self-improvement/scripts/run_evaluation.py'
     spec = importlib.util.spec_from_file_location('ahl_evaluator', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -181,8 +181,8 @@ def main(argv=None):
     if argv and argv[0] in ('bank', 'experiment', 'regression', 'sandbox-check'):
         from agent_harness_lab.evaluation.cli import main as evaluation_main
         return evaluation_main(argv)
-    commands = {'mine': assets() / 'skills/harness-evaluation/scripts/mine_traces.py',
-                'evaluate': assets() / 'skills/harness-evaluation/scripts/run_evaluation.py'}
+    commands = {'mine': assets() / 'skills/harness-self-improvement/scripts/mine_traces.py',
+                'evaluate': assets() / 'skills/harness-self-improvement/scripts/run_evaluation.py'}
     tool_commands = {'diagnose': 'diagnose.py', 'benchmark': 'benchmark_models.py'}
     if argv and argv[0] in commands.keys() | tool_commands.keys():
         import tools
@@ -317,10 +317,12 @@ def main(argv=None):
             command.add_argument('--evaluation-store',type=Path,help='Explicit private HistoryStore for automatic controlled construction/feedback exposure; never certification')
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
+            from .evaluation.before_after import margin_option
             command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
             command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
+            command.add_argument('--regression-margin', type=margin_option, help='Tolerated paired score loss for the before/after guard, from 0 up to but not including 1 (default: 0, any net loss); a candidate worse by more ends blocked as candidate_regressed with an investigation, and improved then needs its interval above this margin. A fixed-bank request declares its own margins')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
-            command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
+            command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line or your saved default (ahl config set-scope) selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
@@ -382,10 +384,14 @@ def main(argv=None):
                 return exit_code(result['status'])
             from .one_call import resolve
             if args.command == 'improve':
+                from .scope import apply_user_default
+                apply_user_default(args, explicit)
                 from .history import prepare
                 prepare(args)
                 if args.remember_runtime and (args.agent not in ('codex', 'claude') or '--agent' not in explicit):
                     raise ValueError('--remember-runtime requires an explicit --agent codex or --agent claude')
+                if args.regression_margin is not None and args.experiment_request is not None:
+                    raise ValueError('--regression-margin does not apply to --experiment-request, whose request declares family_margin and effect_margin')
             started = time.monotonic()
             args._entry_started = started
             resolve(args, explicit)

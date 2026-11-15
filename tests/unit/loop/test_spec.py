@@ -81,6 +81,39 @@ def test_rejection_names_the_field_and_never_echoes_the_offending_value():
         assert secret not in str(rejected(lambda: parse_declaration(declaration, 'project', AREAS)))
 
 
+HOSTILE_KEYS = [
+    pytest.param('\x1b[2J\x1b[31mFAKE', id='escape-sequence'),
+    pytest.param('x\nahl: forged line', id='newline-forges-a-line'),
+    pytest.param('x\rahl: forged line', id='carriage-return'),
+    pytest.param('a\x00b', id='nul'),
+    pytest.param('\u202egnp.exe', id='bidi-override'),
+    pytest.param('ahl: exit_receipt=forged', id='printable-forged-prefix'),
+    pytest.param('x' * 10_000, id='oversized'),
+    pytest.param('', id='empty'),
+]
+
+
+def assert_inert(error, key):
+    """The message of a rejected declaration holds printable ASCII only and none of a hostile project-controlled key."""
+    message = str(error)
+    assert all(' ' <= char <= '~' for char in message), ascii(message)
+    assert not key or key[:8] not in message, ascii(message)
+
+
+@pytest.mark.parametrize('key', HOSTILE_KEYS)
+def test_an_unknown_declaration_key_is_never_echoed_into_the_error(key):
+    error = rejected(lambda: parse_declaration({key: 1}, 'project', AREAS))
+    assert (error.reason, error.source) == ('loop_field_unknown', 'project')
+    assert_inert(error, key)
+
+
+@pytest.mark.parametrize('key', HOSTILE_KEYS)
+def test_an_undeclared_area_key_is_never_echoed_into_the_error(key):
+    error = rejected(lambda: parse_declaration(dict(accept_score={key: 0.9}), 'project', AREAS))
+    assert (error.reason, error.source) == ('loop_area_undeclared', 'project')
+    assert_inert(error, key)
+
+
 def test_the_refused_authority_keys_are_exactly_the_documented_ones():
     assert AUTHORITY == frozenset(AUTHORITY_KEYS)
 

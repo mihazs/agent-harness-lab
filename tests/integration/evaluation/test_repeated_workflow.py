@@ -664,8 +664,8 @@ def test_actual_critical_dispatch_vetoes_artifact_success(kernel_case):
 @kernel_only
 def test_different_actual_artifacts_change_analysis_and_recommendation(kernel_case):
     kernel_case.mode='harm';runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
-    assert result['analysis']['status'] == 'rejected', result
-    assert result['recommendation'] == 'candidate_not_supported'
-    assert len(kernel_case.calls) == 26
+    output=kernel_case.root/'output';_,result=kernel_case.invoke(runtime,pin,output)
+    assert (result['status'],result['reason']) == ('blocked','candidate_regressed'), result
+    assert result['analysis']['status'] == 'rejected';assert 'recommendation' not in result
+    assert (output/'investigation.json').is_file();assert len(kernel_case.calls) == 26
 

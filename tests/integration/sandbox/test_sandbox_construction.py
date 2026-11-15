@@ -48,8 +48,8 @@ def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(prep):
     for role,folder in views.items():
         summary = json.loads((folder/'analysis-summary.json').read_text())
         assert canary not in json.dumps(summary); assert summary['findings'][0]['kind'] == 'tool_error'
-        assert (folder/'methodology/harness-evaluation/SKILL.md').is_file()
-        assert (folder/'methodology/harness-self-improvement').exists() == (role=='proposer')
+        assert (folder/'methodology/harness-self-improvement/references/evaluation.md').is_file()
+        assert (folder/'methodology/harness-self-improvement/SKILL.md').exists() == (role=='proposer')
         assert not list(folder.rglob('*.pyc'))
         WorkingState(folder,prep.deadline)
 
@@ -141,7 +141,11 @@ Path('proposal.json').write_text(json.dumps(dict(status='candidate',mechanisms=[
 '''
 AUTHOR = r'''from pathlib import Path
 import json,sys
-scenario = int(sys.argv[1]); bundle = Path('oracle'); bundle.mkdir()
+scenario = int(sys.argv[1])
+fresh = sys.argv[2].startswith('reuse') and scenario>1  # a refinement author told to write only fresh held-out tasks beside the reused ones
+kind = 'development' if sys.argv[2]=='reuse-split' else 'heldout'  # reuse-split: a refinement author that breaks the held-out-only rule
+prefix = 'fresh-' if fresh else ''
+bundle = Path(prefix+'oracle'); bundle.mkdir()
 grader = """from pathlib import Path
 import json,sys
 actual=json.loads((Path(sys.argv[1])/'result.json').read_text())
@@ -152,16 +156,17 @@ sys.exit(0 if outcome else 1)
 """
 (bundle/'grade.py.txt').write_text(grader); (bundle/'expected.json').write_text(json.dumps(dict(scenario=scenario)))
 tasks,controls = [],[]
-for split in ('development','regression','heldout'):
- fixture = Path(split); fixture.mkdir(); (fixture/'task.json').write_text(json.dumps(dict(split=split,scenario=scenario)))
- tasks.append(dict(id=split,split=split,fixture=split,prompt='Produce the synthetic result',artifacts=['result.json']))
+for split in ((kind,) if fresh else ('development','regression','heldout')):
+ name = prefix+split
+ fixture = Path(name); fixture.mkdir(); (fixture/'task.json').write_text(json.dumps(dict(split=split,scenario=scenario)))
+ tasks.append(dict(id=name,split=split,fixture=name,prompt='Produce the synthetic result',artifacts=['result.json']))
  for status in ('broken','partial','complete'):
-  control = Path(split+'-'+status); control.mkdir()
+  control = Path(name+'-'+status); control.mkdir()
   (control/'result.json').write_text(json.dumps(dict(complete=status!='broken',scenario=scenario+1 if status=='partial' else scenario)))
-  controls.append(dict(task=split,state=status,fixture=str(control)))
+  controls.append(dict(task=name,state=status,fixture=str(control)))
 if sys.argv[2]=='bad-argv': tasks[0]['grader']=['/bin/sh','-c','forbidden host execution']
 Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],tasks=tasks,grader_self_tests=controls,
- grader_bundles={task['id']:dict(path='oracle') for task in tasks})))
+ grader_bundles={task['id']:dict(path=prefix+'oracle') for task in tasks})))
 '''
 EXECUTOR = r'''from pathlib import Path
 import json,sys
@@ -201,7 +206,7 @@ class ControlledWorkflow:
         if any(item.get('type')=='function_call_output' for item in payload['input']): return wire.reply([wire.message('final-'+ident)])
         if 'You are the proposer' in instructions:
             self.proposals += 1
-            argv = ['/usr/bin/python3','-c',PROPOSER,'worse' if self.mode=='refine' and self.proposals==1 else 'good']
+            argv = ['/usr/bin/python3','-c',PROPOSER,'worse' if (self.mode=='refine' or self.mode.startswith('reuse')) and self.proposals==1 else 'good']
         elif 'You are the evaluator author' in instructions:
             self.authors += 1
             argv = ['/usr/bin/python3','-c',AUTHOR,str(self.authors),self.mode]
@@ -270,7 +275,7 @@ def test_all_roles_share_one_client_and_budget_without_exposing_candidates_to_au
 
 
 def test_refinement_receives_only_minimal_development_feedback_and_a_fresh_author(controlled):
-    controlled.mode = 'refine'; result = controlled.run_controlled()
+    controlled.mode = 'reuse'; result = controlled.run_controlled()  # the refinement author writes fresh held-out tasks only
     assert result['status'] == 'inconclusive'; assert controlled.authors == 2
     feedback = json.loads((Path(result['output'])/'preparation/proposer-context-1/feedback.json').read_text())
     assert len(feedback['trials']) == 4

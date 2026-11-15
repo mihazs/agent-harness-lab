@@ -3,13 +3,16 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
 import tempfile
+import time
 
 from agent_harness_lab.diagnostics import triage_policy
-from agent_harness_lab.evaluation.integrity import contained
+from agent_harness_lab.evaluation import review_authority as authority
+from agent_harness_lab.evaluation.integrity import contained, read_regular
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
 from agent_harness_lab.evaluation.task_bank import identifier
 from agent_harness_lab.sources.execution import RecordRef
@@ -27,6 +30,12 @@ MAX_DECISIONS = 1024
 GROUPING = 'reviewed-lineage-grouping-v1'
 MAX_GROUPINGS = 16
 MAX_GROUP_REVISIONS = 4096
+REVIEW_KINDS = ('submitted','adjudicated')
+GOLD_POLICY = 'diagnostic-gold-label-policy-v1'
+GOLD_REQUIREMENTS = ('adjudicated_known_outcome','complete_approved_unambiguous_capture','distinct_declared_reviewer_identities',
+    'every_review_event_approved_by_installed_policy_key','distinct_approving_keys')
+GOLD_LIMITATIONS = ('A verified key approval shows that a policy-listed key signed the exact review; it does not show that the keys belong to distinct independent humans or that the declared outcome is true.',
+    'Meeting the policy is necessary, not sufficient, for a future gold label: no export, benchmark, classifier-selection or publication authority changes.')
 ACCESS_PROFILE = 'diagnostic-corpus-protected-access-v1'
 ACCESS_PARTITION = 'validation'  # certification stays reserved: no genuine qualification issuer exists
 ACCESS_LIMITATIONS = ('Validation labels are operator-attested declarations, not gold labels; reviewer and root independence are unverified.',
@@ -84,6 +93,25 @@ def incident(value):
         seen.add(item['id'])
     if len(encoded(value))>128*1024: raise ValueError('incident metadata byte bound exceeded')
     return deepcopy(value)
+
+
+def _unbound(payload):
+    return {key:value for key,value in payload.items() if key!='authentication'}
+
+
+def _review(value):
+    """The frozen fields of one key-approved review request; only reasoned adjudications carry a reason."""
+    _fields(value,'case_id expected_event_sha256 kind reviewer label reason'); _sha(value['case_id']); _sha(value['expected_event_sha256'])
+    _fields(value['reviewer'],'identity'); _identity(value['reviewer']['identity'])
+    if value['kind'] not in REVIEW_KINDS or (value['kind']=='adjudicated')!=(value['reason'] is not None):
+        raise ValueError('key-approved review requires a submission without a reason or an adjudication with one')
+    if value['reason'] is not None: _text(value['reason'])
+
+
+def _deadline(seconds):
+    if type(seconds) not in (int,float) or not 0<seconds<=60 or not math.isfinite(seconds):
+        raise ValueError('bounded review verification budget required')
+    return time.monotonic()+seconds
 
 
 def annotation(value, inputs):
@@ -279,19 +307,36 @@ class CorpusStore(PrivateJournal):
                 _fields(payload,'reviewer'); _identity(payload['reviewer'])
                 if payload['reviewer']!=claimant:raise ValueError('nonresponse differs from review claim')
             elif kind=='submitted':
-                _fields(payload,'reviewer label')
+                _fields(_unbound(payload),'reviewer label')
                 if payload['reviewer']!=claimant or len(submissions)>=2: raise ValueError('review claim/submission differs')
-                annotation(payload['label'],inputs); submissions.append(payload); claimant=None
+                annotation(payload['label'],inputs); self._approval(case_id,event); submissions.append(payload); claimant=None
                 if event['state']!=('submitted' if len(submissions)==1 else 'reviewed'):
                     raise ValueError('review count differs from lifecycle')
             elif kind=='adjudicated':
-                _fields(payload,'reviewer label reason'); _identity(payload['reviewer']); _text(payload['reason'])
+                _fields(_unbound(payload),'reviewer label reason'); _identity(payload['reviewer']); _text(payload['reason'])
                 if len(submissions)!=2 or payload['reviewer'].casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                     raise ValueError('adjudication requires a separate declared reviewer')
-                final=annotation(payload['label'],inputs)
+                final=annotation(payload['label'],inputs); self._approval(case_id,event)
             elif kind=='exposed':
                 _fields(payload,'reason'); _text(payload['reason'])
         return case,inputs,events,submissions,final
+
+    def _approval(self, case_id, event):
+        """The stored key approval of an authenticated review event after an identity check, else None.
+
+        This compares the record with the exact event and does not verify the signature; ``gold_label_policy`` does."""
+        payload=event['payload']; binding=payload.get('authentication')
+        if binding is None: return None
+        _fields(binding,'profile record_sha256'); _sha(binding['record_sha256'])
+        wrapper,pin=record(contained(self.root,'review-auth/'+binding['record_sha256']+'.json'),2*authority.MAX_BYTES)
+        _fields(wrapper,'schema_version profile request signature proof')
+        review=dict(case_id=case_id,expected_event_sha256=event['previous_sha256'],kind=event['kind'],
+            reviewer=dict(identity=payload['reviewer']),label=payload['label'],reason=payload.get('reason'))
+        if (binding['profile']!=authority.PROFILE or wrapper['profile']!=authority.PROFILE or pin!=binding['record_sha256']
+                or not isinstance(wrapper['request'],dict) or wrapper['request'].get('purpose')!=authority.CORPUS_PURPOSE
+                or wrapper['request'].get('review')!=review):
+            raise ValueError('authenticated review record differs from its exact case event')
+        return wrapper
 
     def _retirement(self, case_id, inputs, events):
         """Return the newest exposure event that retires this incident lineage, if any."""
@@ -414,7 +459,8 @@ class CorpusStore(PrivateJournal):
             return dict(**self._summary(case_id,inputs,events,submissions,final),review_packet=visible,
                 prior_labels_visible=False,predicted_summary_visible=False)
 
-    def update(self, case_id, expected_event_sha256, kind, *, reviewer=None, label=None, reason=None):
+    def update(self, case_id, expected_event_sha256, kind, *, reviewer=None, label=None, reason=None, _authentication=None):
+        """Apply one queue operation; ``_authentication`` is ``submit_authenticated``'s hook to bind a verified approval."""
         _sha(expected_event_sha256)
         with self.locked():
             case,inputs,events,submissions,final=self._opened(case_id)
@@ -435,9 +481,82 @@ class CorpusStore(PrivateJournal):
                 raise ValueError('only the current claimant can submit')
             if kind=='adjudicated' and (len(submissions)!=2 or reviewer.casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}):
                 raise ValueError('adjudication requires a separate declared reviewer')
+            if _authentication is not None: payload['authentication']=_authentication()
             self.append(case,events,kind,target,payload)
             _,inputs,events,submissions,final=self._opened(case_id)
             return self._summary(case_id,inputs,events,submissions,final)
+
+    def install_review_policy(self, path):
+        """Install the host-controlled reviewer public-key policy (purpose ``diagnostic_corpus_review``) for this store."""
+        authority.require_host()
+        with self.locked(create=True): return authority.install(self,path,purpose=authority.CORPUS_PURPOSE)
+
+    def prepare_review(self, case_id, expected_event_sha256, kind, reviewer, label, reason=None):
+        """Freeze one unsigned submission or adjudication request for external OpenSSH signing.
+
+        Sign the file at ``request_path`` with namespace ``ahl.diagnostic-corpus-review.v1``; the private key never
+        enters this store. ``submit_authenticated`` then records the review against the exact current event."""
+        review=dict(case_id=case_id,expected_event_sha256=expected_event_sha256,kind=kind,reviewer=dict(identity=reviewer),label=label,reason=reason)
+        _review(review); authority.require_host()
+        with self.locked():
+            _,inputs,events,_,_=self._opened(case_id)
+            if events[-1][1]!=expected_event_sha256: raise ValueError('stale corpus event revision')
+            annotation(label,inputs)
+            try: value=authority.request(self,review,purpose=authority.CORPUS_PURPOSE)
+            except FileNotFoundError: raise ValueError('diagnostic corpus reviewer policy is not installed') from None
+            raw=encoded(value); pin=hashlib.sha256(raw).hexdigest()
+            folder=contained(self.root,'review-requests'); folder.mkdir(mode=0o700,exist_ok=True); path=folder/(pin+'.json')
+            if path.exists():
+                if read_regular(path,authority.MAX_BYTES*2)!=raw: raise ValueError('frozen review request changed')
+            else: write_bytes(path,raw); sync_directory(folder)
+            return dict(profile=authority.PROFILE,request=value,request_sha256=pin,request_path=str(path),gold_label=False,publication_allowed=False)
+
+    def submit_authenticated(self, request, signature, *, budget_seconds=10):
+        """Record one submission or adjudication whose exact request a policy-listed key signed.
+
+        The queue transition rules, reviewer separation and stale-revision check are those of ``update``. The key
+        approval is actor evidence only: it does not make the reviewer independent or the label gold."""
+        deadline=_deadline(budget_seconds)
+        review=authority.request_value(self,request,purpose=authority.CORPUS_PURPOSE); _review(review)
+        try: proof=authority.verify(self,request,signature,purpose=authority.CORPUS_PURPOSE,deadline=deadline)
+        except FileNotFoundError: raise ValueError('diagnostic corpus reviewer policy is not installed') from None
+        return self.update(review['case_id'],review['expected_event_sha256'],review['kind'],reviewer=review['reviewer']['identity'],
+            label=review['label'],reason=review['reason'],_authentication=lambda: authority.save(self,request,signature,proof))
+
+    def _approved_keys(self, case_id, events, deadline):
+        """The blocker code, or None, from re-verifying every review event's key approval of one case now."""
+        wrappers=[self._approval(case_id,event) for event,_ in events if event['kind'] in REVIEW_KINDS]
+        if any(wrapper is None for wrapper in wrappers): return 'unauthenticated_review'
+        keys=set()
+        for wrapper in wrappers:
+            try: proof=authority.verify(self,wrapper['request'],wrapper['signature'],purpose=authority.CORPUS_PURPOSE,deadline=deadline)
+            except (authority.VerifierUnavailable,TimeoutError): return 'verification_unavailable'
+            except (ValueError,OSError): return 'review_signature_invalid_or_revoked'
+            if proof!=wrapper['proof']: return 'review_signature_invalid_or_revoked'
+            keys.add(proof['key_sha256'])
+        return None if len(keys)==len(wrappers) else 'reused_reviewer_key'
+
+    def gold_label_policy(self, *, budget_seconds=60):
+        """Report which current cases meet ``diagnostic-gold-label-policy-v1``; it verifies signatures and issues no label.
+
+        A case that cannot be verified now (no OpenSSH verifier, exhausted budget) has ``meets_policy`` None, never a pass or a fail."""
+        deadline=_deadline(budget_seconds)
+        with self.locked():
+            rows,summaries,revision=self._snapshot(); cases=[]
+            for (key,(_,inputs,events,_,final)),summary in zip(rows,summaries):
+                blockers=[]
+                if final is None: blockers.append('not_adjudicated')
+                else:
+                    if final['outcome']=='unknown': blockers.append('unknown_outcome')
+                    if not _eligible(inputs): blockers.append('ineligible_capture_permission_or_ambiguity')
+                    found=self._approved_keys(key,events,deadline)
+                    if found is not None: blockers.append(found)
+                definite=[code for code in blockers if code!='verification_unavailable']
+                cases.append(dict(case_id=key,state=summary['state'],meets_policy=False if definite else None if blockers else True,blockers=blockers))
+            return dict(schema_version=1,profile=GOLD_POLICY,revision_sha256=revision,requirements=list(GOLD_REQUIREMENTS),cases=cases,
+                meeting_policy=sum(row['meets_policy'] is True for row in cases),unverifiable=sum(row['meets_policy'] is None for row in cases),
+                gold_labels_issued=0,reviewer_independence='unverified',root_independence='unverified',
+                classifier_selection_allowed=False,publication_allowed=False,limitations=list(GOLD_LIMITATIONS))
 
     def _snapshot(self):
         from agent_harness_lab.evaluation.decision_receipts import engine

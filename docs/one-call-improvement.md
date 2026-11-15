@@ -51,6 +51,11 @@ It remains inconclusive until the applicable certification prerequisites are met
 After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
+The receipt also carries a `before_after` block; a candidate worse than its baseline ends
+`blocked` with reason `candidate_regressed` and an `investigation.json`, see the
+[before/after guard](before-after-guard.md).
+A second run on the same project also carries an `incremental` block: whether the earlier candidate was applied, ignored or edited, the earlier
+score as a labelled historical observation, and the stages it reran; see [incremental runs](incremental-runs.md).
 
 No manual analyze/manifest/evaluate sequence is required. Authentication remains
 the runtime's responsibility; AHL does not inspect credential contents.
@@ -90,8 +95,8 @@ preflight. Without the flag nothing is written, and the flag without an explicit
 
 ```sh
 ahl improve . --agent codex --remember-runtime
-ahl config show     # {"path": ..., "runtime": "codex", "reason": null}
-ahl config clear    # deletes the whole file: the runtime and any loop object
+ahl config show     # {"path": ..., "runtime": "codex", "reason": null, "default_scope": {...}}
+ahl config clear    # deletes the whole runtime file: the runtime and any loop object
 ```
 
 The file is a versioned `{schema_version, runtime}` document at
@@ -107,7 +112,9 @@ credential or token, and is never read from or written to a project, so a projec
 file cannot override it. A corrupt, oversized, non-regular or not owner-only file
 is ignored (`ahl config show` names the `reason`). The remembered runtime only
 chooses among installed runtimes: it never overrides `--agent` or a project
-`ahl.json` and grants no execution authority.
+`ahl.json` and grants no execution authority. It never chooses a user-level harness
+location either; a [saved default scope](improve-scope.md#save-a-default-scope) is a
+separate file with its own runtime.
 
 To evaluate from sessions already recorded, add `--history`; see
 [improve from past sessions](improve-from-past-sessions.md).
@@ -397,7 +404,7 @@ No CLI path stages a hook unit yet. A passed contract is not behavioral evidence
 Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
 canary inside a private trial workspace with no credentials in its environment,
 sandboxed by default by the bubblewrap backend without network or host home
-([hook canary validation](../skills/harness-evaluation/references/execution.md#hook-canary-validation)).
+([hook canary validation](../skills/harness-self-improvement/references/execution.md#hook-canary-validation)).
 
 ## Workflow contract
 
@@ -521,6 +528,9 @@ candidate in these cases:
   (`required_text_removed`). A newly required text must also become active
   (`required_text_not_active`).
 - The staged baseline no longer matches the project (`stale_baseline`).
+- A staged baseline or candidate tree holds a symlink (`symlink_in_staged_tree`). It is a
+  blocked validation, never an exception, and a symlink that appears in the evaluated
+  candidate later invalidates the validation as `candidate_changed`.
 - The plan is missing or invalid, its runtime is not the trial runtime, its task
   directory does not exist, or either closure fails to resolve.
 
@@ -694,7 +704,8 @@ one unit before evaluation, because an adoptable path does not make a bundle
 valid. A bundle is a folder directly below a `skills/` folder
 (`.claude/skills`, `.agents/skills`, an owned root `skills/` or a nested
 `<dir>/.claude/skills`). Each change is a `create` (no baseline file), `remove`
-(no candidate file) or `update`, and a complete removal is always valid. Any
+(no candidate file) or `update`. A complete removal needs no membership check but
+is blocked (`removed_bundle_referenced`) while a remaining file names the bundle. Any
 other candidate membership must keep `SKILL.md` (`missing_entry_point`, so
 deleting only the entry point cannot orphan the assets), open it with a
 frontmatter fence on line 1 that parses (`missing_frontmatter`,
@@ -717,6 +728,13 @@ A newly created bundle whose name equals another bundle's in the candidate state
 the same kind of folder (`.claude/skills`, `.agents/skills` or a bare `skills`, never across kinds) at
 the same, an enclosing or a nested directory, is blocked as `shadowed_name`; sibling
 packages do not collide, and updates and removals are not compared.
+A complete removal is blocked as `removed_bundle_referenced` while a file that remains in the
+candidate state outside the removed bundle (the root `AGENTS.md` or `CLAUDE.md`, or any file of
+another bundle) links into the bundle or names its folder as a whole path, either project-relative
+or relative to that file's folder. A reference the same candidate also removes does not count, so a
+consolidation passes once the surviving files stop naming the removed bundle. A bare skill name in
+prose is not a reference, and the reason names no file; search for the removed folder path to find
+the referrer.
 
 The check reads staged bytes and never runs them; executable files and
 hook-bearing frontmatter still go through the hook contract. `ahl improve`
@@ -728,8 +746,9 @@ When `ahl.json` `harness_paths` is configured, the snapshot holds only the liste
 files, so bundle membership is unknown: the entry point, dangling reference and
 orphan asset checks are skipped, the action is reported as `scoped`, and only
 the listed `SKILL.md` frontmatter, name and escaping links are judged.
-References from other bundles to a removed one, name collisions across kinds of folder, and runtime activation are not checked or
-claimed.
+Name-only mentions of a removed skill, references from files outside the snapshot, name collisions
+across kinds of folder, and runtime activation are not checked or claimed. A scoped snapshot cannot
+judge removals, so it skips the reference check.
 
 Each reviewed bundle, adoptable or blocked, is one typed row: `bundle`, `action`, `reasons`, `placement`,
 `before_sha256` and `after_sha256`. `placement` names the runtime whose documented skills root holds the bundle
@@ -796,11 +815,16 @@ are all verified is reported as the actual committed result.
 of `ahl improve` and `ahl skills invoke`; [the how-to](improve-scope.md) shows the
 workflow. This section is the contract.
 
-**Selection.** Only the command line selects a scope. A project `ahl.json` that
-carries a `scope` key is rejected as invalid input before any run state exists, so an
-untrusted checkout cannot escalate to the user-level layer. `global` and `project+global`
-need an explicit `--agent codex|claude`; `auto`, `responses`, a configured runtime, a
-remembered runtime and host markers never choose a user-level location. The location is
+**Selection.** Only the command line, or the user's own saved default, selects a scope.
+`--scope` on the command line always wins; without it, a valid `user-scope.json`
+(`ahl config set-scope global|project+global --agent codex|claude`, an owner-only file of
+at most 1 KiB beside `user-config.json` and never read from a project) supplies the scope
+and, unless the run passes `--agent`, its runtime; an absent or ignored file leaves the
+default `project`. A project `ahl.json` that carries a `scope` key is rejected as invalid
+input before any run state exists, so an untrusted checkout cannot escalate to the
+user-level layer. `global` and `project+global` need an explicit `--agent codex|claude`
+or the saved default's runtime; `auto`, `responses`, a configured runtime, a remembered
+runtime and host markers never choose a user-level location. The location is
 the runtime's user skill directory: `$CLAUDE_CONFIG_DIR/skills` (else `~/.claude/skills`)
 for `claude` and `~/.agents/skills` for `codex`.
 
@@ -823,6 +847,7 @@ layer committed is reported beside that layer, never instead of it.
 | Key | Meaning |
 | --- | --- |
 | `scope` | The selected scope. |
+| `scope_source` | Where the scope came from: `command_line` (`--scope`), `user_configuration` (the saved default) or `default` (the project). |
 | `layers` | One row per selected layer in evaluation order: `layer` (`global` or `project`), `evaluated`, `status`, `changed_files` (relative to the layer's `root`), `recommended_files` (planned but not applied), `reason`, `root` and, when present, `plan`, `plan_sha256`, `deployment`, `journal`, `rollback` and `error`. |
 | `layers_evaluated`, `layers_changed` | Layer names that were examined, and that changed at least one file. |
 | `changed_files`, `recommended_files` | All layers combined; user-level entries carry a `global:` prefix, project entries stay unprefixed. |
@@ -840,9 +865,8 @@ authorization digest, so its identity differs from a project plan's. It carries 
 
 **Not yet available.** Model-driven evaluation of a user-level layer (it returns
 `blocked` with `global_scope_model_evaluation_unavailable`), user-level instruction,
-settings and hook layers, choosing the responsible layer for a conflict between layers,
-user-level configuration of a default scope, and a deprecation notice on
-`ahl skills invoke` are not implemented.
+settings and hook layers, choosing the responsible layer for a conflict between layers
+and a deprecation notice on `ahl skills invoke` are not implemented.
 
 ## Change matrix coverage
 
@@ -913,13 +937,30 @@ already holds the reviewed bytes, so the command reports `stale` and writes noth
 transaction with `ahl promotion PROJECT --deployment ID --action recover` or undo it with `ahl rollback ID
 --project PROJECT`. These apply-stage cases are covered by `tests/integration/workflow/test_plan_review.py`.
 
+Ctrl-C is handled the same way. A review prints that it wrote nothing and exits 1. An interrupted authorization
+exits 1 with the command to repeat and, when a transaction for that plan had begun writing, the unfinished
+deployment IDs to pass to `ahl promotion PROJECT --deployment ID --action recover`; no traceback is printed. A
+repair run interrupted before its target write (while journaling or just before writing) leaves the project
+unchanged and keeps its saved plan, so the same review and authorized apply then write the target once; a run
+interrupted while planning has no plan, and `ahl apply` rejects it with exit 2. These stage cases are covered by
+`tests/integration/workflow/test_stage_interruptions.py`.
+
+A behavioral run interrupted while its paired trials run, or after they finish but before the decision, writes
+`workflow.json` with `status: interrupted` and leaves the project unchanged. Trials that ended stay in
+`evaluation-0/results.json`; when the evaluation itself was cut short that file has no `inputs_unchanged` or
+`elapsed_seconds`, so it is not a finished evaluation. The run has no `change-plan.json`, so `ahl apply` rejects it with
+exit 2, and `--resume` reports `blocked` / `resume_requires_intervention`: only a completed no-change proposal can be
+finalized without a model action, so a lost or finished trial is never replayed. Run the command again for a new run
+with a new output directory; it pays for its own trials and leaves the interrupted run as it was. These cases are
+covered by `tests/integration/workflow/test_evaluation_interruption.py`.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. `ahl apply` reviews every saved plan but applies only the
-independently reproduced skill-header repair; interruption tests cover only its
-application stage (planning, evaluation and review interruptions, Codex hook
-application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
+independently reproduced skill-header repair; interruption tests cover the planning,
+journaling, review and application stages of that repair, and an interrupted behavioral evaluation is pinned to
+leave the target unchanged with nothing to apply or replay (Codex hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation, operation-level review and capture join are described above; a native capture
 of the trials and the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),

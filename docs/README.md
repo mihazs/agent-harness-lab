@@ -35,6 +35,8 @@ reader purpose.
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
 - [Vacuity labels](vacuity-labels.md): the closed set of five labels for an evaluation that proves nothing, where each surface applies them, and the audit of reported numbers.
 - [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
+- [Before/after guard](before-after-guard.md): the paired verdict, the frozen-inputs identity of both arms and the investigation record of a regressed candidate.
+- [Incremental runs](incremental-runs.md): what a second `ahl improve` reads from the first: applied, ignored, regressed or edited candidates, historical beside fresh scores, and the finished regression it does not repeat.
 - [Stage budgets and early stops](budget-stages.md): the construction time box, feasibility check, uninformative stop, refinement reuse and per-stage receipt.
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
@@ -45,11 +47,11 @@ reader purpose.
 ## Understand the context
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
-- [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
+- [Why there is one skill](single-skill-rationale.md), [why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
 - [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): why a numeric, non-LLM better, equivalent, worse or insufficient-evidence score runs beside the unchanged Hoeffding path, how it treats unknown outcomes, how its false-recommendation rate was calibrated with the seeded power simulator under a frozen protocol, its descriptive-only desirability and Pareto epsilon-indicator report, its evidence status (no peer-reviewed work applies the method to agent harness scoring) and its limits.
 - [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md).
 - [Where a tool-result adapter may attach to a runtime](adapter-runtime-decision.md): the evidence, decision and open blockers for the identity bridge.
-- [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
+- [Scientific sources and limits](../skills/harness-self-improvement/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-self-improvement/references/trace-diagnosis.md), and [execution contract](../skills/harness-self-improvement/references/execution.md).
 
 ## Historical and maintainer material
 
