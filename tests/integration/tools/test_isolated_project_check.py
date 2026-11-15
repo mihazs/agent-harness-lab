@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -326,3 +327,72 @@ def test_setup_problems_return_two(tmp_path, capsys):
     with pytest.raises(SystemExit) as error:
         check.main([str(tmp_path)])
     assert error.value.code == 2
+
+
+@pytest.fixture
+def temporary(tmp_path, monkeypatch):
+    """An empty temporary root, so a test sees exactly the directories the check made."""
+    root = tmp_path / 'temporary'
+    root.mkdir()
+    monkeypatch.setattr(tempfile, 'tempdir', str(root))
+    return root
+
+
+def worktree_of(repo, log):
+    check.run(repo, py("import os; print(os.environ['WORKTREE'])"), log_dir=log)
+    return (log / 'stdout.txt').read_text().strip()
+
+
+def test_checks_of_one_repository_that_run_in_turn_use_the_same_worktree_path(repo, tmp_path, temporary):
+    first = worktree_of(repo, tmp_path / 'first')
+
+    second = worktree_of(repo, tmp_path / 'second')
+
+    assert first == second and first.startswith(str(temporary))
+    assert 'ahl-isolated-' in first, 'the how-to finds a runtime\'s leftover session records by this name'
+
+
+def test_the_directory_of_a_check_is_removed_and_its_slot_is_free_again(repo, temporary):
+    with check.private_directory(repo) as before:
+        pass
+    check.run(repo, py('pass'))
+
+    assert list(temporary.iterdir()) == []
+    with check.private_directory(repo) as after:
+        assert after == before
+
+
+def test_checks_of_one_repository_that_overlap_never_share_a_path(repo, temporary):
+    with check.private_directory(repo) as first, check.private_directory(repo) as second:
+        assert first != second and {Path(first), Path(second)} <= set(temporary.iterdir())
+
+
+def test_two_repositories_never_share_a_path(repo, tmp_path, temporary):
+    other = tmp_path / 'other'
+    git(tmp_path, 'init', '-q', '-b', 'main', str(other))
+
+    with check.private_directory(repo) as first, check.private_directory(other) as second:
+        assert first != second and Path(first).parent == Path(second).parent == temporary
+
+
+@pytest.mark.parametrize('leftover', ['directory', 'link'])
+def test_a_leftover_in_the_first_slot_is_skipped_and_never_followed_or_removed(repo, tmp_path, temporary, leftover):
+    with check.private_directory(repo) as probe:
+        taken = temporary / Path(probe).name
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    (taken.symlink_to(elsewhere) if leftover == 'link' else taken.mkdir())
+
+    worktree = worktree_of(repo, tmp_path / 'log')
+
+    assert worktree != str(taken / 'worktree') and taken.is_symlink() == (leftover == 'link') and taken.exists()
+    assert list(elsewhere.iterdir()) == [], 'a planted link is not followed'
+
+
+def test_a_repository_with_every_slot_taken_is_a_setup_problem(repo, temporary, monkeypatch, capsys):
+    monkeypatch.setattr(check, 'SLOTS', 1)
+
+    with check.private_directory(repo):
+        status = check.main([str(repo), '--', 'true'])
+
+    assert status == 2 and 'temporary slots' in capsys.readouterr().err
