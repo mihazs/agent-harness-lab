@@ -23,7 +23,20 @@ def test_the_incremental_block_in_a_recovery_record_is_ignored_the_same_way():
     assert differences(dict(receipt=dict(status='no_change')), dict(receipt=dict(status='no_change', incremental=BLOCK)), 'recovery.json') == []
 
 
+@pytest.mark.parametrize('first, second', [
+    pytest.param(dict(status='no_change'), dict(status='no_change', reuse=dict(outcome='reused')), id='reuse_only_on_the_later_route'),
+    pytest.param(dict(status='no_change', reuse=dict(outcome='executed')), dict(status='no_change', reuse=dict(outcome='reused')), id='reuse_outcomes_differ'),
+])
+def test_the_stage_reuse_summary_follows_the_store_not_the_route(first, second):
+    assert differences(first, second) == []
+
+
+def test_the_stage_reuse_summary_in_a_recovery_record_is_ignored_the_same_way():
+    assert differences(dict(receipt=dict(status='x')), dict(receipt=dict(status='x', reuse=dict(outcome='reused'))), 'recovery.json') == []
+
+
 @pytest.mark.parametrize('first, second, expected', [
+    pytest.param(dict(status='x'), dict(status='x', reuse_other=1), ['reuse_other'], id='a_reuse_lookalike_key_is_not_ignored'),
     pytest.param(dict(status='no_change'), dict(status='blocked', incremental=BLOCK), ['status'], id='another_field_still_differs'),
     pytest.param(dict(status='x'), dict(status='x', incremental_other=1), ['incremental_other'], id='a_lookalike_key_is_not_ignored'),
     pytest.param(dict(status='x'), dict(status='x', reason='y'), ['reason'], id='a_missing_key_is_still_reported'),

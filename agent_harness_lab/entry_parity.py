@@ -64,8 +64,10 @@ ALLOWED_DIFFERENCES = {
     'preparation/evaluation-*/context.json': ('invocation.origin', 'invocation.parent_run_id', *_RUN_TIMING),
 }
 # Dotted key patterns that depend on which route ran first, not on the route: the incremental block (#806) describes the
-# previous run in the private run store, so the later of two routes on one project carries it and the earlier does not.
-ORDER_DEPENDENT = {'workflow.json': ('incremental', 'incremental.*'), 'recovery.json': ('receipt.incremental', 'receipt.incremental.*')}
+# previous run in the private run store, and the stage-reuse summary what the memory store held, so the later of two routes
+# on one project carries the block and gets the hit while the earlier does not.
+ORDER_DEPENDENT = {'workflow.json': ('incremental', 'incremental.*', 'reuse', 'reuse.*'),
+                   'recovery.json': ('receipt.incremental', 'receipt.incremental.*', 'receipt.reuse', 'receipt.reuse.*')}
 RECEIPT = 'workflow.json'
 
 # Progress lines on stderr report elapsed wall time.
