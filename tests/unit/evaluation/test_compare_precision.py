@@ -176,10 +176,10 @@ REFUSED = [
     pytest.param(mutate(automatic_budget_change=True), id='budget-authority'),
     pytest.param(mutate(publication_allowed=True), id='publication-authority'),
     pytest.param(lambda result: result['sample_size_plan'].update(plan_mutation=True), id='solver-plan-mutation'),
-    pytest.param(feasible_but(trial_ceiling_met=False), id='feasible-with-the-trial-ceiling-unmet'),
+    pytest.param(feasible_but(trial_ceiling_met=False, execution_allowed=False), id='feasible-with-the-trial-ceiling-unmet'),
     pytest.param(feasible_but(precision_target_met=False), id='feasible-with-the-target-unmet'),
     pytest.param(lambda result: (result.update(status='feasible'), result['endpoints']['family:a'].update(criteria_possible=False)), id='feasible-with-impossible-criteria'),
-    pytest.param(mutate(trial_ceiling_met=False, execution_allowed=True), id='execution-allowed-over-the-ceiling'),
+    pytest.param(mutate(status='infeasible', trial_ceiling_met=False, execution_allowed=True), id='execution-allowed-over-the-ceiling'),
 ]
 
 
@@ -188,6 +188,17 @@ def test_a_malformed_or_self_contradicting_preflight_refuses_the_whole_input(dam
     result = preflight()
     damage(result)
     with pytest.raises(ValueError, match='precision'):
+        sbs.build(shown(result))
+
+
+@pytest.mark.parametrize('damage, message', [
+    pytest.param(feasible_but(trial_ceiling_met=False, execution_allowed=False), 'feasible precision preflight contradicts', id='feasible-guard-alone'),
+    pytest.param(mutate(status='infeasible', trial_ceiling_met=False, execution_allowed=True), 'allows execution over its trial ceiling', id='execution-guard-alone'),
+])
+def test_each_trial_ceiling_guard_refuses_on_its_own_message(damage, message):
+    result = preflight()
+    damage(result)
+    with pytest.raises(ValueError, match=message):
         sbs.build(shown(result))
 
 
