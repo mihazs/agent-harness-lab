@@ -22,6 +22,13 @@ LAYER_NAMES = {'user': 'global', 'project': 'project', 'project_root_to_task_dir
 STATUS_ORDER = ('requires_intervention', 'execution_error', 'budget_exhausted', 'blocked', 'inconclusive', 'applied', 'no_change')
 NOT_ATTEMPTED = 'not_attempted'
 BLOCKED_REASON = 'global_scope_model_evaluation_unavailable'
+# Documented same-name skill resolution per runtime, for a project copy in the runtime's own project skill folder.
+# Claude Code runs the personal skill over the project one; Codex does not merge them and keeps both.
+SKILL_RULES = dict(
+    claude=dict(project_location='.claude/skills', resolution='user_over_project', effective_layer='global', shadowed_layer='project',
+                source='https://code.claude.com/docs/en/skills'),
+    codex=dict(project_location='.agents/skills', resolution='both_kept', effective_layer='both', shadowed_layer=None,
+               source='https://developers.openai.com/codex/skills'))
 
 
 @dataclass(frozen=True)
@@ -158,16 +165,39 @@ def combine(args, results, base=None, roots=None):
     return value
 
 
-def precedence(runtime, selection):
-    """What the runtime documents about layer ordering; skills sharing a name across layers stay unresolved."""
+def shared_skills(runtime, selection):
+    """One row per skill name both layers hold. The winner is only what the runtime documents for the project copy in its
+    own project skill folder (declared, never observed): a copy anywhere else keeps the winner unknown."""
     from .workflow import skill_roots
+    rule = SKILL_RULES[runtime]
+    held = {layer.label: {} for layer in selection}
+    for layer in selection:
+        for skill in skill_roots(layer.root):
+            location = skill.parent.relative_to(layer.root).as_posix()
+            if layer.label != 'global' or location == 'skills':  # the user layer is only its documented skill directory
+                held[layer.label].setdefault(skill.name, []).append(location)
+    rows = []
+    for name in sorted(set.intersection(*(set(names) for names in held.values()))):
+        locations = sorted(held['project'][name])
+        documented = rule['project_location'] in locations
+        rows.append(dict(name=name, resolution=rule['resolution'] if documented else 'unknown',
+                         effective_layer=rule['effective_layer'] if documented else 'unknown',
+                         shadowed_layer=rule['shadowed_layer'] if documented else None,
+                         project_locations=locations, source=rule['source'] if documented else None))
+    return rows
+
+
+def precedence(runtime, selection):
+    """What the runtime documents about layer ordering; a same-name skill is resolved only by a documented rule."""
     order = LOAD_ORDER[runtime]
-    names = [{skill.name for skill in skill_roots(layer.root)} for layer in selection]
+    shared = shared_skills(runtime, selection)
+    unresolved = any(item['resolution'] == 'unknown' for item in shared)
     return dict(runtime=runtime, applies_to='instructions', documented_load_order=list(order),
                 layer_order=layer_order(runtime),
                 out_of_scope=[name for name in order if name not in LAYER_NAMES],
-                source=CODEX if runtime == 'codex' else CLAUDE, same_name_skills='effective_layer_unknown',
-                shared_skill_names=sorted(set.intersection(*names)))
+                source=CODEX if runtime == 'codex' else CLAUDE,
+                same_name_skills='none_shared' if not shared else 'effective_layer_unknown' if unresolved else 'documented_rule',
+                shared_skill_names=[item['name'] for item in shared], shared_skills=shared)
 
 
 def not_attempted(status):

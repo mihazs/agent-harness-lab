@@ -831,10 +831,26 @@ for `claude` and `~/.agents/skills` for `codex`.
 **Evaluation order.** Layers run in the runtime's documented load order, user before
 project (`precedence.documented_load_order`, `layer_order` and `out_of_scope` come
 from the same table the static audit reports: managed and local layers are never
-addressed). The documented order concerns instruction files. For skills that share a
-name across layers the effective one is not established, so `precedence.same_name_skills`
-is `effective_layer_unknown`, `shared_skill_names` lists them, and each file is repaired
-only in the layer that holds it.
+addressed). The documented order concerns instruction files. A skill name that both
+layers hold is listed in `precedence.shared_skill_names`, with one `precedence.shared_skills`
+row per name: `resolution`, `effective_layer`, `shadowed_layer`, the project folders that
+hold it (`project_locations`) and the documentation it comes from (`source`). The winner
+is what the runtime documents, never something observed, and it is stated only for a
+project copy in that runtime's own project skill folder, the user copy being in its user
+skill directory:
+
+| Runtime | Project folder | `resolution` | `effective_layer` | `shadowed_layer` |
+| --- | --- | --- | --- | --- |
+| `claude` | `.claude/skills` | `user_over_project` (personal skill over project skill) | `global` | `project` |
+| `codex` | `.agents/skills` | `both_kept` (same names are not merged) | `both` | none |
+
+A project copy anywhere else (for example `.agents/skills` for `claude`, or a plain
+`skills` folder) has `resolution: unknown`, `effective_layer: unknown` and no `source`, and
+a single unknown name makes `precedence.same_name_skills` `effective_layer_unknown`;
+`documented_rule` means every shared name has a documented rule and `none_shared` means
+there are none. The winner is attribution only: each file is still repaired in the layer
+that holds it, so a shadowed project copy keeps a valid header for anyone who does not
+have the user-level copy.
 
 **Budget and stops.** One run id, one output directory, one controller clock and one
 `--timeout` cover every layer. A layer that ends `blocked`, `inconclusive`,
