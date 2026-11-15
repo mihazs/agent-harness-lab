@@ -1,5 +1,0 @@
----
-"agent-harness-lab": patch
----
-
-Add the first-use stress matrix, a failure-injection suite that runs `ahl improve` against a fake runtime that times out, is killed, returns garbage, prints nothing or too much, crashes or is interrupted at each stage, against corrupt, duplicated and empty history, unusual, symlinked and read-only harness files, concurrent runs, `--resume` and per-stage budget exhaustion, and checks that every scenario ends with a typed receipt. It found and fixed five bugs. A runtime whose output was not UTF-8 ended as a rejected input (exit 2) instead of an execution error. A dangling or looping instruction symlink was ignored instead of refused as an unsupported layout. A read-only instruction file made the staged candidate read-only, so the preparation call was spent and its edit failed; the staged copy is now writable for the proposer and gets its modes back. Resuming an unknown run ID ended as an operating-system error with the raw errno text and is now a rejected input. A resume with no completed proposal now says to rerun the command.
