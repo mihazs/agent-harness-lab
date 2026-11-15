@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness_lab import entry_parity, typed_exit
+from agent_harness_lab import entry_parity, incremental, typed_exit, workflow
 from agent_harness_lab.loop import improve as loop_improve, receipt
 from agent_harness_lab.monitoring.state import exit_code
 from tests.support import loop_improve as li
@@ -216,6 +216,7 @@ def test_the_receipt_is_the_same_through_both_entries_apart_from_the_run_directo
     runs = []
     for entry in (('improve',), ('skills', 'invoke')):
         (project.project/'AGENTS.md').write_bytes(initial)
+        (workflow.state_root()/'runs'/workflow.identity(project.project)/incremental.POINTER).unlink(missing_ok=True)  # a later run would carry the first one's mechanism dispositions; parity compares two first runs
         _, found, _ = project.invoke(*flags, entry=entry)
         runs.append((found, Path(found['output'])))
     (cli, cli_run), (skill, skill_run) = runs

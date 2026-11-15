@@ -332,7 +332,7 @@ def main(argv=None):
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
             from .evaluation.before_after import margin_option
-            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
+            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal, or return the verified receipt of a finished loop run, without repeating model actions')
             command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
             command.add_argument('--regression-margin', type=margin_option, help='Tolerated paired score loss for the before/after guard, from 0 up to but not including 1 (default: 0, any net loss); a candidate worse by more ends blocked as candidate_regressed with an investigation, and improved then needs its interval above this margin. A fixed-bank request declares its own margins')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')

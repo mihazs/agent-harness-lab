@@ -13,6 +13,8 @@ from .machine import OUTCOMES, STOPS as CRITERIA
 
 PROFILE = 'ahl-loop-receipt-v1'
 MAX_BYTES = 64*1024
+CARRY_PROFILE = 'ahl-loop-carryover-v1'
+MAX_CARRIED, MAX_HISTORY = 50, 10  # the most dispositions and earlier runs a carry_over block holds; more are pruned and marked truncated
 # Each fine stop criterion and the coarse status and exit code it maps onto; the code is monitoring.state.exit_code(status).
 ACCEPTED, NOT_ACCEPTED, INTERVENTION = 'accepted', 'not_accepted', 'requires_intervention'
 STATUS = dict(accepted_without_change=ACCEPTED, acceptance_score_reached=ACCEPTED,
@@ -32,8 +34,10 @@ STEPS = dict(
     no_actionable_mechanism='No mechanism was left to try, which does not show the harness is fine; read loop.mechanisms for what was tried or deferred, add verified outcome evidence or pass --focus, then rerun.',
     evidence_insufficient='The evidence could not support a result, so none is claimed; read loop.before and loop.rounds for the evidence state and any vacuity label, fix the named cause, then rerun.',
     budget_exhausted='The budget could not cover improving and re-evaluating again, so the loop stopped before spending it; raise it with --timeout SECONDS or limits.trials in ahl.json, then rerun.',
-    interrupted='The loop was interrupted before it reached a criterion; this release cannot resume it, so rerun the command and read loop.rounds for what finished.',
+    interrupted='The loop was interrupted before it reached a criterion; resume it from its round ledger with the controller, or rerun the command, which starts from the harness on disk and carries over the mechanism dispositions recorded here; read loop.rounds for what finished.',
     comparison_invalid='A frozen input differed between evaluations, which is an AHL defect and not a verdict on the harness; read the investigation in the private run output, fix the cause, add a regression test for it, then rerun.')
+RECONCILE = ('A provider request of the evaluation that was running has no recorded outcome, so the loop did not repeat it and ended interrupted; '
+             'reconcile that request with the provider\'s usage records and report its trials from the evaluator, then resume the loop from its round ledger.')
 _EVIDENCE = ('scored', 'provisional', 'no_evidence', 'blocked')
 _VALIDITY = ('valid', 'vacuous', 'incomplete', 'comparison_invalid')
 
@@ -89,6 +93,7 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
             current.update(_evaluation(index, payload.get('value'), payload.get('evaluation')), paired=_paired(guards[index] if index < len(guards) else None))
         elif kind == 'decided' and current is not None:
             current.update(decision=payload.get('value'), disposition=payload.get('disposition'))
+            if payload.get('abandoned') is True: current['abandoned'] = True  # an interrupted round: no evaluation completed, so no score
     best = result['best']
     best_round = next((item['round'] for item in rounds if item['candidate'] == best['snapshot'] and item['decision'] in ('accepted', 'improved')), 0)
     after = None if before is None else dict(round=best_round, snapshot=best['snapshot'],
@@ -98,8 +103,11 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
     return dict(profile=PROFILE, schema_version=1, spec=spec.to_dict(), frozen_inputs_sha256=result['frozen_inputs_sha256'], mode=result['mode'],
                 acceptance_source=result['acceptance_source'], looks=result['looks'], alpha_per_look=result['per_look_alpha'],
                 before=before, after=after, rounds=rounds, best_round=best_round, stop_criterion=stop, stop_reason=result['stop_reason'],
-                mechanisms=result['mechanisms'], deferrals=list(deferrals), usage=result['usage'], events=result['ledger']['events'], budget_stages=budget,
-                recommendation_only=True, automatic_promotion=False, certification='unverified', remediation=STEPS[stop])
+                mechanisms=result['mechanisms'], deferrals=list(deferrals), usage=result['usage'], events=result['ledger']['events'],
+                ledger_head_sha256=result['ledger']['head_sha256'], budget_stages=budget,
+                recommendation_only=True, automatic_promotion=False, certification='unverified',
+                remediation=RECONCILE if result['stop_reason'] == 'unresolved_request' else STEPS[stop],
+                **({'resumed': result['resumed']} if 'resumed' in result else {}))
 
 
 def _fail(field):
@@ -123,6 +131,18 @@ def _sound(item):
     """The evaluation behind an accepted stop: valid, scored and with no vacuity label and a score."""
     return (isinstance(item, dict) and item.get('validity') == 'valid' and item.get('evidence') == 'scored' and item.get('vacuity') is None
             and item.get('score') is not None)
+
+
+def _check_carry(carry):
+    """What an earlier run handed over is bounded, labelled, and states no authority; a historical score is never labelled fresh."""
+    if (not isinstance(carry, dict) or carry.get('profile') != CARRY_PROFILE or carry.get('recommendation_only') is not True
+            or carry.get('automatic_promotion') is not False): _fail('carry_over')
+    held, history = carry.get('mechanisms') or {}, carry.get('history') or []
+    if (not isinstance(held, dict) or not isinstance(history, list) or len(history) > MAX_HISTORY
+            or any(len(held.get(name) or ()) > MAX_CARRIED for name in ('carried', 'reopened'))): _fail('carry_over.size')
+    if carry.get('historical') is not None and (not isinstance(carry['historical'], dict) or carry['historical'].get('label') != 'historical_observation'): _fail('carry_over.historical')
+    if carry.get('fresh') is not None and (not isinstance(carry['fresh'], dict) or carry['fresh'].get('label') != 'fresh_evaluation'): _fail('carry_over.fresh')
+    if carry.get('comparable') is False and 'fresh_baseline_minus_historical_best' in carry: _fail('carry_over.delta')  # no delta across other frozen inputs
 
 
 def validate_receipt(value):
@@ -154,6 +174,10 @@ def validate_receipt(value):
     elif stop == 'acceptance_score_reached':
         last = rounds[-1] if rounds else None  # an accepted result needs the evaluation that followed an improvement
         if last is None or last.get('decision') != 'accepted' or not _sound(last) or not _sound(before): _fail('rounds')
+    carry = value.get('carry_over')
+    if carry is not None: _check_carry(carry)
+    resumed = value.get('resumed')
+    if resumed is not None and (not isinstance(resumed, dict) or not all(type(resumed.get(name)) is int and resumed[name] >= 0 for name in ('count', 'abandoned_rounds'))): _fail('resumed')
     try: size = len(json.dumps(value, allow_nan=False).encode())
     except (TypeError, ValueError): _fail('value')
     if size > MAX_BYTES: _fail('size')
