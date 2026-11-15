@@ -40,19 +40,28 @@ def _artifacts(adapter_id):
     return names
 
 
-def stage(journal, authorized, authorization, candidate, adapter_bytes):
-    """Prepare (never apply) the deployment of one candidate; any rejection happens before anything is journaled."""
+def check(project, authorized, authorization, candidate, adapter_bytes):
+    """Every rejection stage() makes, from the project's current bytes alone and with nothing journaled or written.
+
+    Returns the parsed spec and the before records of its two artifacts."""
     review = review_candidate_spec(authorized, candidate, authorization)
     if review['status'] != 'within_authorized_capabilities':
         raise ValueError('adapter candidate rejected: ' + ', '.join(review['reasons']))
     spec = candidate if isinstance(candidate, AdapterSpec) else AdapterSpec.from_mapping(candidate)
     if not verify_adapter_bytes(spec, adapter_bytes):
         raise ValueError('adapter bytes differ from the declared digest')
-    adapter, spec_file = names = _artifacts(spec.adapter_id)
-    before = {name: file_record(journal.owned(name)) for name in names}
-    deployed = (before[adapter] or {}).get('sha256')
+    names = _artifacts(spec.adapter_id)
+    before = {name: file_record(contained(project, name)) for name in names}
+    deployed = (before[names[0]] or {}).get('sha256')
     if spec.previous_digest != deployed or spec.content_digest == deployed:
         raise ValueError('candidate does not follow the deployed adapter version')
+    return spec, before
+
+
+def stage(journal, authorized, authorization, candidate, adapter_bytes):
+    """Prepare (never apply) the deployment of one candidate; any rejection happens before anything is journaled."""
+    spec, before = check(journal.project, authorized, authorization, candidate, adapter_bytes)
+    adapter, spec_file = before
     spec_bytes = (json.dumps(spec.as_mapping(), sort_keys=True, indent=2) + '\n').encode()
     after = {adapter: snapshot_record(adapter_bytes, ARTIFACT_MODE), spec_file: snapshot_record(spec_bytes, ARTIFACT_MODE)}
     metadata = dict(adapter=dict(adapter_id=spec.adapter_id, content_digest=spec.content_digest,

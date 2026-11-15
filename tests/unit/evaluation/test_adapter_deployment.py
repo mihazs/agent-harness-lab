@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_harness_lab.evaluation.adapter_deployment import AdapterJournal, preview_rollback, rollback, stage
+from agent_harness_lab.evaluation.adapter_deployment import AdapterJournal, check, preview_rollback, rollback, stage
 from agent_harness_lab.evaluation.adapters import AdapterSpec, Authorization
 from agent_harness_lab.promotion.journal import file_record, snapshot_record
 from agent_harness_lab.surfaces import PINS
@@ -301,3 +301,27 @@ def test_a_crash_between_the_two_artifacts_is_recovered_to_the_state_before_the_
 
     assert file_record(project / ADAPTER) is None and file_record(project / SPEC) is None
     assert (project / 'unrelated.txt').read_text() == 'keep'
+
+
+@pytest.mark.parametrize(('candidate', 'raw', 'message'), [
+    pytest.param(mapping(tools=['Read', 'Grep', 'Bash']), V1, 'adapter candidate rejected', id='expanded-tool'),
+    pytest.param(mapping(network=['example.invalid']), V1, 'adapter candidate rejected', id='added-network'),
+    pytest.param(mapping(), V2, 'differ from the declared digest', id='bytes-not-declared'),
+    pytest.param(v2_mapping(), V2, 'does not follow the deployed adapter version', id='lineage-skips-the-first-version'),
+])
+def test_check_rejects_what_staging_rejects_without_journaling_or_writing(project, authorization, tmp_path, candidate, raw, message):
+    authorized = AdapterSpec.from_mapping(mapping())
+
+    with pytest.raises(ValueError, match=message):
+        check(project, authorized, authorization, candidate, raw)
+
+    assert not (project / '.ahl').exists() and not (tmp_path / 'private').exists()
+
+
+def test_check_accepts_a_candidate_that_follows_the_deployed_version_and_reports_what_it_would_replace(journal, project, authorization):
+    deploy(journal, authorization, mapping(), V1)
+
+    spec, before = check(project, AdapterSpec.from_mapping(mapping()), authorization, v2_mapping(), V2)
+
+    assert spec.content_digest == digest(V2)
+    assert before[ADAPTER]['sha256'] == digest(V1) and before[SPEC] is not None
