@@ -4207,8 +4207,49 @@ billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
 numbers, deep nesting, duplicate case names, TAP directives, plans, bail outs,
 subtests and line bounds, commit-identity validation and CLI journals that hold
-hashes only. Still open in #53: artifact download or zip handling; coverage and
-lint reports; and expired-artifact coverage warnings from a live read.
+hashes only. Still open in #53: artifact download; coverage and lint reports; and
+expired-artifact coverage warnings from a live read.
+
+### Reports inside a CI artifact ZIP
+
+A GitHub Actions artifact is downloaded as a ZIP. Both `test-results` and
+`quality-reports` can read one report from inside such an archive that the caller
+already has on disk: add `"member"` to the declaration, naming one entry of the
+archive at `path`.
+
+```json
+{"path": "artifacts/ci.zip", "format": "junit-xml", "member": "reports/junit.xml"}
+```
+
+The archive is parsed in memory and never extracted, so no file is written, no URL
+is fetched, and nothing in it is run. `member` follows the same relative-path rules
+as `path` (no absolute path, `..`, backslash or empty segment). Several members of
+one archive are several reports; `(path, member)` must be unique. Only the named
+member is read, and it is decoded by the ordinary format parser and its bounds,
+including `max_report_bytes` for the member's uncompressed size. A member is never
+opened as a nested archive, so a ZIP inside a ZIP is just an unparsable report.
+
+The archive is quarantined whole as `HostileReport`, before any member is read, when
+it is not a plain classic ZIP (a ZIP64 directory, an encrypted entry, a compression
+method other than stored or deflate, a symbolic link or special file, a ZIP64 extra
+field, a duplicate name or a directory that disagrees with its entries), when any
+entry name, not only the declared one, is absolute or contains `..`, a backslash, a
+drive colon, an empty or `.` segment or a control character, or when the declared
+member's size, checksum or compressed stream disagrees with its headers or exceeds
+the byte bound. A file that is not a ZIP is refused the same way. A declared member
+the archive lacks is a plain `ValueError`: the report is missing, never empty. These
+checks are the validators `hindsight_zip` already uses.
+
+A report taken from an archive is identified by its path and member
+(`report_path_sha256` is the fingerprint of the pair, so it never collides with the
+same path read as a plain file), and `report_sha256` is the hash of the member's own
+bytes. A selection that uses any member adds `archive_origin_unverified`: the
+archive's origin is the caller's declaration, so it does not show that the CI run,
+job or commit named for it produced it. To link a member's failed cases or findings
+to a captured job, the caller names the member in the origin declaration for the
+join too: `origins=[{"path": "artifacts/ci.zip", "member": "reports/junit.xml",
+"job_id": ..., "step": ...}]`. An origin without the `member` of a member report, or
+with one that was not selected, names an unselected report and raises.
 
 ### Joining test results to Actions jobs
 
@@ -4381,6 +4422,9 @@ checked before records are made. `limits` may only lower these ceilings:
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 |
+
+SARIF logs may also be read from a member of a
+[CI artifact ZIP](#reports-inside-a-ci-artifact-zip).
 
 Not covered here: SARIF taxonomies, rule metadata and result fingerprints, and any
 live read of code-scanning alerts. Joining findings to Actions jobs is described
