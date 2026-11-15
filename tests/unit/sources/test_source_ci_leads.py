@@ -19,7 +19,7 @@ MERGED = '2026-01-02T00:00:00Z'
 BEFORE, AFTER = '2026-01-01T12:00:00Z', '2026-01-03T00:00:00Z'
 
 
-class TestCiLeads(GitHubCase):
+class CiLeadsFixture(GitHubCase):
     @pytest.fixture(autouse=True)
     def _leads(self, _github):
         self.selection = GitHubSelection(42, (7,), (8,), schema_version=7, details=('actions', 'checks'))
@@ -50,6 +50,8 @@ class TestCiLeads(GitHubCase):
         assert 'SYNTHETIC_PRIVATE' not in json.dumps(report)
         return report
 
+
+class TestCiLeads(CiLeadsFixture):
     def test_failing_check_status_and_run_on_a_merged_head_form_one_lead_without_a_verdict(self):
         self.routes[CHECKS] = dict(total_count=2, check_runs=[self.check(1101, 'failure'), self.check(1102, 'success')])
         self.routes[STATUSES] = [self.status(1103, 'error', BEFORE)]
