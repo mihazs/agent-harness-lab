@@ -27,7 +27,7 @@ def subjects(*values):
             for value in values]
 
 
-VALID = subjects('feat: add a flag', 'fix(cli): keep exit status', 'docs(skills/harness-evaluation): clarify',
+VALID = subjects('feat: add a flag', 'fix(cli): keep exit status', 'docs(skills/harness-self-improvement): clarify',
                  'refactor(a.b_c-d/e1)!: drop the legacy path', 'chore!: remove support',
                  'revert: undo the flag', 'ci: check titles', 'build: pin lefthook', 'perf: cache',
                  'style: wrap lines', 'test: cover ranges', 'feat: ' + 'x' * 94)

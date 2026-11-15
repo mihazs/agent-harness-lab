@@ -109,8 +109,8 @@ def test_legacy_unbound_history_has_no_bank_authority_and_bound_history_requires
 def test_role_projection_is_a_fixed_allow_list(tmp_path):
     from agent_harness_lab.evaluation.construction import views
     assets = tmp_path / 'assets'
-    for skill in ('harness-evaluation', 'harness-self-improvement'):
-        (assets / 'skills' / skill).mkdir(parents=True); (assets / 'skills' / skill / 'SKILL.md').write_text('synthetic')
+    skill = 'harness-self-improvement'
+    (assets / 'skills' / skill).mkdir(parents=True); (assets / 'skills' / skill / 'SKILL.md').write_text('synthetic')
     data = dict(analysis=dict(events=1, findings=[dict(kind='k', status='s', explanation='e', evidence=['hidden'])]),
                 paired_history_analysis=dict(status='blocked'), source_context=dict(hidden=True),
                 incident_retrieval=dict(approval='caller_declared_reviewed_approval_unverified',

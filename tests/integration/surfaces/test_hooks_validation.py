@@ -21,7 +21,7 @@ from agent_harness_lab.evaluation.sandbox import KEYRING_TRAMPOLINE, SandboxBack
 from agent_harness_lab.hooks_validation import FAKE_TRACE, validate
 
 ROOT = Path(__file__).resolve().parents[3]
-RUNNER = ROOT / 'skills/harness-evaluation/scripts/run_evaluation.py'
+RUNNER = ROOT / 'skills/harness-self-improvement/scripts/run_evaluation.py'
 SCRIPT = '.claude/hooks/check.sh'
 SETTINGS = '{\n  "permissions": {"allow": ["Bash(ls)"]}\n}\n'
 # Runs every configured handler of each scenario event through sh, the way a runtime would, and reports each
