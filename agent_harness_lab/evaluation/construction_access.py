@@ -115,7 +115,7 @@ def _backend_options(backend):
     return result
 
 
-def _scope(handle):
+def _scope(handle,*,unbound=None):  # unbound: the one stage whose consumer copy a refinement merge is re-binding
     if type(handle) is not WorkflowAccess or handle not in _SCOPES:
         raise ValueError('actual canonical workflow ownership required')
     value=_SCOPES[handle]
@@ -133,7 +133,7 @@ def _scope(handle):
             or value['client'].settings!=value['settings'] or _hash(engine())!=value['engine_pin']):
         raise ValueError('canonical workflow settings/engine changed')
     for owned in value['stages']:
-        if not owned.get('published'):continue
+        if not owned.get('published') or owned is unbound:continue
         if WorkingState(owned['destination'],value['deadline']).snapshot!=owned['consumer_snapshot']:
             raise ValueError('published canonical output differs from owned consumer state')
     return value
@@ -214,7 +214,7 @@ class WorkflowAccess:
             attach(closed,self)
             _SCOPES[self]['closed_domain']=closed
 
-    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False,bank_conversion=None,box=None):
+    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False,bank_conversion=None,box=None,reuse=None):
         if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
         if bank_conversion is not None and (role!='evaluator_author' or type(bank_conversion) is not dict
                 or set(bank_conversion)!={'metadata','controls_manifest','output','review_store','declaration'}):
@@ -222,6 +222,8 @@ class WorkflowAccess:
         from . import construction
         data=_scope(self); deadline=data['deadline']; store=data['store']
         if data.get('final_author_started'):raise ValueError('final author scope cannot dispatch further roles')
+        if reuse is not None and (role!='evaluator_author' or bank_conversion is not None or data.get('closed_domain') is not None):
+            raise ValueError('refinement reuse applies to the plain evaluation author only')  # a sealed or converted output has no merge path
         if bank_conversion is not None:
             from agent_harness_lab.promotion.prerequisites import current as current_scope
             if current_scope() is None or data['backend'].permission_audit is None:
@@ -303,6 +305,7 @@ class WorkflowAccess:
             else:
                 options={'analysis':True} if analysis else {}
                 if box is not None:options['box']=box
+                if reuse is not None:options['reuse']=reuse
                 if bank_conversion is not None:options['bank_qualification']=True
                 made=[]; dropped=[]; options['ignored']=dropped
                 if bank_conversion is None:options.update(repairs=made,repair_allowed=closed is None)  # sealed closed-input stages allow no second pass
@@ -324,7 +327,8 @@ class WorkflowAccess:
                 original_manifest=next(raw for name,_,raw in original.files if name=='manifest.json')
                 if manifest_pin!=hashlib.sha256(original_manifest).hexdigest():
                     raise ValueError('actual canonical manifest changed during capture')
-                if not 3<=len(source['tasks'])<=5: raise ValueError('canonical author requires the existing bounded task count')
+                if not (1 if reuse is not None else 3)<=len(source['tasks'])<=5:  # a refinement author writes only the fresh held-out tasks
+                    raise ValueError('canonical author requires the existing bounded task count')
                 if bank_conversion is not None and any(task.get('split')!='heldout' for task in source['tasks']):
                     raise ValueError('final bank author may produce only held-out tasks')
                 check=lambda:check_deadline(deadline)
@@ -391,8 +395,8 @@ class WorkflowAccess:
             raise ValueError('focus is unsupported by the closed input profile')
         return self._run('proposer',context,destination,candidate=candidate,focus=focus,analysis=analysis)
 
-    def author(self,context,destination,*,analysis=False,bank_conversion=None,box=None):
-        return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion,box=box)
+    def author(self,context,destination,*,analysis=False,bank_conversion=None,box=None,reuse=None):
+        return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion,box=box,reuse=reuse)
 
     def ignored_digests(self):
         return sum(_scope(self)['ignored'])
@@ -430,6 +434,31 @@ class WorkflowAccess:
             _scope(self)
         return result
 
+    def adopt_reuse(self,path,merged):
+        """Re-bind the consumer copy of the latest author output after the controller merged frozen parts into it (#739).
+
+        The copy may differ from the sealed author output only by the merged manifest and by files and directories that match
+        the previous author's consumer copy byte for byte; any other difference rejects and nothing is adopted."""
+        authors=[item for item in (_SCOPES[self]['stages'] if type(self) is WorkflowAccess and self in _SCOPES else ()) if item['ledger_role']=='evaluator_author']
+        if len(authors)<2 or authors[-1]['destination']/'manifest.json'!=Path(path): raise ValueError('actual refinement author manifest required')
+        owned,earlier=authors[-1],authors[-2]
+        data=_scope(self,unbound=owned)
+        current=WorkingState(Path(path).parent,data['deadline']).snapshot; before=owned['consumer_snapshot']
+        authored={name:(mode,raw) for name,mode,raw in before.files if name!='manifest.json'}
+        frozen={name:(mode,raw) for name,mode,raw in earlier['consumer_snapshot'].files}
+        found={name:(mode,raw) for name,mode,raw in current.files}
+        added=found.keys()-authored.keys()-{'manifest.json'}
+        if (current.root_mode!=before.root_mode or 'manifest.json' not in found or json.loads(found['manifest.json'][1])!=merged
+                or any(found.get(name)!=value for name,value in authored.items())
+                or any(found[name]!=frozen.get(name) for name in added)
+                or not set(before.directories)<=set(current.directories)
+                or not {name for name,_ in current.directories}-{name for name,_ in before.directories}<={name for name,_ in earlier['consumer_snapshot'].directories}):
+            raise ValueError('refinement reuse differs from the author output and the earlier custody copy')
+        own,_=record(owned['folder']/'published/manifest.json',ledger.MAX_BYTES)
+        owned['consumer_snapshot']=current
+        owned['reused']=(earlier,{task['id'] for task in merged['tasks']}-{task['id'] for task in own['tasks']})
+        _scope(self)
+
     def feedback(self,rows):
         data=_scope(self); author=data['last_author']
         if data.get('final_author_started'):raise ValueError('final author scope cannot issue feedback')
@@ -437,6 +466,10 @@ class WorkflowAccess:
         _check(author,pending=False)
         source,_=record(author['folder']/'published/manifest.json',ledger.MAX_BYTES)
         indexed={task['id']:task for task in source['tasks']}
+        if 'reused' in author:  # a refinement's reused tasks keep the split their own sealed author output recorded
+            earlier,ids=author['reused']; _check(earlier,pending=False)
+            sealed,_=record(earlier['folder']/'published/manifest.json',ledger.MAX_BYTES)
+            indexed.update({task['id']:task for task in sealed['tasks'] if task['id'] in ids})
         if not isinstance(rows,list) or not 0<len(rows)<=2000: raise ValueError('bounded actual feedback required')
         for row in rows:
             if (not isinstance(row,dict) or set(row)!={'task','version','split','status'} or row['task'] not in indexed

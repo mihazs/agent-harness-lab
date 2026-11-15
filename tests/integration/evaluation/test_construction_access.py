@@ -204,7 +204,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert time.monotonic() >= before
 
     def test_actual_refinement_uses_same_completed_author_feedback_custody(self):
-        f=self.f; f.mode='refine'
+        f=self.f; f.mode='reuse'  # the refinement author writes only fresh held-out tasks beside the reused ones
         execute=f.execute
         def observe(argv,workspace,inputs,role,limits,**options):
             assert not Path(workspace).is_relative_to(self.store)

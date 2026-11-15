@@ -367,11 +367,13 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading):
-    """Copy the frozen development and regression tasks beside the fresh held-out ones the author wrote and rewrite the manifest (#739)."""
+def merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading, access=None):
+    """Copy the frozen development and regression tasks beside the fresh held-out ones the author wrote and rewrite the manifest (#739).
+    On the evaluation-store route the custody copy is re-bound to the merged tree, or the merge is refused."""
     merged, facts = refinement_reuse.merge(reused, evaluation, authored)
     manifest_contract.check_authored(merged, stage='evaluation_construction', controller_grader=False, grading=grading is not None)
     write_json(manifest_path, merged)
+    if access is not None: access.adopt_reuse(manifest_path, merged)
     args._evaluation_reuse = dict(attempt=attempt, **facts)
 
 
@@ -1026,14 +1028,14 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             box = stages.allotted('construction')  # each agent pass is stopped at the box; an overrun ends the run (no second pass: the client is closed)
             dropped = []; seen = access.ignored_digests() if access is not None else 0
             try:
+                reused = reuse if attempt and getattr(args,'_closed_input_domain',None) is None else None  # a sealed closed-input author output has no merge path
                 if access is None:
-                    reused = reuse if attempt else None  # the evaluation-store route (custody-sealed outputs) still rebuilds the whole evaluation
                     manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
                         prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped,box=box,reuse=reused)
-                    if reused: merge_reuse(args, reused, evaluation, manifest_path, json.loads(manifest_path.read_text()), attempt, grading)
                 else:
-                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True,box=box)
+                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True,box=box,reuse=reused)
                     finally: made[:] = access.repair_log(); dropped[:] = [access.ignored_digests() - seen]
+                if reused: merge_reuse(args, reused, evaluation, manifest_path, json.loads(manifest_path.read_text()), attempt, grading, access)
             finally:
                 args._authored_digest_ignored += sum(dropped)
                 args._construction_seconds += now() - authoring_started
@@ -1129,7 +1131,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
         with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
             checked = (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
-        if access is None and bank is None and not attempt:
+        if bank is None and not attempt:
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
         if instruction is not None:
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
