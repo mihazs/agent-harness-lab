@@ -55,6 +55,22 @@ class CoveragePredictionTests(unittest.TestCase):
         text = render_markdown(report([record('m1')], predictions=table))
         self.assertNotIn('\n# heading', text)
 
+    def test_revision_chain_is_listed_whole_and_a_contradicted_ancestor_still_reopens(self):
+        ledger = PredictionLedger()
+        ledger.register(prediction())
+        ledger.register(prediction(prediction_id='p2', supersedes='p1', candidate_hash='c2'))
+        table = reconcile(ledger, {'p1': obs(pairs=pairs(dev=(False, False))), 'p2': obs(candidate_hash='c2')})
+        result = report([record('m1', disposition='validated')], capture='complete', predictions=table)
+        got = result['predictions']
+        self.assertEqual((got['eligible_predictions'], got['superseded_predictions']), (2, 1))
+        self.assertEqual([(r['revision'], r['supersedes'], r['superseded_by']) for r in got['entries']],
+                         [(1, None, 'p2'), (2, 'p1', None)])
+        self.assertEqual(result['entries'][0]['coverage'], 'open')
+        text = render_markdown(result)
+        self.assertIn('r1, superseded by p2', text)
+        self.assertIn('r2, revises p1', text)
+        self.assertIn('1 superseded by a later revision', text)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -51,6 +51,7 @@ class PredictionRecord:
     evidence_refs: tuple = ()
     components: tuple = ('candidate',)
     ablation_design: str | None = None
+    supersedes: str | None = None
 
     def validate(self, *, protected_task_ids=(), allowed_refs=None):
         if not all(_ident(v) for v in (self.prediction_id, self.mechanism_id, self.baseline_hash,
@@ -67,6 +68,8 @@ class PredictionRecord:
             raise ValueError('invalid prediction lists')
         if self.ablation_design is not None and not _text(self.ablation_design):
             raise ValueError('invalid ablation design')
+        if self.supersedes is not None and (not _ident(self.supersedes) or self.supersedes == self.prediction_id):
+            raise ValueError('invalid superseded prediction')
         if set(self.development_task_ids) & set(self.control_task_ids):
             raise ValueError('a task cannot be both effect and control')
         if (set(self.development_task_ids) | set(self.control_task_ids)) & set(protected_task_ids):
@@ -83,12 +86,22 @@ def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
+def _content(record):
+    """The prediction's claim without its identity or lineage; a revision must differ here."""
+    return {k: v for k, v in record.as_dict().items() if k not in ('prediction_id', 'supersedes')}
+
+
 class PredictionLedger:
-    """Append-only registry. Receipts chain by hash; nothing is edited or removed."""
+    """Append-only registry. Receipts chain by hash; nothing is edited or removed.
+
+    A changed prediction is a new record with ``supersedes`` naming the one it revises. The
+    superseded record stays registered and reconciled; a revision never inherits its outcome.
+    """
 
     def __init__(self):
         self.receipts = []
         self._records = {}
+        self._successor = {}
 
     def register(self, record, *, outcomes_read=(), protected_task_ids=(), allowed_refs=None):
         """Freeze `record`. A candidate whose outcomes were already read is recorded as late (not preregistered)."""
@@ -98,15 +111,32 @@ class PredictionLedger:
         if earlier is not None:
             if earlier[0] == body:
                 return earlier[1]
-            raise ValueError('a frozen prediction cannot be revised; register a new record for changed content')
+            raise ValueError('a frozen prediction cannot be edited; register a revision that supersedes it')
+        revision = 1
+        if record.supersedes is not None:
+            parent = self._records.get(record.supersedes)
+            if parent is None:
+                raise ValueError('a revision must supersede a registered prediction')
+            if record.supersedes in self._successor:
+                raise ValueError('prediction already revised; revise its latest revision')
+            if record.mechanism_id != parent[2].mechanism_id:
+                raise ValueError('a revision stays on the superseded prediction\'s mechanism')
+            if _content(record) == _content(parent[2]):
+                raise ValueError('a revision must change the prediction')
+            revision = parent[1]['revision'] + 1
         late = record.candidate_hash in set(outcomes_read)
         previous = self.receipts[-1]['receipt_id'] if self.receipts else None
         receipt = dict(prediction_id=record.prediction_id, record_sha256=body, preregistered=not late,
-                       previous_receipt_id=previous)
+                       revision=revision, supersedes=record.supersedes, previous_receipt_id=previous)
         receipt['receipt_id'] = _digest(receipt)
         self.receipts.append(receipt)
         self._records[record.prediction_id] = (body, receipt, record)
+        if record.supersedes is not None:
+            self._successor[record.supersedes] = record.prediction_id
         return receipt
+
+    def superseded_by(self, prediction_id):
+        return self._successor.get(prediction_id)
 
     def verify(self):
         previous = None
@@ -177,6 +207,7 @@ def reconcile(ledger, observations):
     for record, receipt in ledger.entries():
         pid, obs = record.prediction_id, observations.get(record.prediction_id)
         extra = dict(mechanism_id=record.mechanism_id, kind=record.kind, preregistered=receipt['preregistered'], receipt_id=receipt['receipt_id'],
+                     revision=receipt['revision'], supersedes=record.supersedes, superseded_by=ledger.superseded_by(pid),
                      expected=record.observable_effect, regression_risks=list(record.regression_risks),
                      attribution='unresolved' if len(record.components) > 1 and not record.ablation_design else 'single_or_isolated')
         if obs is None:
@@ -193,6 +224,7 @@ def reconcile(ledger, observations):
             rows.append(_limit(pid, status, reason, limitations=limits, **extra))
     counts = {s: sum(r['status'] == s for r in rows) for s in STATUSES}
     return dict(profile=RECONCILIATION_PROFILE, eligible_predictions=len(rows), counts=counts, entries=rows,
-                certifies=False,
+                superseded_predictions=sum(r['superseded_by'] is not None for r in rows), certifies=False,
                 limitations=['predictions are self-selected hypotheses, not population-wide diagnostic accuracy',
+                             'every revision and every superseded prediction is counted and listed, never only the latest',
                              'a status is bookkeeping under the registered criterion, not a causal or certification claim'])
