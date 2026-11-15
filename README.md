@@ -79,6 +79,8 @@ cooperative, not sandboxed):
   evaluation results, a change plan and a run lock. AHL itself never writes project
   instructions, skills or hooks. A candidate that passes evaluation is reported for
   independent certification; it is not applied.
+- `ahl improve . --incremental --memory-store DIR` also commits evidence-stage records to that
+  explicit, opt-in private store.
 - The agent that `improve` starts is cooperative. It is told to treat the project
   as read-only, but nothing enforces that; your agent's own permission settings
   decide whether it can write there. AHL rechecks the project harness before it

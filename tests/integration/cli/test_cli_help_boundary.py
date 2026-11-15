@@ -23,6 +23,7 @@ SUMMARIES = {
 }
 BOUNDARIES = {
     'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
+               'With --incremental and --memory-store, it also commits evidence-stage records to that explicit opt-in private store.\n'
                'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
                'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
                'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
@@ -63,6 +64,8 @@ README_BOUNDARY = (
     'AHL rechecks the project harness before it recommends and rejects a stale result, but it does not revert '
     'such a change.',
     'A candidate that passes evaluation is reported for independent certification; it is not applied.',
+    '`ahl improve . --incremental --memory-store DIR` also commits evidence-stage records to that explicit, opt-in '
+    'private store.',
     '`ahl improve . --repair-contracts` is the one exception',
     'A project `ahl.json` keeps even that repair recommendation-only.',
     '`ahl watch .` reruns the same recommendation-only staging and evaluation when evidence or execution '

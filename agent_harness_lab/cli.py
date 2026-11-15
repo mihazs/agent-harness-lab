@@ -245,6 +245,7 @@ def main(argv=None):
             'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence or configuration, or a classified transient retry; AHL never writes harness files'}
         boundary = {'analyze': '',
             'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
+                'With --incremental and --memory-store, it also commits evidence-stage records to that explicit opt-in private store.\n'
                 'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
                 'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
                 'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'

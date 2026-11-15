@@ -5,7 +5,8 @@
 `ahl memory` manages an opt-in, local evidence store. Immutable, hash-addressed
 objects are authoritative; a SQLite index is derived from them and can always be
 rebuilt. This slice provides the store, its integrity checks and its maintenance
-commands. Only [`ahl analyze --incremental`](incremental-analysis.md) populates it so far,
+commands. Only [`ahl analyze --incremental`](incremental-analysis.md) and
+[`ahl improve --incremental`](incremental-runs.md#reuse-the-evidence-stage) populate it so far,
 with stage records the [reuse planner](stage-reuse-planner.md) reads back, through the
 library module `agent_harness_lab.memory.commit` that also stores diagnostic events and reuse
 receipts (see [committing to the store](stage-reuse-planner.md#committing-to-the-store)).
