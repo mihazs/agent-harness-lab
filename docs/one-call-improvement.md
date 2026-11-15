@@ -54,6 +54,8 @@ block explaining that outcome; see
 The receipt also carries a `before_after` block; a candidate worse than its baseline ends
 `blocked` with reason `candidate_regressed` and an `investigation.json`, see the
 [before/after guard](before-after-guard.md).
+A second run on the same project also carries an `incremental` block: whether the earlier candidate was applied, ignored or edited, the earlier
+score as a labelled historical observation, and the stages it reran; see [incremental runs](incremental-runs.md).
 
 No manual analyze/manifest/evaluate sequence is required. Authentication remains
 the runtime's responsibility; AHL does not inspect credential contents.
