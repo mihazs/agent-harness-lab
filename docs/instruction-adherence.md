@@ -104,6 +104,20 @@ is missing or does not parse is undecidable.
   (`actually`, `go ahead`, `you can`, `never mind`); a violation before that turn still counts.
 - A later user turn that repeats the instruction, or names it with `I told you`, `as I said` or `again`,
   restates it, unless the agent's last word before it was a question.
+- A later user turn that names an operand the instruction constrains is also a reaction to it, never a
+  verdict, when it is one of these: a **revert request** (`revert`, `undo`, `roll back`, `restore`,
+  `put it back`), a **reopened task** (`not done`, `not fixed`, `still failing`, `you forgot`, `you
+  missed`, `redo`, `try again`) or a **steering message** (a user turn that comes while the agent was
+  acting, that is, the turn before it is a tool call and not the agent's own words). A reaction that names
+  nothing the rule constrains, a reply straight after the agent's question, a reaction at or after a
+  supersession and a reaction to a harness rule are not read. Only an instruction with a checkable operand
+  is read this way.
+- When a rule is violated, a reaction that came after its first violating call is listed in the finding's
+  `corroboration` (`user_revert_requested`, `user_task_reopened`, `user_steering_message`,
+  `user_restated`, in that order). When the capture cannot decide the rule, the reactions are one
+  `possible_violation` per instruction: the first of `revert_requested`, `task_reopened`,
+  `steering_message` and `instruction_restated` names its `mechanism` and the others are its
+  `corroboration`. A rule that was satisfied on a complete capture has no finding.
 - Two rules in force together that require and forbid the same operand are a `conflict`; neither is then
   reported as violated.
 
@@ -120,9 +134,9 @@ is missing or does not parse is undecidable.
 | `calibration` | The measurements below |
 
 One finding is kept per instruction, mechanism and session; each further violating call raises `occurrences`
-and is listed in `turns` (at most five). A skipped required step, a `conflict` and a restated instruction are
-one occurrence each, with no `turns`: their `span` bounds the window, the two instruction turns or the prompt
-and its repeat. Counts of independence use `root` only: sessions sharing a root are one independent root, and
+and is listed in `turns` (at most five). A skipped required step, a `conflict` and a user reaction (a restated
+instruction, a revert request, a reopened task or a steering message) are one occurrence each, with no
+`turns`: their `span` bounds the window, the two instruction turns or the prompt and its reaction. Counts of independence use `root` only: sessions sharing a root are one independent root, and
 sessions without one are reported under `unknown_lineage_sessions` and never added to `independent_roots`.
 
 The report states `authority: descriptive_only`, `causal_diagnosis: false` and `publication_allowed: false`.
@@ -140,7 +154,9 @@ human review and not real sessions.
   A `cannot_tell` answer counts against recall and never toward precision.
 - A claimed status is admitted to `findings` only when its sample precision has a Wilson lower bound of at
   least 0.8 over at least 10 cases (`by_status`, `admitted`); otherwise its findings are `abstentions`.
-  With the shipped sample, `observed_violation` is admitted and `possible_violation` is not.
+  With the shipped sample, `observed_violation` is admitted and `possible_violation` is not; the sample
+  holds reactions the detector cannot tell apart (a revert request about an edit the agent made and one
+  about an edit the user made), which is why a reaction without checkable evidence is an abstention.
 
 The sample measures that the documented rules behave as documented. It does not estimate accuracy on real
 sessions, which have wording and tool use the sample does not model.

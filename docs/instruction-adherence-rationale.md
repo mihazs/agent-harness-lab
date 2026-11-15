@@ -30,14 +30,23 @@ whose capture state is unknown decides nothing, and a session with no declared l
 never counted as an independent root. Collapsing an unknown into a pass would make a harness
 look better than the evidence allows, and collapsing it into a failure would invent work.
 
-## A repeated instruction is weak evidence
+## A user's reaction is weak evidence
 
 A user may repeat an instruction because the agent ignored it, or because they changed their
-mind, answered a question or pasted the same text twice. The detector excludes the cases it can
-recognize (a supersession cue, a repeat straight after the agent's question) and never lets a
-restatement override checkable evidence. What remains is a `possible_violation`. On the shipped
-sample its precision is far below the threshold, so it is reported as an abstention rather than a
-finding. The abstention is the honest outcome, not a defect to tune away.
+mind, answered a question or pasted the same text twice. The same holds for the other reactions
+that point at an ignored instruction: a request to revert a file, a message that the task is not
+done, a message sent while the agent was still acting. Each can follow an ignored instruction and
+each can follow something else: the user's own edit, a new requirement, an unrelated slip.
+
+The detector therefore reads a reaction only when it names an operand the instruction constrained,
+excludes the cases it can recognize (a supersession cue, a reply straight after the agent's question)
+and never lets a reaction override checkable evidence. Beside a violation the capture shows, a reaction
+that came after the violating call is corroboration. Where the capture cannot decide the rule, the
+reactions make one `possible_violation`, named by the strongest of them. On the shipped sample its precision is far
+below the threshold, so it is reported as an abstention rather than a finding. The abstention is the
+honest outcome, not a defect to tune away. A steering message is read from structure (the turn before
+it is a tool call) because a captured session does not record that the user typed while the agent was
+working; a runtime that records interruptions could say so directly.
 
 ## Why native sessions are partial and Codex rules abstain
 

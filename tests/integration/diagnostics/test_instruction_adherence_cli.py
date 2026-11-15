@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from agent_harness_lab.diagnostics import instruction_adherence as adherence
-from tests.support.adherence_fixture import edit, session, shell, user
+from tests.support.adherence_fixture import agent, edit, session, shell, user
 from tests.support.native_session_fixture import claude, write
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -50,6 +50,16 @@ def test_global_rules_are_refused_unless_the_scope_names_the_global_layer(files)
     allowed = run(files, 'sessions.json', '--rules', 'global=GLOBAL.md', '--scope', 'project+global')
     assert refused.returncode == 2 and 'layer' in refused.stderr and refused.stdout == ''
     assert allowed.returncode == 0 and json.loads(allowed.stdout)['inventory']['sources'][0]['layer'] == 'global'
+
+
+def test_cli_reports_a_revert_request_the_capture_cannot_judge_as_an_abstention_and_never_prints_it(tmp_path):
+    turns = [user(f'Do not edit `notes/{SECRET}.md`.'), agent('Working.'), agent('Done.'), user(f'Please revert `notes/{SECRET}.md`.')]
+    (tmp_path / 'sessions.json').write_text(json.dumps(dict(profile=adherence.SESSIONS_PROFILE, sessions=[session('s', turns, capture='partial')])))
+    result = run(tmp_path, 'sessions.json')
+    report = json.loads(result.stdout)
+    assert result.returncode == 0 and report['findings'] == []
+    assert [(row['mechanism'], row['abstention']) for row in report['abstentions']] == [('revert_requested', 'below_calibrated_threshold')]
+    assert SECRET not in result.stdout and 'Please revert' not in result.stdout
 
 
 def test_private_detail_is_opt_in(files):

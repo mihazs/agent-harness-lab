@@ -110,6 +110,7 @@ To turn findings into candidate repairs and to screen a repair against recorded 
   is counted as reviewable or unverifiable and produces no violation.
 - A finding is a pattern with evidence, not a cause. It does not say why the agent
   deviated, and it does not measure whether a change would help.
-- A user who repeats an instruction is a weak signal. It is reported as a possible
-  violation only when no checkable evidence decides the instruction, and it is held back as
-  an abstention unless the sample calibration admits it.
+- A user who repeats an instruction, asks to revert what it constrained, says the task is not done
+  or steers the agent while it works is a weak signal. It is reported as a possible violation only when
+  no checkable evidence decides the instruction, and it is held back as an abstention unless the sample
+  calibration admits it. Beside an observed violation it is listed under `corroboration`.
