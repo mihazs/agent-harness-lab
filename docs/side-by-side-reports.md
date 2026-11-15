@@ -140,6 +140,21 @@ section follows it with the Pareto relation, the epsilon-indicator and the desir
 summary as text, labelled descriptive only and not a verdict; an unknown measurement shows
 as `unknown`, never zero. A page whose analysis has no block is unchanged.
 
+When the supplied analysis contains a `preservation` block (the conditional analysis of
+[preservation cohorts](preservation-cohorts.md), #122), a "Preservation cohorts" section
+follows the leading analysis. It shows, as text copied from the analysis and never
+recomputed: the cohort manifest hash, `qualification_authority` and `independence` as
+supplied, the seven paired-transition cells of all frozen pairs (baseline pass or fail
+against candidate pass or fail, then missing, invalid and unknown) and the same cells per
+cohort, each cohort's role, exposure, severity policy, margin, member count, disposition and
+interval with its independent roots, the trial coverage counts, the error allocation and the
+stated assumptions. Each cohort is its own row, so an aggregate gain cannot hide a protected
+loss. A cohort whose interval was not computed shows `unknown` and, for an incomplete
+analysis, the supplied `missing_outcome_bounds` as worst and best possible outcomes, not
+imputed. A malformed member shows `unknown` or is skipped. The section grants no authority: a
+real preservation result is labelled `publication_allowed: false`, so a public export of it is
+refused.
+
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without
 JavaScript.
@@ -160,7 +175,7 @@ archive layouts of the full suite.
 
 Not yet covered: browser-driven keyboard and network-interception checks (this
 audit proves structure, not rendering or focus order in a browser) and the
-optimization, controller and review panels.
+optimization-receipt, interaction (#123) and review-queue (#73) panels.
 
 ## Public export
 
