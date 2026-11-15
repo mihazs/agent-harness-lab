@@ -4,9 +4,10 @@
 
 | Command | Purpose |
 | --- | --- |
-| `ahl improve [project]` | Discover issues, stage repairs and evaluate; behavioral adoption is blocked |
+| `ahl improve [project]` | Run the evaluate, improve, evaluate loop on the pinned bank, or make the labelled single pass when none is pinned; behavioral adoption is blocked |
 | `ahl analyze\|improve [project] --history-from CHECKOUT` | Read the sessions recorded for another checkout of the same repository, read-only and labelled `source_project_path_differs`, when the project is a linked worktree; see [improve from past sessions](improve-from-past-sessions.md#try-it-in-a-worktree) |
-| `ahl improve [project] --accept-score X --max-rounds N [--plateau-rounds N] [--on-regression stop\|rollback_continue]` | Opt into the bounded evaluate, improve, evaluate loop on a pinned bank; one typed stop criterion and exit code per run, recommendation only and never certification; see the [loop reference](loop-reference.md#running-the-loop-from-ahl-improve) |
+| `ahl improve [project] --accept-score X --max-rounds N [--plateau-rounds N] [--on-regression stop\|rollback_continue]` | Declare the bar and stop policy of the loop, which is the default on a pinned bank; one typed stop criterion and exit code per run, recommendation only and never certification; see [improve until an acceptance score is reached](improve-until-score.md) and the [loop reference](loop-reference.md#running-the-loop-from-ahl-improve) |
+| `ahl improve [project] --single-pass` | Deprecated, removed after one release: the previous improve-first single pass; the receipt says `loop.status: not_used`; see [the default and `--single-pass`](loop-reference.md#the-default-and---single-pass) |
 | `ahl improve [project] --history [--since DATE\|first]` | Use captured past project sessions as read-only evidence; see [improve from past sessions](improve-from-past-sessions.md) |
 | `ahl improve [project] --repair-contracts --scope project\|global\|project+global [--agent codex\|claude]` | Repair skill headers in the project (default), the named runtime's user-level skill directory, or both; see [choose the project or user-level scope](improve-scope.md) |
 | `ahl config show\|clear\|set-scope SCOPE --agent codex\|claude\|clear-scope` | Show or change the user-level remembered runtime and the saved default `--scope` (`global` or `project+global`); never a project file, see [save a default scope](improve-scope.md#save-a-default-scope) |

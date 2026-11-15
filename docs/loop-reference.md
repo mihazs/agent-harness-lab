@@ -6,10 +6,13 @@ evaluate > improve > evaluate state machine and the loop controller in
 clock, network or file access beyond reading configuration. The controller drives
 the machine through two injected ports and writes only its private round ledger.
 The [frozen-bank evaluator](#frozen-bank-evaluator) adapts the real evaluation to
-the controller's evaluator port. `ahl improve` calls the controller only when a
-[loop flag or declaration](#running-the-loop-from-ahl-improve) opts the run in; without
-one it still makes a single pass, and its receipts, statuses and exit codes are
-unchanged.
+the controller's evaluator port. `ahl improve` calls the controller by default
+whenever the project pins a task bank, with or without a
+[loop flag or declaration](#running-the-loop-from-ahl-improve); `--single-pass` and a run
+that has no frozen bank to drive keep the earlier single pass and say so in a `loop`
+block that reads `not_used`. How to run it is in
+[improve until an acceptance score is reached](improve-until-score.md) and why it is
+shaped this way in [why the loop evaluates, improves, then evaluates](loop-rationale.md).
 
 The loop only recommends. A declaration sets a bar and a stop policy; it never
 grants apply, global scope, promotion or certification, and every resolved spec
@@ -513,12 +516,16 @@ needs both). Without `arms` it runs both, so every other caller is unchanged.
 ## Running the loop from `ahl improve`
 
 `ahl improve` and `ahl skills invoke` (one shared parser and receipt) run the loop
-only when a run asks for it. The loop is opt-in in this release: without a loop flag
-or a loop declaration the command makes its single pass and nothing below applies.
+by default. This is a breaking change of the command: a run with no loop flag and no
+loop declaration is a loop run whenever `ahl.json` pins a task bank, with the documented
+defaults labelled `acceptance_source: default` and the mode `relative_supported_improvement`
+(`--max-rounds 1` makes exactly one evaluate, improve, evaluate pass). The previous
+improve-first single pass stays reachable for one release as `--single-pass`; see
+[the default and `--single-pass`](#the-default-and---single-pass).
 
-### Opting in
+### Declaring the loop
 
-A run is a loop run when it has any of these:
+A run declares its bar and stop policy with any of these; none is required:
 
 | Source | How |
 | --- | --- |
@@ -538,15 +545,38 @@ object with `scope`, `apply`, `recommendation_only`, `automatic_promotion`,
 `promotion` or `certification` is `loop_authority_refused`, and the run stays
 recommendation-only whatever it declares.
 
+### The default and `--single-pass`
+
+| Run | What happens | `loop` block |
+| --- | --- | --- |
+| No flag, no declaration, a pinned bank | The loop runs with the defaults (`max_rounds` 3, `plateau_rounds` 2, `on_regression` `stop`, `alpha` 0.05) and no absolute bar | The full receipt, `acceptance_source: default`, `mode: relative_supported_improvement` |
+| A flag or a declaration, a pinned bank | The loop runs with the declared values | The full receipt, the source of each value named |
+| A flag or a declaration, no pinned bank or a controlled runtime | `blocked` with `loop_requires_frozen_bank`, exit 3, nothing ran | `status: not_started` |
+| A loop run that a gate stopped before its first evaluation (no outcome evidence, no matching history, an unavailable sandbox) | `blocked` with that gate's own reason; no model call that cannot succeed is made | `status: not_started`, `reason` the gate's reason |
+| No flag, no declaration, no pinned bank or a controlled runtime | The single pass runs | `status: not_used`, `reason: loop_requires_frozen_bank` |
+| No flag, no declaration, `--experiment-request` (a request needs the starter bank, so no bank is pinned) | The fixed-bank comparison of the request runs | `status: not_used`, `reason: loop_requires_frozen_bank` |
+| `--single-pass` | The previous improve-first single pass runs | `status: not_used`, `reason: single_pass_requested`, `deprecated: true` |
+| `--repair-contracts` | The deterministic repair runs; it is no improvement pass | no `loop` block |
+
+A `not_used` block holds `profile`, `status`, `reason`, `single_pass: true`, `deprecated`
+(true only for `--single-pass`), `recommendation_only: true`, `automatic_promotion: false`,
+`certification: unverified` and one `remediation` step, and it is the same on `ahl improve`
+and `ahl skills invoke`. `--single-pass` is removed one release after the loop default and
+does not combine with `--accept-score`, `--max-rounds`, `--plateau-rounds` or
+`--on-regression` (exit 2, `invalid_usage`); it wins over a project or user `loop`
+declaration, which it does not read. `ahl watch` has no loop options and keeps its single pass.
+
 ### What a loop run needs
 
 The loop evaluates every round on one frozen bank, so it needs a pinned task bank in
 `ahl.json` (`bank.path` and `bank.sha256`, with development, calibration and
 certification or transfer tasks) and the cooperative runtime the configuration names.
-Without one the result is `blocked` with reason `loop_requires_frozen_bank`, exit 3, a
-`loop` block that says `status: not_started`, and one remediation step; the run never
-falls back to a single pass. The frozen bank is the pinned one: first-use construction
-and `--experiment-request` banks are not available to the loop in this release.
+A run that asked for the loop with a flag or a declaration and has none is `blocked` with
+reason `loop_requires_frozen_bank`, exit 3, a `loop` block that says `status: not_started`,
+and one remediation step; it never falls back to a single pass. A run that did not ask
+makes the labelled single pass instead (see [the table above](#the-default-and---single-pass)).
+The frozen bank is the pinned one: first-use construction of a bank and
+`--experiment-request` banks are not available to the loop in this release.
 
 Only the development and calibration (regression) tasks are scored. The certification
 and transfer (held-out) tasks are never run, hashed or read to choose a candidate.
@@ -704,7 +734,7 @@ the loop's modules as it does for the rest of the receipt.
 
 A per-area `accept_score` map resolves but is not decided (it stops
 `evidence_insufficient`), `ahl improve --resume RUN_ID` returns a finished loop run's receipt but does not continue an interrupted one (the real evaluator and proposer hold in-process state a cold start cannot rebuild; the controller's `resume()` and a rerun's carry-over are the two ways on), a first-use bank is not
-constructed for the loop, `ahl improve` does not default to the loop, and a recommended
+constructed for the loop and an `--experiment-request` bank is not driven by it (both keep their labelled single pass), and a recommended
 candidate has no change plan; each belongs to a later slice of the loop epic.
 
 ## Simulation test-bed
@@ -799,5 +829,5 @@ Each reason has one remediation in the [exit reason table](analysis.md#exit-reas
 | `resume_spec_changed` | a resume under a declaration other than the one the run was frozen with; nothing ran |
 | `resume_inputs_changed` | a resume under other frozen inputs, baseline, mechanism queue or carried dispositions than the run was frozen with; nothing ran |
 | `resume_busy` | a resume while a run or another resume holds the case; nothing ran |
-| `loop_requires_frozen_bank` | a loop declaration with no pinned task bank in `ahl.json`, or with a controlled bank: status `blocked`, never a silent single pass |
+| `loop_requires_frozen_bank` | a loop flag or declaration with no pinned task bank in `ahl.json`, or with a controlled bank: status `blocked`, never a silent single pass; the same reason labels a default run that made the single pass for that cause (`loop.status: not_used`) |
 | `loop_receipt_invalid` | a loop receipt that failed `validate_receipt()`: a missing or unknown stop criterion, an accepted stop without its evaluation, a number without an evaluation id, an authority field other than recommendation only, or an oversized receipt |

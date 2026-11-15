@@ -11,7 +11,7 @@ reader purpose.
 ## Complete a task
 
 - [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
-- [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [reuse analysis work on unchanged input](incremental-analysis.md); [inspect CLI help](cli-help.md).
+- [Analyze, improve, or monitor a project](workflows.md); [improve until an acceptance score is reached](improve-until-score.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [reuse analysis work on unchanged input](incremental-analysis.md); [inspect CLI help](cli-help.md).
 - [Audit a long-lived checkout whose inventory is blocked](audit-long-lived-checkout.md), [repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
 - [Annotate pull requests with the static audit](audit-pull-requests.md), [find where agents ignored instructions](detect-ignored-instructions.md), or [repair a harness whose instructions are ignored](repair-ignored-instructions.md).
 - [Stage a presentation adapter under a controller-owned manifest and roll it back](stage-an-adapter.md).
@@ -25,7 +25,7 @@ reader purpose.
 
 - [Global instruction region markers and typed reasons](global-instructions-reference.md), [command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md), including its [capability area declarations](evaluation-manifest-contract.md#capability-area-declarations).
 - [Campaign specification and planned records](campaign-specification.md).
-- [Loop declaration, state machine and controller](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants, the controller's ports, rounds, budget reserve and round ledger, and the simulation test-bed.
+- [Loop declaration, state machine and controller](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants, the controller's ports, rounds, budget reserve and round ledger, the default of `ahl improve` and `--single-pass`, the receipt and exit codes, and the simulation test-bed.
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Bayesian decision score reference](bayesian-decision-reference.md): the `bayes_decision` spec field, the output block with the recorded input behind each number, reasons, verdict meanings and the six synthetic fixtures.
@@ -50,6 +50,7 @@ reader purpose.
 ## Understand the context
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
+- [Why the loop evaluates, improves, then evaluates](loop-rationale.md): why the order is fixed, why scores carry intervals, why each round is a look, and what `accepted` does not mean.
 - [Why there is one skill](single-skill-rationale.md), [why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
 - [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): why a numeric, non-LLM better, equivalent, worse or insufficient-evidence score runs beside the unchanged Hoeffding path, how it treats unknown outcomes, how its false-recommendation rate was calibrated with the seeded power simulator under a frozen protocol, its descriptive-only desirability and Pareto epsilon-indicator report, its evidence status (no peer-reviewed work applies the method to agent harness scoring) and its limits.
 - [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md), and [why a repair plan is a recommendation](instruction-adherence-rationale.md#why-a-repair-plan-is-a-recommendation).
