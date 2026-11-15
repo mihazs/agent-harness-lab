@@ -30,13 +30,15 @@ REPAIR = dict(not_in_context='restore_loading', conflicting_instructions='resolv
 ROUTE = dict(prose_only_rule='hook', context_loss='state')
 ENFORCEABLE = ('forbidden_action_taken', 'approval_not_sought', 'scope_exceeded', 'required_step_skipped', 'order_violated')
 CLAIMED = ('observed_violation', 'possible_violation')
+# What a finding says about recorded compactions, and the support fact it adds to context_loss.
+COMPACTION = dict(in_window='compaction_in_window', none_in_window='no_compaction_in_window', not_recorded='compaction_not_recorded')
 UNASSESSED = (dict(mechanism='skill_not_activated', reason='the adherence report carries no skill activation evidence'),)
 GUARDS = ('never_weaken_delete_or_bypass_a_safety_rule', 'never_edit_a_protected_or_out_of_scope_surface')
 SORT = ('violated', 'unknown', 'satisfied')
 LIMITATIONS = (
     'Every hypothesis is a candidate explanation from structural facts of one finding and the harness text; none is a diagnosis.',
     'A repair class is a recommendation: only a fresh controlled paired experiment can support an improvement, and applying it needs the existing application gate.',
-    'Compaction, skill activation and whether a hook already enforces a rule are not read here; a hypothesis that depends on them stays not_excluded or unassessed.')
+    'A compaction is read only from a session that records it, and then only that one fell after the instruction came into view; whether it removed the instruction from view, skill activation and whether a hook already enforces a rule are not read, so a hypothesis that depends on them stays not_excluded or unassessed.')
 VERDICT_LIMITATIONS = (
     'The screen grades recorded arms with the adherence detector: lexical rules over tool calls, three-valued, with a rule credited only when it was loaded.',
     'An unknown root is counted in the direction that makes the comparison harder to pass; a session with no declared root is excluded, never an independent root.',
@@ -83,8 +85,12 @@ def _hypotheses(finding, rows, texts):
             found.append(_hypothesis('prose_only_rule', 'not_excluded', ['mechanism=' + finding['mechanism'], 'loaded_rule_broken' if loading == 'loaded' else 'loading_unrecorded']))
     if direction == 'user_prompt':
         found.append(_hypothesis('no_self_check_for_user_instruction', 'not_excluded', ['direction=user_prompt', 'mechanism=' + finding['mechanism']]))
-    if finding['span']['last_turn'] >= LONG_SESSION_TURNS:
-        found.append(_hypothesis('context_loss', 'not_excluded', ['late_in_session', 'compaction_not_recorded']))
+    # A report made before compactions were recorded has no field: that is not recorded, never none.
+    compaction = finding.get('compaction', 'not_recorded')
+    late = finding['span']['last_turn'] >= LONG_SESSION_TURNS
+    if late or compaction == 'in_window':
+        # A recorded compaction is a fact beside the hypothesis, not its basis: whether the instruction left the context is not read.
+        found.append(_hypothesis('context_loss', 'not_excluded', [*(['late_in_session'] if late else []), COMPACTION[compaction]]))
     found.sort(key=lambda row: ORDER.index(row['mechanism']))
     return found
 
@@ -93,7 +99,8 @@ def _check(report):
     fields = ('finding_id', 'instruction_ref', 'direction', 'status', 'mechanism', 'loading', 'source_layer', 'span', 'root_ref', 'session_ref')
     if not isinstance(report, dict) or report.get('profile') != adherence.PROFILE or not all(isinstance(report.get(name), list) for name in ('findings', 'abstentions', 'recurrence')):
         raise ValueError('report must be an %s report' % adherence.PROFILE)
-    if not all(isinstance(row, dict) and set(fields) <= set(row) and isinstance(row['span'], dict) and type(row['span'].get('last_turn')) is int for row in report['findings']):
+    if not all(isinstance(row, dict) and set(fields) <= set(row) and isinstance(row['span'], dict) and type(row['span'].get('last_turn')) is int
+               and row.get('compaction', 'not_recorded') in list(COMPACTION) for row in report['findings']):
         raise ValueError('report findings differ from the %s schema' % adherence.PROFILE)
 
 

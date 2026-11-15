@@ -13,13 +13,18 @@ def write(path, rows, *, tail=''):
 
 
 def claude(project, steps, *, session='claude-1', version=CLAUDE_VERSION, sidechain=False):
-    """Claude rows for steps: ('user'|'meta'|'agent', text), ('call', tool, input), ('result',) or ('memory', absolute path[, attached text])."""
+    """Claude rows for steps: ('user'|'meta'|'agent', text), ('call', tool, input), ('result',), ('memory', absolute path[, attached text]),
+    ('compact',) for the compaction boundary or ('summary',) for the compaction summary the runtime writes after it."""
     rows = []
     for number, (kind, *rest) in enumerate(steps):
         common = dict(uuid=f'u{number}', parentUuid=f'u{number - 1}' if number else None, timestamp=STAMP, sessionId=session,
                       cwd=str(project), version=version, isSidechain=sidechain, **(dict(agentId='sub') if sidechain else {}))
         if kind in ('user', 'meta'):
             rows.append(dict(common, type='user', message=dict(role='user', content=rest[0]), **(dict(isMeta=True) if kind == 'meta' else {})))
+        elif kind == 'compact':
+            rows.append(dict(common, type='system', subtype='compact_boundary', logicalParentUuid='synthetic'))
+        elif kind == 'summary':
+            rows.append(dict(common, type='user', isCompactSummary=True, message=dict(role='user', content='synthetic summary')))
         elif kind == 'result':
             rows.append(dict(common, type='user', message=dict(role='user', content=[
                 dict(type='tool_result', tool_use_id=f'call{number - 1}', is_error=False, content='tool output')])))
@@ -33,11 +38,16 @@ def claude(project, steps, *, session='claude-1', version=CLAUDE_VERSION, sidech
 
 
 def codex(project, steps, *, session='codex-1', version=CODEX_VERSION):
-    """Codex rollout rows for steps: ('user'|'agent', text), ('exec', cmd), ('shell', [argv]), ('patch', text) or ('local', [argv])."""
+    """Codex rollout rows for steps: ('user'|'agent', text), ('exec', cmd), ('shell', [argv]), ('patch', text) or ('local', [argv]);
+    ('compacted', None) and ('compaction_event', None) are the two records one compaction leaves."""
     rows = [dict(type='session_meta', timestamp=STAMP, payload=dict(id=session, cwd=str(project), cli_version=version))]
     for number, (kind, value) in enumerate(steps):
         if kind in ('user', 'agent'):
             rows.append(dict(type='event_msg', timestamp=STAMP, payload=dict(type=f'{kind}_message', message=value)))
+        elif kind == 'compacted':
+            rows.append(dict(type='compacted', timestamp=STAMP, payload=dict(message='synthetic summary', replacement_history=[])))
+        elif kind == 'compaction_event':
+            rows.append(dict(type='event_msg', timestamp=STAMP, payload=dict(type='context_compacted')))
         elif kind == 'patch':
             rows.append(dict(type='response_item', timestamp=STAMP, payload=dict(type='custom_tool_call', name='apply_patch', call_id=f'c{number}', input=value)))
         elif kind == 'local':

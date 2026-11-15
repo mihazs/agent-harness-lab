@@ -62,12 +62,16 @@ def _text(value):
 class _Capture:
     def __init__(self, project, harness):
         # The text the report will judge, by loaded key: an attachment counts only when it carries exactly this text.
-        self.project, self.id, self.turns, self.loaded = PurePosixPath(project), None, [], {}
+        self.project, self.id, self.turns, self.loaded, self.compactions = PurePosixPath(project), None, [], {}, set()
         self.judged = {f"{source['layer']}:{source['name']}": source['text'] for source in harness}
 
     def add_turn(self, turn):
         if len(self.turns) < MAX_TURNS:
             self.turns.append(turn)
+
+    def compaction(self):
+        # The position is the next turn's index; a boundary and its summary (or a Codex row and its event) land on one position and count once.
+        self.compactions.add(len(self.turns))
 
     def message(self, role, value):
         if isinstance(value, str):
@@ -84,14 +88,15 @@ class _Capture:
     def finish(self):
         if self.id is None:
             raise Skipped('no_session')
-        return dict(session=self.id, capture='partial', project_dir=str(self.project), loaded=self.loaded, turns=self.turns)
+        return dict(session=self.id, capture='partial', project_dir=str(self.project), loaded=self.loaded, turns=self.turns, compactions=sorted(self.compactions))
 
 
 class _Claude(_Capture):
     def add(self, row, position):
         from ..telemetry.claude_native import VERIFIED
         kind = row.get('type')
-        if kind not in ('user', 'assistant', 'attachment'):
+        boundary = kind == 'system' and row.get('subtype') == 'compact_boundary'
+        if kind not in ('user', 'assistant', 'attachment') and not boundary:
             return
         if row.get('version') not in VERIFIED:
             raise Skipped('unsupported_version')
@@ -106,7 +111,9 @@ class _Claude(_Capture):
             raise Skipped('mixed_sessions')
         if kind == 'attachment':
             self.attachment(row.get('attachment'))
-        elif not row.get('isMeta') and not row.get('isCompactSummary'):
+        elif boundary or row.get('isCompactSummary'):
+            self.compaction()
+        elif not row.get('isMeta'):
             self.conversation(kind, row.get('message'))
 
     def attachment(self, attachment):
@@ -151,6 +158,8 @@ class _Codex(_Capture):
             self.id = _text(payload.get('id'))
         elif kind == 'session_meta':
             raise Skipped('mixed_sessions')
+        elif kind == 'compacted' or kind == 'event_msg' and payload.get('type') == 'context_compacted':
+            self.compaction()
         elif kind == 'event_msg' and payload.get('type') in ('user_message', 'agent_message'):
             self.message(payload['type'].split('_')[0], payload.get('message'))
         elif kind == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call', 'local_shell_call'):

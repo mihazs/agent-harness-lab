@@ -105,8 +105,20 @@ def _state(value):
     return state, begin, before
 
 
+def _compactions(value, count):
+    """None when the session does not record compactions; else the strictly increasing positions of the recorded ones.
+
+    A position is the index of the first turn after the compaction, so it lies in 0..count. An empty list says none was recorded, not that none happened.
+    """
+    if value is None:
+        raise ValueError('compactions must be a list of turn positions')
+    if not isinstance(value, list) or any(type(at) is not int or not 0 <= at <= count for at in value) or any(a >= b for a, b in zip(value, value[1:])):
+        raise ValueError('compactions must be strictly increasing turn positions inside the session')
+    return list(value)
+
+
 def _session(raw, seen):
-    _fields(raw, {'session', 'root', 'capture', 'project_dir', 'loaded', 'turns'}, {'session', 'turns'}, 'session')
+    _fields(raw, {'session', 'root', 'capture', 'project_dir', 'loaded', 'turns', 'compactions'}, {'session', 'turns'}, 'session')
     identity = _bounded(raw['session'], 'session', 256)
     if identity in seen or not isinstance(raw['turns'], list) or len(raw['turns']) > MAX_TURNS:
         raise ValueError('sessions need distinct ids and at most %d turns' % MAX_TURNS)
@@ -123,7 +135,8 @@ def _session(raw, seen):
     return dict(ref=rules.digest('session', identity), root_ref=rules.digest('root', _bounded(raw['root'], 'root', 256)) if 'root' in raw else None,
                 capture=capture, project=posixpath.normpath(project) if project else None,
                 loaded={_bounded(name, 'source', 256): _state(value) for name, value in loaded.items()}, turns=turns,
-                calls=[turn for turn in turns if turn['role'] == 'tool_call'])
+                calls=[turn for turn in turns if turn['role'] == 'tool_call'],
+                compactions=_compactions(raw['compactions'], len(turns)) if 'compactions' in raw else None)
 
 
 def load_sessions(value):
@@ -302,13 +315,25 @@ def _conflicts(items):
     return pairs
 
 
+def _compaction(session, item, last):
+    """Whether a recorded compaction fell after the instruction came into view and by the last turn of the finding.
+
+    not_recorded when the session carries no compaction record, else in_window or none_in_window. A fact about the record only: it does not say
+    the compaction removed the instruction, and none_in_window does not say no compaction happened.
+    """
+    if session['compactions'] is None:
+        return 'not_recorded'
+    since = item['begin'] if item['turn'] is None else item['turn']
+    return 'in_window' if any(since < at <= last for at in session['compactions']) else 'none_in_window'
+
+
 def _finding(session, item, status, mechanism, turns, evidence, detail, **extra):
     refs = extra.pop('refs', [item['ref']])
     record = dict(direction=extra.pop('direction', item['direction']), status=status, mechanism=mechanism, instruction_ref=refs[0],
                   source_layer=extra.pop('layer', item['layer']), loading=item['loading'], session_ref=session['ref'], root_ref=session['root_ref'],
                   lineage='declared' if session['root_ref'] else 'unknown', span=dict(first_turn=min(turns), last_turn=max(turns)),
                   occurrences=1 if mechanism in ONCE else len(turns), turns=[] if mechanism in ONCE else turns[:MAX_TURN_REFS], corroboration=extra.pop('corroboration', []),
-                  evidence_sha256=rules.digest('evidence', *evidence))
+                  compaction=_compaction(session, item, max(turns)), evidence_sha256=rules.digest('evidence', *evidence))
     if len(refs) > 1:
         record['instruction_refs'] = refs
     if detail:
@@ -350,7 +375,8 @@ def _session_findings(session, harness, detail):
             # A reaction counts as corroboration of a violation only when it came after the first violating call.
             reactions = dict(item['signals'], instruction_restated=item['restated'])
             corroboration = [label for name, label in SIGNALS if reactions.get(name) is not None and (name == 'instruction_restated' or reactions[name] > min(bad))]
-            found = _finding(session, dict(item, loading=state), status, MECHANISMS[item['rule']['kind']], bad,
+            # A call before the load turn, with what came before unknown: the rule may have been in view since launch, so the compaction window starts there.
+            found = _finding(session, dict(item, loading=state, begin=item['begin'] if live or state != 'unknown' else 0), status, MECHANISMS[item['rule']['kind']], bad,
                              [str(call['tool']), str(call.get('command')), str(call['path']), rules.key(item['rule'])], detail, corroboration=corroboration)
             findings.setdefault(found['finding_id'], found)
     for item in users:
