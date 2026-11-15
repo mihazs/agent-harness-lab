@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +42,16 @@ def test_an_explicit_scope_on_the_command_line_overrides_the_saved_default(one, 
     user_config.remember_scope('global', 'claude')
     before = tree(home.path)
     code, result = one.invoke('--repair-contracts', '--scope', 'project')
+    assert (code, result['scope'], result['scope_source'], result['layers_changed']) == (0, 'project', 'command_line', ['project'])
+    assert tree(home.path) == before
+
+
+def test_the_project_command_the_skill_documents_ignores_a_saved_global_default(one, home):
+    reference = Path(__file__).resolve().parents[3] / 'skills/harness-self-improvement/references/invocation.md'
+    command = reference.read_text().split('## Standalone project invocation', 1)[1].split('```', 2)[1].split()
+    user_config.remember_scope('global', 'claude')
+    before = tree(home.path)
+    code, result = invoke_skill(one, *command[command.index('.') + 1:], '--repair-contracts')
     assert (code, result['scope'], result['scope_source'], result['layers_changed']) == (0, 'project', 'command_line', ['project'])
     assert tree(home.path) == before
 

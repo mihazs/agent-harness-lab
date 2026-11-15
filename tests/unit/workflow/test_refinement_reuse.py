@@ -90,3 +90,26 @@ def test_the_prompt_line_lists_the_reused_ids_and_reserved_names_but_never_fixtu
     line = reuse.prompt_line(plan)
     assert 'development, regression' in line and 'oracle-development' in line and 'heldout' in line
     assert 'tampered' not in line and str(first) not in line
+
+
+@pytest.mark.parametrize('names', [
+    pytest.param(['grade.py'], id='reserved-file'),
+    pytest.param(['development'], id='reserved-directory'),
+    pytest.param(['oracle-regression/grade.py.txt'], id='file-inside-a-reserved-directory'),
+    pytest.param(['fresh/data', 'regression-complete/result.json'], id='one-collision-among-fresh-files'),
+])
+def test_check_fresh_rejects_an_authored_file_at_or_under_a_reserved_path(world, names):
+    _, second, _, plan = world
+    with pytest.raises(ContractError) as caught:
+        reuse.check_fresh(plan, fresh(second), names)
+    assert (caught.value.reason, caught.value.field, caught.value.repairable) == ('evaluation_manifest_field_invalid', 'tasks[*].fixture', True)
+
+
+@pytest.mark.parametrize('names', [
+    pytest.param([], id='no-files'),
+    pytest.param(['fresh/data', 'fresh-oracle/grade.py.txt', 'manifest.json'], id='unrelated-files'),
+    pytest.param(['development-extra/data', 'grade.py.txt', 'oracle-development2'], id='names-that-merely-share-a-prefix'),
+])
+def test_check_fresh_accepts_fresh_files_even_when_a_name_shares_a_prefix_with_a_reserved_one(world, names):
+    _, second, _, plan = world
+    reuse.check_fresh(plan, fresh(second), names)

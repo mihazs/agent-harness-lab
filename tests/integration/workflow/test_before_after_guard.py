@@ -34,11 +34,13 @@ def run():
         base = workflow_fixture.WorkflowTests(cleanups.callback)
         base.agent.write_text(WORSE)
 
-        def go(original, mode='ok', agent=None):
+        def go(original, mode='ok', agent=None, **options):
             (base.project / 'AGENTS.md').write_text(original)
             (base.project / 'mode').write_text(mode)
             if agent is not None: base.agent.write_text(agent)
-            result = improve(base.args())
+            args = base.args()
+            for name, value in options.items(): setattr(args, name, value)
+            result = improve(args)
             return result, Path(result['output']), base
         yield go
 
@@ -98,8 +100,8 @@ def test_both_arms_record_the_same_frozen_inputs_identity(run):
 
 
 def test_the_same_inputs_have_the_same_identity_in_another_run_folder(run):
-    first, first_output, _ = run('good', 'worse')
-    second, second_output, _ = run('good', 'worse')
+    first, first_output, _ = run('bad')  # a candidate that is not regressed: an identical regressed one is not evaluated twice (#806)
+    second, second_output, _ = run('bad')
     assert first_output != second_output
     assert first['before_after']['frozen_inputs']['baseline'] == second['before_after']['frozen_inputs']['baseline']
 
@@ -131,3 +133,55 @@ def test_the_cli_exit_code_and_receipt_name_the_regression(tmp_path, capsys, mon
     receipt = json.loads(capsys.readouterr().out)
     assert (code, receipt['status'], receipt['reason']) == (3, 'blocked', 'candidate_regressed')
     assert receipt['exit_receipt']['stage'] == 'trials' and 'investigation.json' in receipt['exit_receipt']['next_step']
+
+
+@pytest.mark.parametrize('margin, regressed', [
+    pytest.param(0.0, True, id='no_margin_is_the_default_and_any_net_loss_blocks'),
+    pytest.param(0.5, True, id='loss_beyond_the_margin'),
+    pytest.param(0.66, True, id='margin_just_under_the_observed_loss'),
+    pytest.param(0.67, False, id='margin_just_over_the_observed_loss'),
+    pytest.param(0.99, False, id='margin_tolerating_nearly_everything'),
+])
+def test_a_declared_margin_tolerates_a_loss_inside_it_and_blocks_one_beyond_it(run, margin, regressed):
+    result, output, _ = run('good', 'worse', regression_margin=margin)  # two of three tasks flip to fail: the paired delta is -2/3
+    guard = result['before_after']
+    assert (guard['margin'], guard['adoption_blocked']) == (margin, regressed)
+    assert guard['verdict'] == ('candidate_regressed' if regressed else 'inconclusive')
+    assert (result['reason'], (output / 'investigation.json').exists()) == (('candidate_regressed', True) if regressed else ('evaluation_run_failed', False))
+
+
+def test_a_declared_margin_also_raises_the_bar_for_improved(run):
+    result, _, _ = run('bad', regression_margin=0.5)
+    assert result['before_after']['margin'] == 0.5 and result['before_after']['verdict'] == 'inconclusive'
+
+
+@pytest.mark.parametrize('value', [
+    pytest.param('-0.1', id='negative'), pytest.param('1', id='one'), pytest.param('nan', id='nan'), pytest.param('abc', id='word'), pytest.param('', id='empty')])
+def test_an_unsupported_margin_is_an_input_error_before_any_run(tmp_path, capsys, value):
+    with ExitStack() as cleanups:
+        base = workflow_fixture.WorkflowTests(cleanups.callback)
+        with pytest.raises(SystemExit) as stopped:
+            main(['improve', str(base.project), '--agent', 'codex', '--codex', str(base.agent), '--regression-margin', value, '--output', str(tmp_path / 'run')])
+    assert stopped.value.code == 2 and 'margin' in capsys.readouterr().err and not (tmp_path / 'run').exists()
+
+
+def test_a_margin_cannot_be_combined_with_a_fixed_bank_request_that_declares_its_own(tmp_path, capsys):
+    with ExitStack() as cleanups:
+        base = workflow_fixture.WorkflowTests(cleanups.callback)
+        request = tmp_path / 'request.json'
+        request.write_text('{}')
+        with pytest.raises(SystemExit) as stopped:
+            main(['improve', str(base.project), '--regression-margin', '0.1', '--experiment-request', str(request), '--output', str(tmp_path / 'run')])
+    assert stopped.value.code == 2 and 'family_margin' in capsys.readouterr().err and not (tmp_path / 'run').exists()
+
+
+def test_the_cli_carries_the_declared_margin_into_the_receipt(tmp_path, capsys):
+    with ExitStack() as cleanups:
+        base = workflow_fixture.WorkflowTests(cleanups.callback)
+        base.agent.write_text(WORSE)
+        (base.project / 'AGENTS.md').write_text('good')
+        (base.project / 'mode').write_text('worse')
+        code = main(['improve', str(base.project), '--agent', 'codex', '--codex', str(base.agent), '--claude', 'missing',
+                     '--timeout', '30', '--regression-margin', '0.8', '--output', str(tmp_path / 'run')])
+    receipt = json.loads(capsys.readouterr().out)
+    assert (code, receipt['reason'], receipt['before_after']['margin'], receipt['before_after']['adoption_blocked']) == (1, 'evaluation_run_failed', 0.8, False)

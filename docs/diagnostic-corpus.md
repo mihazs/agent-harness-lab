@@ -15,6 +15,8 @@ It uses the existing owner-only `PrivateJournal` rather than a second database.
 | `snapshot()` | List current queue metadata and its revision, without label/evidence bodies |
 | `bind_lineage(receipt)` | Record one reviewed source-lineage grouping; its components must stay inside one effective partition |
 | `export_development(expected_revision_sha256)` | Return eligible fitting/development annotations; protected labels are excluded |
+| `install_review_policy(path)`, `prepare_review(...)`, `submit_authenticated(request, signature)` | Optional key-approved submissions and adjudications ([below](#key-approved-reviews-and-the-gold-label-policy)) |
+| `gold_label_policy()` | Read-only report of which cases meet the frozen gold-label policy; issues no label |
 
 `record` is a schema-version-one object with opaque incident/root/family/project
 and time-group IDs, partition, source kind/reference/revision, permission/license,
@@ -45,7 +47,8 @@ whitespace and compare case-insensitively for reviewer separation. Original labe
 in append-only history after adjudication; an unknown final annotation remains
 unresolved and is excluded from development export.
 
-These are **operator-attested identities**, not authenticated independent humans.
+Unless a review is key-approved (see [below](#key-approved-reviews-and-the-gold-label-policy)), these are
+**operator-attested identities**, not authenticated independent humans.
 Packets provide convenience blinding, not an isolation boundary against the local
 store owner, who can inspect files. Agreement does not create a gold label. Every
 receipt/export explicitly retains unverified reviewer/root independence,
@@ -128,10 +131,46 @@ All storage and exports remain private, including synthetic-source declarations.
 The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
 No public exporter is included. The next slices still need verified native lineage
-(the #58 full chain), a production review authentication policy, a certification-role
-evaluation and the #74 classifier gate's use of real models. A
+(the #58 full chain), certification-role evaluation and the #74 classifier gate's use of
+real models, and the export, benchmark and protected-access outputs still report
+operator-attested labels with no gold authority. A
 reviewed diagnostic annotation remains distinct from #8's independently
 reproduced and graded executable regression case.
+
+## Key-approved reviews and the gold-label policy
+
+A submission or adjudication can carry an OpenSSH Ed25519 key approval, reusing the host
+reviewer-policy mechanism of the artifact and bank reviews (purpose `diagnostic_corpus_review`,
+signature namespace `ahl.diagnostic-corpus-review.v1`). It needs the `ssh-keygen` verifier, which is
+optional; without it the queue works as before and nothing becomes authenticated.
+
+1. `install_review_policy(path)` installs an owner-only policy file kept outside the store:
+   `{"schema_version":1,"profile":"review-authority-policy-v1","purpose":"diagnostic_corpus_review","reviewers":{PRINCIPAL:"ssh-ed25519 AAAA..."}}`.
+   Claims stay operator-declared; only the submission and adjudication events are approved.
+2. `prepare_review(case_id, expected_event_sha256, kind, reviewer, label, reason=None)` writes an unsigned
+   request bound to the store, the policy digest and the exact current event, and returns its
+   `request_path`. `kind` is `submitted` (no reason) or `adjudicated` (reason required).
+3. Sign that file outside this store, which never holds a private key: `ssh-keygen -Y sign -f KEY -n ahl.diagnostic-corpus-review.v1 REQUEST`.
+4. `submit_authenticated(request, signature)` verifies the signature, then applies the same transition,
+   reviewer-separation and stale-revision rules as `update`. A changed label, another key or namespace, another
+   store or an older event revision is rejected and records nothing.
+
+The approval record is stored beside the event. Every later read of the queue re-checks that the stored
+record matches its exact event and fails closed when it was edited; it does not re-run the signature check.
+
+`gold_label_policy(budget_seconds=60)` is that re-check. For each current case it reports `meets_policy` and
+`blockers` under the frozen `diagnostic-gold-label-policy-v1`: an adjudicated known outcome, complete,
+approved and unambiguous capture, distinct declared reviewer identities, every review event (two submissions
+and the adjudication) key-approved by the installed policy at verification time, and three distinct approving
+keys. Blockers are `not_adjudicated`, `unknown_outcome`, `ineligible_capture_permission_or_ambiguity`,
+`unauthenticated_review`, `review_signature_invalid_or_revoked` (including a policy that was replaced or revoked),
+`reused_reviewer_key` and `verification_unavailable`. A case that cannot be verified now has `meets_policy: null`
+and is counted in `unverifiable`; it is never a pass or a fail.
+
+Meeting the policy is necessary, not sufficient. A verified key shows that a listed key signed the exact review.
+It cannot show that the keys belong to distinct independent humans or that the declared outcome is true, so the
+report keeps `gold_labels_issued: 0`, `reviewer_independence: unverified` and `root_independence: unverified`,
+and no export, benchmark, protected-access or classifier-selection output changes.
 
 ## Benchmark input profile
 
@@ -192,9 +231,10 @@ rejects even with forged public provenance.
 
 This profile shows that local adjudicated declarations can be scored under the
 corpus's own split and root groups without exposing protected items. It is not
-evidence of classifier accuracy. Real reviewed gold labels need authenticated,
-independent human reviewers and an agreed gold-label policy, both still open in
-#73. The same applies to certification-role evaluation and the #74 acceptance gate.
+evidence of classifier accuracy. Real reviewed gold labels need independent human
+reviewers and an agreed gold-label policy. The [policy report](#key-approved-reviews-and-the-gold-label-policy)
+checks key approvals only and no output of this profile issues a gold label. The same
+limit applies to certification-role evaluation and the #74 acceptance gate.
 
 ## Class-wise annotation plan
 

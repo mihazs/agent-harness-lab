@@ -64,7 +64,7 @@ class Request:
             raise ValueError('fixed-bank requests require explicit controlled improve')
         self.permission_profile=getattr(args,'permission_audit',None)
         self.baseline_bundle=None
-        self.path=canonical(args.experiment_request);self.deadline=deadline
+        self.path=canonical(args.experiment_request);self.deadline=deadline;self.output=output
         self.value,self.request_hash=record(self.path,64*1024)
         request_fields(self.value)
         selected,pin=selected_store(args,output)
@@ -202,8 +202,11 @@ class Request:
         checked=store.verify_decision(summary['run_id'],receipt['receipt_sha256'])
         if time.monotonic()>=self.deadline:raise TimeoutError('comparison decision deadline exhausted')
         self.check()
-        return dict(status='inconclusive',reason='certification_prerequisites_unverified',
+        result=dict(status='inconclusive',reason='certification_prerequisites_unverified',
             recommendation='review_candidate' if checked['analysis']['status']=='supported' else 'candidate_not_supported',
             controller_run_id=summary['run_id'],decision=checked,analysis=checked['analysis'],
             request_sha256=self.request_hash,operator_review='unverified',served_model='unverified',native_identity='unverified',
             cache_policy=self.value['cache_policy'],publication_allowed=False,automatic_promotion=False)
+        from .before_after import attach_experiment
+        attach_experiment(result,self.output,store,summary['run_id'],bank_sha256=self.value['bank_sha256'],tasks=self.source_value['tasks'])
+        return result

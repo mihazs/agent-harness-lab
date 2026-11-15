@@ -76,17 +76,18 @@ the `reason`. `ahl config clear` deletes the remembered-runtime file (the runtim
 ## Ask an agent instead of typing flags
 
 The installed `harness-self-improvement` skill reads your words and picks the scope for you,
-so it never widens it:
+so it never widens it. It writes the scope out on every run, `project` included, so the
+command line states what you asked for:
 
 | You say | The skill runs |
 | --- | --- |
-| nothing about scope, "this project", "my repo" | `ahl skills invoke .` (`project`, or your [saved default scope](#save-a-default-scope) when you have one) |
+| nothing about scope, "this project", "my repo" | `ahl skills invoke . --scope project` |
 | "global", "my user-level harness" | `ahl skills invoke . --scope global --agent claude` or `codex`, as you named it |
 | "both", "global and project" | `ahl skills invoke . --scope project+global --agent claude` or `codex` |
 | something either layer could mean ("my skills") | one question, or a `project` run; never a guess toward global |
 
-With a saved default the skill still omits `--scope` for such a request, so the run uses that default and
-the receipt's `scope_source` says so; run `ahl skills invoke . --scope project` yourself to keep one run on the project.
+The skill never applies a [saved default scope](#save-a-default-scope): a request that names no scope runs
+`--scope project`, and the receipt's `scope_source` says `command_line`. The saved default applies to the command you type yourself.
 It asks once for the runtime when you name a global scope without one, adds `--repair-contracts`
 only when you ask for the header repair, and relays a `blocked` result as it is. It does not
 edit a user-level file by hand instead. Why the skill is a single one is explained in

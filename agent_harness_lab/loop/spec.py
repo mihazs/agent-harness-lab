@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import re
 
 from .errors import LoopError
 
@@ -19,6 +20,15 @@ AUTHORITY = frozenset({'recommendation_only', 'automatic_promotion', 'apply', 'g
                        'publication_allowed', 'certification'})
 
 
+_PLAIN_NAME = re.compile(r'[A-Za-z0-9_.-]{1,64}')
+
+
+def _name(key):
+    """A project-controlled key reaches the terminal through the error message, so only a plain identifier is echoed."""
+    text = str(key)
+    return text if _PLAIN_NAME.fullmatch(text) else '<unknown>'
+
+
 def _number(value):
     try: return type(value) in (int, float) and math.isfinite(value)
     except OverflowError: return False  # an integer too large for a float is as unusable as an infinite one
@@ -33,7 +43,7 @@ def _accept_score(value, source, areas):
         if not value: raise LoopError('loop_accept_score_invalid', 'accept_score', source)
         if not areas: raise LoopError('areas_not_declared', 'accept_score', source)
         for area, score in value.items():
-            field = f'accept_score.{str(area)[:64]}'
+            field = f'accept_score.{_name(area)}'
             if not isinstance(area, str) or area not in areas: raise LoopError('loop_area_undeclared', field, source)
             if not _score(score): raise LoopError('loop_accept_score_invalid', field, source)
         return tuple(sorted((area, float(score)) for area, score in value.items()))
@@ -88,7 +98,7 @@ def parse_declaration(value, source, areas=()):
     if value is None: return {}
     if not isinstance(value, dict): raise LoopError('loop_declaration_invalid', None, source)
     for key in value:
-        field = str(key)[:64]
+        field = _name(key)
         if key in AUTHORITY: raise LoopError('loop_authority_refused', field, source)
         if key not in DECLARED: raise LoopError('loop_field_unknown', field, source)
     parsed = {key: _CHECK[key](item, source, areas, key) for key, item in value.items()}
