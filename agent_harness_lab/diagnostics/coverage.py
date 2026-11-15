@@ -85,7 +85,7 @@ def _counts(entries, name, vocabulary):
 
 
 _PREDICTION_FIELDS = ('prediction_id', 'mechanism_id', 'status', 'reason', 'kind', 'expected', 'preregistered',
-                      'attribution', 'regression_risks', 'limitations', 'route')
+                      'attribution', 'regression_risks', 'limitations', 'route', 'revision', 'supersedes', 'superseded_by')
 
 
 def _predictions(reconciliation):
@@ -96,8 +96,9 @@ def _predictions(reconciliation):
         raise ValueError('prediction-reconciliation-v1 result required')
     rows = [{k: row[k] for k in _PREDICTION_FIELDS if k in row} for row in reconciliation['entries']]
     return dict(eligible_predictions=len(rows), counts={s: sum(r['status'] == s for r in rows) for s in STATUSES},
-                entries=rows, certifies=False,
+                superseded_predictions=sum(bool(r.get('superseded_by')) for r in rows), entries=rows, certifies=False,
                 limitations=['predictions are self-selected hypotheses, not population-wide diagnostic accuracy',
+                             'every revision and every superseded prediction is counted and listed, never only the latest',
                              'a prediction status is bookkeeping under its registered criterion, not certification'])
 
 
@@ -177,6 +178,17 @@ def report(mechanisms, *, capture='unknown', predictions=None):
     return body
 
 
+def _prediction_cell(row, name):
+    if name == 'limitations':
+        return _cell(', '.join(row.get(name, [])))
+    if name == 'revision':
+        parts = [f"r{row.get('revision', 1)}"]
+        parts += [f'{label} {row[key]}' for key, label in (('supersedes', 'revises'), ('superseded_by', 'superseded by'))
+                  if row.get(key)]
+        return _cell(', '.join(parts))
+    return _cell(row.get(name, ''))
+
+
 def render_markdown(result):
     """Human report for a coverage report; every recorded string is escaped untrusted text."""
     if result.get('profile') != COVERAGE_PROFILE or result.get('publication_allowed') is not False:
@@ -198,13 +210,13 @@ def render_markdown(result):
                                  'disposition', 'coverage', 'reason')) + ' |' for entry in result['entries']]
     table = result.get('predictions')
     if table:
-        lines += ['', f"Predictions: {table['eligible_predictions']} registered; none is omitted. Self-selected "
+        lines += ['', f"Predictions: {table['eligible_predictions']} registered ({table.get('superseded_predictions', 0)} "
+                      'superseded by a later revision); none is omitted. Self-selected '
                       'hypotheses, not diagnostic accuracy or certification.', '',
-                  '| Prediction | Mechanism | Expected change | Status | Reason | Attribution | Limitations |',
-                  '| --- | --- | --- | --- | --- | --- | --- |']
-        lines += ['| ' + ' | '.join(_cell(row.get(name, '')) if name != 'limitations'
-                                    else _cell(', '.join(row.get(name, [])))
-                                    for name in ('prediction_id', 'mechanism_id', 'expected', 'status', 'reason',
-                                                 'attribution', 'limitations')) + ' |' for row in table['entries']]
+                  '| Prediction | Mechanism | Revision | Expected change | Status | Reason | Attribution | Limitations |',
+                  '| --- | --- | --- | --- | --- | --- | --- | --- |']
+        lines += ['| ' + ' | '.join(_prediction_cell(row, name)
+                                    for name in ('prediction_id', 'mechanism_id', 'revision', 'expected', 'status',
+                                                 'reason', 'attribution', 'limitations')) + ' |' for row in table['entries']]
     lines += ['', 'Limitations: ' + ', '.join(_cell(item) for item in result['limitations']), '']
     return '\n'.join(lines)

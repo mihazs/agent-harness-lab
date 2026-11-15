@@ -106,5 +106,58 @@ class PredictionTests(unittest.TestCase):
         self.assertEqual(rows, {'p1': 'unresolved', 'p2': 'single_or_isolated'})
 
 
+class RevisionChainTests(unittest.TestCase):
+    def chain(self):
+        ledger = PredictionLedger()
+        first = ledger.register(prediction())
+        second = ledger.register(prediction(prediction_id='p2', supersedes='p1', candidate_hash='c2', criterion='fail_to_pass v2'))
+        return ledger, first, second
+
+    def test_revision_links_receipts_and_keeps_the_superseded_prediction_listed(self):
+        ledger, first, second = self.chain()
+        self.assertEqual((first['revision'], first['supersedes']), (1, None))
+        self.assertEqual((second['revision'], second['supersedes']), (2, 'p1'))
+        self.assertEqual(second['previous_receipt_id'], first['receipt_id'])
+        self.assertTrue(ledger.verify())
+        report = reconcile(ledger, {'p1': obs(pairs=pairs(dev=(False, False))), 'p2': obs(candidate_hash='c2')})
+        rows = {r['prediction_id']: r for r in report['entries']}
+        self.assertEqual((rows['p1']['status'], rows['p1']['superseded_by']), ('contradicted_under_test', 'p2'))
+        self.assertEqual((rows['p2']['status'], rows['p2']['supersedes'], rows['p2']['revision']), ('supported_under_test', 'p1', 2))
+        self.assertEqual((report['eligible_predictions'], report['superseded_predictions']), (2, 1))
+        self.assertEqual(report['counts']['contradicted_under_test'], 1)
+
+    def test_a_revision_does_not_inherit_the_superseded_outcome(self):
+        ledger, _, _ = self.chain()
+        row = reconcile(ledger, {'p1': obs()})['entries'][1]
+        self.assertEqual((row['prediction_id'], row['status']), ('p2', 'not_tested'))
+
+    def test_revision_after_the_candidate_outcomes_were_read_is_late(self):
+        ledger = PredictionLedger(); ledger.register(prediction())
+        late = ledger.register(prediction(prediction_id='p2', supersedes='p1', criterion='rewritten after the result'),
+                               outcomes_read=['c1'])
+        self.assertFalse(late['preregistered'])
+        self.assertEqual(reconcile(ledger, {'p2': obs()})['entries'][1]['reason'], 'late_registration')
+
+    def test_a_revision_must_be_a_real_linear_change_on_the_same_mechanism(self):
+        ledger, _, _ = self.chain()
+        for bad in (dict(prediction_id='p3', supersedes='missing', criterion='x'),
+                    dict(prediction_id='p3', supersedes='p1', criterion='fork'),
+                    dict(prediction_id='p3', supersedes='p2', mechanism_id='m2', criterion='x'),
+                    dict(prediction_id='p3', supersedes='p2', candidate_hash='c2', criterion='fail_to_pass v2'),
+                    dict(prediction_id='p3', supersedes='p3', criterion='x')):
+            with self.assertRaises(ValueError, msg=bad):
+                ledger.register(prediction(**bad))
+        ledger.register(prediction(prediction_id='p3', supersedes='p2', candidate_hash='c3'))
+        self.assertEqual(ledger.receipts[-1]['revision'], 3)
+
+    def test_registering_a_revision_again_is_idempotent_and_tampering_is_detected(self):
+        ledger, _, second = self.chain()
+        again = ledger.register(prediction(prediction_id='p2', supersedes='p1', candidate_hash='c2', criterion='fail_to_pass v2'))
+        self.assertEqual(again, second)
+        self.assertEqual(len(ledger.receipts), 2)
+        ledger.receipts[1]['supersedes'] = None
+        self.assertFalse(ledger.verify())
+
+
 if __name__ == '__main__':
     unittest.main()
