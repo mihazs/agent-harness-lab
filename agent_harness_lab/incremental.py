@@ -22,6 +22,7 @@ RECORD, POINTER = 'harness-states.json', 'latest-run.json'
 REPEAT_REASON = 'candidate_already_regressed'
 MAX_FILES, LISTED, REGRESSIONS_KEPT = 1000, 20, 50  # an older regression than the newest 50 is forgotten and evaluated again
 _HEX, _RUN = re.compile(r'[0-9a-f]{64}'), re.compile(r'run-[A-Za-z0-9_-]{1,80}')
+_REASON = re.compile(r'[a-z_]{1,64}')
 _RERUN = dict(evidence_collection='no_verified_prior_output', candidate_preparation='nonreplayable_model_stage',
               evaluation_construction='fresh_heldout_required', trials='earlier_trials_are_historical_only')
 _AUTHORITY = dict(adoption_authority=False, automatic_promotion=False, publication_allowed=False)
@@ -209,8 +210,20 @@ def _fresh(result, historical):
     return dict(fresh, comparison=comparison, **shown)
 
 
-def attach(result, state, current):
-    """Add the ``incremental`` block; a first run has none, and a failure here never changes the run result."""
+def _evidence_stage(reuse):
+    """The evidence stage's row: reused only for a verified hit, else rerun with the planner's reason; anything unrecognised is the default."""
+    default = dict(action='rerun', reason=_RERUN['evidence_collection'])
+    if not isinstance(reuse, dict): return default
+    outcome, reason = reuse.get('outcome'), reuse.get('reason')
+    if not isinstance(reason, str) or not _REASON.fullmatch(reason): return default
+    if outcome == 'reused' and reason == 'hit_verified': return dict(action='reused', reason=reason)
+    return dict(action='rerun', reason=reason) if outcome == 'executed' and reason != 'hit_verified' else default
+
+
+def attach(result, state, current, reuse=None):
+    """Add the ``incremental`` block; a first run has none, and a failure here never changes the run result.
+
+    ``reuse`` is this run's stage-reuse summary (``ahl improve --incremental``), or None when reuse was not requested."""
     if state is None: return
     try:
         if state['problem']:
@@ -239,6 +252,6 @@ def attach(result, state, current):
                 removed=listed(None, [path for path in record['baseline'] if path not in now])))),
             historical=historical, fresh=_fresh(result, historical),
             stages={name: dict(action='skipped', reason='previous_regression_of_the_same_candidate') if state['skipped'] and name in ('evaluation_construction', 'trials')
-                    else dict(action='rerun', reason=why) for name, why in _RERUN.items()}, **_AUTHORITY)
+                    else _evidence_stage(reuse) if name == 'evidence_collection' else dict(action='rerun', reason=why) for name, why in _RERUN.items()}, **_AUTHORITY)
     except Exception as exc:
         result['incremental'] = dict(profile=PROFILE, status='unavailable', reason=type(exc).__name__, **_AUTHORITY)

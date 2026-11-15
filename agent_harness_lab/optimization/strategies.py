@@ -4,9 +4,11 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import time
 from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.private_journal import record
 from .budget import Budget
-from .search import CandidateRecord, search
+from .search import MAX_STATE_BYTES, CandidateRecord, _candidate, _private_state, _verified, search
 
 CONFIG_KEYS = {'seed', 'variants'}
 
@@ -187,6 +189,91 @@ def _retry_baseline(path, baseline, evaluate, retries, ceiling, reserve):
     return save('complete')
 
 
+GUARDED_RETRY_ESTIMAND = ('selected development candidate versus the unchanged baseline compared with itself through the same '
+                          'controller, repeated unconditionally for a count fixed before any retry runs; both sides are '
+                          'controller-verified development observations, not a treatment effect')
+
+
+def _guarded_retry_baseline(path, baseline, controller, allowed_files, retries, ceiling, reserve, parent_deadline):
+    """Dispatch the unchanged baseline against itself `retries` times through the controller, charging each before dispatch.
+
+    No retry result is read from a return value: every attempt is re-verified against its controller receipt, on the
+    run and on every repeat. A charged retry is never redispatched, so an unfinished run stays interrupted.
+    """
+    context = controller.template_binding
+    declared = _candidate(baseline, allowed_files)
+    if declared['changes']:
+        raise ValueError('guarded retries need the unchanged baseline')
+    deadline = parent_deadline if parent_deadline is not None else time.monotonic() + context['resource_profile']['budget_seconds']
+    with _private_state(path, context) as path:
+        prefix = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+        resumed = path.exists()
+        if resumed:
+            state = record(path, MAX_STATE_BYTES)[0]
+            if (set(state) != {'schema_version', 'status', 'retries', 'template_sha256', 'budget', 'attempts'}
+                    or state['schema_version'] != 1 or state['retries'] != retries
+                    or state['template_sha256'] != context['template_sha256']
+                    or set(state['budget']) != {'ceiling', 'reserve', 'events'}
+                    or (state['budget']['ceiling'], state['budget']['reserve']) != (ceiling, reserve)
+                    or not isinstance(state['attempts'], list) or len(state['attempts']) > retries):
+                raise ValueError('guarded retry state context or budget changed')
+        else:
+            state = dict(schema_version=1, status='retrying', retries=retries, template_sha256=context['template_sha256'],
+                         budget=dict(ceiling=ceiling, reserve=reserve, events=[]), attempts=[])
+        budget = Budget(ceiling, reserve, state['budget']['events'])
+
+        def save(status=None):
+            state['status'] = status or state['status']
+            atomic_json(path, state)
+
+        def finish(status, verified):
+            save(status)
+            rows = [] if status == 'blocked' else [dict(candidate_id=f'{baseline.candidate_id}-retry-{item["index"]}',
+                digest=item['digest'], safe=item['safe'], metrics=item['metrics'], run_id=item['binding']['run_id'],
+                receipt_sha256=item['binding']['receipt_sha256']) for item in verified]
+            return dict(status=status, attempts=rows, budget_events=budget.events, resumed_without_execution=resumed)
+
+        def checked(attempt):
+            return dict(_verified(controller, dict(attempt, kind='baseline_retry', record=declared, patch_sha256=baseline.digest),
+                                  context), index=attempt['index'])
+        verified = []
+        try:
+            for attempt in state['attempts']:
+                if attempt['binding'] is None:
+                    break
+                verified.append(checked(attempt))
+        except (ValueError, OSError, KeyError, TypeError):
+            return finish('blocked', [])
+        if resumed:
+            if state['status'] == 'complete' and len(verified) != retries:
+                return finish('blocked', [])
+            return finish('interrupted' if state['status'] == 'retrying' else state['status'], verified)
+        for index in range(1, retries + 1):
+            event_id = f'{prefix}:retry:{index}'
+            if time.monotonic() >= deadline or not budget.consume('retry_trial', 1, event_id):
+                return finish('budget_exhausted', verified)
+            attempt = dict(index=index, event_id=event_id, run_id=None, binding=None)
+            state['attempts'].append(attempt)
+            save()
+
+            def started(run_id):
+                if attempt['run_id'] is not None:
+                    raise ValueError('duplicate guarded retry start')
+                attempt['run_id'] = run_id
+                save()
+            try:
+                result = controller.evaluate(baseline, stage='baseline_retry', event_id=event_id, on_started=started,
+                                             parent_deadline=deadline)
+                if _candidate(baseline, allowed_files) != declared:
+                    raise ValueError('baseline changed during controller execution')
+                attempt['binding'] = result['binding']
+                verified.append(checked(attempt))
+                save()
+            except Exception:  # The charge stays spent and the run is never replayed: the comparison is blocked, not retried.
+                return finish('blocked', [])
+        return finish('complete', verified)
+
+
 def _exceeds_best_retry(selected, retry):
     """True or False only when every retry is comparable; a missing or mismatched metric leaves it unknown (None)."""
     keys, rows = set(selected['metrics']), retry['attempts']
@@ -211,14 +298,14 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
     With a `HistorySearchContext` as `controller` (and `evaluate` None) each strategy runs through the guarded
     controller route; a favorable strategy is then `development_recommended_for_review` after a fresh development
     confirmation, still deferred to a protected evaluation and never certified here.
-    With `retry_comparator=True` (callback route only) each strategy that selected a finalist also gets the unchanged
-    baseline re-evaluated once per non-final stage unit it charged, under its own `Budget(ceiling, reserve)`; the row's
-    `exceeds_best_retry` is True only when the finalist dominates every feasible retry, and None when anything is unknown.
+    With `retry_comparator=True` each strategy that selected a finalist also gets the unchanged baseline re-evaluated,
+    under its own `Budget(ceiling, reserve)`: once per non-final stage unit it charged on the callback route, and once
+    per non-final controller run it made on the controller route, where each retry is an unchanged-versus-unchanged
+    controller run re-verified from its receipt. The row's `exceeds_best_retry` is True only when the finalist dominates
+    every feasible retry, and None when anything is unknown.
     """
     if type(retry_comparator) is not bool:
         raise ValueError('retry_comparator must be True or False')
-    if retry_comparator and controller is not None:
-        raise ValueError('the equal-budget retry comparator is callback route only')
     strategies = list(strategies)
     if not strategies or len(set(strategies)) != len(strategies) or any(
             type(key) is not tuple or len(key) != 2 for key in strategies):
@@ -252,13 +339,19 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
         if retry_comparator:
             row['retry_comparator'] = None
             if finalist:
-                units = sum(e['amount'] for e in _events(result) if not e['final'])
                 state = Path(result['strategy']['state_path'])
-                retry = _retry_baseline(state.with_name(f'retry-{state.stem}-k{units}{state.suffix}'), baseline, evaluate,
-                                        units, ceiling, reserve)
+                if controller is None:
+                    units = sum(e['amount'] for e in _events(result) if not e['final'])
+                    retry = _retry_baseline(state.with_name(f'retry-{state.stem}-k{units}{state.suffix}'), baseline, evaluate,
+                                            units, ceiling, reserve)
+                else:
+                    units = sum(a['run_id'] is not None for a in result['attempts'])
+                    retry = _guarded_retry_baseline(state.with_name(f'retry-{state.stem}-k{units}{state.suffix}'), baseline,
+                                                    controller, allowed_files, units, ceiling, reserve, parent_deadline)
                 selected = next(c for c in result['candidates'] if c['candidate_id'] == result['finalist'])
                 spent = sum(e['amount'] for e in retry['budget_events'])
-                row['retry_comparator'] = dict(estimand=RETRY_ESTIMAND, matched_stage_units=units, status=retry['status'],
+                row['retry_comparator'] = dict(estimand=RETRY_ESTIMAND if controller is None else GUARDED_RETRY_ESTIMAND,
+                    matched_stage_units=units, status=retry['status'],
                     charges=dict(ceiling=ceiling, reserve=reserve, spent=spent, by_kind=dict(retry_trial=spent)),
                     attempts=retry['attempts'], exceeds_best_retry=_exceeds_best_retry(selected, retry),
                     resumed_without_execution=retry['resumed_without_execution'])

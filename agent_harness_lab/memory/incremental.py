@@ -60,6 +60,8 @@ def require(args):
     from agent_harness_lab.telemetry.codex_rollout import VERSION as CODEX_NATIVE
     if (args.format, args.source_version) in (('codex', CODEX_NATIVE), ('claude', CLAUDE_NATIVE)):
         raise ValueError('--incremental does not support pinned native profiles: their reads depend on the project directory')
+    if getattr(args, 'history', False):
+        raise ValueError('--incremental does not support --history: the stage reads one explicit --events capture')
     if os.environ.get(ROLE_VARIABLE):
         raise ValueError('the memory store is not available to isolated roles')
 

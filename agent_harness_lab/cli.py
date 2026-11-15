@@ -298,8 +298,9 @@ def main(argv=None):
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')
             command.add_argument('--source-project-sha256',help='Exact project identity SHA-256 used to select metadata from --source-cache')
             command.add_argument('--source-scope-sha256',help='Exact authorized scope SHA-256 paired with --source-project-sha256 for the private journal')
+        if name != 'watch':
             command.add_argument('--memory-store', type=Path, help='Explicit absolute private store from ahl memory init, used only with --incremental; it never enables discovery, scanning or retrieval')
-            command.add_argument('--incremental', action='store_true', help='Reuse the verified process-mining output of an unchanged --events capture and harness, and commit it after a miss; no model call')
+            command.add_argument('--incremental', action='store_true', help='Reuse the verified process-mining output of an unchanged --events capture and harness, and commit it after a miss; the evidence stage only, never a trial or a proposal')
             command.add_argument('--explain-reuse', action='store_true', help='With --incremental: add the typed reuse receipt (reused, executed, excluded and unknown stages with reasons) to the output')
         if name != 'analyze':
             if name=='improve':
@@ -391,6 +392,9 @@ def main(argv=None):
                 return exit_code(result['status'])
             from .one_call import resolve
             if args.command == 'improve':
+                if args.incremental or args.memory_store is not None or args.explain_reuse:
+                    from .memory.incremental import require
+                    require(args)
                 from .scope import apply_user_default
                 apply_user_default(args, explicit)
                 from .history import prepare

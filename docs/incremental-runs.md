@@ -71,10 +71,37 @@ project pins one, so expect `mismatch` for an unpinned bank.
 
 | Stage | Action | Why |
 | --- | --- | --- |
-| `evidence_collection` | `rerun` | No verified earlier output is reused by `ahl improve`. The [stage reuse planner](stage-reuse-planner.md) decides which deterministic analysis stages could be reused; it has no command in this release. |
+| `evidence_collection` | `reused`, or `rerun` | `reused` with `hit_verified` only when `ahl improve --incremental` found a verified stored output for this exact capture and harness (see [reuse the evidence stage](#reuse-the-evidence-stage)). Otherwise `rerun`: with the planner's miss or invalid reason when reuse was requested, and `no_verified_prior_output` when it was not. |
 | `candidate_preparation` | `rerun` | A model stage is never replayed. |
 | `evaluation_construction` | `rerun`, or `skipped` | Held-out inputs are always fresh; skipped only for the repeated regression below. |
 | `trials` | `rerun`, or `skipped` | Earlier trials are historical only; skipped only for the repeated regression below. |
+
+## Reuse the evidence stage
+
+The one stage with a deterministic output is the process-mining part of evidence collection.
+`ahl improve` reuses it under the same opt-in as [`ahl analyze --incremental`](incremental-analysis.md):
+
+```sh
+ahl improve /abs/path/project --events /abs/path/events.jsonl --format normalized \
+  --memory-store /abs/path/ahl-memory --incremental --explain-reuse
+```
+
+`--incremental` needs `--memory-store` and an explicit `--events` capture, and is refused (exit 2,
+before any run folder exists) with `--history`, a pinned native profile or an isolated role. The
+receipt gains the same `reuse` object as `analyze`, and the stage row above says what happened.
+The decision follows the exact bytes of the capture and the harness files, so each disposition
+reuses a different thing:
+
+| Earlier candidate | Harness now | `evidence_collection` |
+| --- | --- | --- |
+| `ignored`, or a repeated regression | The earlier baseline | `reused`, `hit_verified` |
+| `applied`, `partially_applied` or `edited` | Different bytes or modes | `rerun`, `miss_input_changed` |
+| Any | The capture changed | `rerun`, `miss_input_changed` |
+
+A reuse hit changes nothing else: preparation, evaluation construction and trials are never
+reused, and `analysis.json` and `report.md` match a run without the flags. The `reuse` object and
+the `incremental` block follow the store and the call order, so receipt parity between the CLI and
+skill routes ignores both.
 
 ## A finished regression is not repeated
 
@@ -104,7 +131,8 @@ already run when the guard fires, so the result also carries `spend_label: spent
 
 ## Not covered here
 
-The loop's round ledger, resume semantics and carry-over of the best snapshot are owned by the
+Frozen development and regression tasks are never reused across runs: held-out inputs stay fresh
+whatever an earlier run did. The loop's round ledger, resume semantics and carry-over of the best snapshot are owned by the
 [loop reference](loop-reference.md) and consume this detection. The fixed repeated-bank lane records
 the baseline and candidate states but has no earlier `candidate_regressed` receipt to repeat.
 Related: [before/after guard](before-after-guard.md), [typed exit receipts](typed-exit-receipts.md),
