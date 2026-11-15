@@ -65,6 +65,9 @@ def verify(archive, checksums):
     return actual
 
 
+MAX_MEMBERS = 4096  # the shipped tree is about a quarter of this; test_archive_member_bound keeps it under three quarters
+
+
 def extract(archive, destination):
     """Accept one archive root and regular files only; reject links and traversal."""
     with tarfile.open(archive, 'r:gz') as stream:
@@ -73,7 +76,7 @@ def extract(archive, destination):
         expanded = 0
         for member in stream:
             expanded += member.size
-            if len(members) >= 1000 or member.size < 0 or expanded > 100 * 1024 * 1024:
+            if len(members) >= MAX_MEMBERS or member.size < 0 or expanded > 100 * 1024 * 1024:
                 raise ValueError('invalid release archive size')
             path = PurePosixPath(member.name)
             if path.is_absolute() or '..' in path.parts or '\\' in member.name or not path.parts:

@@ -91,13 +91,18 @@ preflight. Without the flag nothing is written, and the flag without an explicit
 ```sh
 ahl improve . --agent codex --remember-runtime
 ahl config show     # {"path": ..., "runtime": "codex", "reason": null}
-ahl config clear    # deletes the file
+ahl config clear    # deletes the whole file: the runtime and any loop object
 ```
 
-The file is a versioned `{schema_version, runtime}` document of at most 1 KiB at
+The file is a versioned `{schema_version, runtime}` document at
 `$XDG_CONFIG_HOME/agent-harness-lab/user-config.json` (`~/.config` when unset), or
-`$AHL_STATE_HOME/user-config.json` when that run-state override is set. It is
-written atomically with owner-only permissions, holds no executable path,
+`$AHL_STATE_HOME/user-config.json` when that run-state override is set. It may
+also hold an optional `loop` object that declares the acceptance bar (see the
+[loop reference](loop-reference.md#sources-and-precedence)); the 1 KiB cap applies
+to the whole file, and a larger file is ignored. Remembering a runtime keeps an
+existing `loop` object, `ahl config clear` deletes it with the runtime, and
+`ahl config show` reports only the runtime and why a file was ignored, not the
+`loop` object. The file is written atomically with owner-only permissions, holds no executable path,
 credential or token, and is never read from or written to a project, so a project
 file cannot override it. A corrupt, oversized, non-regular or not owner-only file
 is ignored (`ahl config show` names the `reason`). The remembered runtime only
@@ -605,6 +610,22 @@ application path. When the same candidate also changes a skill or hook path, `co
 paths and marks an `interaction_evaluation` as `required`, because no per-surface result covers
 the combination.
 
+`instruction_validation.loading_evidence(document, baseline_events, candidate_events)` joins one
+pinned Claude capture of each version to a valid validation. A changed file is `observed_pattern`
+in a version only when an attachment names its path and the attached text hashes to that
+version's file, the test `harness_inventory.join_loading` applies to an inventory. Everything
+else stays `unknown`: a missing or empty capture, a path-only match, a file the version lacks,
+a Codex run (its rollout records no load) and any file Claude loads at launch without an
+attachment event. No event is never evidence that a file did not load. Duplicate and contested
+records are counted as `join_loading` counts them. The record carries `effective`, `outcome`
+and `independence` as `unknown`, and `sha256` over its content. Passed to `review(...,
+loading=record)`, it adds each operation's per-version observation and `loading_evidence`, and
+`review` refuses a record that does not describe the same validation or whose hash no longer
+matches. The review's own `observed_loading` stays `unknown`, because it speaks for the whole
+closure and the changed files do not cover it. The improvement workflow produces no native
+session capture of its trials, so its saved reviews keep `loading` empty until a caller supplies
+one.
+
 ## Validating staged agent and command definitions
 
 `sources/agents_validation.py` checks every created, updated or removed Claude
@@ -709,6 +730,21 @@ orphan asset checks are skipped, the action is reported as `scoped`, and only
 the listed `SKILL.md` frontmatter, name and escaping links are judged.
 References from other bundles to a removed one, name collisions across kinds of folder, and runtime activation are not checked or
 claimed.
+
+Each reviewed bundle, adoptable or blocked, is one typed row: `bundle`, `action`, `reasons`, `placement`,
+`before_sha256` and `after_sha256`. `placement` names the runtime whose documented skills root holds the bundle
+(`claude-code` for `.claude/skills`, `codex` for `.agents/skills`, at the project root or nested) and is
+`unverified_location` for a bare `skills/` folder, which neither runtime documents as a discovery root; it says
+where the files sit, never that anything loads them. The identity is the SHA-256 of the bundle's sorted
+`[relative path, content SHA-256, mode]` rows, so an edit to any file or mode inside the bundle changes it. It is
+null for a side with no file (the `before` of a `create`, the `after` of a `remove`) and for both sides of a
+`scoped` review, where the membership is unknown. A blocked run lists the rows in `skill_review.findings`; a
+behavioral candidate that stays `inconclusive` lists them as `skill_bundles` in `change-plan.json`, beside the
+per-file operations of the plan. The rows grant no authority and the plan hash does not cover them.
+
+`ahl skills` links AHL's own skills into a runtime's skill directory. It does not create, update or remove the
+skills of a target project; those lifecycles run only through the staged-candidate path above, which stays
+recommendation-only until a candidate is independently certified (`skill_lifecycle` remains deferred).
 
 ## Independently verified format repair
 
@@ -884,8 +920,8 @@ behavioral controller. `ahl apply` reviews every saved plan but applies only the
 independently reproduced skill-header repair; interruption tests cover only its
 application stage (planning, evaluation and review interruptions, Codex hook
 application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
-validation and operation-level review are described above; actual loading evidence and
-the composed-change interaction evaluation remain), skill lifecycle and
+validation, operation-level review and capture join are described above; a native capture
+of the trials and the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
 and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)

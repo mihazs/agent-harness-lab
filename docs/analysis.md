@@ -90,8 +90,10 @@ retries, edit-then-revert) are `observed_pattern` with competing explanations. A
 signal whose input is not captured is `unknown`, and a zero count is
 `not_observed_capture_unverified`; neither is a clean result. Same-call retries compare the
 `input_fingerprint` of consecutive calls to the same tool within a case. Pinned native Claude and Codex
-captures carry it (see [input fingerprints](telemetry.md#input-fingerprints)); edit-then-revert needs a
-state revision on mutating events that native captures do not record, so it stays `unknown` there. Restated instructions
+captures carry it (see [input fingerprints](telemetry.md#input-fingerprints)). Edit-then-revert compares the
+`state_revision` of consecutive mutating events and, on pinned native Claude captures, the per-target before and after
+fingerprints of a `Write` or `Edit` call (see [edit fingerprints](telemetry.md#edit-fingerprints)); a capture with
+neither, such as Codex patches or a multi-edit, leaves it `unknown`. Restated instructions
 count a user message whose `message_fingerprint` equals an earlier one in the same case.
 The field is a salted, normalized word-set hash that never stores text, and it exists
 only on pinned native captures of messages with at least four words (see
@@ -132,6 +134,31 @@ to `ahl analyze` or `ahl improve` to write every row and every event without the
 gigabytes on a history of thousands of sessions. The role views given to controlled proposers keep their complete
 `analysis-summary.json` (unlimited analysis admission is unchanged) and additionally receive `analysis-brief.json`,
 which their instructions name as the place to start.
+
+### Imported text is data, never instructions
+
+Captured and imported records are untrusted. The role views and the role instruction
+strings are built from counts, hashes and closed labels, so imported sentences do not
+reach a model as instructions. One slot copies capture text into a view: an activity
+name, which the `normalized`, `ai-memory` and descriptive native readers (and an unknown
+session-observation `kind`) take verbatim. A name that is not a short label
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}`) appears in `analysis-summary.json` as
+`withheld-activity-<16 hex of SHA-256>` everywhere it occurred, and `limitations` says how
+many names were replaced. The placeholder keeps distinct names distinct and the counts
+unchanged; it does not claim the withheld text was malicious. Label-shaped names are
+unchanged. The pinned Codex and Claude readers map a closed vocabulary and never need it.
+
+The one deliberate text pass-through is an operator-approved incident summary, which
+carries `authority: untrusted_evidence_only` and is named untrusted evidence in
+`limitations`. `analysis.json` still holds the verbatim names for private review; only
+the model-facing views are filtered.
+
+A synthetic canary sweep (`tests/integration/sources/test_source_injection_canaries.py`)
+plants one instruction-shaped sentence in each string slot of each adapter's synthetic
+capture and requires that no role view carries it. A rejected capture counts as safe; the
+clean-capture and placeholder controls keep the sweep from passing vacuously. It covers
+those synthetic shapes only and does not show that every real capture or future adapter
+field is safe.
 
 ## Evidence-based method selection
 
@@ -315,17 +342,25 @@ behavior.
 
 Supported contract, which fails closed:
 
-- Only schema-1 unbound fixed histories are read. Bank-bound, protected, derived,
-  sequential and preservation/cohort histories fail explicitly before their
+- Only fixed histories are read: schema 1 (unbound) and schema 2 (bound to a
+  bank revision). A bound history re-checks that the bank revision is still
+  current and eligible, and a revoked, retired or changed bank fails explicitly
+  instead of reporting current authority. Protected, derived, behavior-policy,
+  cohort, sequential and responses-bound histories fail explicitly before their
   transitive validators run, because those validators may create dependency locks
-  or signature-verification scratch inside the store. Their standalone commands
-  keep their own contracts.
+  inside the store. Their standalone commands keep their own contracts.
+- Validation scratch, such as the temporary directory used to verify an
+  authenticated bank review signature, is created inside the private analysis
+  output and never inside the history or the bank store.
 - The store must already be initialized, owner-only and hold its existing lock
   file; a missing lock fails without being recreated.
 - The resolved `--output`, the default run directory and the lock directory under
-  the state root must not equal, contain or sit inside the store. Symlink aliases
-  are resolved first. The check runs before any lock, directory or scratch exists,
-  for both `analyze` and `improve`.
+  the state root must not equal, contain or sit inside the store, or inside the
+  bank store a bound history declares; the temporary directory must not sit inside
+  either. Symlink aliases are resolved first. The check runs before any lock,
+  directory or scratch exists, for both `analyze` and `improve`. The declared bank
+  location is only a claim used to widen this refusal; bank validation still
+  decides authority.
 - The check is a path comparison at start. Output and state paths must stay stable
   and trusted; a concurrent replacement of a directory ancestor, or a concurrent
   writer to the store, is outside this contract and is not prevented.
@@ -379,6 +414,21 @@ not blocked and still reach preparation. A run whose preparation called the mode
 evaluated no trial carries `spend_label: spent_without_evaluation` (also in the `ahl: outcome=` line as `label=`)
 and a `spent_without_evaluation` object with `preparation_seconds` and `provider_reported_spend: unverified`.
 
+A receipt whose preparation stage wrote a proposal, or failed to write a usable one, carries a `preparation` block (profile
+`ahl-preparation-outcome-v1`): `outcome` is `hypothesis_supplied` (a candidate that changes the baseline), `no_change_supported`
+(`no_change` with at least one recognized `reason_codes` entry), `no_hypothesis` (`no_change` without one, or a candidate identical to the
+baseline) or `invalid_proposal` (native CLI-runtime preparation only: no proposal file, malformed JSON, not an object, or neither
+`candidate` nor `no_change`; the run status is then `invalid_proposal`). A controlled or configured-inference preparation stage still
+rejects such a proposal before the workflow reads it, so that run ends `invalid_input` with no `preparation` block. A candidate may carry
+the three lists below beside its mechanisms; they never count as unknown proposal fields in the mechanism admission. `reason_codes`
+come from a closed list (`no_verified_outcome`, `pattern_not_recurring`, `too_few_independent_roots`, `capture_unverified`, `cause_outside_harness`, `baseline_conforms`, `evidence_ambiguous`), `missing_evidence`
+holds only ids listed in the run's `analysis-brief.json`, and `baseline_checks_passed` is a `count` and the `classes` of the static audit
+conventions the proposer reported as conforming. Each list reads at most 32 entries; `unrecognized` counts every entry outside the
+vocabulary, which is discarded, never echoed. The fields are the proposer's declaration (`declared_by: proposer`, `controller_verified: false`):
+`no_change_supported` is not a claim that the harness is correct. The proposal's free text never reaches the receipt, `report.md` or the
+terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evidence=... baseline_checks_passed=N` line before the
+`ahl: outcome=` line. A run that stopped before any model call carries no block.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
@@ -386,6 +436,7 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
 | `area_duplicate` | List each area id once, in the ahl.json areas and in every task areas list, then rerun. |
 | `area_registry_invalid` | Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun. |
+| `areas_not_declared` | Declare capability areas in the ahl.json areas list before giving accept_score as a per-area map, or give one number. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |
@@ -411,6 +462,23 @@ and a `spent_without_evaluation` object with `preparation_seconds` and `provider
 | `evaluation_construction_timeout` | The evaluation-construction agent overran its time box and the remaining budget could not cover another pass; raise the budget with --timeout or the construction share with --construction-fraction, or narrow the run with --focus so construction has less to build, then rerun. |
 | `evaluation_task_infeasible` | The complete control of a task could not be graded within the per-trial timeout, so no trial could finish it in time; simplify the task or its grader so the reference completion finishes sooner, or raise --timeout when the budget bounds the per-trial timeout, then rerun. |
 | `evaluation_uninformative` | Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun. |
+| `evaluation_vacuous` | The evaluation proved nothing: it had no eligible case, no trial, only unknown outcomes, no executed grader or two identical arms (see vacuity.labels in the receipt, and docs/vacuity-labels.md); fix the named cause, then rerun. No improvement is reported for it. |
+| `loop_accept_basis_invalid` | Set accept_basis to lower_bound, the only basis this release accepts, or omit it. |
+| `loop_accept_score_invalid` | Set accept_score to a number above 0 and at most 1, or to a non-empty map of declared area ids to such numbers. |
+| `loop_alpha_invalid` | Set alpha to a number above 0 and below 1, or omit it for 0.05. |
+| `loop_area_undeclared` | Use only area ids declared in the ahl.json areas list as accept_score keys. |
+| `loop_authority_refused` | Remove the authority field; a loop declaration sets a bar, never apply, global scope, promotion or certification, and the loop only recommends. |
+| `loop_declaration_invalid` | Write the loop declaration as one JSON object that uses only the documented loop fields. |
+| `loop_field_unknown` | Remove the unknown field; the loop declares accept_score, accept_basis, regression_margin, noise_margin, max_rounds, plateau_rounds, on_regression and alpha. |
+| `loop_ledger_full` | The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run. |
+| `loop_ledger_invalid` | Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again. |
+| `loop_limits_invalid` | Pass the project limits as seconds above 0 and a whole number of trials above 0. |
+| `loop_margin_invalid` | Set regression_margin and noise_margin to numbers from 0 up to but not including 1. |
+| `loop_max_rounds_invalid` | Set max_rounds to a whole number from 1 to 10, or omit it for the default of 3. |
+| `loop_on_regression_invalid` | Set on_regression to stop or rollback_continue, or omit it for stop. |
+| `loop_order_violation` | This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event. |
+| `loop_plateau_rounds_invalid` | Set plateau_rounds to a whole number from 1 up to max_rounds, or omit it to use the smaller of 2 and max_rounds. |
+| `loop_port_invalid` | This is an AHL adapter defect: the evaluator, proposer or clock returned something outside its port contract; report it with the named field. |
 | `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |

@@ -1,5 +1,6 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
 from .evaluation.manifest_contract import ALL_REASONS as CONTRACT_REASONS
+from .loop.errors import REASONS as LOOP_REASONS
 from .typed_exit import REASONS as TYPED_EXIT_REASONS
 
 REMEDIATION = {
@@ -45,6 +46,7 @@ REMEDIATION = {
     'no_outcome_evidence': 'Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
     'evaluation_uninformative': 'Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun.',
+    'evaluation_vacuous': 'The evaluation proved nothing: it had no eligible case, no trial, only unknown outcomes, no executed grader or two identical arms (see vacuity.labels in the receipt, and docs/vacuity-labels.md); fix the named cause, then rerun. No improvement is reported for it.',
     'refinement_budget_unavailable': 'The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun.',
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
@@ -78,6 +80,7 @@ REMEDIATION = {
     'inference_tool_count_exhausted': 'Review the configured inference tool-call limit.',
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
     **{reason: step for reason, (_, _, step) in TYPED_EXIT_REASONS.items()},
+    **LOOP_REASONS,
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
     'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
     'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',
@@ -135,6 +138,9 @@ def guidance(result):
     uninformative = result.get('evaluation_uninformative')
     if reason == 'evaluation_uninformative' and isinstance(uninformative, dict):
         action += f" Next step: {uninformative.get('next_step')}"
+    vacuous = result.get('vacuity')
+    if reason == 'evaluation_vacuous' and isinstance(vacuous, dict):
+        action += f" Labels: {', '.join(vacuous.get('labels') or [])}."
     violation = result.get('contract_violation')
     if reason in CONTRACT_REASONS and isinstance(violation, dict):
         action += f" Stage: {violation.get('stage')}; file: {violation.get('file')}; field: {violation.get('field') or 'none'}; origin: {violation.get('origin')}."

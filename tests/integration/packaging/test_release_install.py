@@ -412,7 +412,7 @@ def test_publication_requires_clean_commit_and_reviewed_app_files(rel):
 def test_header_count_limit_stops_before_extracting(rel):
     archive = rel.root/'headers.tar.gz'
     with tarfile.open(archive, 'w:gz') as stream:
-        for index in range(1002):
+        for index in range(installer.MAX_MEMBERS + 2):
             member = tarfile.TarInfo(f'root/file-{index}')
             member.size = 0
             stream.addfile(member, io.BytesIO(b''))

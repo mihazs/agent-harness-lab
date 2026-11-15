@@ -6,6 +6,8 @@ import re
 
 from .error_catalog import VOCABULARY as TOOL_ERROR_CLASSES
 
+# Content-free state fingerprints of one native file edit: the target, the state before (optional) and the state after.
+EDIT_FIELDS = ('edit_target_fingerprint', 'edit_before_fingerprint', 'edit_after_fingerprint')
 TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'actor', 'timestamp', 'tool_name', 'input_fingerprint', 'result_fingerprint',
         'state_revision', 'tool_effect', 'contract_ref', 'harness_fingerprint',
@@ -16,7 +18,7 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
         'reported_model_fingerprint', 'native_stop_reason_fingerprint',
-        'message_fingerprint', 'tool_error_class', 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+        'message_fingerprint', 'tool_error_class', *EDIT_FIELDS, 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 # Where a row's working directory sat relative to the project that attributed the session; never a path or name.
 CWD_CLASSES = ('project_root', 'project_subdirectory', 'registered_worktree_of_project', 'other_location')
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
@@ -32,7 +34,7 @@ PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model
 
 
 # Derived from private tool-call and tool-result bodies: kept out of duplicate checks and the body-insensitive metadata fingerprint of native captures.
-BODY_DERIVED = frozenset(('input_fingerprint', 'tool_error_class'))
+BODY_DERIVED = frozenset(('input_fingerprint', 'tool_error_class', *EDIT_FIELDS))
 FINGERPRINT = re.compile(r'[0-9a-f]{16}\Z')
 MIN_FINGERPRINT_WORDS = 4
 
@@ -67,6 +69,30 @@ def input_fingerprint(value, case_id):
     return hashlib.sha256((case_id + '\0' + body).encode()).hexdigest()[:16]
 
 
+def _state(kind, path, body, case_id):
+    return hashlib.sha256((case_id + '\0' + json.dumps([kind, path, body])).encode()).hexdigest()[:16]
+
+
+def edit_fingerprints(tool, value, case_id):
+    """Content-free before/after fingerprints of one native file edit, comparable only within one case; {} unless the input names a whole state.
+
+    A Claude `Write` names the whole file after the call (its `content`) and nothing before it. An `Edit` names an
+    explicit old and new text for one path, so only that fragment is the state. Anything else (a multi-edit, a patch,
+    a shell command, an empty old text that creates a file, a call that changes nothing) yields {} and the edit stays
+    unknown: nothing is inferred from tool names or text. The target is the path hash; paths and text are never stored.
+    """
+    if tool not in ('Write', 'Edit') or not isinstance(value, dict):
+        return {}
+    path = value.get('file_path')
+    old, new = (None, value.get('content')) if tool == 'Write' else (value.get('old_string'), value.get('new_string'))
+    if not isinstance(path, str) or not path or not isinstance(new, str) or tool == 'Edit' and (not isinstance(old, str) or not old or old == new):
+        return {}
+    fields = dict(edit_target_fingerprint=_state('target', path, None, case_id), edit_after_fingerprint=_state(tool, path, new, case_id))
+    if old is not None:
+        fields['edit_before_fingerprint'] = _state(tool, path, old, case_id)
+    return fields
+
+
 def event(value):
     if not isinstance(value, dict):
         raise ValueError('event must be an object')
@@ -93,6 +119,10 @@ def event(value):
         raise ValueError('invalid tool error class')
     if 'message_fingerprint' in result and (result['activity'] != 'user_message' or not FINGERPRINT.match(result['message_fingerprint'])):
         raise ValueError('invalid message fingerprint')
+    edit = [key in result for key in EDIT_FIELDS]
+    if any(edit) and not (result['activity'] == 'tool_call' and 'edit_target_fingerprint' in result and 'edit_after_fingerprint' in result
+            and all(FINGERPRINT.match(result[key]) for key in EDIT_FIELDS if key in result)):
+        raise ValueError('invalid edit fingerprint')
     declared = [key in result for key in SOURCE_ORDER]
     if any(declared) and not (all(declared) and 'capture_order' in result
             and isinstance(result['source_order_profile'], str) and result['source_order_profile'] in SOURCE_ORDER_PROFILES
