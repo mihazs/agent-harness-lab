@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.212.0
+
+### Minor Changes
+
+- 817b344: Show the frozen preservation cohorts in the static `ahl compare` review page. When the supplied analysis carries a `preservation` block, the page adds a "Preservation cohorts" section with the paired transition cells of all frozen pairs and of each cohort, each cohort's role, margin, disposition and interval with its independent roots, the trial coverage counts, the error allocation and the stated assumptions, all copied from the analysis and never recomputed. A protected loss stays visible beside an aggregate gain, an interval that was not computed shows `unknown` instead of zero, an incomplete analysis shows the possible outcomes with missing trials as not imputed, and a malformed block is shown as unknown or skipped. A page without the block is unchanged.
+- 10066b5: Report declared staleness in the temporal resolver (part of #47). `TemporalFacet` takes an optional `stale_after` instant, `sources.knowledge_facets.facets` maps a page's `stale_after`, and each `temporal.resolve` row now carries `freshness` (`current`, `stale` or `unknown`) with a `freshness_reason`, plus a `freshness_counts` summary. The instant is stale from `stale_after` on, offsets compare as instants, and a missing, unparseable (a duration included) or timezone-less value is `unknown`, never `current`. Freshness never changes the validity status, reads only the revision's own declaration and ignores revisions first recorded after a historical replay's instant. The real clock is never consulted. Adding the field changes `inputs_sha256` for the same facets. Not yet done: claim identity across sources, project-scope compatibility, review provenance, binding link edges to `RecordRef`s, storing facets, contradiction detection, a CLI and the #43/#58/#11 integrations.
+- fe184dd: Add `ahl skills report --results RESULTS` (part of #11), a private `ahl-skill-measurement-report-v1` that rolls the skill fields saved evaluator trials already record into one report. It separates staged change (created, updated, removed, unchanged or unknown), availability, observed activation, same-name shadowing, natural versus preload routing and graded outcome per arm. A trial without usable skill fields, a receipt without its own evidence and a shadowing scan that does not cover every staged skill stay `unknown`, never `not_observed` or `none_found`; only `passed` and `failed` are outcomes. It never crosses activation with outcome and reports no utility estimate or success flag.
+
 ## 0.211.0
 
 ### Minor Changes
