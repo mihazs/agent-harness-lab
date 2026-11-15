@@ -3,7 +3,7 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 
-COMPONENTS = {'instruction', 'skill', 'tool_adapter', 'state_recovery',
+COMPONENTS = {'instruction', 'skill', 'tool_adapter', 'hook', 'state_recovery',
               'runtime_or_tool_defect', 'evaluator', 'insufficient_evidence', 'no_change'}
 DISPOSITIONS = {'proposed', 'evaluating', 'recommended', 'validated', 'rejected',
                 'already_covered', 'outside_scope', 'deferred'}
