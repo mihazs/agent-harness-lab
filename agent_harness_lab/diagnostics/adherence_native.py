@@ -24,6 +24,9 @@ from . import instruction_adherence as adherence, instruction_rules as rules
 RUNTIMES = ('claude', 'codex')
 RULE_FILES = ('AGENTS.md', 'CLAUDE.md')
 MAX_FILES = 200
+MAX_SCANNED = 20000
+# Rejected on a row near the start of the file, so they use neither a read slot nor the byte budget.
+CHEAP_SKIPS = ('subagent_transcript', 'foreign_project', 'unsupported_version')
 MAX_FILE_BYTES = 128 * 1024 * 1024
 MAX_TOTAL_BYTES = 512 * 1024 * 1024
 MAX_LINE_BYTES = 8 * 1024 * 1024
@@ -234,24 +237,31 @@ def read_session(path, runtime, project, harness=()):
 
 
 def read_sessions(files, project, harness=()):
-    """(raw sessions, {reason: count}) for (runtime, path) pairs; every skipped capture is counted, none is read as clean."""
-    files, sessions, skipped, seen, spent = list(files), [], Counter(), set(), 0
+    """(raw sessions, {reason: count}) for (runtime, path) pairs; every skipped capture is counted, none is read as clean.
+
+    The file and byte bounds charge the captures that were really read; a subagent or foreign-project file is turned
+    away at its first row, so it is counted as skipped but cannot use the bounds up before a main session is tried.
+    """
+    files, sessions, skipped, seen, spent, read = list(files), [], Counter(), set(), 0, 0
     for number, (runtime, path) in enumerate(files):
-        if number >= MAX_FILES:
+        if number >= MAX_SCANNED or read >= MAX_FILES:
             skipped['over_file_limit'] = len(files) - number
             break
         try:
-            spent += os.lstat(path).st_size
+            size = os.lstat(path).st_size
         except OSError:
-            pass  # read_session types it as unavailable
-        if number and spent > MAX_TOTAL_BYTES:
+            size = 0  # read_session types it as unavailable
+        if read and spent + size > MAX_TOTAL_BYTES:
             skipped['over_byte_budget'] = len(files) - number
             break
         try:
             session = read_session(path, runtime, project, harness)
         except Skipped as error:
             skipped[error.reason] += 1
+            if error.reason not in CHEAP_SKIPS:
+                read, spent = read + 1, spent + size
             continue
+        read, spent = read + 1, spent + size
         if session['session'] in seen:
             skipped['duplicate_session'] += 1
         else:
@@ -272,14 +282,22 @@ def harness_files(project):
     return found
 
 
+def _newest_first(file):
+    """Sort key: the most recently written capture first, then by path, so the read bound keeps the recent sessions."""
+    try:
+        return -os.lstat(file[1]).st_mtime_ns, file
+    except OSError:
+        return 0, file
+
+
 def for_analysis(args, data):
     """(section for the analysis brief, full report or None) over the native captures an analysis read.
 
     The section is counts only. A run that read no native capture says so (`not_run`); it never reports zero findings.
     """
     project = Path(args.project).resolve()
-    files = sorted((source['format'], source['path']) for source in data.get('sources', [])
-                   if source.get('format') in RUNTIMES and isinstance(source.get('path'), str))
+    files = sorted(((source['format'], source['path']) for source in data.get('sources', [])
+                    if source.get('format') in RUNTIMES and isinstance(source.get('path'), str)), key=_newest_first)
     if not files and getattr(args, 'events', None) is not None and getattr(args, 'format', None) in RUNTIMES and getattr(args, 'source_root', None) is None:
         files = [(args.format, str(args.events))]
     base = dict(authority='descriptive_only', causal_diagnosis=False)
