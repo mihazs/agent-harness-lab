@@ -475,8 +475,10 @@ for saved-result handling and migration limits.
 agent did at a declared decision boundary, separately from the optimizer's
 `no_change` routing. It is opt-in: a task with no contract keeps its artifact-only
 semantics, and the module changes no existing grader. This increment is the
-contract and a pure grader over synthetic evidence; it is not yet wired into
-`run_evaluation.py`, and no runtime is claimed to produce the evidence. A task can
+contract and a pure grader over synthetic evidence; it is not wired into
+`run_evaluation.py`, and no runtime is claimed to produce the evidence. Saved-history
+analysis reads grader-declared evidence
+(see [interaction outcomes](#interaction-outcomes-in-saved-history-analysis)). A task can
 store the contract's identity (see [task-bank identity](#task-bank-identity-for-the-contract-and-oracle)).
 
 A contract (`profile: "interaction-contract-v1"`, `schema_version: 1`) declares the
@@ -514,8 +516,7 @@ and is never a deliberate stop. A natural-language `claim` is retained but never
 satisfies a postcondition. Clarification topics and stop reasons are identifiers
 that a trusted runner assigns to observed events; the grader does not judge free
 text, and semantic adjudication remains a separate step. Receipts never authorize
-publication or promotion. The synthetic pair controls below exercise the grader;
-evaluator integration remains later work under the same issue.
+publication or promotion. The synthetic pair controls below exercise the grader.
 
 Six paired control families (ambiguous versus specified, already-correct versus
 defective, prohibited versus authorized, infeasible versus feasible, ask then
@@ -556,7 +557,7 @@ The digest is a caller assertion, not proof of a reviewed task-bank oracle or
 independence; same-process code can access inputs. Exact matching is a fixture
 rule, not semantic adjudication of other valid questions. This fixture does not
 grade interaction or establish user-reply receipt, completion, or authority.
-Replay, scripted delivery and evaluator integration remain future work.
+Replay and scripted delivery remain future work.
 
 ### Task-bank identity for the contract and oracle
 
@@ -579,6 +580,42 @@ verification the declarations are checked for shape only and the files are not r
 
 This binds identity and separation; it does not run `run_evaluation.py`, deliver the
 reply, grade an episode, or establish that a declared oracle was reviewed.
+
+### Interaction outcomes in saved history analysis
+
+`agent_harness_lab.evaluation.interaction_report` counts interaction grades by frozen
+family and arm when a saved comparison is analyzed. A grader bundle that holds
+`interaction-contract.json` marks its task as interaction-graded; a bundle without it,
+and every history without such a bundle, keeps its analysis unchanged. The contract is
+read only from a digest-verified bundle, must name its task, and may not share a bundle
+with a `behavior.json` policy (the two typed-output extensions are not combined).
+
+The grader's typed output adds an `interaction` object with the exact fields
+`schema_version` (1), `profile` (`interaction-contract-v1`), `contract_sha256` (the
+frozen contract identity) and `evidence` (the `evaluate` input described above). The
+analysis recomputes the verdict from that evidence and the frozen contract; the
+grader's stated `outcome` and process facts (exit code, status, timeout, unchanged
+inputs) are only cross-checked. A stated outcome that differs from the recomputed
+verdict, an outcome stated over unknown evidence, another contract identity, or any
+malformed or unreadable output makes that trial's observation incomplete, never a
+pass, a failure or a deliberate stop.
+
+`analysis.interaction` reports, per family and arm: the three-valued `passed`,
+`interaction_requirement_satisfied`, `whole_task_completed` and `state_preserved`
+counts, `findings` (`unnecessary_action`, `missed_necessary_clarification`,
+`unnecessary_clarification`, `unauthorized_stop`, `abnormal_termination`,
+`correct_deliberate_stop`, `valid_non_action_success`), and `unknowns` by reason. A
+valid non-action episode (a passing episode with no mutation) is therefore counted as a
+success rather than as missing work. The existing per-trial outcome that feeds the
+paired analysis stays the grader's own, and it must equal the recomputed pass, so the
+adjudicated outcome and the action-specific counts cannot disagree. If any observation
+is incomplete the recommendation is `blocked` with reason
+`interaction_observation_incomplete` (a critical behavior-policy rejection still wins).
+
+The evidence is a grader declaration, not an authenticated runtime capture, and no
+supported runtime is claimed to supply a transcript or side-effect receipts today, so a
+real run without them reports unknowns. Reply delivery and the #37 comparison view remain
+future work. The report grants no publication, promotion or independence.
 
 ## Offline validation and limits
 

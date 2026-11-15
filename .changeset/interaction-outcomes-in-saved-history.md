@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Report interaction-contract outcomes when a saved comparison is analyzed (part of #123). A grader bundle that holds `interaction-contract.json` now adds an `interaction` section to the analysis: per family and arm, three-valued pass, interaction, whole-task and state-preservation counts, separate counts for unnecessary action, missed or unnecessary clarification, unauthorized stop, abnormal termination, correct deliberate stop and valid non-action success, and unknowns by reason. The verdict is recomputed from the grader-declared evidence and the frozen contract; a stated outcome that contradicts it, or missing, partial or malformed evidence, leaves the observation unknown and blocks the recommendation as `interaction_observation_incomplete`. Histories without a contract and every existing analysis result are unchanged. The evidence is a grader declaration, not an authenticated runtime capture; reply delivery and the comparison walkthrough remain open.
