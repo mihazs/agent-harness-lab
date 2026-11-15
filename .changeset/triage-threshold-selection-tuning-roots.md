@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `triage_policy.select_thresholds` (part of #74) and triage evaluation profile v9 (`diagnostic-triage-evaluation-v9`). The selector chooses each class threshold from declared `split: "tuning"` rows only. For each class it keeps the lowest observed threshold whose same-sample precision and end-to-end recall meet the policy's preregistered targets with at least one correct decision. A class with too few labeled tuning roots, or with no such threshold, stays unselected and no policy is issued. It refuses validation rows, roots declared for fitting or calibration, and rows from another model or corpus revision. Repeated rows of a root count once, and a root whose rows disagree never supports a threshold. The frozen policy declares every tuning root. `evaluate(..., report_version=9)` applies every v8 check unchanged and also accepts such a policy, refusing validation roots listed as tuning roots. Earlier profiles, `check_policy` by default and `ahl benchmark` still refuse selected thresholds. Results are private, descriptive and grant no certification, `accepted_for_shadow` path or promotion authority.

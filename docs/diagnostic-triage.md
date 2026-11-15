@@ -211,3 +211,49 @@ root independence, and it adds no `accepted_for_shadow` path. Human decisions
 remain open in #74: preregistering per-use-case thresholds, costs, capacities and
 acceptance values; supplying real reviewed labels; and a protected validation
 source. The corpus development export releases no validation roots.
+
+## Selecting thresholds on declared tuning roots
+
+`agent_harness_lab.diagnostics.triage_policy.select_thresholds(draft, observations,
+min_roots_per_class=N)` is the one role that may choose a threshold. It is a library
+API; `ahl benchmark` and every `evaluate` profile up to v8 are unchanged. The draft is
+a v7-shaped policy (scope and class-calibration fields, a model revision) with
+`threshold_provenance: "selected_on_tuning_roots"`, every class `threshold` set to
+`null`, and `threshold_tuning_roots_sha256` empty. The per-class `min_precision` and
+`min_recall` are the targets the policy author preregistered; `N` is the minimum
+number of labeled tuning roots a class needs, and AHL supplies no default for it.
+
+Observations have the shape `evaluate` reads, with `split: "tuning"`. Validation rows
+are refused, as are roots the draft lists as fitting or calibration roots and rows
+from another or unstated model or corpus revision. A root counts once however many
+rows it has. It can decide a class only when every row leads with that class and a
+unique, margin-clearing top score, so a root whose rows disagree never supports a
+threshold. Unlabeled roots are declared as tuning roots but never become labels.
+
+For each class the selector sweeps the observed thresholds from high to low and keeps
+the lowest one at which same-sample precision and end-to-end recall (abstained roots
+stay in the denominator) both meet the targets with at least one correct decision.
+A class with fewer than `N` labeled roots, or with no such threshold, stays
+unselected. Then the result has `status: "unselected"` and `policy: null`: no
+threshold is borrowed from another class, and the 990-negative/10-positive
+counterexample cannot select a severe-class threshold however accurate the majority
+class is. Otherwise `status: "selected"` and `policy` is the draft with the chosen
+thresholds and every tuning root's hash declared. Per-class `tuning_precision` and
+`tuning_recall` are same-sample descriptive values (`same_sample_estimates_only`).
+They are not interval estimates and not evidence of performance on other roots.
+
+Validate the frozen policy with `evaluate(policy, observations, report_version=9)`.
+The separate `diagnostic-triage-evaluation-v9` profile applies every v8 check,
+decision and diagnostic unchanged, and additionally accepts a policy whose
+provenance is `selected_on_tuning_roots`, provided it declares its tuning roots. It
+refuses any validation root in that list. Its `threshold_authority` is
+`selected_on_declared_tuning_roots_unverified`, and `threshold_selection` stays
+`refused_in_validation`. Earlier profiles and `check_policy` by default still refuse
+a selected policy. Validation labels never reach the selector, so changing them
+changes the report but not the thresholds or tuning roots.
+
+Selection and validation reports are private, issue no certification and carry no
+promotion authority. AHL cannot verify that the tuning roots are independent of the
+validation roots beyond the declared hash lists, that labels are authoritative, or
+that the targets were preregistered before tuning data were seen. The selector fits no
+model or calibrator and adds no `accepted_for_shadow` path.

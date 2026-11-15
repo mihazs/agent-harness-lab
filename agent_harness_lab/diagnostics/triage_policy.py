@@ -1,11 +1,13 @@
-"""Frozen multi-class diagnostic triage policy (schema v2); validation role only.
+"""Frozen multi-class diagnostic triage policy (schema v2): validation and threshold selection.
 
-Fitting, calibration and threshold selection happen elsewhere. This module only
-checks a frozen, human-preregistered policy on held-out declared roots: it never
-selects or adjusts a threshold, refuses roots the policy declares as fitting,
-calibration or threshold-tuning roots, and issues no certification. Schema v1
-binary policies stay in ``tools.benchmark_models.evaluate_triage_policy``.
+Fitting and calibration happen elsewhere. ``evaluate`` only checks a frozen policy
+on held-out declared roots: it never selects or adjusts a threshold, refuses roots
+the policy declares as fitting, calibration or threshold-tuning roots, and issues
+no certification. ``select_thresholds`` is the one separate role that may choose
+thresholds, and only from declared tuning rows. Schema v1 binary policies stay in
+``tools.benchmark_models.evaluate_triage_policy``.
 """
+from copy import deepcopy
 import hashlib
 import json
 import math
@@ -18,6 +20,9 @@ REPORT_PROFILE_V5 = 'diagnostic-triage-evaluation-v5'
 REPORT_PROFILE_V6 = 'diagnostic-triage-evaluation-v6'
 REPORT_PROFILE_V7 = 'diagnostic-triage-evaluation-v7'
 REPORT_PROFILE_V8 = 'diagnostic-triage-evaluation-v8'
+REPORT_PROFILE_V9 = 'diagnostic-triage-evaluation-v9'
+SELECTION_PROFILE = 'diagnostic-triage-threshold-selection-v1'
+SELECTED = 'selected_on_tuning_roots'
 BIN_EDGES = (0.0, 0.2, 0.4, 0.6, 0.8)  # fixed descriptive grid, never a tuned or accepted value
 MIN_BIN_ROOTS = 10  # below this a reliability bin is reported as sparse, not as evidence
 SEVERITIES = ('severe', 'normal', 'none')
@@ -33,6 +38,9 @@ ABSTAINED = 'abstained'
 CONFLICT = 'conflicting_root_decisions'
 LIMITATIONS = ('independent_validation_not_verified', 'threshold_preregistration_unverified',
                'label_authority_unverified', 'root_independence_unverified')
+SELECTION_LIMITATIONS = ('same_sample_estimates_only', 'target_preregistration_unverified',
+                         'label_authority_unverified', 'root_independence_unverified')
+SPLIT_REFUSAL = {'heldout': 'triage validation requires heldout rows', 'tuning': 'threshold selection requires tuning rows'}
 
 
 def root_sha256(root):
@@ -58,14 +66,20 @@ def _sha(value):
     return isinstance(value, str) and len(value) == 64 and all(c in '0123456789abcdef' for c in value)
 
 
-def check_policy(policy, *, require_disjoint_roles=False, require_scope=False, require_class_calibration=False):
-    """Validate a frozen v2 policy; return its class order and forbidden evaluation roots."""
+def check_policy(policy, *, require_disjoint_roles=False, require_scope=False, require_class_calibration=False,
+                 allow_selected=False, selecting=False):
+    """Validate a frozen v2 policy; return its class order and forbidden evaluation roots.
+
+    ``allow_selected`` also accepts thresholds selected on declared tuning roots. ``selecting`` validates the
+    draft ``select_thresholds`` fills in: thresholds unset, no tuning roots declared yet.
+    """
     expected = POLICY_FIELDS | (SCOPE_FIELDS if require_scope else frozenset()) | (CLASS_CALIBRATION_FIELDS if require_class_calibration else frozenset())
     if not isinstance(policy, dict) or set(policy) != expected:
         raise ValueError('invalid triage policy v2 schema')
     if type(policy['schema_version']) is not int or policy['schema_version'] != 2 or policy['profile'] != POLICY_PROFILE:
         raise ValueError('invalid triage policy v2 schema')
-    if policy['threshold_provenance'] != 'human_preregistered':
+    allowed = (SELECTED,) if selecting else ('human_preregistered', *((SELECTED,) if allow_selected else ()))
+    if policy['threshold_provenance'] not in allowed:
         raise ValueError('v2 validation accepts only human-preregistered thresholds; it never selects them')
     classes = policy['classes']
     if not isinstance(classes, dict) or len(classes) < 2:
@@ -75,9 +89,10 @@ def check_policy(policy, *, require_disjoint_roles=False, require_scope=False, r
             raise ValueError('invalid triage class name')
         if not isinstance(spec, dict) or set(spec) != CLASS_FIELDS or spec['severity'] not in SEVERITIES:
             raise ValueError('invalid triage class policy')
-        if spec['threshold'] is None:
-            raise ValueError('frozen per-class threshold required; v2 validation never selects thresholds')
-        if not all(_number(spec[key]) for key in ('threshold', 'min_precision', 'min_recall')):
+        if (spec['threshold'] is None) != selecting:
+            raise ValueError('a threshold selection draft must leave every class threshold unset' if selecting
+                             else 'frozen per-class threshold required; v2 validation never selects thresholds')
+        if not all(_number(spec[key]) for key in ('min_precision', 'min_recall', *(() if selecting else ('threshold',)))):
             raise ValueError('invalid triage class constraint')
     costs = policy['costs']
     if not isinstance(costs, dict) or set(costs) != set(COSTS) or not all(_number(costs[k], None) for k in COSTS):
@@ -105,6 +120,8 @@ def check_policy(policy, *, require_disjoint_roles=False, require_scope=False, r
             forbidden.setdefault(value, key)
     if require_class_calibration:
         _check_class_calibration(policy, classes)
+    if policy['threshold_provenance'] == SELECTED and selecting == bool(policy['threshold_tuning_roots_sha256']):
+        raise ValueError('a selection draft declares no tuning roots yet' if selecting else 'a selected policy must declare its tuning roots')
     return tuple(sorted(classes)), forbidden
 
 
@@ -133,31 +150,37 @@ def _row_decision(scores, names, classes, margin):
     return ranked[0], None
 
 
+def _read_row(row, policy, names, forbidden, split, bind_model, bind_corpus):
+    """Validate one observation of the given role and return its root hash, label and scores."""
+    if not isinstance(row, dict) or row.get('split') != split:
+        raise ValueError(SPLIT_REFUSAL[split])
+    root = row.get('root_case_id')
+    if not isinstance(root, str) or not root or len(root) > 256:
+        raise ValueError('triage validation requires declared root IDs')
+    label, scores = row.get('label'), row.get('scores')
+    if label is not None and (not isinstance(label,str) or label not in policy['classes']):
+        raise ValueError('label outside the declared triage taxonomy')
+    if not isinstance(scores, dict) or set(scores) != set(names):
+        raise ValueError('class scores must cover exactly the declared taxonomy')
+    if not all(_number(value) for value in scores.values()):
+        raise ValueError('invalid triage class score')
+    if bind_model and row.get('model_sha256') != policy['model_sha256']:
+        raise ValueError('observation model revision is outside the policy scope')
+    if bind_corpus and row.get('corpus_sha256') != policy['corpus_sha256']:
+        raise ValueError('observation corpus revision is outside the policy scope')
+    digest = root_sha256(root)
+    if digest in forbidden:
+        raise ValueError(f'evaluated root appears in policy {forbidden[digest]}; validation roots must be untouched')
+    return digest, label, scores
+
+
 def _aggregate(observations, policy, names, forbidden, bind_model=False, sums=None, bind_corpus=False):
     """Single pass over rows; per-root state is the only retained data."""
     classes, margin = policy['classes'], policy['abstention']['min_margin']
     severe = [name for name in names if classes[name]['severity'] == 'severe']
     roots = {}
     for row in observations:
-        if not isinstance(row, dict) or row.get('split') != 'heldout':
-            raise ValueError('triage validation requires heldout rows')
-        root = row.get('root_case_id')
-        if not isinstance(root, str) or not root or len(root) > 256:
-            raise ValueError('triage validation requires declared root IDs')
-        label, scores = row.get('label'), row.get('scores')
-        if label is not None and (not isinstance(label,str) or label not in classes):
-            raise ValueError('label outside the declared triage taxonomy')
-        if not isinstance(scores, dict) or set(scores) != set(names):
-            raise ValueError('class scores must cover exactly the declared taxonomy')
-        if not all(_number(value) for value in scores.values()):
-            raise ValueError('invalid triage class score')
-        if bind_model and row.get('model_sha256') != policy['model_sha256']:
-            raise ValueError('observation model revision is outside the policy scope')
-        if bind_corpus and row.get('corpus_sha256') != policy['corpus_sha256']:
-            raise ValueError('observation corpus revision is outside the policy scope')
-        digest = root_sha256(root)
-        if digest in forbidden:
-            raise ValueError(f'evaluated root appears in policy {forbidden[digest]}; validation roots must be untouched')
+        digest, label, scores = _read_row(row, policy, names, forbidden, 'heldout', bind_model, bind_corpus)
         predicted, reason = _row_decision(scores, names, classes, margin)
         state = roots.get(digest)
         if state is None:
@@ -183,10 +206,10 @@ def evaluate(policy, observations, *, report_version=2):
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
-    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6, 7, 8):
+    if type(report_version) is not int or report_version not in (2, 3, 4, 5, 6, 7, 8, 9):
         raise ValueError('unsupported triage report version')
     names, forbidden = check_policy(policy, require_disjoint_roles=report_version >= 4, require_scope=report_version >= 6,
-                                  require_class_calibration=report_version >= 7)
+                                  require_class_calibration=report_version >= 7, allow_selected=report_version >= 9)
     classes, costs = policy['classes'], policy['costs']
     if report_version >= 4 and policy['model_sha256'] is None:
         raise ValueError('v4 and later require a policy bound to a model revision')
@@ -297,7 +320,7 @@ def evaluate(policy, observations, *, report_version=2):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')
-    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6,7:REPORT_PROFILE_V7,8:REPORT_PROFILE_V8}[report_version], role='validate',
+    result=dict(schema_version=report_version, profile={2:REPORT_PROFILE,3:REPORT_PROFILE_V3,4:REPORT_PROFILE_V4,5:REPORT_PROFILE_V5,6:REPORT_PROFILE_V6,7:REPORT_PROFILE_V7,8:REPORT_PROFILE_V8,9:REPORT_PROFILE_V9}[report_version], role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',
@@ -310,7 +333,8 @@ def evaluate(policy, observations, *, report_version=2):
                            roots_sha256=sorted(severe_roots)),
         costs=dict(declared=dict(costs), counts=errors, total=total_cost),
         decisions=report_decisions, decision_threshold_source='frozen_policy',
-        threshold_authority='human_preregistered_unverified', threshold_selection='refused_in_validation',
+        threshold_authority='selected_on_declared_tuning_roots_unverified' if policy['threshold_provenance'] == SELECTED
+        else 'human_preregistered_unverified', threshold_selection='refused_in_validation',
         root_independence='unverified', label_authority='unverified', qualification='descriptive_only',
         certification='not_issued', automatic_promotion=False, publication_allowed=False)
     if report_version >= 4:
@@ -328,6 +352,71 @@ def evaluate(policy, observations, *, report_version=2):
         if result['score_diagnostics']['reliability']['sparse_bins']:
             result['reasons'].insert(len(failed)+len(missing), 'reliability_bins_sparse')
     return result
+
+
+def select_thresholds(policy, observations, *, min_roots_per_class):
+    """Choose each class threshold on declared tuning rows only and freeze them into a policy.
+
+    ``policy`` is a draft: every class threshold unset, ``threshold_provenance`` ``selected_on_tuning_roots`` and
+    no tuning roots yet. Its per-class ``min_precision`` and ``min_recall`` are the preregistered targets.
+    ``observations`` are rows shaped as for ``evaluate`` but with ``split: tuning``; validation rows are refused.
+    A class gets the lowest observed threshold at which its same-sample precision and end-to-end recall meet
+    its targets with at least one correct decision. A class with fewer than ``min_roots_per_class`` labeled
+    roots, or no such threshold, stays unselected and no policy is issued. These estimates are optimistic by
+    construction and grant no authority; the policy still needs an untouched validation (``evaluate`` v9).
+    """
+    if not _count(min_roots_per_class):
+        raise ValueError('the minimum tuning roots per class must be a nonnegative integer')
+    names, forbidden = check_policy(policy, require_disjoint_roles=True, require_scope=True,
+                                    require_class_calibration=True, selecting=True)
+    if policy['model_sha256'] is None:
+        raise ValueError('threshold selection requires a policy bound to a model revision')
+    classes, margin = policy['classes'], policy['abstention']['min_margin']
+    unconstrained = dict.fromkeys(names, dict(threshold=0))  # decisions before any threshold: unique leader, margin met
+    roots = {}
+    for row in observations:
+        digest, label, scores = _read_row(row, policy, names, forbidden, 'tuning', True, True)
+        decided, _ = _row_decision(scores, names, unconstrained, margin)
+        state = roots.setdefault(digest, [label, dict.fromkeys(names, math.inf)])
+        if state[0] != label:
+            raise ValueError('conflicting labels within a declared tuning root')
+        for name in names:  # -1 marks a class this root can never decide: some row abstained or chose another class
+            state[1][name] = min(state[1][name], scores[name]) if name == decided else -1.0
+    if not roots:
+        raise ValueError('empty triage tuning input')
+    summary, chosen, failed = {}, {}, []
+    for name in names:
+        support = sum(state[0] == name for state in roots.values())
+        # Sweep thresholds from high to low; the last satisfying one is the lowest, hence the widest coverage.
+        points = sorted(((state[1][name], state[0] == name) for state in roots.values()
+                         if state[0] is not None and state[1][name] >= 0), reverse=True)
+        best, tp, fp, index = None, 0, 0, 0
+        while support >= min_roots_per_class and support and index < len(points):
+            value = points[index][0]
+            while index < len(points) and points[index][0] == value:
+                tp, fp, index = tp+points[index][1], fp+(not points[index][1]), index+1
+            if tp and tp/(tp+fp) >= classes[name]['min_precision'] and tp/support >= classes[name]['min_recall']:
+                best = (value, tp/(tp+fp), tp/support)
+        if best is None:
+            failed.append(f'class:{name}:'+('tuning_roots_below_minimum' if support < min_roots_per_class
+                                           else 'no_threshold_meets_preregistered_targets'))
+        chosen[name] = best[0] if best else None
+        summary[name] = dict(severity=classes[name]['severity'], tuning_roots=support, threshold=chosen[name],
+                             tuning_precision=best[1] if best else None, tuning_recall=best[2] if best else None,
+                             authority='same_sample_descriptive_only')
+    frozen = None if failed else deepcopy(policy)
+    if frozen:
+        frozen['threshold_tuning_roots_sha256'] = sorted(roots)
+        for name in names:
+            frozen['classes'][name]['threshold'] = chosen[name]
+    return dict(schema_version=1, profile=SELECTION_PROFILE, role='select', status='unselected' if failed else 'selected',
+                reasons=failed+list(SELECTION_LIMITATIONS), draft_sha256=policy_sha256(policy),
+                policy_sha256=policy_sha256(frozen) if frozen else None, model_sha256=policy['model_sha256'],
+                corpus_sha256=policy['corpus_sha256'], unit='declared_root', labeled_roots=sum(s[0] is not None for s in roots.values()),
+                unlabeled_roots=sum(s[0] is None for s in roots.values()), min_roots_per_class=min_roots_per_class,
+                classes=summary, tuning_roots_sha256=sorted(roots), policy=frozen,
+                threshold_authority='selected_on_tuning_roots_unverified', certification='not_issued',
+                automatic_promotion=False, publication_allowed=False)
 
 
 def _population_metrics(confusion, classes, decided):
