@@ -142,7 +142,7 @@ class TestSkillInvocation:
 
     @pytest.mark.parametrize('value',[pytest.param('',id='empty'),pytest.param('malformed',id='malformed')])
     def test_direct_owned_runner_entry_denies_marker_before_parsing_or_trials(self,value):
-        script=cli.assets()/'skills/harness-evaluation/scripts/run_evaluation.py'
+        script=cli.assets()/'skills/harness-self-improvement/scripts/run_evaluation.py'
         environment=dict(os.environ,AHL_MANAGED_PREPARATION=value)
         result=subprocess.run([sys.executable,str(script)],capture_output=True,text=True,env=environment,timeout=10)
         assert result.returncode == 3;assert result.stdout == '';assert 'nested trials' in result.stderr
@@ -336,9 +336,9 @@ class TestEntryReceiptParity:
         if manifest.exists():shutil.copy(manifest,source)
         fixture=make_fixture();(fixture.project/'mode').write_text('no_change');initial=(fixture.project/'AGENTS.md').read_bytes()
         with patch.object(cli,'assets',return_value=source):
-            shutil.rmtree(source/'skills/harness-evaluation/scripts/__pycache__',ignore_errors=True)
+            shutil.rmtree(source/'skills/harness-self-improvement/scripts/__pycache__',ignore_errors=True)
             _,_,_,cli_run=self.route(fixture,['improve'],{},initial)
-            cache=source/'skills/harness-evaluation/scripts/__pycache__';cache.mkdir(exist_ok=True)
+            cache=source/'skills/harness-self-improvement/scripts/__pycache__';cache.mkdir(exist_ok=True)
             (cache/'run_evaluation.cpython-314.pyc').write_bytes(b'synthetic bytecode')
             _,_,_,skill_run=self.route(fixture,['skills','invoke'],{},initial)
         assert entry_parity.run_differences(cli_run,skill_run) == {}

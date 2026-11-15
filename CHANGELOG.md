@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.206.0
+
+### Minor Changes
+
+- be61b13: Block the complete removal of a project skill bundle while a file that remains in the candidate still names it (part of #78). A root `AGENTS.md` or `CLAUDE.md`, or any file of another bundle, that links into the removed bundle or mentions its folder by whole path (project-relative, or relative to that file's folder) now gives the removal the reason `removed_bundle_referenced`, so `ahl improve` stops with `skill_bundle_validation_failed` and `workflow.adopt` refuses it. A reference the same candidate also deletes does not count, so a consolidation passes once the surviving files stop naming the removed bundle. Bare skill names in prose, files outside the snapshot and scoped snapshots are not checked, and the reason names no file. No activation, utility or authorization claim changes, and behavioral candidates stay inconclusive.
+
+### Patch Changes
+
+- f9976df: An interrupted `ahl apply` no longer ends in a Python traceback: a review says it wrote nothing, and an interrupted authorization says to repeat the same command and names any unfinished deployment to finish with `ahl promotion --action recover`; both exit 1. The bundled self-improvement skill now documents the review and apply step (the user confirms the exact plan hash; approval is not certification) and requires `ahl` 0.198.0, the first release with `ahl apply`. New tests interrupt a repair run while journaling and before the target write and show that the saved plan is then reviewed and applied exactly once, and that review and apply reach the same target bytes in the source, wheel and archive layouts.
+- 9981507: Block a scoped instruction validation whose staged baseline or candidate tree holds a symlink instead of raising (part of #79). `instruction_validation.validate` documents that it never raises for a candidate defect, but a symlink in either staged tree escaped as a `ValueError`; it now returns a `blocked` validation with the reason `symlink_in_staged_tree` and no scope, and `current` reports a symlink that appears in the evaluated candidate as `candidate_changed`. The workflow already rejected a symlinked candidate earlier, so an `ahl improve` run behaves as before.
+
 ## 0.205.0
 
 ### Minor Changes

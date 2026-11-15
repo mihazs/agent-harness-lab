@@ -45,11 +45,11 @@ reader purpose.
 ## Understand the context
 
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
-- [Why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
+- [Why there is one skill](single-skill-rationale.md), [why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
 - [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): why a numeric, non-LLM better, equivalent, worse or insufficient-evidence score runs beside the unchanged Hoeffding path, how it treats unknown outcomes, how its false-recommendation rate was calibrated with the seeded power simulator under a frozen protocol, its descriptive-only desirability and Pareto epsilon-indicator report, its evidence status (no peer-reviewed work applies the method to agent harness scoring) and its limits.
 - [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md).
 - [Where a tool-result adapter may attach to a runtime](adapter-runtime-decision.md): the evidence, decision and open blockers for the identity bridge.
-- [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
+- [Scientific sources and limits](../skills/harness-self-improvement/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-self-improvement/references/trace-diagnosis.md), and [execution contract](../skills/harness-self-improvement/references/execution.md).
 
 ## Historical and maintainer material
 

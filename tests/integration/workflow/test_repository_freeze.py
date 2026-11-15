@@ -158,7 +158,7 @@ def test_freeze_created_before_atomic_publish_stops_replace(project, writer):
 def test_skill_install_refuses_frozen_destination_and_backup(project):
     from tools.link_skills import install
     source = project.root / 'skill-sources'
-    for name in ('harness-evaluation', 'harness-self-improvement'):
+    for name in ('harness-self-improvement',):
         (source / name).mkdir(parents=True)
         (source / name / 'SKILL.md').write_text('synthetic')
     (project.project / '.ahl-read-only').touch()

@@ -1,11 +1,7 @@
----
-name: harness-evaluation
-description: Build and run baseline/candidate evaluations for agent instructions and skills, diagnose evaluation failures, and measure supported improvements. Use for harness maintenance, not ordinary application testing.
----
+# Evaluation methodology
 
-# Harness evaluation
-
-Requires `ahl` 0.169.0 or later; `ahl doctor` warns when the CLI or these skill links are stale (fix: `ahl update`).
+The execution procedure of `harness-self-improvement`: how to build, run and read baseline/candidate
+evaluations. It is not a separate skill.
 
 Evaluation is an executable part of harness improvement. Construct missing tests,
 run them, inspect outcomes, and repair the evaluation when necessary. Do not require
@@ -29,7 +25,7 @@ Do not grade success from the agent's own final claim or source-word matching.
 ## Diagnose traces and choose informative tasks
 
 For multi-session diagnosis or recurring failures, read
-[trace diagnosis and method selection](references/trace-diagnosis.md). Use process
+[trace diagnosis and method selection](trace-diagnosis.md). Use process
 mining to discover sequences and case-supported patterns, then check raw evidence
 and current harness contracts. Patterns propose mechanisms; they do not establish
 causation or authorize a change. Use ML only when it answers a named question
@@ -60,8 +56,8 @@ manifest and grader controls without launching recursive controllers.
 ## Construct and run
 
 1. Inspect available runtime, authentication status, existing tests and fixtures.
-   Reuse installed tools. The bundled [runner](scripts/run_evaluation.py) supports
-   Codex and Claude Code JSONL trials; read [the execution contract](references/execution.md) to use it.
+   Reuse installed tools. The bundled [runner](../scripts/run_evaluation.py) supports
+   Codex and Claude Code JSONL trials; read [the execution contract](execution.md) to use it.
 2. Freeze task inputs and graders before scoring. Start with the observed failure,
    an adjacent regression, and an unseen transfer case; separate development and
    held-out feedback. Synthetic cases must represent the failure mechanism, not
@@ -73,7 +69,7 @@ manifest and grader controls without launching recursive controllers.
 4. Use fresh isolated fixture copies for each trial. Keep candidate instructions out
    of baseline, graders and reference answers outside writable task workspaces, and
    evaluation artifacts outside skill discovery. Verify the intended version is
-   loaded; [trial isolation](references/isolation.md) lists what a trial still
+   loaded; [trial isolation](isolation.md) lists what a trial still
    inherits. Worktrees, if needed, belong under `~/dev/.worktrees/`.
 5. Run baseline, then candidate on identical inputs; preserve negative results.
    Inspect artifacts and traces, not just exit codes. Repeat the decisive behavioral
@@ -127,4 +123,4 @@ conditions, observed costs and limitations. Report tested, rejected, already-cov
 and deferred mechanisms separately; data volume is not a coverage measure.
 Keep sanitized traces and rollback artifacts;
 do not create routine ai-memory pages. Research informs experiment design, not local
-proof: see [evidence and limits](references/evidence-to-design.md).
+proof: see [evidence and limits](evidence-to-design.md).

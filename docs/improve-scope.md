@@ -73,6 +73,25 @@ its location and safety rules) and has the same limits: owner-only, regular, at 
 not owner-only file is ignored and the run stays on the project; `ahl config show` names
 the `reason`. `ahl config clear` deletes the remembered-runtime file (the runtime and any loop object) and leaves the saved default scope alone.
 
+## Ask an agent instead of typing flags
+
+The installed `harness-self-improvement` skill reads your words and picks the scope for you,
+so it never widens it:
+
+| You say | The skill runs |
+| --- | --- |
+| nothing about scope, "this project", "my repo" | `ahl skills invoke .` (`project`, or your [saved default scope](#save-a-default-scope) when you have one) |
+| "global", "my user-level harness" | `ahl skills invoke . --scope global --agent claude` or `codex`, as you named it |
+| "both", "global and project" | `ahl skills invoke . --scope project+global --agent claude` or `codex` |
+| something either layer could mean ("my skills") | one question, or a `project` run; never a guess toward global |
+
+With a saved default the skill still omits `--scope` for such a request, so the run uses that default and
+the receipt's `scope_source` says so; run `ahl skills invoke . --scope project` yourself to keep one run on the project.
+It asks once for the runtime when you name a global scope without one, adds `--repair-contracts`
+only when you ask for the header repair, and relays a `blocked` result as it is. It does not
+edit a user-level file by hand instead. Why the skill is a single one is explained in
+[why one skill](single-skill-rationale.md).
+
 ## Read the receipt
 
 Every scope returns `scope`, `layers`, `layers_evaluated`, `layers_changed`,

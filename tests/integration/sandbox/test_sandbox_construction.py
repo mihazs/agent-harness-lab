@@ -48,8 +48,8 @@ def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(prep):
     for role,folder in views.items():
         summary = json.loads((folder/'analysis-summary.json').read_text())
         assert canary not in json.dumps(summary); assert summary['findings'][0]['kind'] == 'tool_error'
-        assert (folder/'methodology/harness-evaluation/SKILL.md').is_file()
-        assert (folder/'methodology/harness-self-improvement').exists() == (role=='proposer')
+        assert (folder/'methodology/harness-self-improvement/references/evaluation.md').is_file()
+        assert (folder/'methodology/harness-self-improvement/SKILL.md').exists() == (role=='proposer')
         assert not list(folder.rglob('*.pyc'))
         WorkingState(folder,prep.deadline)
 
