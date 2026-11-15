@@ -1,6 +1,5 @@
 """The worker runs declared adapter bytes in the offline bubblewrap sandbox and contains what they can reach."""
 import os
-import socket
 import sys
 
 import pytest
@@ -9,11 +8,10 @@ from agent_harness_lab.evaluation.adapter_worker import present
 from agent_harness_lab.evaluation.adapters import identity
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from tests.support.adapter_worker import (ADAPTER_ID, IDENTITY, INJECTION, STRUCTURED, adapter_source, authorization,
-                                          canary_adapter, failure_envelope, spec_for, success_envelope)
+                                          canaries, canary_adapter, failure_envelope, spec_for, success_envelope)
 
 AUTH = authorization()
 TRANSFORM = 'structured-error-v1'
-SECRET = 'adapter-canary-' + 'a1b2c3'
 
 
 def run(adapter, envelope, *, transform=TRANSFORM, policy='required', **limits):
@@ -119,29 +117,6 @@ def test_an_optional_policy_returns_the_identity_envelope_for_a_failing_adapter_
     result = run(present_body('    raise RuntimeError("boom")'), envelope, policy='optional-identity')
     assert (result['outcome'], result['code'], result['transformation']) == ('fallback', 'adapter_error', 'identity')
     assert result['presented'] == identity(envelope, AUTH, ADAPTER_ID)
-
-
-@pytest.fixture
-def listener():
-    server = socket.socket()
-    server.bind(('127.0.0.1', 0))
-    server.listen()
-    yield server.getsockname()[1]
-    server.close()
-
-
-def canaries(tmp_path, monkeypatch, listener_port):
-    secret_file = tmp_path / 'host-secret.txt'
-    secret_file.write_text(SECRET)
-    monkeypatch.setenv('AHL_ADAPTER_CANARY', SECRET)
-    home = os.path.expanduser('~')
-    return {
-        'host-file': "open(%r).read() == %r" % (str(secret_file), SECRET),
-        'host-environment': "os.environ.get('AHL_ADAPTER_CANARY') == %r" % SECRET,
-        'host-home': "os.path.isdir(%r)" % home,
-        'network': "socket.create_connection(('127.0.0.1', %d), timeout=1)" % listener_port,
-        'write-adapter-bytes': "open('/inputs/harness/adapter.py', 'ab').write(b'#') or True",
-    }
 
 
 @pytest.mark.parametrize('name', ['host-file', 'host-environment', 'host-home', 'network', 'write-adapter-bytes'])

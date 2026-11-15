@@ -11,7 +11,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; admission and the private coverage report attached to the `ahl improve` receipt as `mechanism_coverage`; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger, linear `supersedes` revision chains that keep every superseded prediction, and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`); versioned deterministic constraint definitions with three-valued `constraint-report-v1` observations over captured events (`diagnostics/constraints.py`); bounded `constraint-localization-v1` step localization of violated constraints with competing causes, negative controls and unverified draft records (`diagnostics/localization.py`) | Reviewed route dispositions and queue integration in `ahl improve`; versioned evidence beyond the analysis brief; localization from #58 event links and a replay of the falsifying intervention; evaluate composed repairs; wire predictions into proposal sessions and the `ahl improve` receipt |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API that rejects credential-shaped text, copied held-out answers, redundant instructions and undeclared fields inside a caller-set byte bound (`compile_procedure`); observable-requirement procedure compliance with declared alternatives and separate safety checks (`procedure_compliance`); pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation); evaluator trials record `skill_availability` bundle provenance for both the `skills` and `harness_paths` routes; evaluator trials record `skill_shadowing` candidates from a read-only scan of the runtime's user-level skill folder, and a shadowed copy makes `paired_transfer` inconclusive; `ahl skills report` rolls saved evaluator trials up into a private staged-change, availability, activation, shadowing, routing and graded-outcome report | Observed activation evidence, Codex skill signals, effective-path resolution and managed/plugin-layer shadowing, false activation on unrelated tasks and instruction/token cost in that report, independently graded routing/transfer pack, wiring compliance into transfer reports, live utility and compiler pilot evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, not connected to any hook; journaled staging and conflict-safe rollback of a reviewed adapter version (`evaluation.adapter_deployment`), exposed only through the opt-in `ahl adapters` command under a controller-owned authorization manifest | A live run proving the bridge hook executes in the supported runtime, a controller-owned relay from the hook to the worker, and independently graded adapter effectiveness; no runtime flags are invented |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, and a controller-side relay (`evaluation.adapter_relay`) from hook events to that worker that answers a failed call with fixed controller text only, with no hook installed; journaled staging and conflict-safe rollback of a reviewed adapter version (`evaluation.adapter_deployment`), exposed only through the opt-in `ahl adapters` command under a controller-owned authorization manifest | A live run proving the bridge hook executes in the supported runtime, the hook-side client and channel to the relay, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration; a [held-out probe leakage check](diagnostic-retrieval-leakage.md) that rejects an index holding a probe's own root or text copy | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
@@ -400,8 +400,8 @@ digests to the calls and to any model-visible results the caller observed; witho
 observations the application state stays `unknown`, and the only accepted source is
 the test `fake-runtime`, which sets `runtime_verified` to false. `verify_receipt`
 fails after any change to the authorization, spec, adapter bytes, bridge source or
-receipt content, or after an observed mismatch. A hook command, deployment of its
-configuration and the relay to the isolated worker are not part of this bridge.
+receipt content, or after an observed mismatch. A hook command and the deployment of its
+configuration are not part of this bridge; the relay to the isolated worker is described below.
 
 `evaluation.adapter_worker.present(authorization, spec, adapter_bytes, envelope,
 transform=..., policy=...)` runs one declared adapter on one already authorized
@@ -422,7 +422,8 @@ or output above its bound), `resource_limit`, `adapter_error`, `malformed_output
 `contract_violation`, `input_modified`, `sandbox_failed` and `sandbox_unavailable`.
 A sandbox that cannot start is a failure, never a pass: a non-zero exit while the
 backend's capability probe is unsupported (for example namespaces denied) is
-`sandbox_unavailable`, not `adapter_error`, and a numeric literal that overflows to
+`sandbox_unavailable`, not `adapter_error`, as is a host that cannot create or fill
+the private run directory, and a numeric literal that overflows to
 infinity is `malformed_output`. Under `required` a failure
 stops the call (`presented` is `None`); under `optional-identity` the result falls
 back to the identity envelope, or to `None` with the original kept when the
@@ -431,6 +432,32 @@ holds digests and bounded worker metadata, never worker stdout or stderr. A
 valid answer shows only that the contract holds, not that the presentation is
 correct, and nothing calls the worker by default: delivering a non-identity
 result to the model stays blocked as the decision record describes.
+
+`evaluation.adapter_relay.Relay` is the controller side of the hook-to-worker
+path; `Relay(authorization, spec, adapter_bytes, run_id, runtime_version,
+transform=..., categories=(), policy=...)` takes the same arguments as `Bridge`
+plus the transform and a vocabulary, and its `handle(stdin_bytes)` returns hook
+stdout bytes. It runs every event through a `Bridge`, so identity, run binding,
+ordering, duplicate, cancellation and stop semantics are the bridge's. A
+successful call is answered with the empty reply and never starts the worker. A
+failed call (`PostToolUseFailure`) runs the declared adapter in the worker and,
+when the worker's answer passes the contract check, is answered with additive
+context only, because the runtime cannot replace a failed result: one fixed
+controller sentence (`NOTE`) with one substitution, the adapter's
+`error_metadata.code` when the project listed it in `categories` before the run
+and `unknown` otherwise. A category is a bounded identifier (letters, digits,
+`_`, `.`, `-`, up to 64 characters), so the model never sees tool text, adapter
+text or a sentence an adapter composed, and the original output is delivered
+unchanged. A worker failure stops the execution under `required` with a reply
+that names only a fixed code, and falls back to the empty reply under
+`optional-identity` with the code recorded. A redelivered call gets its first reply
+without a second worker run. The metadata-only `ledger()` records the outcome,
+code, transformation, original digest, bounded worker attestation and the digest
+of each reply, so a later model-visible observation can be compared; the worker's
+private result is `result(call_id)`. There is no relay receipt: a fake runtime
+exercising the relay is not evidence that the supported runtime applied it, and
+the hook-side client, its channel to a long-lived controller process and the hook
+deployment are not built. `docs/adapter-runtime-decision.md` lists what remains.
 
 `evaluation.adapter_deployment` stages one reviewed adapter version through the
 promotion journal and rolls it back without overwriting later work.

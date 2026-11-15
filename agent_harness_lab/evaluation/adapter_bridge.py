@@ -170,6 +170,10 @@ class Bridge:
         """Metadata-only entries in arrival order; private, and never a raw payload."""
         return copy.deepcopy(self._ledger)
 
+    def last_entry(self):
+        """The metadata-only entry of the event handled last, or None before the first."""
+        return copy.deepcopy(self._ledger[-1]) if self._ledger else None
+
     def provenance(self, call_id):
         """The private original and presented envelopes of one applied call, or None."""
         return copy.deepcopy(self._provenance.get(call_id))
