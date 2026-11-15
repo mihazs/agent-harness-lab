@@ -15,7 +15,7 @@ from agent_harness_lab import config
 from agent_harness_lab.cli import main
 from tests.integration.evaluation.test_offline_evaluation import SOLVER
 
-KINDS = ('pairs', 'settings', 'responses', 'values', 'requests', 'queue')  # the six scoring tasks of the starter bank, five roots
+KINDS = ('pairs', 'settings', 'responses', 'values', 'requests', 'queue', 'text')  # the six scoring tasks of the starter bank (five roots) and its held-out one, which only a single pass runs
 EVERYTHING = 'solves=' + ','.join(KINDS)
 NOTHING = 'solves='
 AGENT = '''#!/usr/bin/env python3
