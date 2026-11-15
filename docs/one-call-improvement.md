@@ -792,7 +792,7 @@ It does not rename skills, delete instructions, install hooks or call a model.
 The repair is bound to the harness it staged, and `ahl improve` and `ahl skills invoke` stop
 at the same checks with the target untouched when the project no longer matches it. Before the
 journal exists they are a staged harness file that differs from the project (`target changed
-before application`), a harness file added or removed (`frozen plan inventory changed`) and a
+before application`), a harness file added (`frozen plan inventory changed`) and a
 candidate or configuration that differs from the staged one (`configuration or candidate changed
 before application`). Each ends as `invalid_input`, exit code 2. Once the journal is prepared the
 inventory is compared again (`target inventory changed during planned application`, also exit
