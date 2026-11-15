@@ -39,6 +39,23 @@ the same receipt.
    `status: blocked` with `reason: global_scope_model_evaluation_unavailable`, exit 3,
    and nothing is written or evaluated.
 
+## Ask an agent instead of typing flags
+
+The installed `harness-self-improvement` skill reads your words and picks the scope for you,
+so it never widens it:
+
+| You say | The skill runs |
+| --- | --- |
+| nothing about scope, "this project", "my repo" | `ahl skills invoke .` (`project`) |
+| "global", "my user-level harness" | `ahl skills invoke . --scope global --agent claude` or `codex`, as you named it |
+| "both", "global and project" | `ahl skills invoke . --scope project+global --agent claude` or `codex` |
+| something either layer could mean ("my skills") | one question, or a `project` run; never a guess toward global |
+
+It asks once for the runtime when you name a global scope without one, adds `--repair-contracts`
+only when you ask for the header repair, and relays a `blocked` result as it is. It does not
+edit a user-level file by hand instead. Why the skill is a single one is explained in
+[why one skill](single-skill-rationale.md).
+
 ## Read the receipt
 
 Every scope returns `scope`, `layers`, `layers_evaluated`, `layers_changed`,

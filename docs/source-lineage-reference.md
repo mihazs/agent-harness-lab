@@ -100,9 +100,11 @@ The existing task-bank lexical receipts remain heuristic/pending; this command
 neither clears content exposure nor upgrades bank eligibility. The offline
 Git/GitHub [commit join](source-contracts.md#offline-gitgithub-commit-join) and
 [PR commit-role join](source-contracts.md#offline-pr-commit-role-join) are
-separate: their candidate receipts do not enter these components or reviews. Broader native
-cross-source resolution, corpus integration, diagnostic-utility evaluation and
-immutable regression admission remain work under #58/#8.
+separate: their candidate receipts do not enter these components or reviews. The
+[preregistered utility study](source-contracts.md#preregistered-utility-study-against-a-session-only-baseline)
+scores resolver outputs against a session-only baseline on a fixture. Broader native
+cross-source resolution, corpus integration and immutable regression admission remain
+work under #58/#8.
 
 ## Persistence, limits and privacy
 
