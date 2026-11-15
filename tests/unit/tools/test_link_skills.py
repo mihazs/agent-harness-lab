@@ -116,3 +116,37 @@ def test_foreign_or_ordinary_retired_entries_are_left_alone(trees):
     (trees.dest / RETIRED / 'SKILL.md').write_text('mine')
     links.install(trees.source, trees.dest, trees.backups)
     assert (trees.dest / RETIRED / 'SKILL.md').read_text() == 'mine'
+
+
+def installer_release(trees, name):
+    release = trees.root / 'data/releases/0.1.0'
+    (release / 'skills' / name).mkdir(parents=True)
+    (release / '.release-sha256').write_text('synthetic\n')
+    return release / 'skills' / name
+
+
+def test_current_link_into_an_installer_release_is_upgraded_not_refused(trees):
+    """Regression: an installer-managed layout links every skill into an old release; the upgrade crashed on it."""
+    name = links.NAMES[0]
+    old = installer_release(trees, name)
+    (trees.dest / name / 'SKILL.md').unlink()
+    (trees.dest / name).rmdir()
+    (trees.dest / name).symlink_to(old, target_is_directory=True)
+    link = stale_link(trees, installer_release(trees, RETIRED))
+    backup = links.install(trees.source, trees.dest, trees.backups)
+    assert (trees.dest / name).resolve() == trees.source / name
+    assert (backup / name).readlink() == old and old.is_dir()
+    assert not link.is_symlink() and (backup / RETIRED).is_symlink()
+    assert links.install(trees.source, trees.dest, trees.backups) is None
+
+
+def test_cli_reports_a_foreign_symlink_in_one_line_and_changes_nothing(trees):
+    name = links.NAMES[0]
+    (trees.dest / name / 'SKILL.md').unlink()
+    (trees.dest / name).rmdir()
+    (trees.dest / name).symlink_to(trees.root / 'elsewhere')
+    with pytest.raises(SystemExit) as refusal:
+        links.main(['--destination', str(trees.dest), '--backup-root', str(trees.backups)], source=trees.source)
+    assert 'foreign symlink' in str(refusal.value) and 'nothing was changed' in str(refusal.value)
+    assert (trees.dest / name).readlink() == trees.root / 'elsewhere'
+    assert not trees.backups.exists()
