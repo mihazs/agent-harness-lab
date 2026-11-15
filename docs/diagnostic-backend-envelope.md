@@ -55,9 +55,10 @@ The status is `rejected` when any envelope shows:
 - `label_or_reward_in_model_input`: an input field is named like a label, reward, ground truth, outcome,
   grade, expected value or answer. Names are compared after trimming and lowercasing; a differently
   named field that carries a label is not detected.
-- `unsupported_probability_claim`: a score declared `calibrated_probability` by an `nli` or
-  `recorded_response` backend (entailment and stated confidence are never probabilities), or without a
-  `calibration_ref`.
+- `unsupported_probability_claim`: a score declared `calibrated_probability` by any backend kind other than
+  `tfidf`, `embeddings` or `local_encoder` (so `nli`, `recorded_response`, `rules` and `majority` are
+  rejected even with a `calibration_ref`: entailment and stated confidence are never probabilities), or by one
+  of those three without a `calibration_ref`.
 - `backend_identity_changed`: one `ref` appears with another revision, preprocessing hash, score meaning,
   calibration reference, fit, input fields or window. Its `identity_sha256` is then `null`, because a changed
   model, prompt or preprocessing invalidates the cache and calibration identity.

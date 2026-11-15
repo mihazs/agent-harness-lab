@@ -121,8 +121,11 @@ def test_label_or_reward_among_the_model_inputs_is_rejected(field):
     ('nli', 'cal-1'),
     ('recorded_response', 'cal-1'),
     ('tfidf', None),
+    ('rules', 'cal-1'),
+    ('majority', 'cal-1'),
 ], ids=['nli-entailment-is-not-a-probability', 'self-reported-confidence-is-not-a-probability',
-        'probability-without-calibration-ref'])
+        'probability-without-calibration-ref', 'rules-kind-is-outside-the-probability-allow-list',
+        'majority-kind-is-outside-the-probability-allow-list'])
 def test_score_claimed_as_probability_without_support_is_rejected(kind, calibration_ref):
     records = [tweak(r, 'backend', kind=kind, score_semantics='calibrated_probability', calibration_ref=calibration_ref)
                for r in complete('local')]
