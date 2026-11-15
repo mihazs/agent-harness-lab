@@ -593,3 +593,134 @@ def test_v7_validation_labels_never_change_the_class_calibration_declaration():
     # A root declared as class calibration data cannot be a validation root.
     with pytest.raises(ValueError, match='calibration_roots_sha256'):
         triage.evaluate(frozen, _v6_rows([row(f'{SEVERE}-c0', NONE, NONE)]), report_version=7)
+
+
+def _v8_report(rows, **kwargs):
+    return triage.evaluate(_v7_policy(**kwargs), _v6_rows(rows), report_version=8)
+
+
+def _population(rows, **kwargs):
+    return _v8_report(rows, **kwargs)['population_metrics']
+
+
+def test_v8_exposes_zero_incident_recall_for_the_990_negative_10_positive_counterexample():
+    rows = [row(f'negative-{i}', NONE, NONE, .99) for i in range(990)] + [row(f'positive-{i}', SEVERE, NONE, .99) for i in range(10)]
+    report = _v8_report(rows)
+    alert = report['population_metrics']['alert']
+    assert report['status'] == 'rejected' and f'class:{SEVERE}:recall_below_minimum' in report['reasons']
+    # 99% of decided roots are right, yet no incident was alerted and no alert precision exists to quote.
+    assert alert['incident_roots'] == 10 and alert['incident_recall'] == 0
+    assert alert['alert_roots'] == 0 and alert['alert_precision'] is None
+    assert alert['accepted_negative_roots'] == 1000 and alert['accepted_negative_error_rate'] == pytest.approx(.01)
+
+
+def test_v8_alert_precision_is_population_level_while_class_precision_stays_class_conditional():
+    # A normal incident alerted as the severe class is a wrong-class alert, but still an alert on a real incident.
+    report = _v8_report([row('a', NORMAL, SEVERE)])
+    assert report['population_metrics']['alert']['alert_precision'] == 1
+    assert report['classes'][SEVERE]['precision'] == 0
+    assert report['metric_scopes'] == dict(classes='class_conditional', population_metrics='population_over_labeled_roots')
+
+
+def test_v8_incident_recall_keeps_abstained_incident_roots_in_the_denominator():
+    alert = _population([row('caught', SEVERE, SEVERE), row('held', NORMAL, None)])['alert']
+    assert alert['incident_roots'] == 2 and alert['abstained_incident_roots'] == 1
+    assert alert['incident_recall'] == .5 and alert['alert_precision'] == 1
+
+
+def test_v8_all_abstaining_classifier_never_reports_perfect_or_zero_risk_population_metrics():
+    report = _v8_report([row('a', SEVERE, None), row('b', NONE, None)])
+    alert = report['population_metrics']['alert']
+    assert report['status'] == 'rejected' and report['coverage'] == 0 and 'coverage_below_minimum' in report['reasons']
+    assert alert['alert_precision'] is None and alert['accepted_negative_error_rate'] is None
+    assert alert['incident_recall'] == 0 and alert['abstained_incident_roots'] == 1
+
+
+def test_v8_population_metrics_are_undefined_without_labeled_roots():
+    population = _population([row('unlabeled', None, SEVERE), row('also-unlabeled', None, NONE)])
+    assert {k: v for k, v in population['alert'].items() if k.endswith(('precision', 'recall', 'error_rate'))} == dict(
+        alert_precision=None, incident_recall=None, accepted_negative_error_rate=None)
+    assert all(entry['roots'] == 0 and entry['precision'] is None and entry['recall'] is None for entry in population['by_severity'].values())
+
+
+def test_v8_repeated_rows_of_one_root_count_once_in_population_metrics():
+    alert = _population([row('same-root', SEVERE, SEVERE)]*20)['alert']
+    assert alert['incident_roots'] == 1 and alert['alert_roots'] == 1
+
+
+def test_v8_by_severity_counts_follow_the_declared_class_severity():
+    rows = [row('r1', SEVERE, SEVERE), row('r2', SEVERE, NONE), row('r3', NORMAL, SEVERE), row('r4', NORMAL, NORMAL),
+            row('r5', NONE, NONE), row('r6', NONE, NORMAL), row('r7', SEVERE, None), row('unlabeled', None, NONE)]
+    population = _population(rows)
+    expected = {'severe': dict(roots=3, tp=1, fp=1, fn=1, tn=3, abstained=1, precision=.5, recall=1/3),
+                'normal': dict(roots=2, tp=1, fp=1, fn=1, tn=3, abstained=0, precision=.5, recall=.5),
+                'none': dict(roots=2, tp=1, fp=1, fn=1, tn=3, abstained=0, precision=.5, recall=.5)}
+    assert population['by_severity'].keys() == expected.keys()
+    for kind, counts in expected.items():
+        assert population['by_severity'][kind] == pytest.approx(counts)
+    assert population['alert'] == dict(incident_roots=5, abstained_incident_roots=1, alert_roots=4, alert_precision=.75,
+                                       incident_recall=.6, accepted_negative_roots=2, accepted_negative_error_rate=.5)
+    assert population['unit'] == 'declared_root' and population['authority'] == 'descriptive_only'
+
+
+def test_v8_two_classes_of_one_severity_are_not_a_severity_error():
+    scores = lambda **top: dict(root_case_id='a', split='heldout', label='b', scores={'a': 0., 'b': 0., 'c': 0., **top},
+                                model_sha256=sha('synthetic-model'), corpus_sha256=sha('synthetic-corpus'))
+    classes = {name: dict(severity=severity, threshold=.6, min_precision=.5, min_recall=.5)
+               for name, severity in (('a', 'normal'), ('b', 'normal'), ('c', 'none'))}
+    lists = {name: [sha(f'{name}-c')] for name in classes}
+    configured = _v6_policy(classes=classes, min_calibration_roots_per_class=1, calibration_class_roots_sha256=lists,
+                            calibration_roots_sha256=[h for hashes in lists.values() for h in hashes])
+    population = triage.evaluate(configured, [scores(a=.9)], report_version=8)['population_metrics']
+    assert population['by_severity']['normal'] == dict(roots=1, tp=1, fp=0, fn=0, tn=0, abstained=0, precision=1, recall=1)
+
+
+def test_v8_keeps_v7_decisions_diagnostics_and_authority_unchanged():
+    rows = _v6_rows([row('a', NONE, NONE), row('b', SEVERE, NONE), row('c', None, None)])
+    configured = _v7_policy(calibrator_sha256=FITTED)
+    v7 = triage.evaluate(configured, rows, report_version=7)
+    v8 = triage.evaluate(configured, rows, report_version=8)
+    assert v8['profile'] == 'diagnostic-triage-evaluation-v8' and v8['schema_version'] == 8
+    ignored = ('profile', 'schema_version', 'population_metrics', 'metric_scopes')
+    assert {k: v for k, v in v8.items() if k not in ignored} == {k: v for k, v in v7.items() if k not in ignored}
+    assert v8['certification'] == 'not_issued' and v8['status'] == 'rejected'
+    assert not v8['automatic_promotion'] and not v8['publication_allowed'] and not public_export_allowed([v8])
+    assert v8['root_independence'] == 'unverified' and v8['label_authority'] == 'unverified'
+    json.dumps(v8, allow_nan=False)
+
+
+def test_v8_good_population_metrics_cannot_rescue_a_failed_class_constraint():
+    # Every incident is alerted (population recall 1), but the alerts hit the wrong severe class: class precision fails.
+    report = _v8_report([row('a', NORMAL, SEVERE), row('b', NORMAL, SEVERE)])
+    assert report['population_metrics']['alert']['incident_recall'] == 1
+    assert report['status'] == 'rejected' and f'class:{SEVERE}:precision_below_minimum' in report['reasons']
+
+
+def test_v8_validation_labels_change_population_metrics_but_never_the_frozen_policy_artifacts():
+    frozen = _v7_policy(calibrator_sha256=FITTED)
+    before = deepcopy(frozen)
+    first = triage.evaluate(frozen, _v6_rows([row('a', NONE, NONE), row('b', SEVERE, SEVERE)]), report_version=8)
+    second = triage.evaluate(frozen, _v6_rows([row('a', SEVERE, NONE), row('b', NONE, SEVERE)]), report_version=8)
+    assert frozen == before and first['population_metrics'] != second['population_metrics']
+    for key in ('policy_sha256', 'model_sha256', 'calibrator_sha256', 'corpus_sha256', 'decisions', 'threshold_selection'):
+        assert first[key] == second[key]
+
+
+def test_population_metrics_belong_to_v8_only():
+    rows = _v6_rows([row('a', NONE, NONE)])
+    for version in (2, 3, 4, 5):
+        report = triage.evaluate({k: v for k, v in _v6_policy().items() if k not in triage.SCOPE_FIELDS}, rows, report_version=version)
+        assert 'population_metrics' not in report and 'metric_scopes' not in report
+    assert 'population_metrics' not in triage.evaluate(_v6_policy(), rows, report_version=6)
+    assert 'population_metrics' not in triage.evaluate(_v7_policy(), rows, report_version=7)
+    with pytest.raises(ValueError, match='unsupported triage report version'):
+        triage.evaluate(_v7_policy(), rows, report_version=9)
+
+
+def test_v8_keeps_v7_policy_scope_and_role_refusals():
+    with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+        triage.evaluate(_v6_policy(), _v6_rows([row('a', NONE, NONE)]), report_version=8)
+    with pytest.raises(ValueError, match='outside the policy scope'):
+        triage.evaluate(_v7_policy(), [row('a', NONE, NONE)], report_version=8)
+    with pytest.raises(ValueError, match='calibration_roots_sha256'):
+        triage.evaluate(_v7_policy(), _v6_rows([row(f'{SEVERE}-c0', NONE, NONE)]), report_version=8)
