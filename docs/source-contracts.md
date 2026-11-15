@@ -1166,7 +1166,8 @@ directory's `AGENTS.md`. Only `CODEX_HOME` (below) skips empty files. Selected
 files outside that directory chain are out of scope; unrecognized filenames within
 it remain unsupported. Parent and shadowing edges describe declared hierarchy,
 without resolving semantic contradictions in the text. Imports, path-scoped Claude
-rules, managed/global influence and hooks are outside this Codex profile; the
+rules and hooks are outside this Codex profile, and its only influences are the
+declared `CODEX_HOME` and managed folder described below; the
 Claude Code profile below declares bounded project imports only.
 
 `GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
@@ -1416,10 +1417,11 @@ where it can hide applicable or on-demand files. An unreadable entry in an
 unrelated scope leaves the receipt `declared`. An unreadable checkout root or
 launch-chain file still fails the capture.
 
-The Codex profile keeps its directory precedence and adds three declarations,
+The Codex profile keeps its directory precedence and adds four declarations,
 pinned to the public `openai/codex@d786ff91` source
 (`codex-rs/core/src/agents_md.rs` and
-`codex-rs/codex-home/src/instructions/mod.rs`):
+`codex-rs/codex-home/src/instructions/mod.rs`), and for the managed folder to the
+`rust-v0.166.0` tag (`codex-rs/config/src/loader`):
 
 - `capture(..., codex_home='home')` names a folder-relative `CODEX_HOME` that
   does not overlap the checkout. It is never discovered, defaulted or read from
@@ -1430,6 +1432,27 @@ pinned to the public `openai/codex@d786ff91` source
   non-empty file is `shadowed` (`codex_home_precedence`). A `parent` edge links
   it to the first applicable project file. It is not counted against
   `project_doc_max_bytes`.
+- `capture(..., codex_managed_root='managed')` names a folder-relative directory that
+  stands in for `/etc/codex` and holds `managed_config.toml` (the legacy managed
+  layer, the highest-precedence configuration layer) and `requirements.toml`
+  (admin-enforced constraints). Like `CODEX_HOME`, the folder is never discovered,
+  defaulted or read from the environment, must not overlap the checkout or
+  `CODEX_HOME`, must not contain `..` or `.git`, and is refused under any other
+  runtime. Each file is streamed and hashed, never decoded, parsed or followed, and
+  becomes one path-free node with origin `codex_managed`. A present file is always
+  `unknown` with reason `managed_config_may_override_declared_settings` or
+  `managed_requirements_effect_unverified`, because its keys, such as
+  `project_doc_max_bytes`, may override the caller-declared profile and this reader
+  does not parse them. A missing file or folder is `unknown` (`missing`). An empty, non-UTF-8 or very large
+  file is hashed and stays `unknown`. A node takes no `parent` or `shadows` edge and
+  never changes a project node, an edge or the `project_doc_max_bytes` budget. A link, hard link or other
+  non-regular file, or a linked folder, fails the capture. A file that exists but
+  cannot be read stays `unknown` (`managed_file_unreadable`) and the receipt is
+  `blocked`. Changing either file changes the receipt fingerprint. The cloud,
+  macOS device-management and Windows locations, and `/etc/codex/config.toml`, are
+  not read, and the configuration inventory still lists
+  `codex_managed_config_and_requirements` as not inventoried. A declared folder is
+  not verified to be the runtime's real managed location.
 - `project_root_markers` (default `['.git']` in Codex; undeclared here keeps
   the checkout root as the project root). Discovery starts at the nearest
   directory from `task_cwd` upward that holds a marker. Directories above it
@@ -1452,8 +1475,8 @@ pinned to the public `openai/codex@d786ff91` source
 The documented 32 KiB `project_doc_max_bytes` default is reported as a fact. It
 is not applied as an implicit bound: native partial truncation is still not
 modelled, and a declared bound that is exceeded still blocks. Unsupported
-runtime/version pairs return `unsupported` before anything, `CODEX_HOME`
-included, is read.
+runtime/version pairs return `unsupported` before anything, `CODEX_HOME` and
+the managed folder included, is read.
 
 The surface inventory registers `instructions.parse_surface` for the
 `instruction` kind, and `surfaces.RULES` classifies nested `CLAUDE.md`,
