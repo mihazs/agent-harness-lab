@@ -711,3 +711,5 @@ Each reason has one remediation in the [exit reason table](analysis.md#exit-reas
 | `loop_port_invalid` | an evaluator, proposer, candidate, evaluation or clock outside its port contract; a bank that cannot be frozen as a scoring bank (`bank`) or whose frozen inputs cannot be read (`frozen_inputs`) |
 | `loop_ledger_invalid` | a ledger root inside the project or on a link, an event out of order, a reused ledger, or a tampered or incomplete ledger read back |
 | `loop_ledger_full` | a ledger event beyond `4 * max_rounds + 8` |
+| `loop_requires_frozen_bank` | a loop declaration with no pinned task bank in `ahl.json`, or with a controlled bank: status `blocked`, never a silent single pass |
+| `loop_receipt_invalid` | a loop receipt that failed `validate_receipt()`: a missing or unknown stop criterion, an accepted stop without its evaluation, a number without an evaluation id, an authority field other than recommendation only, or an oversized receipt |

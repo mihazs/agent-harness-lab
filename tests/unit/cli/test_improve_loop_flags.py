@@ -114,7 +114,7 @@ def test_an_invalid_flag_value_exits_2_with_its_own_reason_before_anything_runs(
     code, receipt, stderr = invoke([*entry_words, str(tmp_path), f'{flag}={value}'])
     assert code == 2 and (receipt['status'], receipt['reason']) == ('invalid_input', reason)
     assert receipt['exit_receipt'] == dict(profile=typed_exit.PROFILE, code=2, stage='usage', next_step=REASONS[reason])
-    assert stderr.startswith(f'ahl: {reason}') and 'Private run artifacts' not in stderr and 'output' not in receipt
+    assert any(line.startswith(f'ahl: {reason}:') for line in stderr.splitlines()) and 'Private run artifacts' not in stderr and 'output' not in receipt
 
 
 @pytest.mark.parametrize('entry_words', ENTRIES)

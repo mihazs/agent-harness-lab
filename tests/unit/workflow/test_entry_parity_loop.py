@@ -56,7 +56,7 @@ def test_each_listed_timing_key_is_allowed_to_differ_in_value(key):
     pytest.param(lambda l: l.update(frozen_inputs_sha256='0'*64), 'loop.frozen_inputs_sha256', id='the-frozen-inputs'),
     pytest.param(lambda l: l['spec'].update(digest='0'*64), 'loop.spec.digest', id='the-spec-digest'),
     pytest.param(lambda l: l['spec']['limits'].update(seconds=1), 'loop.spec.limits.seconds', id='a-declared-limit'),
-    pytest.param(lambda l: l['spec']['sources'].update(accept_score='project'), 'loop.spec.sources.accept_score', id='the-source-of-a-value'),
+    pytest.param(lambda l: l['spec']['sources'].update(accept_score='cli'), 'loop.spec.sources.accept_score', id='the-source-of-a-value'),
     pytest.param(lambda l: l.update(certification='verified'), 'loop.certification', id='certification'),
     pytest.param(lambda l: l['usage'].update(trials=99), 'loop.usage.trials', id='the-trials-spent'),
     pytest.param(lambda l: l['rounds'].pop(), 'loop.rounds.0.decision', id='a-missing-round'),

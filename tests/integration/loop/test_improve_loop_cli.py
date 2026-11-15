@@ -151,7 +151,8 @@ def test_a_preparation_that_produces_no_candidate_is_deferred_with_a_closed_reas
 
 def test_a_candidate_identical_to_the_best_is_deferred_and_never_evaluated(stack, monkeypatch):
     project, flags = make(stack, monkeypatch, 'no_actionable_mechanism', baseline=li.EVERYTHING)
-    project.write({0: dict(harness=li.EVERYTHING), 1: dict(harness=li.EVERYTHING), 2: dict(harness=li.EVERYTHING)})
+    same = li.EVERYTHING + '\n'  # the baseline file is written with a trailing newline, so only this text is byte-identical to it
+    project.write({call: dict(harness=same) for call in range(3)})
     _, found, _ = project.invoke('--accept-score', '0.9')
     assert [item['reason'] for item in found['loop']['deferrals']] == ['candidate_identical_to_best']*3 and found['loop']['rounds'] == []
 

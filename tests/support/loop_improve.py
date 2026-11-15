@@ -31,7 +31,7 @@ if p('context.json').exists():
  with open(@CALLS@, 'a') as calls: calls.write(json.dumps(dict(attempt=c['attempt'], mechanism=c.get('mechanism'))) + chr(10))
  if step.get('crash'): raise SystemExit(3)
  if step.get('tamper_bank'):
-  fixtures = p(c['baseline']).parent/'evaluation-0'/'fixtures'; target = sorted(fixtures.iterdir())[0]/'task.json'
+  fixtures = p(c['baseline']).parent/'evaluation-0'/'fixtures'; target = fixtures/'localization'/'task.json'  # a development task, so it is one the loop scores
   target.write_text(target.read_text() + ' ')
  if step.get('invalid'): proposal.write_text('not json')
  elif 'harness' in step:

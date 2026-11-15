@@ -121,7 +121,7 @@ def test_a_comparison_that_ran_on_other_inputs_has_no_score_decision_or_paired_d
 
 def test_an_interrupted_run_names_the_criterion_and_keeps_what_finished(tmp_path):
     found = block(tmp_path, 'interrupted')
-    assert (found['stop_criterion'], found['before']['validity'], [item['decision'] for item in found['rounds']]) == ('interrupted', 'valid', [None])
+    assert (found['stop_criterion'], found['before']['validity'], [item['decision'] for item in found['rounds']]) == ('interrupted', 'valid', [])  # interrupted while preparing the first candidate: no round started
 
 
 def test_a_budget_stop_records_why_and_calls_no_proposer(tmp_path):
@@ -177,7 +177,7 @@ REJECTED = [
     pytest.param(lambda v: setting(v, 'rounds', 0, 'evidence', 'provisional'), 'rounds', id='unscored-evidence-behind-an-accepted-stop'),
     pytest.param(lambda v: setting(v, 'rounds', 0, 'score', None), 'rounds', id='accepted-stop-with-no-score'),
     pytest.param(lambda v: setting(v, 'before', 'validity', 'incomplete'), 'rounds', id='accepted-stop-over-an-invalid-baseline'),
-    pytest.param(lambda v: setting(v, 'rounds', 0, 'score', 'lower', 0.9), 'rounds.0.score', id='interval-lower-above-the-point'),
+    pytest.param(lambda v: setting(setting(v, 'rounds', 0, 'score', 'point', 0.5), 'rounds', 0, 'score', 'lower', 0.75), 'rounds.0.score', id='interval-lower-above-the-point'),
     pytest.param(lambda v: setting(v, 'rounds', 0, 'score', 'upper', 1.5), 'rounds.0.score', id='interval-above-one'),
     pytest.param(lambda v: setting(v, 'rounds', 0, 'score', 'point', float('nan')), 'rounds.0.score', id='score-not-finite'),
     pytest.param(lambda v: setting(v, 'rounds', 0, 'paired', 'delta', 'big'), 'rounds.0.paired', id='paired-delta-not-a-number'),
