@@ -6,11 +6,11 @@ from pathlib import Path
 import tempfile
 
 EXIT_CODES = {
-    'analyzed': 0, 'applied': 0, 'no_change': 0, 'rejected': 0,
+    'analyzed': 0, 'applied': 0, 'no_change': 0, 'rejected': 0, 'accepted': 0,  # accepted: a loop stop that met its bar, still unverified
     'execution_error': 1, 'invalid_proposal': 1, 'evaluation_failed': 1,
     'conflict': 1, 'budget_exhausted': 1, 'interrupted': 1, 'incomplete': 1,
     'invalid_input': 2, 'setup_error': 2,
-    'inconclusive': 3, 'blocked': 3, 'legacy_attempted': 3,
+    'inconclusive': 3, 'blocked': 3, 'legacy_attempted': 3, 'not_accepted': 3,
 }
 COMPLETED = {'analyzed', 'applied', 'no_change', 'rejected', 'inconclusive', 'blocked'}
 

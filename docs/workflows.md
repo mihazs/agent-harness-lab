@@ -146,7 +146,10 @@ attempts is the configured `--timeout`, not that allowance multiplied per retry.
 `watch --once` reports the last disposition even when no new run is eligible.
 Exit codes: 0 completed, 1 failed/incomplete (including budget exhaustion and
 interruption), 2 invalid input/setup, 3 inconclusive/blocked. Unknown statuses fail
-closed with exit code 1. These codes apply to `improve` as well.
+closed with exit code 1. These codes apply to `improve` as well. A run that opts into
+the [loop](loop-reference.md#running-the-loop-from-ahl-improve) adds the statuses
+`accepted` (0) and `not_accepted` (3), and reports `requires_intervention` (1) for a
+budget stop, an interrupt or an invalid comparison.
 
 ## Inspect before improving
 

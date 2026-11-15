@@ -17,8 +17,13 @@ REASONS = {
     'loop_port_invalid': 'This is an AHL adapter defect: the evaluator, proposer or clock returned something outside its port contract; report it with the named field.',
     'loop_ledger_invalid': 'Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again.',
     'loop_ledger_full': 'The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run.',
+    'loop_requires_frozen_bank': 'Pin a task bank in ahl.json (bank.path and bank.sha256, with development, calibration and certification or transfer tasks) and use the cooperative runtime it names, then rerun; the loop evaluates every round on one frozen bank, so it never falls back to a single pass.',
+    'loop_receipt_invalid': 'This is an AHL defect, not an input defect: the loop receipt failed its own validation, so it was not reported as a result; report it with the named field. Nothing was applied.',
     'loop_order_violation': 'This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event.',
 }
+
+# AHL's own defects: an invalid adapter, ledger, ordering or receipt, never something the declaration or the harness did.
+DEFECTS = frozenset({'loop_port_invalid', 'loop_ledger_invalid', 'loop_ledger_full', 'loop_order_violation', 'loop_receipt_invalid'})
 
 
 class LoopError(ValueError):
@@ -26,6 +31,7 @@ class LoopError(ValueError):
 
     def __init__(self, reason, field=None, source=None):
         self.reason, self.field, self.source, self.remediation = reason, field, source, REASONS[reason]
+        self.next_step, self.stage = self.remediation, 'run' if reason in DEFECTS else 'usage'  # the typed exit receipt reads both
         super().__init__(f'{reason}: field={field or "-"} source={source or "-"}. Next: {self.remediation}')
 
     def receipt(self):

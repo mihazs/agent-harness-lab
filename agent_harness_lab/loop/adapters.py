@@ -98,8 +98,11 @@ class ExecutorRunner:
         return before_after.launch_sha256(self.agent, shutil.which(self.binary) or self.binary, self.options.get('inherit_env', False))
 
     def run(self, arms, snapshots, manifest, out):
+        options = dict(self.options)
+        deadline = options.pop('deadline', None)  # a callable returning the monotonic time the shared budget ends, so each run is capped by it
+        if deadline is not None: options['parent_deadline'] = deadline()
         self.evaluate(Namespace(manifest=str(manifest), output=str(out), agent=self.agent, codex=self.binary, claude=self.binary,
-                                arms=tuple(arms), **{arm: str(snapshots[arm]) for arm in arms}, **self.options))
+                                arms=tuple(arms), **{arm: str(snapshots[arm]) for arm in arms}, **options))
         return json.loads((Path(out)/'results.json').read_text())
 
 

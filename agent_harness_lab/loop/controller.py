@@ -24,6 +24,7 @@ from .spec import RELATIVE, LoopSpec
 PROFILE = 'ahl-loop-result-v1'
 VACUITY = vacuity.LABELS  # the shared closed set, not a copy; classify reads vacuity.LABEL_SET
 RESERVE_UNAVAILABLE = 'reserve_for_evaluation_unavailable'
+MID_ROUND = 'budget_exhausted_during_round'  # a port hit the shared budget while preparing or evaluating
 FINAL = dict(accepted='accepted', improved='improved', regressed='rejected', inconclusive='inconclusive')  # outcome -> mechanism disposition
 _DIGEST = re.compile('[0-9a-f]{64}')
 
@@ -135,7 +136,7 @@ def _summary(e):
 class _Loop:
     """The position of one run; every move is checked by machine.step before the ledger is written."""
 
-    def __init__(self, spec, evaluator, proposer, ledger, clock):
+    def __init__(self, spec, evaluator, proposer, ledger, clock, spent=0.0):
         frozen, baseline, queue = evaluator.frozen_inputs, proposer.baseline, proposer.mechanisms
         if not _digest(frozen): raise LoopError('loop_port_invalid', 'frozen_inputs', 'declared')
         if not _digest(baseline): raise LoopError('loop_port_invalid', 'baseline', 'declared')
@@ -147,8 +148,9 @@ class _Loop:
             if not _number(seconds): raise LoopError('loop_port_invalid', 'clock', 'declared')
             return float(seconds)
 
+        if not _number(spent) or spent < 0: raise LoopError('loop_port_invalid', 'spent', 'declared')
         self.spec, self.evaluator, self.proposer, self.ledger, self.now = spec, evaluator, proposer, ledger, now
-        self.frozen, self.started = frozen, now()
+        self.frozen, self.started = frozen, now() - spent  # the budget began `spent` seconds before the loop did
         self.stages = Stages(spec.limit_seconds, self.started, clock=now)
         self.position = Run(spec)
         self.dispositions = {item: 'pending' for item in queue}  # a recorded disposition is final for the run
@@ -210,9 +212,9 @@ class _Loop:
                                       plateau_streak=position.plateau_streak, **compared), self.spec)
         return outcome, stop, dict(compared, cause=cause)
 
-    def stopped(self, stop, outcome):
+    def stopped(self, stop, outcome, reason=None):
         self.outcome = self.outcome if outcome is None else outcome
-        self.stop_reason = RESERVE_UNAVAILABLE if stop == 'budget_exhausted' else None
+        self.stop_reason = reason or (RESERVE_UNAVAILABLE if stop == 'budget_exhausted' else None)
         self.record('stopped', stop, reason=self.stop_reason, rounds=self.position.rounds, best=self.best, mechanisms=dict(self.dispositions))
 
     def next_candidate(self):
@@ -263,17 +265,21 @@ class _Loop:
                     certification=spec.certification)
 
 
-def run(spec, evaluator, proposer, ledger, clock):
+def run(spec, evaluator, proposer, ledger, clock, *, spent=0.0):
     """Run the loop and return its result; the last ledger event is the one stop criterion.
 
     evaluator and proposer are the ports above, ledger a fresh LoopLedger and clock a callable returning monotonic seconds.
-    An interrupt stops the run as interrupted; any other exception leaves a replayable ledger with no stop event.
+    spent is the seconds of the spec's time ceiling that were already used before the loop started (preparation, analysis).
+    An interrupt stops the run as interrupted and a TimeoutError from a port as budget_exhausted; any other exception leaves a replayable ledger with no stop event.
     """
     if not isinstance(spec, LoopSpec) or not isinstance(ledger, LoopLedger): raise LoopError('loop_port_invalid', 'spec', 'declared')
     spec.validate()
-    loop = _Loop(spec, evaluator, proposer, ledger, clock)
+    loop = _Loop(spec, evaluator, proposer, ledger, clock, spent)
     try: loop.play()
     except KeyboardInterrupt:
         if loop.position.state == 'stopped' or ledger.head is None: raise
         loop.stopped('interrupted', None)
+    except TimeoutError:  # a port ran out of the shared budget mid-round: the typed budget stop, not a crash with no criterion
+        if loop.position.state == 'stopped' or ledger.head is None: raise
+        loop.stopped('budget_exhausted', None, MID_ROUND)
     return loop.result()

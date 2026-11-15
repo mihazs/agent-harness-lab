@@ -250,6 +250,7 @@ def main(argv=None):
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
+    from .loop.entry import EXIT_TEXT
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
@@ -272,7 +273,8 @@ def main(argv=None):
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
-                +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
+                +(EXIT_TEXT if name=='improve' else '')+
+                ('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')
                 +('Watch writes a private checkpoint and continues until stopped unless --once is set.\n' if name=='watch' else '')+
                 'Example: ahl '+name+' . '+('--events ./events.jsonl --format normalized' if name=='analyze' else '--agent codex --timeout 600'+(' --once' if name=='watch' else ''))))
@@ -336,6 +338,8 @@ def main(argv=None):
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
             command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line or your saved default (ahl config set-scope) selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
+            from .loop import entry as loop_entry
+            loop_entry.add_options(command)
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
             command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration (default: %(default)s); completed unchanged work is not repeated')
@@ -412,6 +416,9 @@ def main(argv=None):
             resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
+            if args.command == 'improve':
+                from .loop import entry as loop_entry
+                loop_entry.prepare(args)  # a bad loop value is exit 2 with its own reason before anything runs
             result = improve(args)
         typed_exit.seal(result, args)
         args._progress(result['status'])
