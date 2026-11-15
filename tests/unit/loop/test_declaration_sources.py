@@ -183,6 +183,12 @@ def test_an_unsafe_or_foreign_user_file_declares_nothing_and_names_why(user_file
     assert user_config.load() == dict(runtime=None, reason=reason)
 
 
+def test_remembering_a_runtime_does_not_carry_the_loop_of_an_invalid_user_file(user_file):
+    user_file(dict(schema_version=1, runtime='codex', loop=dict(accept_score=0.9), token='x'))
+    user_config.remember('claude')
+    assert json.loads(user_config.path().read_text()) == dict(schema_version=1, runtime='claude')
+
+
 def test_an_invalid_user_declaration_is_a_typed_error_and_not_a_silent_default(user_file):
     user_file(dict(schema_version=1, runtime='codex', loop=dict(accept_score=2)))
     error = rejected(lambda: resolve(limits=LIMITS, user=user_config.load_loop()['loop']))
