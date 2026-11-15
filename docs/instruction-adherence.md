@@ -24,6 +24,7 @@ Profile `ahl-instruction-sessions-v1`: at most 5,000 sessions and 16 MiB. Unknow
 | `capture` | `complete`, `partial` or `unknown`; absent is `unknown` |
 | `root` | Optional lineage label; absent means unknown lineage |
 | `project_dir` | Optional absolute path; lets absolute call paths be compared with project-relative rules |
+| `compactions` | Optional list of strictly increasing integers in `0..len(turns)`: each is the index of the first turn after a compaction. Absent means the session does not record compactions; `[]` means it records them and found none, which is not proof that none happened |
 | `loaded` | Optional map of `LAYER:FILE-NAME` to `loaded`, `truncated`, `not_loaded`, `unknown` or `{"state": ..., "turn": N, "before": ...}` (loaded from turn N; `before` is what the earlier turns are, `not_loaded` by default or `unknown` when the capture cannot show whether the file was already in context) |
 
 A turn is `{"role": "user"|"agent", "text": ...}` or `{"role": "tool_call", "tool": ..., "command": ..., "path": ...}`
@@ -43,6 +44,7 @@ directory) and is projected into one session in memory; nothing but the turns be
 | Claude calls | `command` from the tool input, and `path` from `file_path`, `notebook_path` or `path` |
 | Codex calls | `exec_command` `cmd`; `shell` and `shell_command` `command` (a `bash -lc` wrapper is read as its script); `apply_patch` one call per file named in the patch; arguments that do not parse leave the call without a command |
 | Capture | Always `partial`; lineage (`root`) is always unknown |
+| Compaction | Claude: a `compact_boundary` system row or a compaction summary row records a compaction at the next turn's index; the boundary and its summary are one compaction, and both rows are checked like any other row of the capture (release, subagent, session). Codex: a `compacted` row or a `context_compacted` event, likewise counted once. The session always carries `compactions`, empty when none was read |
 | Loading | Claude: a memory attachment for the project-root `AGENTS.md` or `CLAUDE.md` marks that file `loaded` from that turn only when the text it carries is exactly the text of the file the report judges; the turns before that attachment stay `unknown`, never `not_loaded`, because a file loaded at launch has no attachment event. An attachment with no text, other text, or for a file that is not judged leaves the file `unknown`. Codex: none recorded, so every rule stays unknown. Any other file is not recorded |
 
 The Codex call fields and the Claude memory attachment are assumptions checked against synthetic fixtures,
@@ -125,13 +127,15 @@ is missing or does not parse is undecidable.
 
 | Field | Meaning |
 | --- | --- |
-| `findings[]` | `status`: `observed_violation`, `possible_violation`, `not_loaded` or `conflict`; `direction`: `harness`, `user_prompt` or `mixed`; `mechanism`, `instruction_ref`, `source_layer`, `loading`, `session_ref`, `root_ref`, `lineage`, `span` (first and last turn), `occurrences`, `turns`, `corroboration`, `evidence_sha256` |
+| `findings[]` | `status`: `observed_violation`, `possible_violation`, `not_loaded` or `conflict`; `direction`: `harness`, `user_prompt` or `mixed`; `mechanism`, `instruction_ref`, `source_layer`, `loading`, `session_ref`, `root_ref`, `lineage`, `span` (first and last turn), `occurrences`, `turns`, `corroboration`, `compaction`, `evidence_sha256` |
 | `abstentions[]` | Findings whose status is below the calibrated threshold, with `abstention: below_calibrated_threshold` |
 | `decisions` | Counts of rule-by-session decisions: `violated`, `satisfied` and each `undecided_*` reason, so unknowns stay visible |
 | `recurrence[]` | Per instruction, mechanism and status: `sessions`, `independent_roots`, `unknown_lineage_sessions`, `occurrences` |
 | `sessions` | Totals, partial and unknown-capture counts, declared roots and unknown-lineage sessions |
 | `inventory` | Per source: counts of machine-checkable, reviewable and unverifiable instructions |
 | `calibration` | The measurements below |
+
+`compaction` says whether a recorded compaction fell after the instruction came into view (a harness rule's loading turn, a prompt's own turn, or the launch when the violating call came before the recorded loading turn and what came before is `unknown`: the rule may have been in view since launch) and by the last turn of the finding's `span`: `in_window`, `none_in_window` or `not_recorded` (the session has no `compactions`). It is a fact about the record, not a cause, and it never changes a finding's identity, status or counts.
 
 One finding is kept per instruction, mechanism and session; each further violating call raises `occurrences`
 and is listed in `turns` (at most five). A skipped required step, a `conflict` and a user reaction (a restated

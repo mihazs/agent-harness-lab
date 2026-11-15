@@ -31,7 +31,7 @@ explanations, which always include `agent_error_unrelated_to_harness`.
 | `buried_or_duplicated` | The rule appears more than once, or sits in the later half of a file of at least 200 lines | `shorten_dedupe_reorder` |
 | `unobservable_wording` | The sentence carries a soft cue such as `try to` or `be careful` | `reword_observable` |
 | `prose_only_rule` | A loaded or possibly loaded rule that a call, order or missing step broke; the basis is always `not_excluded`, because whether a hook already enforces the rule is not read and a hook may exist and have failed. `support` records the observed fact apart: `loaded_rule_broken` or `loading_unrecorded` | `hook_or_feedback_sensor` (route `hook`) |
-| `context_loss` | The finding reaches turn 200 or later; a compaction is never read, so the basis is always `not_excluded` | `re_ground_after_compaction` (route `state`) |
+| `context_loss` | The finding reaches turn 200 or later, or the report says a recorded compaction fell between the instruction coming into view and the finding (`compaction: in_window`). The basis is always `not_excluded`, because whether the compaction removed the instruction is not read; `support` records the facts apart: `late_in_session` and one of `compaction_in_window`, `no_compaction_in_window` (the session records its compactions and none fell in the window) or `compaction_not_recorded` (it does not, or the report predates the field) | `re_ground_after_compaction` (route `state`) |
 | `no_self_check_for_user_instruction` | The ignored instruction came from a user prompt | `pre_action_checklist_or_echo` |
 
 A `not_loaded` or `conflict` finding gets only its own mechanism. The 200-line and 200-turn thresholds are
@@ -84,6 +84,7 @@ mechanisms. The brief never carries a digest.
 ## Limits
 
 - The mechanisms are structural facts of a finding and the harness text, not measurements of why an agent deviated.
-- Whether a hook already enforces a rule, whether the session was compacted and whether a skill activated are not read.
+- A compaction is read only from a session that records its compactions. An empty record is not proof that none happened, and a recorded one does not show that the instruction left the context.
+- Whether a hook already enforces a rule and whether a skill activated are not read.
 - The screen grades recorded arms; the controlled paired experiment and the application gate still decide whether a repair is validated or applied.
 - The verdict holds for the rules the lexical extraction can check; reviewable-only and unverifiable instructions produce no outcome.

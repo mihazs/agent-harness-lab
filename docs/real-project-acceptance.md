@@ -107,10 +107,19 @@ task test:isolated REPO=/path/to/project -- --ref HEAD --timeout 1800 --inherit-
   python -m agent_harness_lab improve '{worktree}' --history --history-from /path/to/project --agent claude --timeout 900
 ```
 
-- PASS: the edit reached the second baseline (`baseline_sha256` differs from the first run's), and the second receipt names the
-  first run (applied, ignored or regressed), reports the delta and does not repeat finished work.
-- FAIL: the second run spends the same preparation again and says nothing about the first. A release without the incremental
-  slice (FU-4, #806) fails here by construction: record FAIL with that issue, never PASS.
+- PASS: the edit reached the second baseline (`baseline_sha256` differs from the first run's), and the second receipt carries an
+  `incremental` block whose `previous.run` is the first run's folder and whose `disposition` says what became of the first
+  candidate (`applied`, `ignored`, `partially_applied` or `edited`; an edit that matches neither arm is `edited`). The block reports the
+  earlier score as `historical` beside this run's own `fresh` one, and `stages.trials` is `rerun`: earlier trials are never reused
+  as fresh execution ([incremental runs](incremental-runs.md)).
+- PASS: a candidate the first run measured worse (the first receipt is `blocked` / `candidate_regressed`) is not evaluated again.
+  The second run ends `blocked` / `candidate_already_regressed` with `previous_run` naming the measuring run, `evaluation_construction`
+  and `trials` `skipped`, and no `plan` or `recommendation`.
+- FAIL: the second receipt has no `incremental` block, or names another run, or repeats the evaluation of a candidate already
+  measured worse. A missing block usually means the runs did not share `AHL_STATE_HOME`: without `--pass-env AHL_STATE_HOME` each
+  check keeps its run directory in its own temporary state and deletes it, so the second run starts as a first run. The same
+  happens when an interrupted earlier check left its `ahl-isolated-*` directory behind (see [delete the private
+  outputs](#delete-the-private-outputs)): the next check takes another worktree path, and the run store is keyed by that path.
 
 <a id="stress"></a>
 
@@ -128,7 +137,8 @@ the criterion: any non-zero end without a `status` and a `reason` is FAIL.
 | Concurrent runs | start two checks together | both end typed. Each sees the other's temporary worktree, so `verdict: drift` with `drift: ['worktrees']` is expected by design; HEAD, refs and `git status` of the real checkout are unchanged |
 | Interrupted run | stop the check with Ctrl-C | the worktree is gone (`git worktree list`) and the checkout is unchanged |
 
-The scenario matrix with failure injection is slice FU-5 (#807); until it lands, the cells above are the manual subset.
+The cells above are the manual subset you can induce on a real project. The failure-injection matrix that covers every scenario
+class on a synthetic one runs in `task test` ([stress matrix](stress-matrix.md)).
 
 ## Record the result
 
@@ -164,6 +174,12 @@ ls -d ~/.claude/projects/*ahl-isolated-* 2>/dev/null
 grep -rl 'ahl-isolated-' ~/.codex/sessions 2>/dev/null
 ```
 
+An interrupted check can leave its own temporary directory. Remove those too, so the next check gets its usual worktree path:
+
+```sh
+ls -d "${TMPDIR:-/tmp}"/ahl-isolated-* 2>/dev/null
+```
+
 A memory tool may have recorded the session as well; remove that record with the tool itself.
 
 ## Run the synthetic equivalent
@@ -177,10 +193,9 @@ failing recorded sessions, a stub runtime and the same check around `ahl improve
 | `first-use` | `test_first_use_with_recorded_history_ends_with_a_typed_reason_and_a_remediation_and_leaves_the_checkout_unchanged`, `test_first_use_with_a_hypothesis_ends_with_an_evidenced_candidate_that_is_never_called_improved` |
 | `before-after` | `test_before_and_after_are_scored_on_one_frozen_set_of_inputs_and_two_different_arms`, `test_a_worse_candidate_carries_no_plan_and_no_recommendation`, `test_a_worse_candidate_ends_blocked_as_candidate_regressed_with_an_investigation_beside_the_receipt`, `test_a_candidate_that_is_not_worse_is_never_blocked_and_leaves_no_investigation` |
 | `no-fake-results` | `test_a_vacuous_evaluation_is_labelled_and_never_reported_as_an_improvement`, `test_every_reported_trial_count_traces_to_the_recorded_results_file` |
-| `incremental` | `test_an_edit_between_two_runs_reaches_the_second_baseline_and_never_the_real_checkout` |
+| `incremental` | `test_an_edit_between_two_runs_reaches_the_second_baseline_and_never_the_real_checkout`, `test_a_second_run_names_the_first_run_and_says_what_became_of_its_candidate`, `test_a_second_run_that_evaluates_again_labels_the_earlier_score_historical_beside_its_own_fresh_trials`, `test_a_second_run_that_evaluates_nothing_reports_the_earlier_score_as_historical_only`, `test_a_candidate_the_first_run_measured_worse_is_not_evaluated_again_by_the_second`, `test_a_second_run_cannot_see_the_first_when_the_state_home_is_not_shared_between_the_checks` |
 | `stress` | `test_a_worktree_without_its_own_history_ends_typed_when_the_main_checkout_is_not_named`, `test_a_missing_runtime_ends_typed_and_spends_nothing` |
 | private outputs | `test_every_private_output_sits_under_one_directory_and_deleting_it_leaves_nothing_behind` |
 
-The synthetic project covers the procedure and the criteria a current release meets. The two things it cannot cover yet are
-marked `KNOWN_GAP` (a project case list that cannot become a bank, #838) and `FAIL` (a second run that reports the first, FU-4, #806)
-above; the second joins the synthetic project when FU-4 ships.
+The synthetic project covers the procedure and the criteria a current release meets. The one thing it cannot cover yet is marked
+`KNOWN_GAP` above: a project case list that cannot become a bank (#838).
