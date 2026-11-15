@@ -130,11 +130,16 @@ private credential only during actual execution; doctor checks metadata only.
 
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
-supplies execution authorization. Offline/unsupported profiles, unintegrated
-project banks, invalid or unavailable banks, stale bank digests, ambiguous runtimes and insufficient trial
-budgets stop before inference, each with its own `reason` and a matching one-step
-`remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
-by improve. Configured trials share one ceiling across preparation and both attempts.
+supplies execution authorization. Offline/unsupported profiles, invalid or unavailable banks, stale bank
+digests, ambiguous runtimes and insufficient trial budgets stop before inference, each with its own `reason`
+and a matching one-step `remediation` in `workflow.json` (the generic text is only a fallback). A pinned
+project bank (any `bank.path` other than `starter`) is evaluated through the cooperative native path; a
+pinned bank the run cannot use stops with `configured_bank_requires_cooperative_runtime` (a Responses
+runtime), `configured_bank_cannot_combine_with_managed_experiment`,
+`configured_managed_bank_requires_controlled_workflow` (a managed bank),
+`configured_bank_requires_development_regression_and_heldout` (a missing partition) or
+`configured_bank_shared_trial_budget_exhausted` (fewer trials than one preparation plus a pair for each task).
+A configuration file is optional and is not created by improve. Configured trials share one ceiling across preparation and both attempts.
 Once preflight passes and before any model dispatch, the CLI writes one `ahl: preview` line to
 stderr with the runtime, harness scope, the time and trial ceilings, the authorization statement and
 `model_cost="unknown..."`: model usage is billed by the runtime provider, AHL does not measure tokens or
@@ -985,8 +990,7 @@ journaling, review and application stages of that repair, and an interrupted beh
 leave the target unchanged with nothing to apply or replay (Codex hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation, operation-level review and capture join are described above; a native capture
 of the trials and the composed-change interaction evaluation remain), skill lifecycle and
-routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
-and full executable CLI/skill parity (#143) remain incomplete; the
+routing utility (#78), native hooks (#80) and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)
 covers the cooperative receipt only. The behavioral gate
 has not been relaxed. No favorable smoke result or approval becomes certification.
