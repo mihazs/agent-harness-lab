@@ -15,6 +15,10 @@ CLAUDE_OPTIONAL = {'instruction_files', 'claude_md_excludes'}
 CODEX, CLAUDE = ('codex', '0.166.0'), ('claude-code', '2.1.317')
 # openai/codex@d786ff91 codex-rs/codex-home/src/instructions/mod.rs: first non-empty of these in CODEX_HOME.
 GLOBAL_NAMES = ('AGENTS.override.md', 'AGENTS.md')
+# openai/codex@rust-v0.166.0 codex-rs/config/src/loader (layer_io.rs, mod.rs): /etc/codex/managed_config.toml is the highest
+# precedence layer and /etc/codex/requirements.toml holds admin constraints. Neither is parsed here, so the effect stays unknown.
+CODEX_MANAGED = (('managed_config.toml', 'managed_config_may_override_declared_settings'),
+                 ('requirements.toml', 'managed_requirements_effect_unverified'))
 CODEX_DEFAULT_BYTES = 32*1024  # documented project_doc_max_bytes default; a fact, never an implicit bound here
 # Rust char::is_whitespace (Unicode White_Space), which Codex's str::trim uses. Python's str.strip() also strips
 # U+001C..U+001F, so a file of only those characters would look empty here yet load, and use budget, in Codex.
@@ -85,7 +89,7 @@ class InstructionNode:
                 or self.mode is not None and (type(self.mode) is not int or not 0 <= self.mode <= 0o7777)
                 or self.applicability not in ('declared_applicable', 'shadowed', 'unknown', 'out_of_scope', 'unsupported',
                                               'private_excluded')
-                or self.observed_loading != 'unknown' or self.origin not in ('project', 'external_reference', 'codex_home', 'claude_managed', 'claude_user')
+                or self.observed_loading != 'unknown' or self.origin not in ('project', 'external_reference', 'codex_home', 'codex_managed', 'claude_managed', 'claude_user')
                 or self.origin == 'external_reference' and (self.presence, self.applicability) != ('unknown', 'unknown')):
             raise ValueError('invalid declared instruction node')
         label(self.reason)
@@ -145,26 +149,46 @@ def read_node(folder, checkout, path, applicability, reason):
     return value, data
 
 
-def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None,
+def separate(paths):
+    """True when no declared folder is, holds or sits inside another, and none names .git."""
+    return not any('.git' in Path(p).parts for p in paths) and not any(
+        a == b or a.startswith(b+'/') for i, a in enumerate(paths) for j, b in enumerate(paths) if i != j)
+
+
+def managed_nodes(folder, root):
+    """The Codex managed_config.toml and requirements.toml of one caller-declared folder as (nodes, readable).
+
+    Each file is streamed and hashed, never decoded, parsed or kept; its effect on the declared profile stays unknown."""
+    from .claude_instructions import scan
+    nodes, readable = [], True
+    for name, why in CODEX_MANAGED:
+        sha = mode = None; presence, reason = 'present', why
+        try: scanned = scan(folder, str(Path(root)/name))
+        except PermissionError: presence, reason, readable = 'unknown', 'managed_file_unreadable', False
+        else:
+            if scanned is None: presence, reason = 'missing', 'missing'
+            else: sha, mode = scanned[:2]
+        nodes.append(InstructionNode(digest(['codex_managed', name]), digest(['codex_managed']), sha, mode, presence, 'unknown',
+                                     reason, origin='codex_managed'))
+    return nodes, readable
+
+
+def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None, codex_managed_root=None,
             claude_managed_root=None, claude_user_home=None, _audit_facts=None):
     """codex_home is an optional caller-declared folder-relative CODEX_HOME; it is never discovered or defaulted.
 
-    claude_managed_root and claude_user_home are likewise optional folder-relative directories that hold the
+    codex_managed_root likewise declares the folder holding the Codex managed_config.toml and requirements.toml.
+    claude_managed_root and claude_user_home are optional folder-relative directories that hold the
     managed-policy and the user CLAUDE.md of a Claude Code profile; only a declared one is read."""
     validate(profile)
     relative(checkout)
     roots = {origin: root for origin, root in (('claude_managed', claude_managed_root), ('claude_user', claude_user_home))
              if root is not None}
-    if roots:
-        paths = [checkout, *map(relative, roots.values())]
-        if profile['runtime'] != 'claude-code' or any('.git' in Path(p).parts for p in paths) or any(
-                a == b or a.startswith(b+'/') for i, a in enumerate(paths) for j, b in enumerate(paths) if i != j):
-            raise ValueError('Claude instruction roots must be separate declared Claude Code roots')
-    if codex_home is not None:
-        relative(codex_home)
-        if profile['runtime'] != 'codex' or '.git' in Path(codex_home).parts or any(
-                a == b or a.startswith(b+'/') for a, b in ((codex_home, checkout), (checkout, codex_home))):
-            raise ValueError('CODEX_HOME must be a separate declared Codex root')
+    if roots and (profile['runtime'] != 'claude-code' or not separate([checkout, *map(relative, roots.values())])):
+        raise ValueError('Claude instruction roots must be separate declared Claude Code roots')
+    codex_roots = [root for root in (codex_home, codex_managed_root) if root is not None]
+    if codex_roots and (profile['runtime'] != 'codex' or not separate([checkout, *map(relative, codex_roots)])):
+        raise ValueError('Codex instruction roots must be separate declared Codex roots')
     if not isinstance(selected, (list, tuple)): raise ValueError('invalid selected instruction files')
     for path in selected:
         relative(path)
@@ -199,6 +223,10 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
             if applicability == 'shadowed': edges.append(InstructionEdge('shadows', home, value.path_sha256))
             elif applicability == 'declared_applicable': home = value.path_sha256
             nodes.append(value)
+    readable = True
+    if codex_managed_root is not None:
+        managed, readable = managed_nodes(folder, codex_managed_root)
+        nodes.extend(managed)
     excluded, markers = {}, profile.get('project_root_markers')
     if markers is not None:
         # Codex walks up from the cwd to the nearest marker; [] or no marker means the cwd alone.
@@ -249,7 +277,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
                         'unrecognized_filename' if in_scope else 'outside_task_scope')
         nodes.append(value)
     return InstructionInventory(**identity, nodes=tuple(nodes), edges=tuple(edges),
-                                resolution_status='blocked' if blocked else 'declared')
+                                resolution_status='blocked' if blocked or not readable else 'declared')
 
 
 def parse_surface(path, raw, profile):
