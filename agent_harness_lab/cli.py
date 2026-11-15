@@ -250,6 +250,7 @@ def main(argv=None):
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
+    from .loop.entry import EXIT_TEXT
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
@@ -272,7 +273,8 @@ def main(argv=None):
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
-                +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
+                +(EXIT_TEXT if name=='improve' else '')+
+                ('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')
                 +('Watch writes a private checkpoint and continues until stopped unless --once is set.\n' if name=='watch' else '')+
                 'Example: ahl '+name+' . '+('--events ./events.jsonl --format normalized' if name=='analyze' else '--agent codex --timeout 600'+(' --once' if name=='watch' else ''))))
@@ -330,6 +332,8 @@ def main(argv=None):
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
             from .evaluation.before_after import margin_option
+            from .loop import entry as loop_entry
+            loop_entry.add_options(command)
             command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
             command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
             command.add_argument('--regression-margin', type=margin_option, help='Tolerated paired score loss for the before/after guard, from 0 up to but not including 1 (default: 0, any net loss); a candidate worse by more ends blocked as candidate_regressed with an investigation, and improved then needs its interval above this margin. A fixed-bank request declares its own margins')
@@ -412,6 +416,9 @@ def main(argv=None):
             resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
+            if args.command == 'improve':
+                from .loop import entry as loop_entry
+                loop_entry.prepare(args)  # a bad loop value is exit 2 with its own reason before anything runs
             result = improve(args)
         typed_exit.seal(result, args)
         args._progress(result['status'])

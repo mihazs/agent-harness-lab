@@ -662,6 +662,11 @@ def _improve(args):
         from .evaluation.construction_access import selection
         access_path=selection(args,output)
     print(f'Private run artifacts: {output}', file=sys.stderr)
+    if getattr(args,'_loop',None) is not None:
+        from .one_call import pinned_bank as frozen_bank
+        if frozen_bank(args) is None or controlled:  # a loop declaration is never run as a silent single pass
+            from .loop import improve as loop_improve
+            return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
     repeated=None
     if getattr(args,'experiment_request',None) is not None:
         from .evaluation.repeated_workflow import Request
@@ -794,6 +799,16 @@ def _improve(args):
         write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
         # Bytecode caches appear in the source tree whenever another process imports a skill script; they are not skill content.
         shutil.copytree(assets() / 'skills', plugin / 'skills', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    if getattr(args,'_loop',None) is not None:
+        from .loop import improve as loop_improve
+        grading_options = dict(sandbox_graders=True, **grader_options) if grading is not None else {}
+        result = loop_improve.run(args, dict(output=output, prepare=prepare, baseline=baseline, original=original, baseline_hash=baseline_hash, agent=agent,
+            binary=binary, plugin=plugin, runner=runner, data=data, progress=progress, stages=stages, started=started, manifest_path=prepare/'evaluation-0'/'manifest.json',
+            bank_manifest=bank_manifest, allowed=allowed_paths(args), grading=grading_options))
+        construction_receipt(result, args)
+        incremental.attach(result, args._incremental, original)
+        write_json(output / 'workflow.json', result)
+        return result
     used_heldout = set()
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
                   analysis=data['execution'])
@@ -1446,7 +1461,9 @@ def _run_improvement(args, *, parent_started=None):
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
+        from .loop.errors import DEFECTS, LoopError
         status = (exc.status if isinstance(exc, typed_exit.TypedExit) else
+                  'requires_intervention' if isinstance(exc, LoopError) and exc.reason in DEFECTS else  # AHL's own defect, never an input error
                   'interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
@@ -1460,7 +1477,7 @@ def _run_improvement(args, *, parent_started=None):
             except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
 
         if inference_error: result['reason'] = str(exc)
-        if isinstance(exc, typed_exit.TypedExit): result['reason'] = exc.reason
+        if isinstance(exc, (typed_exit.TypedExit, LoopError)): result['reason'] = exc.reason
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
         if isinstance(exc, ConstructionTimeout):  # the controlled author overran its time box: the same typed stop as the cooperative path

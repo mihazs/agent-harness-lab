@@ -1,6 +1,7 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
 from .evaluation.manifest_contract import ALL_REASONS as CONTRACT_REASONS
 from .loop.errors import REASONS as LOOP_REASONS
+from .loop.receipt import STEPS as LOOP_STEPS
 from .typed_exit import REASONS as TYPED_EXIT_REASONS
 
 REMEDIATION = {
@@ -82,6 +83,7 @@ REMEDIATION = {
     **{reason: remediation for reason, (_, _, remediation) in CONTRACT_REASONS.items()},
     **{reason: step for reason, (_, _, step) in TYPED_EXIT_REASONS.items()},
     **LOOP_REASONS,
+    **{f'loop_{stop}': step for stop, step in LOOP_STEPS.items()},  # the reason a loop run records for each stop criterion
     'executor_containment_or_state_failure': 'Inspect the executor containment and state failure before retrying.',
     'instruction_markers_malformed': 'Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update',
     'instruction_symlink_refused': 'Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update',
@@ -93,6 +95,8 @@ REMEDIATION = {
 }
 
 STATUS_ACTION = {
+    'accepted': 'Read loop.rounds and the best candidate; the declared bar is met on development and regression evidence only, which is not certification, and nothing was applied.',
+    'not_accepted': 'Read loop.stop_criterion and loop.remediation in the private receipt; not accepted does not show the harness is fine.',
     'no_change': 'Review the evidence and proposal before deciding whether another candidate is needed.',
     'applied': 'Review the recorded deployment and its rollback information.',
     'rejected': 'Review the recorded evaluation and rejection evidence.',
@@ -125,7 +129,9 @@ def guidance(result):
         category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
                     'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
-                    'applied': 'Change applied', 'rejected': 'Candidate rejected'}.get(status, 'Inconclusive')
+                    'applied': 'Change applied', 'rejected': 'Candidate rejected',
+                    'accepted': 'Bar met on development and regression evidence (unverified)', 'not_accepted': 'Not accepted',
+                    'requires_intervention': 'Requires intervention' if str(reason).startswith('loop_') else 'Inconclusive'}.get(status, 'Inconclusive')
     if (reason is not None and reason not in REMEDIATION) or (status == 'analyzed' and reason is None):
         category = 'Inconclusive'
         action = 'Review the private receipt before retrying.'

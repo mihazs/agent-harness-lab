@@ -6,8 +6,10 @@ evaluate > improve > evaluate state machine and the loop controller in
 clock, network or file access beyond reading configuration. The controller drives
 the machine through two injected ports and writes only its private round ledger.
 The [frozen-bank evaluator](#frozen-bank-evaluator) adapts the real evaluation to
-the controller's evaluator port. Nothing calls the controller yet: `ahl improve`
-still makes one pass, and no command, receipt or exit code changes.
+the controller's evaluator port. `ahl improve` calls the controller only when a
+[loop flag or declaration](#running-the-loop-from-ahl-improve) opts the run in; without
+one it still makes a single pass, and its receipts, statuses and exit codes are
+unchanged.
 
 The loop only recommends. A declaration sets a bar and a stop policy; it never
 grants apply, global scope, promotion or certification, and every resolved spec
@@ -330,8 +332,8 @@ prefix.
 `agent_harness_lab.loop.adapters.FrozenBankEvaluator` implements the controller's
 evaluator port over the existing trial runner and `evaluation/statistics`. It adds
 no optimizer and no statistics engine, and like the controller it only recommends:
-nothing here applies, promotes or certifies a candidate. It is not wired into
-`ahl improve` yet.
+nothing here applies, promotes or certifies a candidate. `ahl improve` builds it over
+the pinned bank when the loop is on.
 
 ```python
 evaluator = FrozenBankEvaluator(manifest, runner, snapshots, work, spec=spec, min_roots=2)
@@ -457,6 +459,174 @@ round can rebuild the evaluation: every round scores on that bank.
 `ExecutorRunner.run` passes `arms` to `run_evaluation.evaluate`, which runs only the
 named versions (`baseline`, `candidate` or both, each at most once; a repeated plan
 needs both). Without `arms` it runs both, so every other caller is unchanged.
+
+## Running the loop from `ahl improve`
+
+`ahl improve` and `ahl skills invoke` (one shared parser and receipt) run the loop
+only when a run asks for it. The loop is opt-in in this release: without a loop flag
+or a loop declaration the command makes its single pass and nothing below applies.
+
+### Opting in
+
+A run is a loop run when it has any of these:
+
+| Source | How |
+| --- | --- |
+| `--accept-score X` | Stop when the lower bound of the frozen development and regression success rate reaches `X`, a number above 0 and at most 1. Without it the loop stops on a supported improvement over its own baseline and labels the bar `acceptance_source: default`. |
+| `--max-rounds N` | At most `N` improvement rounds, a whole number from 1 to 10 (default 3). |
+| `--plateau-rounds N` | Stop after `N` consecutive rounds without a supported improvement, from 1 up to `--max-rounds` (default 2, or `--max-rounds` when that is smaller). |
+| `--on-regression stop\|rollback_continue` | What a candidate-caused regression within its margin does (default `stop`); a critical or per-area regression always stops. |
+| A `loop` object | In the project `ahl.json` or in the user file beside the remembered runtime. A flag overrides the user file, which overrides the project file, which overrides the default; the receipt names the source of every value. |
+
+Every value is checked before anything runs, with the reasons in
+[declaration fields](#declaration-fields): an invalid flag, project or user value exits
+2 with its own reason (for example `loop_max_rounds_invalid`), the stage `usage` and one
+next step. A flag value is read as text, so `--max-rounds 2.5`, `--accept-score nan` and
+an empty value are the same typed refusal. `--repair-contracts` and `--resume` do not
+combine with the loop options. A declaration sets a bar and never authority: a `loop`
+object with `scope`, `apply`, `recommendation_only`, `automatic_promotion`,
+`promotion` or `certification` is `loop_authority_refused`, and the run stays
+recommendation-only whatever it declares.
+
+### What a loop run needs
+
+The loop evaluates every round on one frozen bank, so it needs a pinned task bank in
+`ahl.json` (`bank.path` and `bank.sha256`, with development, calibration and
+certification or transfer tasks) and the cooperative runtime the configuration names.
+Without one the result is `blocked` with reason `loop_requires_frozen_bank`, exit 3, a
+`loop` block that says `status: not_started`, and one remediation step; the run never
+falls back to a single pass. The frozen bank is the pinned one: first-use construction
+and `--experiment-request` banks are not available to the loop in this release.
+
+Only the development and calibration (regression) tasks are scored. The certification
+and transfer (held-out) tasks are never run, hashed or read to choose a candidate.
+
+### What a run does
+
+1. The existing evidence and preflight stages run, then the baseline is evaluated on
+   the frozen bank with one arm (the baseline's own score, with its interval).
+2. A baseline that meets the bar stops `accepted_without_change` with no preparation
+   call. Otherwise each round starts only if what is left of the budget also pays for
+   re-evaluating its candidate.
+3. A round offers one mechanism to the preparation stage, in this order: `focus` when
+   `--focus` or an audit hypothesis was given, each distinct mechanism of the analysis
+   brief, then `agent_selected`, which lets the agent discover one. The agent edits a
+   staged copy of the best snapshot only, and the candidate must pass what a single
+   pass requires: the configured scope, instruction and rule validation, agent
+   definition and skill review, no change to the project during preparation, and no
+   active guidance removed (a removal needs trial records the loop does not give the
+   gate). A mechanism that cannot give such a candidate is deferred and not offered
+   again, with one closed reason in `loop.deferrals`.
+4. The frozen copy of the candidate is evaluated in a fresh paired run against the best
+   snapshot on the same frozen inputs. A different digest ends the run
+   `comparison_invalid`.
+5. The round is decided by the [decision table](#decision-table). The best snapshot
+   moves only for an `accepted` or `improved` candidate; a regressed, inconclusive or
+   unmet candidate stays in the receipt as evidence.
+
+The time ceiling is the run's `--timeout` and the trial ceiling is the shared ceiling
+minus one preparation role for each round the declaration allows; the seconds spent
+before the loop began (evidence, preflight, the baseline snapshot) count against the
+time ceiling. A preparation that reaches the ceiling stops the loop `budget_exhausted`
+with `stop_reason: budget_exhausted_during_round`. Each round is one look at the same
+frozen bank, so `alpha` is split across `max_rounds` and the receipt states the number
+of looks. With few independent roots the interval is wide: a bank of five scored roots
+cannot show a lower bound near 1 at any `alpha`, so a bar must be declared against the
+interval the bank can produce.
+
+The round ledger is written to a private directory under the state home
+(`loops/<run name>`), outside the project and the run directory. The candidate staged
+for round `n` is `candidate-<call>` in the run directory, and `recommended_candidate`
+points at the best one. Nothing is applied: `changed_files` stays empty, the project is
+never written, and the loop produces no change plan, so adopting a candidate is a
+separate step behind the existing gates.
+
+An exception other than an interrupt or a budget stop is not a result: the run exits
+with its existing typed status and reason (an invalid input is 2, an execution error 1)
+and leaves a replayable ledger with no stop event, and a loop receipt is never written
+for it. An AHL defect inside the loop (`loop_port_invalid`, `loop_ledger_invalid`,
+`loop_ledger_full`, `loop_order_violation`, `loop_receipt_invalid`) is status
+`requires_intervention`, exit 1, stage `run`.
+
+### The receipt
+
+The `loop` block of `workflow.json` and of the stdout receipt (`ahl-loop-receipt-v1`)
+holds counts, digests, numbers and closed labels, never task, grader, candidate or
+captured text.
+
+| Key | Meaning |
+| --- | --- |
+| `spec` | The resolved declaration (`ahl-loop-spec-v1`): the eight fields, `limits`, `mode`, `sources` (the origin of each value) and its `digest`. |
+| `frozen_inputs_sha256` | The bank, grader, seed schedule, per-arm budget share and runtime every evaluation ran on. |
+| `mode`, `acceptance_source`, `looks`, `alpha_per_look` | The bar's mode and origin, the number of looks at the frozen bank and the error level of each. |
+| `before` | The round-0 baseline: `snapshot`, `evaluation_id`, `validity` (`valid`, `vacuous`, `incomplete`), `evidence`, `vacuity`, `trials` and `score` (`point`, `lower`, `upper`). |
+| `after` | The best snapshot (the baseline when no round improved it): the same fields plus `round`. |
+| `rounds` | One entry per round: `round`, `mechanism`, `base`, `candidate`, `evaluation_id`, `validity`, `evidence`, `vacuity`, `trials`, `score`, `paired` (the delta against the best with its interval), `decision` (`accepted`, `improved`, `inconclusive`, `regressed`) and `disposition`. A comparison that ran on other inputs has no score, no paired delta and no decision. |
+| `best_round` | The round of the best snapshot; 0 is the baseline. |
+| `stop_criterion`, `stop_reason` | The one criterion that stopped the run, and for `budget_exhausted` why: `reserve_for_evaluation_unavailable` or `budget_exhausted_during_round`. |
+| `mechanisms`, `deferrals` | Each mechanism's disposition, and each deferred mechanism with its closed reason (`preparation_failed`, `invalid_proposal`, `no_change`, `candidate_identical_to_best`, `instruction_validation_*`, `instruction_removal_*` or the review reason). |
+| `usage`, `events`, `budget_stages` | Trials and seconds spent, the number of ledger events, and the [stage budget](budget-stages.md). |
+| `recommendation_only`, `automatic_promotion`, `certification` | Always `true`, `false` and `unverified`. |
+| `remediation` | One content-free next step for the stop criterion. |
+
+A score is reported only for an evaluation that scored at least one root: an
+evaluation with no evidence, or one blocked because its inputs differed, carries no
+number, so a placeholder never reads as a measured zero. Every evaluation carries an
+`evaluation_id` (`evaluation-N`, the run directory it came from).
+
+`validate_receipt()` runs on every loop result and fails closed with
+`loop_receipt_invalid`, naming the first field that is not honest: a missing or unknown
+`stop_criterion`; an authority field other than `recommendation_only: true`,
+`automatic_promotion: false` and `certification: unverified`; no remediation step or
+spec digest; a number with no evaluation id, an interval outside [0, 1] or out of order,
+or a decision outside the closed set; more rounds than the cap of 10; an accepted stop
+with no post-improvement evaluation (`acceptance_score_reached` needs a last round
+decided `accepted`; `accepted_without_change` is the only accepted stop with no round);
+an evaluation behind an accepted stop that is not valid, scored, labelled with no
+vacuity and carrying a score; and a receipt over 64 KiB. A result that fails it is an AHL
+defect (status `requires_intervention`, exit 1) and is never reported as a result.
+
+### Stop criteria, statuses and exit codes
+
+Every loop result names exactly one criterion, maps it onto a coarse status, records
+the reason `loop_<criterion>` and carries that criterion's one remediation step. The
+existing statuses and exit codes are unchanged.
+
+| Stop criterion | Status | Exit | Remediation |
+| --- | --- | --- | --- |
+| `accepted_without_change` | `accepted` | 0 | The baseline meets the bar on the frozen development and regression evidence; nothing changed and this is not certification. |
+| `acceptance_score_reached` | `accepted` | 0 | A candidate meets the bar on that evidence; nothing was applied and this is not certification. |
+| `budget_exhausted` | `requires_intervention` | 1 | Raise `--timeout` or `limits.trials`, then rerun. |
+| `interrupted` | `requires_intervention` | 1 | The loop cannot be resumed in this release; rerun the command. |
+| `comparison_invalid` | `requires_intervention` | 1 | A frozen input differed between evaluations, an AHL defect: read the investigation, fix the cause, add a regression test, rerun. |
+| `max_rounds` | `not_accepted` | 3 | The cap ended the loop with the bar unmet; raise `--max-rounds` or lower the bar. |
+| `plateau` | `not_accepted` | 3 | Consecutive rounds produced no supported improvement; add evidence or `--focus`. |
+| `regression` | `not_accepted` | 3 | A candidate made the frozen score worse; read the investigation and revise or discard the mechanism. |
+| `no_actionable_mechanism` | `not_accepted` | 3 | No mechanism was left to try; add evidence or `--focus`. |
+| `evidence_insufficient` | `not_accepted` | 3 | The evidence, vacuous or too thin, could not support a result; fix the named cause. |
+
+Beside these, an invalid declaration is exit 2 (status `invalid_input`, the reason of
+the field), `loop_requires_frozen_bank` is status `blocked`, exit 3, and an AHL defect
+is `requires_intervention`, exit 1. `accepted` is not certification, and not accepted
+does not show the harness is fine: no receipt, summary line or guidance text says the
+harness is fine or improved without the evaluated evidence behind it, and
+`certification: unverified` is always present. The stdout summary line on stderr
+carries the status, the category, and the remediation step as `next=`.
+
+### Receipt parity
+
+`ahl improve` and `ahl skills invoke` write a loop block with the same keys. The only
+values allowed to differ are the measured time (`loop.usage.seconds` and the seconds in
+`loop.budget_stages`) and the run directory, listed in `agent_harness_lab.entry_parity`;
+`tests/unit/workflow/test_entry_parity_durations.py` derives clock-based fields from
+the loop's modules as it does for the rest of the receipt.
+
+### Not in this release
+
+A per-area `accept_score` map resolves but is not decided (it stops
+`evidence_insufficient`), `--resume` does not continue a loop, a first-use bank is not
+constructed for the loop, `ahl improve` does not default to the loop, and a recommended
+candidate has no change plan; each belongs to a later slice of the loop epic.
 
 ## Simulation test-bed
 

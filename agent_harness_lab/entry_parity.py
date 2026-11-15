@@ -34,16 +34,19 @@ _CONSTRUCTION_TIMING = ('evaluation_construction_seconds', 'evaluation_construct
 # Measured stage durations and the stage that took most of them; embedded in recovery.json too.
 _BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spent_seconds',
                   'budget_exhaustion.consumed_most_by', 'spent_without_evaluation.preparation_seconds')
+# The loop receipt (#814): the seconds the loop spent and its copy of the budget stages. Every other loop key is derived from frozen
+# digests, scores and counts, so it must match between the routes.
+_LOOP_TIMING = ('loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.*.spent_seconds')
 ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
                       'decision.bindings.manifest_sha256', 'before_after.bindings.results_sha256',
-                      'before_after.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING,
+                      'before_after.bindings.manifest_sha256', *_CONSTRUCTION_TIMING, *_BUDGET_TIMING, *_LOOP_TIMING,
                       # An application mints a new deployment ID; its rollback command embeds it.
                       'deployment', 'rollback', 'layers.*.deployment', 'layers.*.rollback', 'layers.*.plan_sha256'),
     # The recovery record embeds the receipt it will return.
-    'recovery.json': tuple(f'receipt.{field}' for field in (*_CONSTRUCTION_TIMING, *_BUDGET_TIMING)),
+    'recovery.json': tuple(f'receipt.{field}' for field in (*_CONSTRUCTION_TIMING, *_BUDGET_TIMING, *_LOOP_TIMING)),
     'change-plan.json': ('plan_sha256', 'harness_change_plan.affected_controls_sha256',
                          'harness_change_plan.references.evidence'),
     # Measured trial durations, and the digest of a manifest that carries the

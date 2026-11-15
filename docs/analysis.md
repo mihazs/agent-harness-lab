@@ -469,20 +469,33 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `evaluation_vacuous` | The evaluation proved nothing: it had no eligible case, no trial, only unknown outcomes, no executed grader or two identical arms (see vacuity.labels in the receipt, and docs/vacuity-labels.md); fix the named cause, then rerun. No improvement is reported for it. |
 | `loop_accept_basis_invalid` | Set accept_basis to lower_bound, the only basis this release accepts, or omit it. |
 | `loop_accept_score_invalid` | Set accept_score to a number above 0 and at most 1, or to a non-empty map of declared area ids to such numbers. |
+| `loop_acceptance_score_reached` | A candidate meets the declared bar on the frozen development and regression evidence; this is not certification and nothing was applied, so read loop.rounds, review the best candidate and run an independent certification before adopting it. |
+| `loop_accepted_without_change` | The baseline meets the declared bar on the frozen development and regression evidence, so no improvement ran and nothing changed; this is not certification, so read loop.before and run an independent certification before relying on it. |
 | `loop_alpha_invalid` | Set alpha to a number above 0 and below 1, or omit it for 0.05. |
 | `loop_area_undeclared` | Use only area ids declared in the ahl.json areas list as accept_score keys. |
 | `loop_authority_refused` | Remove the authority field; a loop declaration sets a bar, never apply, global scope, promotion or certification, and the loop only recommends. |
+| `loop_budget_exhausted` | The budget could not cover improving and re-evaluating again, so the loop stopped before spending it; raise it with --timeout SECONDS or limits.trials in ahl.json, then rerun. |
+| `loop_comparison_invalid` | A frozen input differed between evaluations, which is an AHL defect and not a verdict on the harness; read the investigation in the private run output, fix the cause, add a regression test for it, then rerun. |
 | `loop_declaration_invalid` | Write the loop declaration as one JSON object that uses only the documented loop fields. |
+| `loop_evidence_insufficient` | The evidence could not support a result, so none is claimed; read loop.before and loop.rounds for the evidence state and any vacuity label, fix the named cause, then rerun. |
 | `loop_field_unknown` | Remove the unknown field; the loop declares accept_score, accept_basis, regression_margin, noise_margin, max_rounds, plateau_rounds, on_regression and alpha. |
+| `loop_interrupted` | The loop was interrupted before it reached a criterion; this release cannot resume it, so rerun the command and read loop.rounds for what finished. |
 | `loop_ledger_full` | The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run. |
 | `loop_ledger_invalid` | Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again. |
 | `loop_limits_invalid` | Pass the project limits as seconds above 0 and a whole number of trials above 0. |
 | `loop_margin_invalid` | Set regression_margin and noise_margin to numbers from 0 up to but not including 1. |
+| `loop_max_rounds` | The round cap ended the loop with the declared bar unmet, which does not show the harness is fine; raise --max-rounds (at most 10) or lower --accept-score, then rerun. |
 | `loop_max_rounds_invalid` | Set max_rounds to a whole number from 1 to 10, or omit it for the default of 3. |
+| `loop_no_actionable_mechanism` | No mechanism was left to try, which does not show the harness is fine; read loop.mechanisms for what was tried or deferred, add verified outcome evidence or pass --focus, then rerun. |
+| `loop_not_accepted` | Read loop.stop_criterion and loop.remediation in the private receipt, then act on that one step. |
 | `loop_on_regression_invalid` | Set on_regression to stop or rollback_continue, or omit it for stop. |
 | `loop_order_violation` | This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event. |
+| `loop_plateau` | Consecutive rounds produced no supported improvement, which does not show the harness is fine; read loop.rounds for the mechanisms tried, add verified outcome evidence or pass --focus, then rerun. |
 | `loop_plateau_rounds_invalid` | Set plateau_rounds to a whole number from 1 up to max_rounds, or omit it to use the smaller of 2 and max_rounds. |
 | `loop_port_invalid` | This is an AHL adapter defect: the evaluator, proposer or clock returned something outside its port contract; report it with the named field. |
+| `loop_receipt_invalid` | This is an AHL defect, not an input defect: the loop receipt failed its own validation, so it was not reported as a result; report it with the named field. Nothing was applied. |
+| `loop_regression` | A candidate made the frozen development or regression score worse and was kept out of the result; read the investigation in the private run output, revise or discard that mechanism, then rerun. |
+| `loop_requires_frozen_bank` | Pin a task bank in ahl.json (bank.path and bank.sha256, with development, calibration and certification or transfer tasks) and use the cooperative runtime it names, then rerun; the loop evaluates every round on one frozen bank, so it never falls back to a single pass. |
 | `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
@@ -572,6 +585,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `task_areas_empty` | Give a tagged task one to three area ids, or remove its areas field to leave it untagged, then rerun. |
 | `task_areas_invalid` | Write the task areas field as a list of one to three lowercase kebab-case area ids, then rerun. |
 | `task_areas_too_many` | Tag a task with at most three areas and keep the ones it genuinely exercises, then rerun. |
+| `status:accepted` | Read loop.rounds and the best candidate; the declared bar is met on development and regression evidence only, which is not certification, and nothing was applied. |
 | `status:applied` | Review the recorded deployment and its rollback information. |
 | `status:blocked` | Review the reported prerequisite before retrying. |
 | `status:budget_exhausted` | Review the recorded budget before retrying. |
@@ -585,6 +599,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `status:invalid_proposal` | Review the invalid proposal and its recorded validation. |
 | `status:legacy_attempted` | Review the recorded legacy operation before retrying. |
 | `status:no_change` | Review the evidence and proposal before deciding whether another candidate is needed. |
+| `status:not_accepted` | Read loop.stop_criterion and loop.remediation in the private receipt; not accepted does not show the harness is fine. |
 | `status:rejected` | Review the recorded evaluation and rejection evidence. |
 | `status:requires_intervention` | Review the recorded intervention requirement before retrying. |
 | `status:setup_error` | Review and correct the recorded setup error. |
