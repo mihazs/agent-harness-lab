@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Add `ahl instruction-repair` (part of #656): `plan` turns the findings of an instruction-adherence report into recommendation-only candidates, each listing the mechanisms the evidence leaves open (instruction not in context, buried or duplicated, conflicting, hedged wording, prose-only rule, possible context loss, no self-check for a user instruction) with its repair class and competing explanations, and never naming a cause or editing a user's prompt; `judge` screens one repair against recorded baseline and candidate arms with the adherence detector, rejecting a repair that deletes a checkable rule or loses a preserved task and otherwise saying only whether the recorded pair separates the arms, never a validated improvement. `ahl analyze` and `ahl improve` write `instruction-repair-plan.json` beside `instruction-adherence.json` and add counts to the analysis brief. Not yet done: running the repaired harness through the controlled paired experiment gate, regression-ledger and loop integration, skill-activation evidence, and generating or applying the repair itself.

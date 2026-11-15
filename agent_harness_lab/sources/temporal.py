@@ -6,6 +6,8 @@ those records were in force at one instant. A historical replay sees only record
 recorded at or before that instant; `as_known_now` is an explicit retrospective view. Missing,
 unparseable or timezone-less times, supersession cycles, ambiguous revisions and competing
 successors stay unknown with reasons. Declared validity is an author claim, not verified truth.
+A declared `stale_after` is reported as a separate freshness per row (`current`, `stale` or `unknown`); it
+never changes the validity status, and an absent or unreadable one is never reported current.
 """
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -19,7 +21,7 @@ PROFILE = 'knowledge-temporal-v1'
 STATUSES = ('in_force', 'superseded', 'not_yet_valid', 'expired', 'not_adopted', 'unknown')
 DECISIONS = ('unspecified', 'proposed', 'accepted', 'rejected', 'deprecated', 'superseded')
 KNOWLEDGE = ('historical', 'as_known_now')
-TIMES = ('recorded_at', 'valid_from', 'valid_until')
+TIMES = ('recorded_at', 'valid_from', 'valid_until', 'stale_after')
 
 
 def declared_time(value):
@@ -33,7 +35,7 @@ def declared_time(value):
 
 @dataclass(frozen=True)
 class TemporalFacet(Contract):
-    """Declared knowledge time, effective interval, decision status and supersession of one revision."""
+    """Declared knowledge time, effective interval, decision status, supersession and staleness date of one revision."""
     record: RecordRef
     recorded_at: str | None = None
     valid_from: str | None = None
@@ -42,6 +44,7 @@ class TemporalFacet(Contract):
     decision_status: str = 'unspecified'
     supersedes: tuple = ()
     superseded_by: tuple = ()
+    stale_after: str | None = None
     schema_version: int = 1
 
     def __post_init__(self):
@@ -129,6 +132,13 @@ def own(facet, instant, recorded):
     return 'in_force', ['open_ended_by_declaration' if end is None else 'within_declared_interval']
 
 
+def freshness(facet, instant):
+    """(current|stale|unknown, reason) from the revision's own declared `stale_after`; validity is not read."""
+    due, problem = declared_time(facet.stale_after)
+    if problem: return 'unknown', 'stale_after_'+problem
+    return ('stale', 'at_or_after_declared_stale_after') if due <= instant else ('current', 'before_declared_stale_after')
+
+
 def effective(facet, instant):
     """Whether an adopted successor's declared start has been reached; None when it is unknown."""
     if facet.decision_status in ('proposed', 'rejected'): return False
@@ -213,7 +223,9 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
             else:
                 status, reasons = own(index[key], instant, recorded[key])
                 if successors: reasons.append('successor_not_adopted_or_not_yet_effective')
-        rows.append(dict(record=ref(key), status=status, reasons=reasons, successors=[ref(s) for s in successors]))
+        fresh, why = freshness(index[key], instant)
+        rows.append(dict(record=ref(key), status=status, reasons=reasons, successors=[ref(s) for s in successors],
+                         freshness=fresh, freshness_reason=why))
     inputs = dict(at=at, knowledge=knowledge, facets=sorted((f.to_dict() for f in facets), key=digest),
                   revisions=sorted(list(e) for e in revisions))
     return dict(schema_version=1, profile=PROFILE, as_of=at, knowledge=knowledge,
@@ -221,6 +233,7 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
         not_known_at_instant=[ref(k) for k in sorted(future)],
         dangling=[dict(predecessor=ref(b), successor=ref(a), reason=r) for b, a, r in sorted(dangling)],
         conflicts=conflicts, counts={s: n for s, n in sorted(Counter(r['status'] for r in rows).items())},
+        freshness_counts={s: n for s, n in sorted(Counter(r['freshness'] for r in rows).items())},
         validity_source='author_declared', truth_established=False, authority='none',
         task_outcomes_verified=False, execution_authorized=False, publication_allowed=False)
 

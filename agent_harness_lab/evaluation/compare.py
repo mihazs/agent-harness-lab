@@ -112,6 +112,67 @@ def _descriptive(analysis):
                        for row in objectives]) if objectives else ''))
 
 
+CELLS = (('pass_pass', 'Baseline pass, candidate pass'), ('fail_pass', 'Baseline fail, candidate pass'),
+         ('pass_fail', 'Baseline pass, candidate fail'), ('fail_fail', 'Baseline fail, candidate fail'),
+         ('missing', 'Missing'), ('invalid', 'Invalid'), ('unknown', 'Unknown'))
+COVERAGE = (('planned_trials', 'Planned trials'), ('received_records', 'Received records'), ('missing_trials', 'Missing trials'),
+            ('duplicate_trial_ids', 'Duplicate trial IDs'), ('duplicate_records', 'Duplicate records'),
+            ('unexpected_trial_ids', 'Unexpected trial IDs'), ('invalid_records', 'Invalid records'),
+            ('invalid_grades', 'Invalid grades'), ('unknown_grades', 'Unknown grades'), ('provenance_mismatches', 'Provenance mismatches'))
+ALLOCATION = ('method', 'total_alpha', 'primary_endpoints', 'family_endpoints', 'required_cohort_endpoints', 'optional_cohort_endpoints', 'per_endpoint_alpha')
+
+
+def _real(value):
+    """An interval end as text. The analysis clips at -1 and 1 as integers; every end shows the same four decimals."""
+    return _cell(float(value) if type(value) is int else value)
+
+
+def _preservation(analysis):
+    """The supplied preservation block (#122) as text; display only, so nothing is recomputed, coloured or promoted."""
+    block = _at(analysis, 'preservation')
+    if not isinstance(block, dict): return ''
+    got = lambda source, *path: _cell(_at(source, *path))
+    cohorts = sorted(block['cohorts'].items()) if isinstance(block.get('cohorts'), dict) else []
+    bounds = _at(analysis, 'missing_outcome_bounds', 'required_cohorts')
+    bounds = sorted(bounds.items()) if isinstance(bounds, dict) else []
+    members = lambda cohort: len(cohort['members']) if isinstance(_at(cohort, 'members'), list) else None
+    unexpected = _at(block, 'descriptive', 'coverage', 'unexpected_trial_ids')
+    assumptions = block['assumptions'] if isinstance(block.get('assumptions'), list) else []
+    return ('<h3>Preservation cohorts (supplied, not recomputed here)</h3>'
+            '<p>Frozen historical-pass and repaired cohorts, copied from the supplied analysis, not recomputed here. Membership was frozen '
+            'before the comparison outcomes and this page does not qualify it. Each cohort is shown beside the overall transitions, so an aggregate '
+            'gain cannot hide a protected loss. Missing, invalid and unknown trials have their own cells and are never counted as a pass or a '
+            'failure; an interval that was not computed is unknown, never zero.</p>'
+            + _table(('Measure', 'Value'), [('Cohort manifest SHA-256', got(block, 'manifest_sha256')),
+                                            ('Qualification authority', got(block, 'qualification_authority')),
+                                            ('Root independence', got(block, 'independence')),
+                                            ('Automatic promotion', got(block, 'automatic_promotion')),
+                                            ('Publication allowed', got(block, 'publication_allowed'))])
+            + '<h3>Paired transitions, all frozen pairs</h3>'
+            + _table(('Measure', 'Value'), [('Planned pairs', got(block, 'descriptive', 'overall', 'planned_pairs'))]
+                     + [(label, got(block, 'descriptive', 'overall', 'transitions', key)) for key, label in CELLS])
+            + '<h3>Frozen cohorts</h3>'
+            + (_table(('Cohort', 'Role', 'Required', 'Exposure', 'Severity policy', 'Margin', 'Members', 'Disposition', 'Mean difference',
+                       'Lower', 'Upper', 'Independent roots'),
+                      [(name, *(got(cohort, key) for key in ('role', 'required', 'exposure', 'severity_policy', 'margin')), _cell(members(cohort)),
+                        got(cohort, 'disposition'), *(_real(_at(cohort, 'endpoint', key)) for key in ('mean', 'low', 'high')), got(cohort, 'endpoint', 'independent_roots'))
+                       for name, cohort in cohorts]) if cohorts else '<p>No cohort was supplied.</p>')
+            + ('<h3>Cohort transitions</h3>'
+               + _table(('Cohort', *(label for _, label in CELLS)),
+                        [(name, *(got(cohort, 'descriptive', 'transitions', key) for key, _ in CELLS)) for name, cohort in cohorts]) if cohorts else '')
+            + ('<h3>Possible cohort differences with missing trials, not imputed</h3>'
+               '<p>Worst and best possible outcomes for the trials without a valid grade. No outcome is assigned to them.</p>'
+               + _table(('Cohort', 'Identified low', 'Identified high', 'Pessimistic low', 'Optimistic high', 'Independent roots', 'Numeric status'),
+                        [(name, *(_real(_at(row, key)) for key in ('identified_low', 'identified_high', 'pessimistic_low', 'optimistic_high')),
+                          got(row, 'independent_roots'), got(row, 'numeric_status')) for name, row in bounds]) if bounds else '')
+            + '<h3>Coverage of the frozen trials</h3>'
+            + _table(('Measure', 'Value'), [(label, _cell(len(unexpected) if key == 'unexpected_trial_ids' and isinstance(unexpected, list)
+                                                         else _at(block, 'descriptive', 'coverage', key))) for key, label in COVERAGE])
+            + '<h3>Error allocation and assumptions</h3>'
+            + _table(('Measure', 'Value'), [(name.replace('_', ' ').capitalize(), got(block, 'error_allocation', name)) for name in ALLOCATION])
+            + (f'<ul>{"".join(f"<li>{_e(item)}</li>" for item in assumptions)}</ul>' if assumptions else ''))
+
+
 def _shown(value, missing='not computed'):
     return missing if value is None else value
 
@@ -201,7 +262,7 @@ def render(report):
             f'<h1>Side-by-side experiment review: {_e(report["experiment_id"])}</h1>'
             f'<p>{scope} Observation only: no causal attribution, '
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
-            f'<h2>Summary</h2>{lead}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
+            f'<h2>Summary</h2>{lead}{_preservation(analysis)}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             + _resource(report) +
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'

@@ -55,6 +55,9 @@ def test_every_mapped_decision_is_a_resolver_decision_status():
     pytest.param('valid_from', 'valid_from_unreadable', 'x'*65, id='valid-from-oversized'),
     pytest.param('valid_from', 'valid_from_unreadable', '2026-01-01\n', id='valid-from-control-character'),
     pytest.param('valid_until', 'valid_until_unreadable', {'at': '2026-01-01'}, id='valid-until-mapping'),
+    pytest.param('stale_after', 'stale_after_unreadable', 20260601, id='stale-after-number'),
+    pytest.param('stale_after', 'stale_after_unreadable', 'x'*65, id='stale-after-oversized'),
+    pytest.param('stale_after', 'stale_after_unreadable', ['2026-06-01T00:00:00Z'], id='stale-after-list'),
     pytest.param('open_ended', 'open_ended_unreadable', 'yes', id='open-ended-text'),
     pytest.param('open_ended', 'open_ended_unreadable', None, id='open-ended-null'),
     pytest.param('open_ended', 'open_ended_unreadable', 1, id='open-ended-number'),
@@ -83,8 +86,8 @@ def test_one_page_with_several_unreadable_fields_reports_each_reason():
     pytest.param('last spring', 'last spring', id='unparseable-text-is-left-for-the-resolver'),
 ])
 def test_declared_times_keep_their_offset_state_for_the_resolver(declared, text):
-    facet, _ = one(valid_from=declared, valid_until=declared)
-    assert (facet.valid_from, facet.valid_until) == (text, text)
+    facet, _ = one(valid_from=declared, valid_until=declared, stale_after=declared)
+    assert (facet.valid_from, facet.valid_until, facet.stale_after) == (text, text, text)
 
 
 def test_knowledge_time_is_the_callers_and_never_a_time_the_page_declares_about_itself():

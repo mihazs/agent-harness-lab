@@ -2771,10 +2771,11 @@ not read pages. A caller supplies one `TemporalFacet` per exact imported revisio
 (`RecordRef`). The facet holds the knowledge time `recorded_at`, the author-declared
 `valid_from` and `valid_until` (or an explicit `open_ended` declaration), a decision
 status (`unspecified`, `proposed`, `accepted`, `rejected`, `deprecated` or
-`superseded`) and explicit `supersedes`/`superseded_by` references.
+`superseded`), explicit `supersedes`/`superseded_by` references and an optional
+author-declared `stale_after` instant.
 `resolve(facets, at)` returns one row per record with a status (`in_force`,
 `superseded`, `not_yet_valid`, `expired`, `not_adopted` or `unknown`) and the
-reasons for it. `resolve_store` binds facets to present revisions of one validated
+reasons for it, plus a separate [freshness](#declared-staleness). `resolve_store` binds facets to present revisions of one validated
 `SourceStore` journal, treats the journal's revision supersession edges as
 successors and reports the journal's SHA-256. Neither function writes anything.
 Existing record, journal and source fingerprints are unchanged.
@@ -2812,16 +2813,33 @@ A status stays `unknown` when the facts it needs are missing:
   revision's `recorded_at`. When that time is unknown or after the instant, the status
   is unknown. A declared interval is half-open, so the `valid_until` instant is expired.
 
-References to records without a facet stay visible under `dangling`. Each result
-carries `profile: knowledge-temporal-v1`, `validity_source: author_declared`,
+References to records without a facet stay visible under `dangling`.
+
+Each result carries `profile: knowledge-temporal-v1`, `validity_source: author_declared`,
 `truth_established: false`, `authority: none` and `publication_allowed: false`,
 and `public_export_allowed` rejects that profile. An `in_force` row means only that
 the author's declarations agree at that instant. It does not mean the statement is
 true or reviewed, that an agent retrieved it, or that it helps with a task.
 Synthetic fixtures establish this contract, not factual accuracy.
 
+#### Declared staleness
+
+`stale_after` is the instant after which the author asks for the statement to be
+re-verified. Each row reports `freshness` (`current`, `stale` or `unknown`) and a
+`freshness_reason`, and the result carries `freshness_counts`. The instant is stale
+from `stale_after` on, as with `valid_until`, and offsets compare as instants. A
+missing, unparseable (a duration such as `90d` included) or timezone-less
+`stale_after` is `unknown` with `stale_after_missing`, `stale_after_unparseable` or
+`stale_after_timezone_missing`; it is never `current`. Freshness reads only the
+revision's own declaration. It does not change the validity status (a stale `in_force` row
+stays `in_force`, and a `current` `expired` row stays `expired`), and a revision first recorded after the
+instant contributes nothing to a historical replay, so a later re-verification cannot
+refresh an earlier replay. The real clock is never consulted; the query instant decides.
+Adding the field changes `inputs_sha256` for the same facets and `TemporalFacet.parse` expects the
+`stale_after` key; no facet is stored by the library yet.
+
 Still open in #47: the [facet mapper](#knowledge-page-temporal-facets) reads declared
-fields from bundle pages, but the resolver does not yet use `stale_after`, claim identity
+fields from bundle pages, but the resolver does not yet use claim identity
 across sources, project-scope compatibility or review provenance, link edges are not yet
 bound to `RecordRef`s, and facets are not stored. Contradiction detection between
 statements, a CLI and the #43/#58/#11 integrations are also still open.
@@ -3010,7 +3028,7 @@ with no CLI exposure and reads no file. `ref(source_sha256, page)` is the exact
 | Page field | Facet |
 | --- | --- |
 | `status` | `proposed` and `draft` give `proposed`; `accepted` and `stable` give `accepted`; `rejected`, `deprecated` and `superseded` map to themselves; absent is `unspecified` |
-| `valid_from`, `valid_until` | Text, or a YAML timestamp as ISO text; a bare date or a time without an offset stays unknown in the resolver |
+| `valid_from`, `valid_until`, `stale_after` | Text, or a YAML timestamp as ISO text; a bare date or a time without an offset stays unknown in the resolver |
 | `open_ended` | `true` declares no end; absent is `false` |
 | `supersedes`, `superseded_by` | One bundle path or a list of up to 100. A path is relative to the page, or to the bundle root with a leading `/` |
 
