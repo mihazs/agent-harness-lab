@@ -695,7 +695,8 @@ carries the status, the category, and the remediation step as `next=`.
 
 `ahl improve` and `ahl skills invoke` write a loop block with the same keys. The only
 values allowed to differ are the measured time (`loop.usage.seconds` and the seconds in
-`loop.budget_stages`) and the run directory, listed in `agent_harness_lab.entry_parity`;
+`loop.budget_stages`), the head of the round ledger (`loop.ledger_head_sha256`), whose events
+are stamped with that time, and the run directory, listed in `agent_harness_lab.entry_parity`;
 `tests/unit/workflow/test_entry_parity_durations.py` derives clock-based fields from
 the loop's modules as it does for the rest of the receipt.
 
