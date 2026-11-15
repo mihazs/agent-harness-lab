@@ -735,6 +735,12 @@ or relative to that file's folder. A reference the same candidate also removes d
 consolidation passes once the surviving files stop naming the removed bundle. A bare skill name in
 prose is not a reference, and the reason names no file; search for the removed folder path to find
 the referrer.
+An update that deletes a file from a bundle is blocked as `removed_file_referenced` while any file
+that remains in the candidate state (including the bundle's own `SKILL.md` and assets) links to the
+deleted file or names its path as a whole path, project-relative or relative to that file's folder; the
+same rules apply, so a longer file name, a path in another folder or a bare file name is not a
+reference, and a reference the same candidate also drops does not count. Delete the reference, or keep
+the file, to clear it.
 
 The check reads staged bytes and never runs them; executable files and
 hook-bearing frontmatter still go through the hook contract. `ahl improve`
@@ -746,9 +752,9 @@ When `ahl.json` `harness_paths` is configured, the snapshot holds only the liste
 files, so bundle membership is unknown: the entry point, dangling reference and
 orphan asset checks are skipped, the action is reported as `scoped`, and only
 the listed `SKILL.md` frontmatter, name and escaping links are judged.
-Name-only mentions of a removed skill, references from files outside the snapshot, name collisions
+Name-only mentions of a removed skill or a deleted file, references from files outside the snapshot, name collisions
 across kinds of folder, and runtime activation are not checked or claimed. A scoped snapshot cannot
-judge removals, so it skips the reference check.
+judge removals or deleted files, so it skips both reference checks.
 
 Each reviewed bundle, adoptable or blocked, is one typed row: `bundle`, `action`, `reasons`, `placement`,
 `before_sha256` and `after_sha256`. `placement` names the runtime whose documented skills root holds the bundle
