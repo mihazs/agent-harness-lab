@@ -32,6 +32,7 @@ class Controller:
     def __init__(self, root):
         self.root, self.calls, self.saved = root, [], {}
         self.effects, self.unsafe, self.interrupt_on = dict(p1=.5, p2=.1, p3=.1), set(), None
+        self.retry_effects, self.unqualified_retries, self.revoke_retries, self.crash_on = {}, set(), False, None
         self.template = dict(schema_version=1, algorithm='guarded-preservation-search-v1', template_sha256='a'*64,
             baseline_sha256='b'*64, allowed_files=['AGENTS.md'], resource_profile=dict(budget_seconds=60),
             paths={name: str(root/name) for name in ('store', 'baseline', 'work', 'bank_owner', 'image')})
@@ -43,6 +44,8 @@ class Controller:
         on_started(ident)
         if self.interrupt_on == stage:
             raise KeyboardInterrupt('synthetic interruption after the custody callback')
+        if self.crash_on == stage:
+            raise RuntimeError('synthetic controller failure after the custody callback')
         binding = dict(schema_version=1, template_sha256=self.template['template_sha256'],
             candidate_record=json.loads(encoded(asdict(value))), patch_sha256=value.digest,
             harness_sha256='b'*64, tree_sha256='d'*64, stage=stage, event_id=event_id,
@@ -53,6 +56,13 @@ class Controller:
 
     def verify(self, binding):
         assert self.saved.get(binding['run_id']) == binding
+        if binding['stage'] == 'baseline_retry':  # An unchanged comparison reports its observed effect, none when unqualified.
+            if self.revoke_retries:
+                raise ValueError('synthetic revoked retry receipt')
+            number = int(binding['event_id'].rsplit(':', 1)[1])
+            qualified = number not in self.unqualified_retries
+            return dict(binding=deepcopy(binding), safe=qualified, qualified_feasible=qualified, retain_no_op=True,
+                        metrics={'primary_effect': self.retry_effects.get(number, 0)} if qualified else {})
         name = binding['candidate_record']['candidate_id']
         safe = name not in self.unsafe and not (binding['stage'] == 'development_confirmation' and 'confirm' in self.unsafe)
         return dict(binding=deepcopy(binding), safe=safe, qualified_feasible=safe, retain_no_op=name == 'base',
@@ -218,3 +228,133 @@ def test_callback_route_without_both_callbacks_is_refused_before_any_state_exist
     with pytest.raises(ValueError, match='callback route'):
         run_strategy('single-revision', 1, tmp_path/'s.json', BASE, proposer, evaluate, certify, Budget(8, 1), FILES, EVIDENCE)
     assert list(tmp_path.iterdir()) == []
+
+
+SINGLE = [('single-revision', 1)]
+
+
+def retried(tmp_path, fake, strategies=SINGLE, **options):
+    report = compare(tmp_path, fake, strategies=strategies, retry_comparator=True, **options)
+    return report, row(report, strategies[0][0])['retry_comparator']
+
+
+@pytest.mark.parametrize('strategy, runs', [
+    pytest.param(('single-revision', 1), 2, id='single-revision'),
+    pytest.param(('reflective-gepa-inspired', 1), 4, id='reflective'),
+])
+def test_unchanged_baseline_is_dispatched_once_per_non_final_controller_run_the_search_made(strategy, runs, tmp_path, controller):
+    report, retry = retried(tmp_path, controller, [strategy])
+    searched = [call for call in controller.calls if call[1] != 'baseline_retry']
+    assert sum(stage in ('baseline', 'development') for _, stage in searched) == runs
+    assert retry['matched_stage_units'] == runs
+    assert controller.calls[len(searched):] == [('base', 'baseline_retry')] * runs
+    assert [a['candidate_id'] for a in retry['attempts']] == [f'base-retry-{i}' for i in range(1, runs + 1)]
+    assert retry['status'] == 'complete'
+
+
+def test_guarded_retries_spend_their_own_budget_under_the_same_ceiling_and_reserve(tmp_path, controller):
+    _, retry = retried(tmp_path, controller, ceiling=12, reserve=2)
+    assert retry['charges'] == dict(ceiling=12, reserve=2, spent=2, by_kind=dict(retry_trial=2))
+
+
+@pytest.mark.parametrize('retry_effects, unqualified, expected', [
+    pytest.param({}, set(), True, id='unchanged-baseline-stays-below-the-candidate'),
+    pytest.param({1: .2, 2: .3}, set(), True, id='small-observed-noise-stays-below'),
+    pytest.param({1: .5}, set(), False, id='a-retry-ties-the-candidate'),
+    pytest.param({2: .9}, set(), False, id='one-lucky-retry-beats-the-candidate'),
+    pytest.param({}, {1}, None, id='one-unqualified-retry-stays-unknown'),
+    pytest.param({}, {1, 2}, None, id='no-qualified-retry-stays-unknown'),
+])
+def test_guarded_candidate_exceeds_the_retries_only_when_it_beats_every_qualified_one(
+        retry_effects, unqualified, expected, tmp_path, controller):
+    controller.retry_effects, controller.unqualified_retries = retry_effects, unqualified
+    report, retry = retried(tmp_path, controller)
+    assert retry['exceeds_best_retry'] is expected
+    assert report['advantage_claim'] is False
+
+
+def test_guarded_retries_keep_their_own_run_and_receipt_joins_and_label_the_controller_estimand(tmp_path, controller):
+    _, retry = retried(tmp_path, controller)
+    search_runs = {hashlib.sha256(str(number).encode()).hexdigest() for number in (1, 2, 3)}  # baseline, p1, confirmation
+    retry_runs = {a['run_id'] for a in retry['attempts']}
+    assert all(set(a) == {'candidate_id', 'digest', 'safe', 'metrics', 'run_id', 'receipt_sha256'} for a in retry['attempts'])
+    assert len(retry_runs) == 2 and not search_runs & retry_runs
+    assert [a['metrics'] for a in retry['attempts']] == [dict(primary_effect=0)] * 2
+    assert 'controller-verified' in retry['estimand'] and 'unchanged baseline' in retry['estimand']
+
+
+def test_guarded_retry_state_is_private_and_sits_beside_the_strategy_state(tmp_path, controller):
+    retried(tmp_path, controller)
+    saved = sorted(path.name for path in (tmp_path/'state').glob('retry-*.json'))
+    assert len(saved) == 1 and saved[0].startswith('retry-single-revision-') and saved[0].endswith('-k2.json')
+    assert ((tmp_path/'state'/saved[0]).stat().st_mode & 0o777) == 0o600
+
+
+@pytest.mark.parametrize('strategies, unsafe, why', [
+    pytest.param([('no-op', 1)], set(), 'no-op-selects-nothing', id='no-op'),
+    pytest.param(SINGLE, {'confirm'}, 'failed-confirmation', id='failed-confirmation'),
+    pytest.param(SINGLE, {'p1'}, 'unsafe-candidate', id='unsafe-candidate'),
+])
+def test_strategies_without_a_recommended_finalist_run_no_guarded_retries(strategies, unsafe, why, tmp_path, controller):
+    controller.unsafe = unsafe
+    report = compare(tmp_path, controller, strategies=strategies, retry_comparator=True)
+    assert [r['retry_comparator'] for r in report['strategies']] == [None]
+    assert all(stage != 'baseline_retry' for _, stage in controller.calls)
+    assert not list((tmp_path/'state').glob('retry-*'))
+
+
+def test_repeating_a_guarded_comparison_reverifies_retries_without_dispatching_them_again(tmp_path, controller):
+    _, first = retried(tmp_path, controller)
+    dispatched = list(controller.calls)
+    _, again = retried(tmp_path, controller)
+    assert controller.calls == dispatched
+    assert again['resumed_without_execution'] is True
+    assert (again['status'], again['attempts'], again['exceeds_best_retry']) == (
+        first['status'], first['attempts'], first['exceeds_best_retry'])
+
+
+def test_a_revoked_retry_receipt_blocks_the_cached_comparison_instead_of_trusting_it(tmp_path, controller):
+    retried(tmp_path, controller)
+    controller.revoke_retries = True
+    _, again = retried(tmp_path, controller)
+    assert (again['status'], again['exceeds_best_retry']) == ('blocked', None)
+    assert [stage for _, stage in controller.calls].count('baseline_retry') == 2
+
+
+def test_interrupted_guarded_retry_is_not_redispatched_and_leaves_the_comparison_unknown(tmp_path, controller):
+    controller.interrupt_on = 'baseline_retry'
+    with pytest.raises(KeyboardInterrupt):
+        retried(tmp_path, controller)
+    controller.interrupt_on = None
+    dispatched = list(controller.calls)
+    _, retry = retried(tmp_path, controller)
+    assert controller.calls == dispatched
+    assert (retry['status'], retry['exceeds_best_retry'], retry['attempts']) == ('interrupted', None, [])
+    assert retry['charges']['by_kind'] == dict(retry_trial=1)
+
+
+def test_a_failed_guarded_retry_blocks_the_comparison_and_is_not_redispatched(tmp_path, controller):
+    controller.crash_on = 'baseline_retry'
+    _, retry = retried(tmp_path, controller)
+    assert (retry['status'], retry['exceeds_best_retry'], retry['attempts']) == ('blocked', None, [])
+    controller.crash_on = None
+    dispatched = list(controller.calls)
+    _, again = retried(tmp_path, controller)
+    assert controller.calls == dispatched
+    assert (again['status'], again['exceeds_best_retry']) == ('blocked', None)
+
+
+def test_a_baseline_changed_during_a_guarded_retry_blocks_the_comparison(tmp_path, controller):
+    base = CandidateRecord('base', (), 'm', {}, ('e1',), 'hypothesis', 'falsifier')
+    original = controller.evaluate
+
+    def mutating(value, *, stage, **options):
+        result = original(value, stage=stage, **options)
+        if stage == 'baseline_retry':
+            value.changes['AGENTS.md'] = 'sneaked in'
+        return result
+    controller.evaluate = mutating
+    report = compare_strategies(tmp_path/'state', base, proposer, None, 12, 1, FILES, EVIDENCE, strategies=SINGLE,
+                                controller=controller.context, retry_comparator=True)
+    retry = row(report, 'single-revision')['retry_comparator']
+    assert (retry['status'], retry['attempts'], retry['exceeds_best_retry']) == ('blocked', [], None)

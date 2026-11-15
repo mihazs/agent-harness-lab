@@ -24,6 +24,7 @@ MAX_FILES=1000
 MAX_ATTEMPTS=16
 MAX_CONTEXTS=16
 MAX_PREPARED_BYTES=64*1024*1024
+UNCHANGED_STAGES=('baseline','baseline_retry')  # Stages that run the unchanged harness against itself.
 
 
 def hash_value(value): return hashlib.sha256(encoded(value)).hexdigest()
@@ -59,8 +60,11 @@ def runtime_hash(data):
     return digest.hexdigest()
 
 
-def feasibility(spec,analysis,*,baseline):
-    """No-op feasibility excludes only superiority, never coverage or NI gates."""
+def feasibility(spec,analysis,*,baseline,retry=False):
+    """No-op feasibility excludes only superiority, never coverage or NI gates.
+
+    A baseline retry is an unchanged comparison whose observed effect is the metric; the baseline arm stays 0.0.
+    An effect that is missing or not a finite number leaves the retry unqualified, never zero."""
     preservation=analysis.get('preservation',{}); coverage=preservation.get('descriptive',{}).get('coverage',{})
     expected=2*len(spec.tasks)*spec.repeats
     complete=(coverage.get('planned_trials')==expected and coverage.get('received_records')==expected
@@ -68,15 +72,17 @@ def feasibility(spec,analysis,*,baseline):
             'invalid_grades','unknown_grades','provenance_mismatches')) and coverage.get('unexpected_trial_ids')==[])
     effects=analysis.get('behavior')
     observed=effects is None or (effects.get('critical_candidate_effect') is False and effects.get('required_observation_unknown') is False)
+    primary=analysis.get('primary'); effect=primary.get('mean') if isinstance(primary,dict) else None
+    measured=type(effect) in (int,float) and math.isfinite(effect)
     required=[value for value in preservation.get('cohorts',{}).values() if value.get('required') is True]
     ni=(all(value.get('disposition')=='supported' for value in required)
         and bool(analysis.get('families')) and all(value['low']>=-spec.family_margin for value in analysis.get('families',{}).values()))
     eligible=(analysis.get('oracle_validity')=='current' and complete and observed and ni and analysis.get('roots',0)>=spec.min_roots
         and analysis.get('status') not in ('rejected','blocked','incomplete')
-        and (baseline or analysis.get('status')=='supported'))
+        and (baseline or analysis.get('status')=='supported') and (measured or not retry))
     return dict(safe=eligible,qualified_feasible=eligible,retain_no_op=baseline,
-        metrics={'primary_effect':0.0 if baseline else analysis['primary']['mean']} if eligible else {},
-        reason='qualified_no_op' if eligible and baseline else 'supported_development_comparison' if eligible else analysis.get('reason','unqualified'),
+        metrics={'primary_effect':effect if retry else 0.0 if baseline else analysis['primary']['mean']} if eligible else {},
+        reason=('qualified_baseline_retry' if retry else 'qualified_no_op') if eligible and baseline else 'supported_development_comparison' if eligible else analysis.get('reason','unqualified'),
         feasibility_scope='frozen_endpoint_criteria_only',independence='unverified',native_identity='unverified',
         automatic_promotion=False,publication_allowed=False,adoption_authority=False)
 
@@ -204,12 +210,12 @@ class HistorySearchContext:
         return value,candidate.digest,expected,data
 
     def _declaration(self,record_value,patch,metadata,data,stage,event_id):
-        if stage not in ('baseline','development','development_confirmation'): raise ValueError('unsupported guarded search stage')
+        if stage not in (*UNCHANGED_STAGES,'development','development_confirmation'): raise ValueError('unsupported guarded search stage')
         text(event_id)
         if len(event_id)>256: raise ValueError('bounded search event identity required')
-        if (stage=='baseline')!=(not record_value['changes']): raise ValueError('only the baseline stage can retain the empty patch')
+        if (stage in UNCHANGED_STAGES)!=(not record_value['changes']): raise ValueError('only a baseline stage can retain the empty patch')
         harness=runtime_hash(data)
-        if stage!='baseline' and harness==self.spec.baseline_hash: raise ValueError('candidate did not change the observed harness')
+        if stage not in UNCHANGED_STAGES and harness==self.spec.baseline_hash: raise ValueError('candidate did not change the observed harness')
         marker=dict(algorithm=ALGORITHM,template_sha256=self._template['template_sha256'],
             candidate_record_sha256=hash_value(record_value),patch_sha256=patch,tree_sha256=hash_value(metadata),
             harness_sha256=harness,stage=stage,event_id=event_id)
@@ -331,4 +337,4 @@ class HistorySearchContext:
                 or decision_receipts.engine()!=verified['receipt']['analysis_engine']):
             raise ValueError('search authority or engine changed after numeric verification')
         return dict(binding=deepcopy(binding),verification='current_recomputed',
-            **feasibility(spec,verified['analysis'],baseline=binding['stage']=='baseline'))
+            **feasibility(spec,verified['analysis'],baseline=binding['stage'] in UNCHANGED_STAGES,retry=binding['stage']=='baseline_retry'))
