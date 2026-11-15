@@ -19,7 +19,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
   test:cli:help:
     desc: Verify recursive agent-facing CLI guidance and side-effect-free help routes
     cmds:
@@ -231,7 +231,7 @@ tasks:
   test:evaluator:
     desc: Run evaluator tests with pytest
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest skills/harness-evaluation/scripts'
+      - '{{.PYTHON | shellQuote}} -m pytest skills/harness-self-improvement/scripts'
   test:workflow:one-call:
     desc: Verify public configured improvement, deterministic repair and rollback
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -507,7 +507,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k TestControllerSource'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 4 --dist worksteal -k TestControllerSource'
   test:sources:harness-binding:
     desc: Run synthetic Git harness snapshot binding, ownership and location controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -541,7 +541,7 @@ tasks:
       AHL_TEST_CGROUP_ROOT: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k live_controller_sources'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 0 -k live_controller_sources'
   test:sources:contracts:
     desc: Run source identity, execution metadata and complete normalized export contracts
     cmds:
@@ -593,17 +593,17 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_test_results.py tests/unit/sources/test_source_ci_join.py tests/unit/sources/test_source_quality_reports.py tests/unit/sources/test_source_ci_leads.py -v'
   test:sources:claude-mem:
-    desc: Run offline Claude-Mem v15.9.0 export, native-session correlation and saved MCP tool-listing controls with synthetic invented inputs
+    desc: Run offline Claude-Mem v15.9.0 export, native-session correlation, saved MCP tool-listing and fake-HTTPS worker list controls with synthetic invented inputs
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/unit/sources/test_source_claude_mem_tools.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_claude_mem.py tests/unit/sources/test_source_claude_mem_tools.py tests/unit/sources/test_source_claude_mem_api.py tests/integration/sources/test_source_claude_mem_correlation.py -v'
   test:sources:mem0:
     desc: Run offline Mem0 OSS v2.2.1 and Platform v3 export controls and the read-only REST/API client controls with synthetic fixtures
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_mem0.py tests/unit/sources/test_source_mem0_platform.py tests/unit/sources/test_source_mem0_api.py -v'
   test:sources:hindsight:
-    desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
+    desc: Run Hindsight v1.1.0 bank archive and REST read controls with synthetic invented banks
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py tests/unit/sources/test_source_hindsight_zip.py tests/unit/sources/test_source_hindsight_models.py tests/unit/sources/test_source_hindsight_knowledge.py tests/unit/sources/test_source_hindsight_model_refs.py tests/unit/sources/test_source_hindsight_serialized_refs.py -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_hindsight.py tests/unit/sources/test_source_hindsight_zip.py tests/unit/sources/test_source_hindsight_models.py tests/unit/sources/test_source_hindsight_knowledge.py tests/unit/sources/test_source_hindsight_model_refs.py tests/unit/sources/test_source_hindsight_serialized_refs.py tests/unit/sources/test_source_hindsight_api.py -v'
   test:sources:cognee:
     desc: Run offline Cognee v1.6.5 graph export controls with synthetic invented datasets
     cmds:
@@ -993,7 +993,7 @@ tasks:
       PYTHONDONTWRITEBYTECODE: '1'
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
@@ -1080,7 +1080,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
   test:evaluation:recovery-gap:
     desc: Probe durable trial binding and ambiguous-request refusal without provider calls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -1088,7 +1088,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-self-improvement/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:
@@ -1135,11 +1135,14 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_pins.py'
   test:isolated:
-    desc: Run a command in a temporary worktree of REPO and fail when REPO changed (opt-in, not part of task test); see docs/isolated-project-check.md
-    requires:
-      vars: [REPO]
+    desc: Opt-in. With REPO, run a command in a temporary worktree of REPO and fail when REPO changed (docs/isolated-project-check.md); without REPO, run the synthetic equivalent of the real-project acceptance protocol (docs/real-project-acceptance.md)
     cmds:
-      - '{{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{.REPO | shellQuote}} {{.CLI_ARGS}}'
+      - |
+        if [ -n {{default "" .REPO | shellQuote}} ]; then
+          {{.PYTHON | shellQuote}} scripts/isolated_project_check.py {{default "" .REPO | shellQuote}} {{.CLI_ARGS}}
+        else
+          {{.PYTHON | shellQuote}} -m pytest tests/integration/tools/test_acceptance_protocol.py -v -rs
+        fi
   test:runtime-contracts:
     desc: Opt-in probes of the real claude and codex CLIs (flags and exit codes, zero model calls); skipped runtimes are listed
     env:
@@ -1168,3 +1171,10 @@ tasks:
     desc: Run the same measurements and exit 1 when a result exceeds tools/perf_budgets.json (extra flags after --)
     cmds:
       - '{{.PYTHON | shellQuote}} tools/perf_bench.py --check tools/perf_budgets.json {{.CLI_ARGS}}'
+  # Bayesian decision calibration (issue #832). Opt-in and heavy (about ten minutes of one core): never part of `task test`.
+  calibrate:bayes-decision:
+    desc: Run one split of the seeded Bayesian decision calibration (SPLIT=tuning or held_out) and print the JSON report; see docs/bayesian-decision-score.md
+    requires:
+      vars: [SPLIT]
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m agent_harness_lab.evaluation.bayes_calibration --split {{.SPLIT | shellQuote}}'

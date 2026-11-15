@@ -4,7 +4,7 @@
 
 This reference records what the repository already enforces for each authoritative
 store or reader, so a later persistent-evidence slice adapts to it instead of guessing.
-It describes current behavior on `main`; the [private memory store](memory-store.md) provides the persistence layer, and no planner reads it yet.
+It describes current behavior on `main`; the [private memory store](memory-store.md) provides the persistence layer, and the [stage reuse planner](stage-reuse-planner.md) reads it for one stage, process mining, through `ahl analyze --incremental`.
 Every module path below is checked by a test, and the characterization tests in
 `tests/unit/docs/test_memory_reuse_contract.py` execute the bounds and projections
 quoted here with synthetic data only.
@@ -44,7 +44,9 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
 
 1. **Analysis stages.** `agent_harness_lab/evidence.py` `collect` streams events through one
    pass of `tools/diagnose.py` `analyze`. Ordering flags, process mining, sequence and
-   observation matching share that pass, so they are not separately cacheable today.
+   observation matching share that pass, so they are not separately cacheable today,
+   except that `analyze` accepts a verified earlier process-mining result in place of running the miner
+   (`ahl analyze --incremental`; see [reuse analysis work on unchanged input](incremental-analysis.md)).
    Separable deterministic units are the whole collect pass (its `fingerprint` already hashes
    the normalized event stream and evaluation identities), `agent_harness_lab/analysis_receipt.py`
    `summarize` and report rendering. In `improve`, the proposer and author roles, fresh trials
@@ -67,8 +69,8 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
 4. **Role projection.** `construction.views` copies a fixed key list. Beyond aggregate
    analysis counts, it passes two optional historical items verbatim to both roles in
    `analysis-summary.json`. `paired_history_analysis` is one explicitly selected result,
-   which `HistoryStore.analyze(read_only=True)` limits to schema-1 history without protected
-   access or derivation. `incident_retrieval` is the operator-supplied reviewed-incident
+   which `HistoryStore.analyze(read_only=True)` limits to fixed schema-1 or bank-bound schema-2
+   history without protected access or derivation. `incident_retrieval` is the operator-supplied reviewed-incident
    search result from `agent_harness_lab/diagnostics/retrieval.py` `contextual_search`; it
    carries incident ids, summaries, evidence references and scores. Its approval is a caller
    declaration (`caller_declared_reviewed_approval_unverified`), each row is marked

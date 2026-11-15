@@ -17,14 +17,14 @@ ROOT=Path(__file__).resolve().parents[3]
 ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),('sources','inventory'),('sources','claude','pin-check'),('sources','claude-mem','tool-check'),('sources','mempalace','capabilities'),('sources','github','quota'),('memory',),('config',),
     ('campaign',),('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),('annotation-plan',),('instruction-adherence',),('apply',),('compare',),
     ('doctor',),('audit',),('research-simulate',),('bank',),('mine',),('evaluate',),('evaluate','hooks'),('diagnose',),('benchmark',),('skills',),('skills','activation-receipt'))
-SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/publish_pending_releases.py','scripts/check_commit_message.py','scripts/check_pins.py','scripts/isolated_project_check.py','install.py','tools/perf_bench.py')
+SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/publish_pending_releases.py','scripts/check_commit_message.py','scripts/check_pins.py','scripts/isolated_project_check.py','scripts/build_bayes_fixtures.py','install.py','tools/perf_bench.py')
 PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',
         'sources/cli.py','sources/claude_mem_tools.py','sources/mempalace_capabilities.py','sources/lineage.py','sources/harness_inventory.py','sources/github_quota.py','telemetry/claude_contract.py','evaluation/cli.py','user_config.py','evaluation/regression_review.py',
         'evaluation/bank_qualification.py','evaluation/oracle_history.py','evaluation/grader_correction.py',
-        'diagnostics/annotation_plan.py','diagnostics/instruction_adherence.py','evaluation/compare.py','plan_review.py','evaluation/interchange.py','evaluation/image.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py','memory/cli.py')}
+        'diagnostics/annotation_plan.py','diagnostics/instruction_adherence.py','evaluation/compare.py','plan_review.py','evaluation/interchange.py','evaluation/image.py','evaluation/bayes_calibration.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py','memory/cli.py')}
 PARSER_FILES.update(('tools/diagnose.py','tools/benchmark_models.py','tools/link_skills.py',
-    'skills/harness-evaluation/scripts/mine_traces.py','skills/harness-evaluation/scripts/run_evaluation.py',*SCRIPTS))
+    'skills/harness-self-improvement/scripts/mine_traces.py','skills/harness-self-improvement/scripts/run_evaluation.py',*SCRIPTS))
 
 
 class Captured(BaseException):
@@ -53,6 +53,8 @@ def parsers():
         yield 'ahl '+' '.join(route),capture(lambda:cli.main(list(route)))
     image=importlib.import_module('agent_harness_lab.evaluation.image')
     yield 'runtime image builder',capture(image.main)
+    calibration=importlib.import_module('agent_harness_lab.evaluation.bayes_calibration')
+    yield 'bayes calibration',capture(lambda:calibration.main([]))
     for relative in SCRIPTS:
         with patch.object(sys,'argv',[relative]):
             yield relative,capture(lambda:runpy.run_path(str(ROOT/relative),run_name='__main__'))
@@ -141,7 +143,7 @@ def test_all_routed_help_is_available_without_operations_or_input(route):
 
 def test_parser_module_inventory_has_no_unreviewed_or_unexercised_entrypoint():
     discovered=set()
-    for directory in ('agent_harness_lab','tools','scripts','skills/harness-evaluation/scripts'):
+    for directory in ('agent_harness_lab','tools','scripts','skills/harness-self-improvement/scripts'):
         for path in (ROOT/directory).rglob('*.py'):
             if 'tests' in path.parts:continue
             raw=path.read_text()

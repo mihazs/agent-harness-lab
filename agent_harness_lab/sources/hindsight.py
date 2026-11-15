@@ -223,12 +223,8 @@ def parse(parts, selection, version, bounds):
     def temporal(value):
         stamps = {name: stamp(name, value.get(field)) for name, field in (('recorded_at', 'created_at'),
             ('mentioned_at', 'mentioned_at'), ('valid_from', 'occurred_start'), ('valid_until', 'occurred_end'))}
-        start, end = stamps['valid_from'][0], stamps['valid_until'][0]
-        if start is not None and end is not None and end < start: warnings.add('inverted_validity'); status = 'undetermined'
-        elif exported is None or 'invalid' in (stamps['valid_from'][1], stamps['valid_until'][1]): status = 'undetermined'
-        elif end is not None and end <= exported: status = 'historical'
-        elif start is not None and start > exported: status = 'not_yet_valid'
-        else: status = 'current'
+        status, inverted = assertion(stamps['valid_from'], stamps['valid_until'], exported)
+        if inverted: warnings.add('inverted_validity')
         return {name: iso(parsed) for name, (parsed, _) in stamps.items()}, status
     def fact_type(value):
         detail = value.get('fact_type') if value.get('fact_type') in FACT_TYPES else 'unrecognized'
@@ -319,6 +315,18 @@ def parse(parts, selection, version, bounds):
         service_contacted=False, database_opened=False, inference_invoked=False, bodies_stored=False,
         capture_completeness='partial')
     return tuple(claims), summary
+
+
+def assertion(start, end, exported):
+    """(assertion status, inverted) of one validity window judged at the export or capture instant.
+
+    ``start`` and ``end`` are ``moment`` pairs. Without a trustworthy instant, or with an invalid bound, nothing is guessed.
+    """
+    if start[0] is not None and end[0] is not None and end[0] < start[0]: return 'undetermined', True
+    if exported is None or 'invalid' in (start[1], end[1]): return 'undetermined', False
+    if end[0] is not None and end[0] <= exported: return 'historical', False
+    if start[0] is not None and start[0] > exported: return 'not_yet_valid', False
+    return 'current', False
 
 
 def moment(value):

@@ -4,11 +4,16 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 from agent_harness_lab.monitoring.state import atomic_json
 from .areas import check_declared, parse_registry, task_areas
 from .integrity import contained, digest, read_regular
 
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
+OPTIONAL_IDENTITIES = {'interaction_contract_sha256', 'interaction_oracle_sha256'}
+OPTIONAL = OPTIONAL_IDENTITIES | {'areas'}
+DESIGN_PARTITIONS = ('construction', 'development', 'calibration')  # inform design, search or calibration
+FINAL_PARTITIONS = ('certification', 'transfer')
 
 
 def identifier(value, maximum=128):
@@ -39,12 +44,20 @@ class TaskSpec:
     safety: tuple
     artifacts: tuple
     areas: tuple = ()  # optional capability tags; absent means untagged
+    # Optional identities of the interaction contract and scripted-reply oracle in the grader bundle; '' is undeclared.
+    interaction_contract_sha256: str = ''
+    interaction_oracle_sha256: str = ''
 
     @classmethod
     def parse(cls, value, *, analysis_only=False, areas_at=None):
         if type(analysis_only) is not bool: raise ValueError('explicit task parsing mode required')
-        if not isinstance(value, dict) or set(value) | {'areas'} != set(cls.__dataclass_fields__):
+        if not isinstance(value, dict) or set(value) | OPTIONAL != set(cls.__dataclass_fields__):
             raise ValueError('task fields must match the versioned schema')
+        for key in sorted(OPTIONAL_IDENTITIES & set(value)):
+            if not isinstance(value[key], str) or not re.fullmatch('[0-9a-f]{64}', value[key]):
+                raise ValueError(f'{key} must be a lowercase SHA-256')
+        if 'interaction_oracle_sha256' in value and 'interaction_contract_sha256' not in value:
+            raise ValueError('a scripted-reply oracle requires a declared contract')
         if any(not isinstance(value[k], list) or not all(isinstance(v, str) and v for v in value[k]) for k in ('safety', 'artifacts')):
             raise ValueError('safety/artifact lists required')
         tags = task_areas(value['areas'], **(areas_at or {})) if 'areas' in value else ()
@@ -63,7 +76,25 @@ class TaskSpec:
         """The JSON task declaration this spec parses back from; an untagged task has no areas field."""
         value = json.loads(json.dumps(asdict(self)))
         if not self.areas: del value['areas']
+        for key in OPTIONAL_IDENTITIES:
+            if not value[key]: del value[key]
         return value
+
+
+def _unenforced_overlaps(tasks, enforced):
+    """Final-set tasks sharing a group value with design/calibration tasks on a dimension `separate_by` does not enforce."""
+    found = []
+    for key in ('family', 'project_group', 'time_group'):
+        if key in enforced: continue  # a shared value already rejected the bank
+        groups = {}
+        for task in tasks: groups.setdefault(getattr(task, key), {}).setdefault(task.partition, []).append(task.task_id)
+        for early in DESIGN_PARTITIONS:
+            for final in FINAL_PARTITIONS:
+                shared = sorted(i for parts in groups.values() if early in parts and final in parts for i in parts[early] + parts[final])
+                if shared:
+                    found.append(dict(status='independence_unverified', reason='group_overlap_not_enforced',
+                                      dimension=key, partitions=[early, final], tasks=shared))
+    return found
 
 
 def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None, registry=None):
@@ -94,6 +125,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
             raise ValueError('grader and fixture overlap')
         if verify_contents and (digest(fixture, **limits) != task.fixture_digest or digest(grader, **limits) != task.grader_digest):
             raise ValueError('task/grader integrity changed; comparisons must be invalidated')
+        if verify_contents and task.interaction_contract_sha256:
+            from .interaction_binding import check
+            check(task, fixture, grader, analysis_only=analysis_only)
         for name in task.artifacts:
             from .integrity import relative
             relative(name)
@@ -108,6 +142,7 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
         if task.review_status == 'quarantined':
             issues.append(dict(task=task.task_id, status='task_quarantined'))
+    issues.extend(_unenforced_overlaps(tasks, dimensions))
     bank_sha256 = hashlib.sha256(raw).hexdigest()
     content_grouping = None
     if verify_contents:
@@ -130,6 +165,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
     tagged = Counter(area for task in tasks for area in task.areas)
     if tagged:  # a task counts once in each of its areas; an untagged bank keeps its published shape
         result['areas'] = dict(sorted(tagged.items()))
+    if any(t.interaction_contract_sha256 for t in tasks):  # an unbound bank keeps its published shape
+        from .interaction_binding import counts
+        result['interaction'] = counts(tasks)
     if analysis_only:
         result['task_index'] = [{key: getattr(task, key) for key in
             ('task_id', 'root_id', 'family', 'partition', 'review_status')} for task in tasks]

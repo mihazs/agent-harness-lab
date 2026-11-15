@@ -9,6 +9,7 @@ import pytest
 from agent_harness_lab.diagnostics import drift
 
 REVISION = 'harness-rev-a'
+HUGE = 10**400  # an integer too large for a float: math.isfinite raises OverflowError on it
 
 
 def sha(text):
@@ -84,6 +85,9 @@ class TestPlan:
         (dict(capture=dict(min_coverage=0, max_coverage_drop=.1)), 'capture'),
         (dict(reference_revisions_sha256=[]), 'revisions'),
         (dict(reference_window=[10, 10]), 'reference window'),
+        (dict(reference_window=[0, HUGE]), 'reference window'),
+        (dict(reference_window=[-HUGE, 100]), 'reference window'),
+        (dict(window_length=HUGE), 'window length'),
         (dict(action='rollback'), 'observe or review'),
         (dict(schema_version=True), 'schema'),
     ])
@@ -264,6 +268,7 @@ class TestChannels:
         (lambda runs: runs[4].update(cursor=runs[5]['cursor']), 'cursor_collision'),
         (lambda runs: runs.append({**runs[0], 'outcome': not runs[0]['outcome']}), 'conflicting_duplicate_runs'),
         (lambda runs: runs[2].update(started=None), 'untimed_runs'),
+        (lambda runs: runs[2].update(started=HUGE), 'untimed_runs'),
         (lambda runs: runs[6].pop('cursor'), 'cursor_unknown'),
         (lambda runs: runs[6].update(cursor='6'), 'cursor_unknown'),
         (lambda runs: [run.pop('cursor') for run in runs], 'cursor_unknown'),

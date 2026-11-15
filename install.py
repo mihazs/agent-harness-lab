@@ -15,7 +15,8 @@ import tempfile
 from urllib.request import Request, urlopen
 
 REPOSITORY = 'mihazs/agent-harness-lab'
-SKILLS = ('harness-evaluation', 'harness-self-improvement')
+SKILLS = ('harness-self-improvement',)
+RETIRED_SKILLS = ('harness-evaluation',)  # folded into harness-self-improvement; owned links are removed on upgrade
 VERSION = re.compile(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?')
 TEMPLATE = 'global-instructions.md'
 START_MARKER = '<!-- agent-harness-lab:start version={version} sha256={digest} -->'
@@ -64,6 +65,9 @@ def verify(archive, checksums):
     return actual
 
 
+MAX_MEMBERS = 4096  # the shipped tree is about a quarter of this; test_archive_member_bound keeps it under three quarters
+
+
 def extract(archive, destination):
     """Accept one archive root and regular files only; reject links and traversal."""
     with tarfile.open(archive, 'r:gz') as stream:
@@ -72,7 +76,7 @@ def extract(archive, destination):
         expanded = 0
         for member in stream:
             expanded += member.size
-            if len(members) >= 1000 or member.size < 0 or expanded > 100 * 1024 * 1024:
+            if len(members) >= MAX_MEMBERS or member.size < 0 or expanded > 100 * 1024 * 1024:
                 raise ValueError('invalid release archive size')
             path = PurePosixPath(member.name)
             if path.is_absolute() or '..' in path.parts or '\\' in member.name or not path.parts:
@@ -283,8 +287,9 @@ def undo(manifest, folder):
         if not os.path.isabs(item['path']) or (item['saved'] and Path(item['saved']).name != item['saved']):
             raise ValueError('invalid installation backup manifest')
     changed = [i['path'] for i in files if Path(i['path']).is_symlink() or sha256_of(i['path']) != i['sha256']]
+    # A link with no target was retired by the install, so nothing may exist at its path now.
     changed += [i['path'] for i in manifest['links'] if os.path.lexists(i['path'])
-                and not (Path(i['path']).is_symlink() and os.readlink(i['path']) == i['target'])]
+                and (i['target'] is None or not (Path(i['path']).is_symlink() and os.readlink(i['path']) == i['target']))]
     if changed:
         raise ValueError('changed since the installation, so nothing was restored: ' + ', '.join(changed))
     for item in files:
@@ -371,6 +376,9 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs, instructio
                 raise ValueError(f'refusing to replace a foreign symlink: {link}')
             if link.exists() and not link.is_symlink() and (relative == Path('ahl') or not link.is_dir()):
                 raise ValueError(f'refusing to replace a non-skill directory: {link}')
+        # An installer-owned link to a retired skill is backed up and not recreated; foreign content stays.
+        retired = list(dict.fromkeys(Path(folder) / name for folder in skill_dirs for name in RETIRED_SKILLS
+                                     if owned_link(Path(folder) / name, root, Path('skills') / name)))
         created = False
         if destination.exists():
             marker = destination / '.release-sha256'
@@ -390,17 +398,18 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs, instructio
             return backup
         moved, installed, files, saved_receipt, written = [], [], [], None, None
         try:
-            for link, relative in links:
-                target = destination / relative
-                if link.is_symlink() and link.resolve() == target:
+            for link, relative in [*links, *((link, None) for link in retired)]:
+                target = destination / relative if relative else None
+                if target and link.is_symlink() and link.resolve() == target:
                     continue
                 link.parent.mkdir(parents=True, exist_ok=True)
                 if link.exists() or link.is_symlink():
                     saved = backup_dir() / str(len(moved))
                     link.rename(saved)
                     moved.append((saved, link))
-                link.symlink_to(target, target_is_directory=relative != Path('ahl'))
-                installed.append(link)
+                if target:
+                    link.symlink_to(target, target_is_directory=relative != Path('ahl'))
+                    installed.append(link)
             # Keep update settings in the same rollback boundary as launcher links.
             document = dict(schema_version=1, version=version, bin_dir=str(bin_dir), skill_dirs=skill_dirs)
             if instructions:
@@ -450,10 +459,12 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs, instructio
         report = [] if report is None else report
         report.extend(instruction_report(targets, destination, version, instructions[0], write))
     if backup:
+        # A retired link has no target: undo restores its saved entry and treats anything now at its path as a change.
+        recorded = [(link, str(destination / dict(links)[link])) for link in installed] + [(link, None) for link in retired]
         manifest = dict(schema_version=1, version=version, files=files,
-                        links=[dict(path=str(link), target=str(destination / dict(links)[link]),
+                        links=[dict(path=str(link), target=target,
                                     saved=next((saved.name for saved, original in moved if original == link), None))
-                               for link in installed],
+                               for link, target in recorded],
                         receipt=written and dict(path=str(receipt), saved=saved_receipt and saved_receipt.name, mode=0o600,
                                                  sha256=hashlib.sha256(written).hexdigest()))
         (backup / 'manifest.json').write_text(json.dumps(manifest) + '\n')

@@ -1,5 +1,6 @@
 """Owner-only journals with explicit size policies; controllers own transitions."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -17,6 +18,19 @@ from .read_only import require_writable
 
 MAX_EVENTS = 64
 MAX_METADATA = 256*1024
+_scratch = ContextVar('validation_scratch', default=None)
+
+
+@contextmanager
+def scratch_in(folder):
+    """Make validators place transient scratch in this caller-approved folder instead of inside an input store."""
+    token = _scratch.set(Path(folder))
+    try: yield
+    finally: _scratch.reset(token)
+
+
+def scratch_dir(default):
+    return _scratch.get() or default
 
 
 def encoded(value):
@@ -217,13 +231,13 @@ class PrivateJournal:
         if not events: raise ValueError('case journal is empty')
         return events
 
-    def append(self, case, events, kind, state, payload, *, before_publish=None):
+    def append(self, case, events, kind, state, payload, *, before_publish=None, recorded_at=None):
         previous = events[-1] if events else None
         if not self._transition(previous[0]['state'] if previous else None, kind, state, previous[0]['kind'] if previous else None):
             raise ValueError('invalid case lifecycle transition')
         if self.max_events is not None and len(events) >= self.max_events: raise ValueError('case journal operation bound exceeded')
         value = dict(schema_version=1, index=len(events), previous_sha256=previous[1] if previous else None,
-            kind=kind, state=state, payload=payload, recorded_at=datetime.now(timezone.utc).isoformat())
+            kind=kind, state=state, payload=payload, recorded_at=recorded_at or datetime.now(timezone.utc).isoformat())
         if self.max_metadata is not None and len(encoded(value)) > self.max_metadata: raise ValueError('complete case event exceeds metadata bound')
         path = case/'events'/f'{len(events):04d}.json'
         if path.exists(): raise ValueError('immutable case event already exists')

@@ -1,7 +1,7 @@
 # Side-by-side experiment review model
 
 `agent_harness_lab.evaluation.side_by_side.build(experiment)` turns one
-baseline/candidate experiment record into a read-only, private review model for
+baseline/candidate experiment record into a read-only review model, private by default, for
 [issue #37](https://github.com/mihazs/agent-harness-lab/issues/37). This is the
 first stage: the model, pairing and per-pair status. The [static viewer](#static-viewer-ahl-compare)
 renders it; nothing else calls this API by default.
@@ -19,6 +19,9 @@ The input is one JSON object with profile `ahl-side-by-side-experiment-v1`:
 | `trials` | Arm records: identity, `trial_id`, `arm`, `harness_hash`, `grader_hash`, `runtime_stratum`, `status`, `outcome`, optional `capture`, `usage` and `events` |
 | `event_mappings` | Optional explicit `baseline_event_id` to `candidate_event_id` links per pair identity |
 | `analysis` | Optional backend analysis, such as the `statistics.analyze` result, with a `status` |
+| `resource_decision` | Optional [`resource_decision.decide`](resource-decisions.md) result, shown as supplied |
+| `resource_success_cost` | Optional list of 1 to 64 [`resource_decision.success_cost`](resource-decisions.md#descriptive-cost-per-success) views |
+| `provenance` | Read only by an explicit [public export](#public-export): `source_kind`, `approved_publication`, `source_ref` and `derived_from_private` |
 
 A malformed profile, execution kind, hash, plan or analysis object refuses the
 whole input. Per-trial problems do not: they stay visible in the report.
@@ -34,7 +37,9 @@ pair gets one verdict:
   not graded (`ungraded_*`, for example an infrastructure error or cancellation).
   Missing data is never a failure.
 - `not_comparable` for unplanned pairs, duplicate arm records or trial IDs,
-  invalid records, and harness, grader or runtime mismatches. A lone arm is still
+  invalid records, harness, grader or runtime mismatches, and an experiment whose
+  baseline and candidate hashes are the same (`arms_identical`, one harness
+  against itself, see [vacuity labels](vacuity-labels.md)). A lone arm is still
   checked against the experiment's hashes. These pairs stay in the report for
   investigation, with every record, and are excluded from the comparable count
   and usage totals.
@@ -75,9 +80,33 @@ events per trial, truncated visibly with `events_total` and `events_truncated`;
 A supplied `analysis` is copied verbatim (`analysis_source: supplied_verbatim`)
 and never recomputed. The model sets `pooled_treatment_effect` to `null`,
 `causal_attribution` to `none`, `publication_allowed` to `false` and
-`automatic_promotion` to `false`. `public=True` is refused, and the public
-benchmark exporter rejects the report. Synthetic and replay runs carry
-`capability_claim: none`; a real-model run is `unverified`.
+`automatic_promotion` to `false`. `publication` is `private` unless the
+[public export](#public-export) was requested, and the benchmark exporter
+(`benchmark.public_export_allowed`) rejects the report either way, because it is
+not a benchmark record. Synthetic and replay runs carry `capability_claim: none`;
+a real-model run is `unverified`.
+
+## Resource decision and cost per success
+
+A supplied `resource_decision` and `resource_success_cost` list are validated, then copied into the
+report (`resource_source: supplied_verbatim`; `not_supplied` otherwise) and never recomputed. The
+page shows them after the measured usage: per endpoint its role, kind, unit, scope, horizon, practical
+margin, status, mean difference with lower and upper bound, method, independent roots, capped
+observations and unknown reasons, so censored and missing measurements stay visible as counts. An
+endpoint without a result shows `not computed`, never zero. The cost-per-success table lists, per arm,
+assigned trials and successes, the all-assigned mean (failures and timeouts included) beside the
+success-conditional mean and the cost per success. An arm with unknown rows shows `unknown`, and an
+arm with no success shows `undefined`, never zero.
+
+The whole input is refused, as for a malformed `analysis`, when a block is malformed or contradicts
+itself: a favorable decision (`improvement`, `noninferior` or their `conditional_` forms) whose
+`quality_status` is not `supported` or that has an unknown, regressed or imprecise required endpoint;
+an unknown endpoint that carries a mean or bound; `automatic_promotion` or `publication_allowed` set
+to `true`; a cost view marked gate-eligible or passing a gate; a zero-success arm with a cost per
+success; an unknown arm with a mean; or a ratio that does not match its status. The check enforces
+those invariants only; it does not authenticate the measurements or the quality status, and the
+caller-attested labels of the decision are shown as supplied. Not yet shown: total optimization spend
+and sample coverage beyond the per-endpoint roots and the pair counts above.
 
 ## Static viewer: `ahl compare`
 
@@ -89,7 +118,8 @@ This renders the model above as one offline page. `--experiment` is a regular
 JSON file (a symlink is refused, 16 MiB maximum). `--output` must not exist; it is
 created mode 0700 and holds `report.html` and `report.json`, both mode 0600. The
 input is never modified. There is no server, browser launch, network access or
-model call, and there is no public mode: the report stays private.
+model call. The report is private unless `--public` asks for the explicit export
+below.
 
 The page leads with the supplied backend analysis (status, reason and the full
 object, verbatim) and the planned, root, comparable and missing counts, so an
@@ -98,6 +128,17 @@ planned pair with no trial shown as `missing`, are text labels in a table; nothi
 is coloured by the direction of a point difference, and no decision is computed in
 the page. Each pair has a collapsible timeline with its alignment mode. Usage that
 is unknown is shown as `unknown`, never zero.
+
+When the supplied analysis already contains a `bayesian_decision` block (see the
+[Bayesian decision score](bayesian-decision-reference.md#wiring)), the page adds a
+"Bayesian decision score" section with its verdict, scores, gate stages, cross-check
+and resource state as text. It is copied from the analysis, never recomputed, labelled
+recommendation-only, and states that no peer-reviewed work applies the method to agent
+harness scoring. When the analysis also contains a `descriptive_report` (see the
+[descriptive report](bayesian-decision-reference.md#descriptive-report)), a "Descriptive report"
+section follows it with the Pareto relation, the epsilon-indicator and the desirability
+summary as text, labelled descriptive only and not a verdict; an unknown measurement shows
+as `unknown`, never zero. A page whose analysis has no block is unchanged.
 
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without
@@ -118,6 +159,43 @@ release archive and requires the same bytes as the golden page, only
 archive layouts of the full suite.
 
 Not yet covered: browser-driven keyboard and network-interception checks (this
-audit proves structure, not rendering or focus order in a browser), a
-public-export mode with negative tests, and the optimization, controller and
-review panels.
+audit proves structure, not rendering or focus order in a browser) and the
+optimization, controller and review panels.
+
+## Public export
+
+```sh
+ahl compare --experiment experiment.json --output NEW_DIRECTORY --public
+```
+
+`--public` is a separate, explicit mode, and `side_by_side.build(experiment, public=True)`
+is its model. It applies the same provenance rule as the
+[benchmark exporter](analysis.md#public-benchmark-report-input) (`benchmark.public_export_allowed`)
+to the experiment's `provenance` declaration: `source_kind` is `synthetic` or
+`public`, `approved_publication` is `true`, `derived_from_private` is `false`,
+`source_ref` is a short text without control characters, and nothing else is
+declared. The declaration is the caller's attestation, not something the tool
+can verify: hashed identifiers or redacted text do not turn private data into
+public data, so the declaration, not the content, decides.
+
+The whole input is refused, and no output directory is created, when:
+
+- the declaration is missing, malformed, private, not approved or possibly derived from private data;
+- any trial carries its own `provenance` that fails the same rule (a mixed input);
+- a supplied `analysis` is labelled private: it carries `publication: private`, or a
+  `publication_allowed` that is not `true` (an analysis without either label is accepted, as in
+  the benchmark exporter);
+- a `resource_decision` or `resource_success_cost` is supplied: the resource material is private
+  throughout [resource decisions](resource-decisions.md), so it is never exported.
+
+An export keeps every verdict, count and usage total of the private report. It drops
+each trial's events, so no event ID, name, status or error class reaches the page or
+`report.json`, reads no event mappings, and records only `events_total`, `invalid_events`
+and `events_omitted`. The timeline of every pair says `omitted`. `report.json` carries
+`publication: explicit_public_export` and a `public_export` block with the declaration,
+and the page leads with a public banner and the declaration.
+
+The tool publishes nothing: `publication_allowed` stays `false`, there is no upload, and the
+files are written as private (mode 0700 and 0600) like any other report. Moving them anywhere
+public is a separate decision by the caller. The export holds only what the declaration
+attests, so it is not a privacy review of the supplied `analysis`.

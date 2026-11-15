@@ -18,7 +18,7 @@ from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces,
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
-from agent_harness_lab.evaluation import manifest_contract
+from agent_harness_lab.evaluation import manifest_contract, vacuity
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -48,17 +48,22 @@ def write_json(path, value):
 
 
 def reject_history_overlap(args):
-    """Refuse before any lock, directory or scratch exists when a write destination touches the selected history."""
+    """Refuse before any lock, directory or scratch exists when a write destination touches the selected history
+    or the bank store a bound run declares. The declared path is a claim; validation still decides authority."""
     store, run = getattr(args, 'history_store', None), getattr(args, 'history_run', None)
     if (store is None) != (run is None):
         raise ValueError('--history-store and --history-run must be supplied together')
     if store is None: return
-    history = Path(store).resolve()
+    from .evaluation.oracle_history import HistoryStore
+    declared = HistoryStore(store).declared_bank_store(run)
+    protected = [Path(store).resolve(), *([declared.resolve()] if declared is not None else [])]
     output = None if getattr(args, 'output', None) is None else Path(args.output).resolve()
     state = state_root().resolve()
     for destination in (state / 'locks', state / 'runs' / identity(args.project), *([output] if output else [])):
-        if destination.is_relative_to(history) or history.is_relative_to(destination):
-            raise ValueError('analysis output and state must not overlap the selected history store')
+        if any(destination.is_relative_to(p) or p.is_relative_to(destination) for p in protected):
+            raise ValueError('analysis output and state must not overlap the selected history or its bank store')
+    if any(Path(tempfile.gettempdir()).resolve().is_relative_to(p) for p in protected):
+        raise ValueError('the temporary directory must not sit inside the selected history or its bank store')
 
 
 def output_dir(args, *, deadline=None):
@@ -127,8 +132,10 @@ def evidence(args, output, source_context=None, *, progress=None):
         reject_history_overlap(args)
         from .evaluation.oracle_history import HistoryStore
         progress('saved_history_analysis')
-        paired_history = dict(HistoryStore(args.history_store).analyze(args.history_run, read_only=True),
-            profile='ahl-analysis-execution-v1', publication_allowed=False)
+        from .private_journal import scratch_in
+        with scratch_in(output):  # validator scratch stays in the private output, never inside an input store
+            paired_history = dict(HistoryStore(args.history_store).analyze(args.history_run, read_only=True),
+                profile='ahl-analysis-execution-v1', publication_allowed=False)
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8', dir=output) as events, contextlib.ExitStack() as captures:
         selected, source_format, memory_summary = args.events, args.format, None
         source_identity = {}
@@ -142,6 +149,10 @@ def evidence(args, output, source_context=None, *, progress=None):
                 temporary.write(serialize(record)+'\n')
             temporary.flush()
             selected, source_format = temporary.name, 'normalized'
+        reuse = getattr(args, '_incremental', None)
+        if reuse is not None:  # a failure before the stage is verified and committed leaves a non-reusable diagnostic record
+            captures.push(lambda kind, error, trace: reuse.interrupted() if kind is not None else None)
+        started = time.monotonic()
         data = collect(args.project, events=selected, source_format=source_format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
@@ -151,7 +162,10 @@ def evidence(args, output, source_context=None, *, progress=None):
             sequence_length=getattr(args, 'sequence_length', None), progress=progress,
             since_ns=getattr(args, '_history_since_ns', None),
             history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None,
-            history_from=getattr(args, 'history_from', None), **source_identity)
+            history_from=getattr(args, 'history_from', None),
+            reused_process_mining=None if reuse is None else reuse.cached, **source_identity)
+        if reuse is not None:
+            args._reuse = reuse.finish(data, time.monotonic()-started)
         events.seek(0)
         store = {}
         # The scratch copy keeps every event for the brief; the retained store is bounded (or whole with --full-detail).
@@ -197,7 +211,12 @@ def analyze_project(args):
     from .telemetry.claude_cwd import from_sources
     from .sources.context import load
     context = load(getattr(args, 'source_cache', None), getattr(args, 'source_project_sha256', None), getattr(args, 'source_scope_sha256', None))
+    if getattr(args, 'incremental', False):  # decide reuse before any output exists; no import cost without the flag
+        from .memory.incremental import Incremental
+        args._incremental = Incremental(args)
     output = output_dir(args)
+    if getattr(args, '_incremental', None) is not None:
+        args._incremental.bind_output(output)
     data = evidence(args, output, source_context=context)
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']),
@@ -206,6 +225,7 @@ def analyze_project(args):
     if 'memory_source' in data: result['memory_source'] = data['memory_source']
     if data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     if (drift := from_sources(data.get('sources', []))) is not None: result['cwd_drift'] = drift
+    if getattr(args, '_reuse', None) is not None: result['reuse'] = args._reuse
     write_json(output / 'workflow.json', result)
     return result
 
@@ -625,7 +645,7 @@ def _improve(args):
         write_json(output/'workflow.json', result)
         return result
     static_convention_stage(args, data, progress)
-    from . import first_use
+    from . import first_use, preparation
     if first_use.blocked(data, args):
         # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
         # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
@@ -739,7 +759,7 @@ def _improve(args):
     elif data.get('capture_reasons'): result['capture_reasons'] = data['capture_reasons']
     protected = {}
     refinement_feedback = []
-    proposals = []
+    proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
     single_run = None
     final_attempt = None
     proposed = None
@@ -797,7 +817,7 @@ def _improve(args):
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
                 candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
-            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and its references/evaluation.md.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from the bounded, content-free brief {output / 'analysis-brief.json'}
 (coverage, methods run and not run, top mechanism summaries, weak-outcome signals, missing evidence),
@@ -810,6 +830,7 @@ previous attempts, global skills, model settings, permissions, hooks or credenti
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
+{preparation.guidance()}
 Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
 {instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
@@ -822,7 +843,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+            command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -842,18 +863,20 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             raise ValueError('Preparation changed a previous frozen evaluation')
         if runner.digest(baseline) != baseline_hash:
             raise ValueError('Preparation modified the baseline; nothing was applied')
-        if not proposal_path.is_file():
+        if access is None:
+            try: proposal = json.loads(proposal_path.read_text()) if proposal_path.is_file() else None
+            except ValueError: proposal = None  # malformed JSON is an unusable proposal, not an input error
+        if not isinstance(proposal, dict) or proposal.get('status') not in ('candidate', 'no_change'):
             result['status'] = 'invalid_proposal'
+            returned.append(None)
             break
-        if access is None:proposal = json.loads(proposal_path.read_text())
-        if not isinstance(proposal, dict):
-            raise ValueError('Proposal must be an object')
         check_configuration(args)
         current_harness = {str(path.relative_to(args.project)):file_state(path)
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
         proposals.append(proposal)
+        returned.append(proposal)
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(status='no_change',reason=brief.disposition(data))
@@ -861,8 +884,6 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result['next_steps'] = getattr(args,'_analysis_next_steps',[])
             first_use.attach(result, data, args, prepared=True)
             break
-        if proposal.get('status') != 'candidate':
-            raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
         # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
         instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
@@ -956,13 +977,14 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             made = []
             args._evaluation_repairs = made
             authoring_started = now()
+            box = stages.allotted('construction')  # each agent pass is stopped at the box; an overrun ends the run (no second pass: the client is closed)
             dropped = []; seen = access.ignored_digests() if access is not None else 0
             try:
                 if access is None:
                     manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped)
+                        prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True,repairs=made,ignored=dropped,box=box)
                 else:
-                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
+                    try: manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True,box=box)
                     finally: made[:] = access.repair_log(); dropped[:] = [access.ignored_digests() - seen]
             finally:
                 args._authored_digest_ignored += sum(dropped)
@@ -978,7 +1000,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
                 **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+            evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
@@ -1137,6 +1159,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.pop('instruction_removal',None)
             result.update(status='incomplete',reason='evaluation_manifest_changed')
             break
+        labels = vacuity.classify(manifest['tasks'], trials, baseline_sha256=baseline_hash, candidate_sha256=frozen_hash)
+        if labels: result['vacuity'] = vacuity.receipt(labels)  # recorded facts only; the gate below stops an evaluation that proves nothing
         if not legacy_coverage(manifest, trials):
             result.pop('instruction_removal',None)
             result['status'] = 'incomplete'
@@ -1155,6 +1179,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else before_after.bank_sha256(manifest, manifest_path.parent),
                 grader_sha256=grader_fingerprint(manifest_path, portable=True), seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
                 budget_share=dict(trials=len(manifest['tasks'])), runtime_sha256=runtime_sha256),
+            vacuity=labels,
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
@@ -1170,6 +1195,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if quiet is not None:  # no pass anywhere and both arms alike: another attempt would spend the budget to learn nothing
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
+            break
+        if labels:  # no improvement, pass or recommendation can come from an evaluation that proves nothing
+            result.pop('instruction_removal',None)
+            result.update(status='inconclusive',reason=vacuity.REASON)
             break
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
@@ -1242,7 +1271,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         try:
             result['decision']=single_run_decision(single_run['manifest'],single_run['trials'],
                 inputs_unchanged=single_run['inputs_unchanged'],prerequisites=result['implementation_prerequisites'],
-                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings)
+                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings,vacuity=single_run['vacuity'])
         except Exception as exc:  # An explanation failure never changes the run result.
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
@@ -1250,6 +1279,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         before_after.attach(result, output, dict(single_run, bindings=bindings))
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
+    if returned:
+        result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
+                                                  brief=getattr(args, '_analysis_brief', None))
+        with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
@@ -1257,7 +1290,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         changed = sorted(name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name))
         result['pre_edit_check'] = pre_edit_check(args.project, changed)
         result['evidence_strength'] = evidence_strength(**(dict(manifest=None, trials=None, inputs_unchanged=True) if single_run is None
-            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged')}),
+            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged', 'vacuity')}),
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis
@@ -1362,6 +1395,7 @@ def _run_improvement(args, *, parent_started=None):
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise
         from .evaluation.responses import InferenceError
+        from .evaluation.construction import ConstructionTimeout
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
@@ -1382,6 +1416,9 @@ def _run_improvement(args, *, parent_started=None):
         if isinstance(exc, typed_exit.TypedExit): result['reason'] = exc.reason
         if isinstance(exc, manifest_contract.ContractError):
             result.update(reason=exc.reason, contract_violation=exc.receipt())
+        if isinstance(exc, ConstructionTimeout):  # the controlled author overran its time box: the same typed stop as the cooperative path
+            timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
+            result.update(reason=timed_out.reason, contract_violation=timed_out.receipt())
         construction_receipt(result, args)
         from .scope import interrupted
         result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed

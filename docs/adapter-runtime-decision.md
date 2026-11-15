@@ -60,6 +60,12 @@ Both claims are documentation reads. None was exercised against a live runtime.
   must be a controller-owned relay from the hook to that worker, and the relay is
   not built or verified. The worker is exercised only directly, never through
   a hook.
+- Staging and rollback of an adapter version reuse the promotion journal
+  (`evaluation.adapter_deployment`): the candidate is reviewed against the
+  controller's authorized spec, only the two declared artifacts are owned, and a
+  rollback is a conflict, not an overwrite, after any later edit or deployment. It
+  is not connected to any command or hook, so no adapter is deployed or rolled out
+  automatically.
 - A required bridge stops the affected execution (`continue: false`) on any
   malformed, oversized, unauthorized, mismatched or conflicting event. An
   optional bridge may only fall back to identity, the policy is frozen before the

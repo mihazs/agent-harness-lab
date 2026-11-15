@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Link the two owned skills globally, keeping replaced directories as backups."""
+"""Link the owned skill globally, keeping replaced directories as backups."""
 import argparse
 from pathlib import Path
 import tempfile
@@ -9,14 +9,23 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_harness_lab.read_only import FrozenProjectError, require_writable
 
-NAMES = ('harness-evaluation', 'harness-self-improvement')
+NAMES = ('harness-self-improvement',)
+RETIRED = ('harness-evaluation',)  # folded into harness-self-improvement; stale owned links are removed
 
 
 def install(source, destination, backup_root):
     source, destination, backup_root = Path(source).resolve(), Path(destination), Path(backup_root)
     require_writable(destination)
     require_writable(backup_root)
-    pending = []
+    pending, stale = [], []
+    for name in RETIRED:
+        link = destination / name
+        if link.is_symlink():
+            target = link.resolve()
+            # Ours only when it points at the retired skill of this source or of an installer release.
+            if target.name == name and (target.parent == source or (
+                    target.parent.name == 'skills' and (target.parent.parent / '.release-sha256').is_file())):
+                stale.append(link)
     for name in NAMES:
         target, link = source / name, destination / name
         if not (target / 'SKILL.md').is_file():
@@ -28,7 +37,7 @@ def install(source, destination, backup_root):
         if link.exists() and not link.is_dir():
             raise ValueError(f'refusing to replace a non-directory: {link}')
         pending.append((target, link))
-    if not pending:
+    if not pending and not stale:
         return None
     require_writable(destination)
     destination.mkdir(parents=True, exist_ok=True)
@@ -38,16 +47,17 @@ def install(source, destination, backup_root):
     backup = Path(tempfile.mkdtemp(prefix='skills-', dir=backup_root))
     moved, installed = [], []
     try:
-        for target, link in pending:
-            if link.exists():
+        for target, link in [*pending, *((None, link) for link in stale)]:
+            if link.exists() or link.is_symlink():
                 saved = backup / link.name
                 require_writable(destination)
                 require_writable(backup_root)
                 link.rename(saved)
                 moved.append((saved, link))
-            require_writable(destination)
-            link.symlink_to(target, target_is_directory=True)
-            installed.append(link)
+            if target:
+                require_writable(destination)
+                link.symlink_to(target, target_is_directory=True)
+                installed.append(link)
     except BaseException:
         try:
             for link in reversed(installed):
@@ -65,7 +75,7 @@ def install(source, destination, backup_root):
 
 def main(argv=None, source=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='Creates links for harness-evaluation and harness-self-improvement; replaces existing directories only after backup.\n'
+        epilog='Creates the harness-self-improvement link and removes a stale harness-evaluation link it owns; replaces existing directories only after backup.\n'
         'Foreign symlinks and non-directories are refused; already-current links are unchanged.\n'
         'Prints a text receipt or backup location; does not run agents or install dependencies.\n'
         'Run this project\'s harness-self-improvement once with: ahl skills invoke [PROJECT]; PROJECT defaults to the\n'
