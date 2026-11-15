@@ -38,6 +38,7 @@ reader purpose.
 - [Before/after guard](before-after-guard.md): the paired verdict, the frozen-inputs identity of both arms and the investigation record of a regressed candidate.
 - [Incremental runs](incremental-runs.md): what a second `ahl improve` reads from the first: applied, ignored, regressed or edited candidates, historical beside fresh scores, and the finished regression it does not repeat.
 - [Stage budgets and early stops](budget-stages.md): the construction time box, feasibility check, uninformative stop, refinement reuse and per-stage receipt.
+- [First-use stress matrix](stress-matrix.md): the injected runtime, history, harness-file, concurrency, interruption and budget failures and the typed end state each must reach.
 - [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
 - [Private memory store](memory-store.md): create, verify, rebuild and clean the opt-in evidence store.

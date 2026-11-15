@@ -25,7 +25,8 @@ def resume(args):
         raise ValueError('resume requires a private run ID')
     output=state_root()/'runs'/identity(args.project)/args.resume
     with project_lock(args.project):
-        descriptor=open_directory_nofollow(output)
+        try: descriptor=open_directory_nofollow(output)
+        except FileNotFoundError: raise ValueError('no run with that ID was recorded for this project') from None
         try:
             info=os.fstat(descriptor)
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:

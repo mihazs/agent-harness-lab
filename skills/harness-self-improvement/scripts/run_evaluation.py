@@ -68,7 +68,7 @@ def execute(argv, cwd, timeout, stdin=None,*,env=None):
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, start_new_session=True,**({} if env is None else dict(env=env)))
+                                   text=True, errors='replace', start_new_session=True,**({} if env is None else dict(env=env)))
         try:
             out, err = process.communicate(stdin, timeout=timeout)
             return dict(exit_code=process.returncode, stdout=out, stderr=err,

@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-A refinement attempt of a controlled (Responses) run on the direct construction route now reuses the frozen development and regression tasks, their grader bundles and controls, and asks the evaluation author for fresh held-out tasks only, instead of rebuilding the whole evaluation. The controller copies the frozen parts beside the fresh tasks, checks every copied byte against the digest taken when the first attempt froze it, and validates and freezes the merged evaluation again before any trial, so the freeze-before-trial rule and the fresh held-out rule are unchanged. A refinement author that writes a task that is not held out, repeats a reused id or writes a file at a reserved path gets the existing single repair pass, then a typed `evaluation_manifest_field_invalid` defect. The receipt records `evaluation_reuse` as on the cooperative path. The evaluation-store route (custody-sealed outputs) still rebuilds the whole evaluation on refinement, and a pinned task bank never refines, so it has nothing to reuse. Part of #739.
