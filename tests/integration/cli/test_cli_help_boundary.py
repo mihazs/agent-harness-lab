@@ -42,7 +42,7 @@ EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude'
 OPTIONS = {
     'improve': (*COMMON, '--history-from', '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--memory-store', '--incremental', '--explain-reuse', '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
                 '--resume', '--construction-fraction', '--regression-margin', '--repair-contracts', '--scope', '--remember-runtime',
-                '--accept-score', '--max-rounds', '--plateau-rounds', '--on-regression'),
+                '--accept-score', '--max-rounds', '--plateau-rounds', '--on-regression', '--single-pass'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',

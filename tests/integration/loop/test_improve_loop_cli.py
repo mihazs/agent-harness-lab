@@ -193,11 +193,12 @@ def test_a_loop_declaration_without_a_pinned_bank_is_blocked_with_one_step_and_n
     assert (project.project/'AGENTS.md').read_text().startswith(li.NOTHING)
 
 
-def test_without_a_loop_flag_or_declaration_the_single_pass_is_unchanged(stack, monkeypatch):
+def test_with_single_pass_the_previous_single_pass_is_unchanged_and_says_the_loop_was_not_used(stack, monkeypatch):
     baseline = 'solves=responses'  # the single pass recommends only when the baseline holds its calibration control and fails a development task
     project = li.LoopProject(stack, monkeypatch, baseline=baseline, script={0: dict(harness=li.EVERYTHING)})
-    code, found, _ = project.invoke()
-    assert 'loop' not in found and (code, found['status']) == (3, 'inconclusive') and found['recommendation'] == 'candidate_requires_independent_certification'
+    code, found, _ = project.invoke('--single-pass')
+    assert found['loop']['status'] == 'not_used' and 'stop_criterion' not in found['loop'] and (code, found['status']) == (3, 'inconclusive')
+    assert found['recommendation'] == 'candidate_requires_independent_certification'
     assert (project.project/'AGENTS.md').read_text() == baseline + '\n' and 'loop_' not in json.dumps(found.get('reason'))
 
 

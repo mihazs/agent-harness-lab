@@ -151,7 +151,7 @@ def blocked(args, output, reason, **extra):
     from agent_harness_lab import workflow
     from agent_harness_lab.exit_guidance import REMEDIATION
     result = dict(status='blocked', reason=reason, output=str(output), changed_files=[], remediation=REMEDIATION[reason], automatic_promotion=False,
-                  loop=dict(profile=receipt.PROFILE, status='not_started', reason=reason, recommendation_only=True, automatic_promotion=False, certification='unverified'), **extra)
+                  loop=entry.not_started(reason), **extra)
     workflow.construction_receipt(result, args)
     workflow.write_json(output/'workflow.json', result)
     return result
