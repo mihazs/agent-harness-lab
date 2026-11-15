@@ -219,7 +219,7 @@ def test_the_skill_text_lists_every_scope_cue_and_flag_the_table_relies_on():
         assert cue in text, cue
     for flag in ('--scope global --agent', '--scope project+global --agent', '--repair-contracts', '[--scope scope]'):
         assert flag in text, flag
-    assert 'never guess toward global' in text and 'omit `--scope`' in (SKILL / 'SKILL.md').read_text()
+    assert 'never guess toward global' in text and '--scope project`' in (SKILL / 'SKILL.md').read_text()
 
 
 def test_every_scope_the_skill_names_is_accepted_by_the_command_it_runs():
@@ -240,3 +240,34 @@ def test_the_manual_fallback_is_closed_once_the_cli_path_exists():
     assert 'never edit a global file by hand instead of its `--scope` path' in ' '.join(skill.split())
     assert 'unavailable before any attempt' in skill
     assert 'Automated global scope is limited' not in (SKILL / 'references/invocation.md').read_text()
+
+
+# A command line without --scope takes whatever default the command resolves, so the scope the skill maps from the
+# user's words must always be written out, `project` included: the command line then states what the user asked for.
+def mapping_lines(path, marker):
+    return [line for line in (ROOT / path).read_text().splitlines() if line.lstrip('-| ').lower().startswith(marker)]
+
+
+@pytest.mark.parametrize(('path', 'marker'), [
+    ('skills/harness-self-improvement/SKILL.md', 'no scope word'),
+    ('skills/harness-self-improvement/references/invocation.md', 'nothing about scope'),
+    ('docs/improve-scope.md', 'nothing about scope'),
+], ids=['skill-entrypoint', 'invocation-table', 'how-to-table'])
+def test_a_request_with_no_scope_word_maps_to_an_explicit_project_scope(path, marker):
+    (line,) = mapping_lines(path, marker)
+    assert '--scope project`' in line
+    assert 'omit' not in line.lower() and 'no `--scope`' not in line
+
+
+def test_the_standalone_project_command_names_the_project_scope():
+    reference = (SKILL / 'references/invocation.md').read_text()
+    block = reference.split('## Standalone project invocation', 1)[1].split('```', 2)[1]
+    assert block.split() == ['sh', 'ahl', 'skills', 'invoke', '.', '--scope', 'project']
+
+
+def test_every_command_the_skill_maps_a_request_to_carries_a_scope():
+    table = (SKILL / 'references/invocation.md').read_text().split('| The user says | Run |', 1)[1].split('\n\n', 1)[0]
+    rows = [row.split('|')[1:3] for row in table.splitlines()[2:]]
+    assert len(rows) == 4
+    for request, run in rows:
+        assert re.search(r'`--scope (project|global|project\+global)\b', run) or 'question' in run, request
