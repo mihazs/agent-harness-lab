@@ -227,6 +227,32 @@ def test_classify_is_valid_only_for_a_scored_sound_evaluation_without_a_vacuity_
     assert controller.classify(evaluation) == verdict
 
 
+MALFORMED_VACUITY = [
+    pytest.param(['zero_trials'], id='list-of-a-listed-label'),
+    pytest.param([], id='empty-list'),
+    pytest.param({}, id='empty-dict'),
+    pytest.param({'zero_trials'}, id='set-of-a-listed-label'),
+    pytest.param(('zero_trials',), id='tuple-of-a-listed-label'),
+    pytest.param(7, id='number'),
+    pytest.param('', id='empty-text'),
+]
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+def test_classify_calls_a_vacuity_value_that_is_not_one_label_incomplete_and_does_not_raise(malformed):
+    assert controller.classify(score(0.9, vacuity=malformed)) == 'incomplete'
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+@pytest.mark.parametrize('where', ['baseline', 'candidate'])
+def test_a_run_with_a_malformed_vacuity_value_stops_as_evidence_insufficient_with_a_stop_event(tmp_path, where, malformed):
+    bad = score(0.95, vacuity=malformed)
+    result, ledger, ports = go(build('malformed-vacuity', [bad] if where == 'baseline' else [0.5, bad]), tmp_path)
+    assert (result['outcome'], result['stop'], result['best']['snapshot']) == ('inconclusive', 'evidence_insufficient', ports.baseline)
+    assert values(ledger, 'stopped') == ['evidence_insufficient'] and kinds(ledger)[-1] == 'stopped'
+    assert not {'accepted', 'improved'} & set(values(ledger, 'decided'))
+
+
 @pytest.mark.parametrize('label', vacuity.LABELS)
 def test_every_label_of_the_shared_closed_set_is_vacuous_for_the_loop(label):
     assert controller.classify(score(0.9, vacuity=label)) == 'vacuous'

@@ -95,7 +95,7 @@ def _sound(e):
 
 def classify(evaluation):
     """valid only for a scored evaluation with a sound interval and no vacuity label; a vacuity label is vacuous, any other doubt is incomplete."""
-    if evaluation.vacuity in vacuity.LABEL_SET: return 'vacuous'
+    if isinstance(evaluation.vacuity, str) and evaluation.vacuity in vacuity.LABEL_SET: return 'vacuous'  # a list or dict from the port is unhashable
     return 'valid' if evaluation.evidence == 'scored' and evaluation.vacuity is None and _sound(evaluation) else 'incomplete'
 
 
