@@ -1,5 +1,5 @@
 {
-  "path": ["agent_harness_lab", "tools", "scripts", "skills/harness-evaluation/scripts", "install.py"],
+  "path": ["agent_harness_lab", "tools", "scripts", "skills/harness-self-improvement/scripts", "install.py"],
   "format": ["python"],
   "minLines": 5,
   "minTokens": 50,

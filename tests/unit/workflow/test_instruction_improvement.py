@@ -446,6 +446,45 @@ def test_an_oversized_project_blocks_validation_with_the_typed_reason_and_the_la
     assert (other['reasons'], 'inventory_remedy' in other) == (['project_inventory_blocked'], False)
 
 
+def _link_outside(ws, tree, name):
+    """Replace name in a staged tree with a symlink to a synthetic target outside every tree."""
+    outside = ws.root / 'outside'; outside.mkdir(exist_ok=True)
+    (outside / 'guidance.md').write_text('Synthetic outside guidance.\n')
+    link = getattr(ws, tree) / name
+    link.unlink(missing_ok=True)
+    link.symlink_to(outside if name == 'extra' else outside / 'guidance.md', target_is_directory=name == 'extra')
+
+
+SYMLINKS = pytest.mark.parametrize('tree, name', [
+    ('candidate', 'src/CLAUDE.md'), ('baseline', 'src/CLAUDE.md'), ('candidate', 'extra'), ('baseline', 'extra')],
+    ids=['candidate-file', 'baseline-file', 'candidate-directory', 'baseline-directory'])
+
+
+@SYMLINKS
+def test_a_symlink_in_a_staged_tree_blocks_validation_instead_of_raising(ws, tree, name):
+    _link_outside(ws, tree, name)
+    document = ws.validate()
+    assert (document['status'], document['reasons'], document['scope']) == ('blocked', ['symlink_in_staged_tree'], None)
+    assert (document['observed_loading'], document['effective']) == ('unknown', 'unknown')
+
+
+def test_a_symlink_that_appears_in_the_evaluated_candidate_invalidates_the_validation(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    plan = ws.plan()
+    document = iv.bind(ws.validate(plan), plan, IN_SRC, cwd_honored=True)
+    assert iv.current(document, plan, ws.baseline, ws.candidate, project=ws.project) == []
+    _link_outside(ws, 'candidate', 'src/CLAUDE.md')
+    assert 'candidate_changed' in iv.current(document, plan, ws.baseline, ws.candidate, project=ws.project)
+
+
+@SYMLINKS
+def test_the_workflow_candidate_inventory_refuses_a_symlink_before_validation(ws, tree, name):
+    from agent_harness_lab.workflow import candidate_states
+    _link_outside(ws, tree, name)
+    with pytest.raises(ValueError, match='Candidate contains a symlink'):
+        candidate_states(getattr(ws, tree), {})
+
+
 def test_validation_leaves_inputs_graders_and_heldout_untouched(ws):
     evaluation = ws.root / 'evaluation'
     ws.write(evaluation, 'heldout/original', 'synthetic held-out input')

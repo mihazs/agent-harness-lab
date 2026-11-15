@@ -7,14 +7,15 @@ from tests.integration.sources.test_source_commit_join import (
 from agent_harness_lab.sources.schema import digest
 
 
-class TestCommitJoinLinkStudy(CommitJoinFixture):
-    def test_real_resolver_has_no_false_links_on_adjudicated_controls(self):
+class AdjudicatedControls(CommitJoinFixture):
+    def controls(self):
+        """Run the seven adjudicated controls through the real resolver: name -> (truth, join result, git source, hub source)."""
         self.capture(self.hub, hub_repository(self.hub, 42), hub_commit(self.hub, 42, SHA))
         fork = self.hub_source(43)
         self.capture(fork, hub_repository(fork, 43), hub_commit(fork, 43, SHA))
         outcomes = {}
-        def case(name, truth, git, **kw):
-            outcomes[name] = (truth, self.join(git=git, **kw)['status'])
+        def case(name, truth, git, hub=None, **kw):
+            outcomes[name] = (truth, self.join(git=git, hub=hub, **kw), git, hub or self.hub)
         good = self.git_source(42, 'good'); self.capture(good, git_commit(good, SHA))
         case('exact', 'link', good)
         case('fork_repository', 'no_link', good, hub=fork, repository_id=43)
@@ -28,7 +29,13 @@ class TestCommitJoinLinkStudy(CommitJoinFixture):
         self.capture(reference, record(reference, 'git_object_reference', ('git_object_reference', digest(SHA))))
         case('reference_only', 'ambiguous', reference)
         case('missing_repository_identity', 'ambiguous', good, repository_id=None)
-        result = score([dict(case_id=k, truth=t, status=s) for k, (t, s) in outcomes.items()])
+        return outcomes
+
+
+class TestCommitJoinLinkStudy(AdjudicatedControls):
+    def test_real_resolver_has_no_false_links_on_adjudicated_controls(self):
+        outcomes = self.controls()
+        result = score([dict(case_id=k, truth=t, status=r['status']) for k, (t, r, _, _) in outcomes.items()])
         assert result['counts'] == dict(tp=1, fp=0, fn=0, tn=6, ambiguous_promoted=0, ambiguous_held=2, truth_links=1, truth_non_links=6)
         assert (result['precision']['value'], result['false_link_rate']['value']) == (1.0, 0.0)
         assert result['false_link_rate']['wilson95'][1] > 0.3  # seven controls cannot certify a zero rate

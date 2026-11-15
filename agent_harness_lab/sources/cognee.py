@@ -61,6 +61,11 @@ GENERATED = ('graph_completion', 'rag_completion', 'triplet_completion', 'natura
 CODE_NODES = ('ApiEndpoint', 'CodeAssociation', 'CodeExtractionAccount', 'CodeInsight', 'CodeIntent', 'CodeLintFinding',
               'CodeModule', 'CodeService', 'CodeSymbol', 'CodeTestReference', 'CodeFileReference', 'CodeFlow',
               'ExternalDependency', 'StorageResource')
+# EvidenceReference.kind at the pin (cognee/modules/search/models/EvidenceReference.py), with the fields that name a node an
+# export can carry. A graph edge's own artifact_id is a generated edge object ID that no export holds, so only its endpoints join;
+# `triplet` is declared but no builder emits it, so it is skipped like any unknown kind.
+EVIDENCE_IDS = dict(segment=('artifact_id', 'chunk_id', 'data_id'), graph_node=('artifact_id',), graph_edge=('source_node_id', 'target_node_id'))
+EVIDENCE_ROLES = ('used_as_context', 'supports_assertion')
 SELECTION = {'schema_version', 'cognee_version', 'instance', 'dataset', 'dataset_id', 'format', 'export'}
 
 
@@ -127,6 +132,7 @@ class RecallClaim(Contract):
     original_at: str | None = None
     graph_node_refs: tuple = ()
     code_node_type: str | None = None
+    supporting_node_refs: tuple = ()
     independent_case: bool = False
     factually_verified: bool = False
     task_outcome_verified: bool = False
@@ -140,8 +146,9 @@ class RecallClaim(Contract):
             'session_status': ('declared', 'unknown', 'not_applicable'), 'graph_refs_status': ('named', 'none', 'not_applicable'),
             'score_semantics': ('none', 'unspecified', 'vector_distance_lower_is_better'), 'timestamp_status': TIMESTAMPS})
         fingerprint(self.body_sha256)
-        for value in (self.session_sha256, *self.graph_node_refs):
+        for value in (self.session_sha256, *self.graph_node_refs, *self.supporting_node_refs):
             if value is not None: fingerprint(value)
+        if not set(self.supporting_node_refs) <= set(self.graph_node_refs): raise ValueError('supporting references must be graph references')
         if self.search_type is not None: label(self.search_type)
         if self.code_node_type is not None and (self.claim_type != 'recall_code' or self.code_node_type not in CODE_NODES):
             raise ValueError('only a code result names a code-graph node type')
@@ -434,6 +441,30 @@ def parse(value, selection, bounds):
     return tuple(claims), summary
 
 
+def evidence_ids(references, declared, bounds, warnings):
+    """Node IDs a saved result's evidence references name, and those with the supports_assertion role; candidate joins only."""
+    if references is None: return [], []
+    if not isinstance(references, list): raise ValueError('Cognee evidence must be a list')
+    if len(references) > bounds['max_fields']: raise HostileReport('Cognee field bound exceeded')
+    named, supporting = [], []
+    for reference in references:
+        if not isinstance(reference, dict): raise ValueError('Cognee evidence references must be objects')
+        if len(reference) > bounds['max_fields']: raise HostileReport('Cognee field bound exceeded')
+        kind, role = reference.get('kind'), reference.get('role', 'used_as_context')
+        fields = EVIDENCE_IDS.get(kind) if isinstance(kind, str) else None
+        if fields is None or role not in EVIDENCE_ROLES: warnings.add('evidence_reference_unrecognized'); continue
+        if reference.get('dataset_id') is not None and reference['dataset_id'] != declared:
+            raise ValueError('Cognee evidence belongs to an undeclared dataset')
+        if not text(reference.get('artifact_id')): raise ValueError('Cognee evidence needs a non-empty artifact_id')
+        ids = [i for i in (reference.get(name) for name in fields) if i is not None]
+        if any(not isinstance(i, str) or not i for i in ids): raise ValueError('Cognee evidence IDs must be non-empty strings')
+        if kind == 'segment' and reference.get('chunk_id') not in (None, reference['artifact_id']):
+            raise ValueError('Cognee segment evidence names two chunks')
+        named += ids
+        if role == 'supports_assertion': supporting += ids
+    return named, supporting
+
+
 def parse_recall(value, selection, bounds):
     """Map a saved recall() result list to claims; the file's own entries are the only inputs, nothing is re-run."""
     if not isinstance(value, list): raise ValueError('Cognee recall results must be a list')
@@ -471,7 +502,7 @@ def parse_recall(value, selection, bounds):
         semantics = 'none' if score is None else 'vector_distance_lower_is_better' if source == 'skills' else 'unspecified'
         scoped_session = source in ('session', 'trace', 'session_context')
         if scoped_session and session is None: warnings.add('session_id_missing')
-        refs, refs_status, code_type = (), 'not_applicable', None
+        refs, refs_status, code_type, supporting = (), 'not_applicable', None, ()
         if source == 'session':
             used = entry.get('used_graph_element_ids') or {}
             ids = used.get('node_ids', []) if isinstance(used, dict) else None
@@ -483,8 +514,7 @@ def parse_recall(value, selection, bounds):
             if not refs: warnings.add('session_entry_without_graph_refs')
         elif source in ('graph', 'code'):
             # SearchResultItem.metadata names the ingested Data (the Document node) and the chunk; a code fact's own `id` is
-            # its code-graph node, trusted only with a code-graph `type`. Evidence references are not read: their artifact
-            # IDs are not typed at the pin.
+            # its code-graph node, trusted only with a code-graph `type`. Evidence references are typed by their `kind`.
             meta, raw = entry.get('metadata') or {}, entry.get('raw') or {}
             if not isinstance(meta, dict) or not isinstance(raw, dict): raise ValueError('Cognee result metadata and raw must be objects')
             ids = [meta.get('data_id'), meta.get('chunk_id')]
@@ -493,14 +523,16 @@ def parse_recall(value, selection, bounds):
                 elif raw.get('id') is not None: warnings.add('code_fact_type_unrecognized')
             ids = [i for i in ids if i is not None]
             if any(not isinstance(i, str) or not i for i in ids): raise ValueError('Cognee result provenance IDs must be non-empty strings')
-            refs = tuple(dict.fromkeys(scoped('node', i, 0) for i in ids))
+            named, support = evidence_ids(meta.get('evidence'), declared, bounds, warnings)
+            refs = tuple(dict.fromkeys(scoped('node', i, 0) for i in ids + named))
+            supporting = tuple(dict.fromkeys(scoped('node', i, 0) for i in support))
             refs_status = 'named' if refs else 'none'
             if not refs and derivation == 'retrieved_item': warnings.add('result_without_provenance_refs')
         original, stamped = instant(entry.get('time'), None) if source == 'session' else (None, 'not_modelled')
         if source == 'session' and stamped != 'native': warnings.add(stamped+'_timestamp')
         claims.append(RecallClaim('recall_'+source, scoped('recall', session, source, identity, occurrence), occurrence, derivation,
             scoped('dataset'), body, dataset, 'declared' if scoped_session and session else 'unknown' if scoped_session else 'not_applicable',
-            refs_status, semantics, stamped, session if scoped_session and session else None, search, score, original, refs, code_type))
+            refs_status, semantics, stamped, session if scoped_session and session else None, search, score, original, refs, code_type, supporting))
     counts = Counter(c.claim_type for c in claims)
     summary = dict(schema_version=1, profile=PROFILE, cognee_version=selection['cognee_version'],
         upstream_commit=PINNED[selection['cognee_version']], export_format='recall_results', version_attestation='caller_declared',

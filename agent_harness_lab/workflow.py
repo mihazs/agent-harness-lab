@@ -18,7 +18,7 @@ from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces,
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
-from agent_harness_lab.evaluation import manifest_contract
+from agent_harness_lab.evaluation import manifest_contract, vacuity
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -819,7 +819,7 @@ def _improve(args):
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
                 candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
-            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and its references/evaluation.md.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from the bounded, content-free brief {output / 'analysis-brief.json'}
 (coverage, methods run and not run, top mechanism summaries, weak-outcome signals, missing evidence),
@@ -845,7 +845,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+            command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1007,7 +1007,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
                 invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
                 **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+            evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
@@ -1166,6 +1166,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.pop('instruction_removal',None)
             result.update(status='incomplete',reason='evaluation_manifest_changed')
             break
+        labels = vacuity.classify(manifest['tasks'], trials, baseline_sha256=baseline_hash, candidate_sha256=frozen_hash)
+        if labels: result['vacuity'] = vacuity.receipt(labels)  # recorded facts only; the gate below stops an evaluation that proves nothing
         if not legacy_coverage(manifest, trials):
             result.pop('instruction_removal',None)
             result['status'] = 'incomplete'
@@ -1181,6 +1183,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
         from .evaluation import before_after
         single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            vacuity=labels,
             frozen=dict(bank_sha256=args.project_settings['bank']['sha256'] if bank is not None else before_after.bank_sha256(manifest, manifest_path.parent),
                 grader_sha256=grader_fingerprint(manifest_path, portable=True), seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
                 budget_share=dict(trials=len(manifest['tasks'])), runtime_sha256=runtime_sha256),
@@ -1199,6 +1202,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if quiet is not None:  # no pass anywhere and both arms alike: another attempt would spend the budget to learn nothing
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
+            break
+        if labels:  # no improvement, pass or recommendation can come from an evaluation that proves nothing
+            result.pop('instruction_removal',None)
+            result.update(status='inconclusive',reason=vacuity.REASON)
             break
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
@@ -1271,7 +1278,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         try:
             result['decision']=single_run_decision(single_run['manifest'],single_run['trials'],
                 inputs_unchanged=single_run['inputs_unchanged'],prerequisites=result['implementation_prerequisites'],
-                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings)
+                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings,vacuity=single_run['vacuity'])
         except Exception as exc:  # An explanation failure never changes the run result.
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
@@ -1291,7 +1298,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         changed = sorted(name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name))
         result['pre_edit_check'] = pre_edit_check(args.project, changed)
         result['evidence_strength'] = evidence_strength(**(dict(manifest=None, trials=None, inputs_unchanged=True) if single_run is None
-            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged')}),
+            else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged', 'vacuity')}),
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis

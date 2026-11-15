@@ -6,9 +6,11 @@
 objects are authoritative; a SQLite index is derived from them and can always be
 rebuilt. This slice provides the store, its integrity checks and its maintenance
 commands. Only [`ahl analyze --incremental`](incremental-analysis.md) populates it so far,
-with stage records the [reuse planner](stage-reuse-planner.md) reads back. The store never
-modifies a `HistoryStore`: a row here is never proof that an original store was updated. The
-separate `history` command only reads selected stores.
+with stage records the [reuse planner](stage-reuse-planner.md) reads back, through the
+library module `agent_harness_lab.memory.commit` that also stores diagnostic events and reuse
+receipts (see [committing to the store](stage-reuse-planner.md#committing-to-the-store)).
+The store never modifies a `HistoryStore`: a row here is never proof that an original store
+was updated. The separate `history` command only reads selected stores.
 
 ## Create and check a store
 
@@ -90,6 +92,7 @@ store.json                      schema, store identity, format version; no secre
 index.sqlite                    derived index (WAL, synchronous=FULL)
 objects/sha256/ab/<digest>      immutable, mode 0400, single link
 locks/writer.lock               owner-only advisory lock
+locks/project-XX.lock           owner-only advisory lock per project (XX = 00 to ff), created on first stage commit
 ```
 
 **Durability.** An artifact and its manifest are each written to a temp file in the same
@@ -130,7 +133,9 @@ index, so a lost index cannot cause data loss. It refuses `--apply` while `verif
 report any problem, because a damaged manifest hides what it references. Retention leases
 arrive with a later slice.
 
-**Concurrency.** One writer at a time (advisory lock), SQLite WAL, a busy timeout, readers
+**Concurrency.** One writer at a time (advisory lock; stage commits first take one of the 256
+`locks/project-XX.lock` files, chosen by hashing the project id, so committers of one project
+are serialized and two projects may share a file), SQLite WAL, a busy timeout, readers
 that run inside one deferred transaction and therefore see a single consistent snapshot, and
 an online-backup method for the index. Objects are immutable and can be copied at any time.
 `verify` takes no lock, so run it while no publication is in progress.

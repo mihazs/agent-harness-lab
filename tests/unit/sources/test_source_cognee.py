@@ -84,6 +84,22 @@ CODE = dict(source='code', kind='code', search_type='CODE', text='invented symbo
             raw=dict(id=SYMBOL, kind='symbol', type='CodeSymbol', name='invented_fn', file='/invented/path/'+SECRET, line=3))
 CITED = dict(HIT, metadata=dict(data_id=DOC, chunk_id=CHUNK, chunk_index=0, document_name='invented.txt'))
 SKILL = dict(source='skills', text='invented: skill', skill=dict(name='invented'), score=0.2)
+# EvidenceReference.model_dump(mode="json") at the pin: snake_case keys, every optional field present.
+EVIDENCE_FIELDS = dict(source_ref_key=None, data_id=None, chunk_id=None, chunk_index=None, document_name=None, source_node_id=None,
+                       target_node_id=None, relationship_name=None, assertion_id=None, label=None, rank=0, score=None)
+
+
+def evidence(kind, artifact_id, role='used_as_context', **fields):
+    return dict(EVIDENCE_FIELDS, kind=kind, artifact_id=artifact_id, role=role, dataset_id=DATASET_A, **fields)
+
+
+SEGMENT = evidence('segment', CHUNK, data_id=DOC, chunk_id=CHUNK, chunk_index=0, document_name='invented.txt')
+NODE = evidence('graph_node', ALICE, label='Invented Alice')
+EDGE = evidence('graph_edge', 'edge-1', source_node_id=ALICE, target_node_id=ACME, relationship_name='works_at')
+
+
+def node_hash(identity, dataset_id=DATASET_A):
+    return digest(['cognee', 'fixture-instance', 'dataset-a', dataset_id, 'node', identity, 0])
 
 
 def graph_hash(claims, detail):
@@ -420,6 +436,91 @@ class TestCogneeSource:
         for change in (dict(code_node_type='Mystery'), dict(claim_type='recall_graph', code_node_type='CodeSymbol')):
             with pytest.raises(ValueError): cognee.RecallClaim(**dict(claim.to_dict(), **change))
         with pytest.raises(ValueError): cognee.RecallClaim(**dict(claim.to_dict(), graph_refs_status='named'))
+
+    def test_evidence_references_link_the_nodes_they_name_to_graph_claims_by_kind(self):
+        self.read()
+        graph = {c.native_id_sha256 for c in self.connector.claims}
+        self.read_recall(recall(dict(ANSWER, metadata=dict(evidence=[SEGMENT, NODE, EDGE]))))
+        claim, = self.connector.claims
+        # A chunk names itself and its Data, a node its ID and an edge only its endpoints: the edge's own generated ID is in no export.
+        linked = {node_hash(i) for i in (CHUNK, DOC, ALICE, ACME)}
+        assert linked <= graph and set(claim.graph_node_refs) == linked and claim.graph_refs_status == 'named'
+        assert node_hash('edge-1') not in claim.graph_node_refs
+        assert (claim.derivation, claim.supporting_node_refs) == ('generated_answer', ())
+        assert SECRET not in json.dumps(claim.to_dict()) and 'Invented' not in json.dumps(claim.to_dict())
+        # The same evidence under another dataset ID names other nodes.
+        self.read_recall(recall(dict(ANSWER, dataset_id=DATASET_B, metadata=dict(evidence=[dict(NODE, dataset_id=DATASET_B)]))),
+                         dataset_id=DATASET_B)
+        assert set(self.connector.claims[0].graph_node_refs) == {node_hash(ALICE, DATASET_B)}
+
+    def test_assertion_support_is_kept_apart_from_context_use_and_never_proves_the_claim(self):
+        supported = evidence('segment', CHUNK, 'supports_assertion', data_id=DOC, chunk_id=CHUNK, assertion_id='edge-1')
+        self.read_recall(recall(dict(ANSWER, metadata=dict(evidence=[NODE, supported]))))
+        claim, = self.connector.claims
+        assert set(claim.graph_node_refs) == {node_hash(i) for i in (ALICE, CHUNK, DOC)}
+        assert set(claim.supporting_node_refs) == {node_hash(CHUNK), node_hash(DOC)}
+        assert (claim.factually_verified, claim.independent_case, claim.task_outcome_verified) == (False,)*3
+        assert node_hash('edge-1') not in claim.graph_node_refs + claim.supporting_node_refs
+
+    def test_evidence_is_also_read_for_code_results_and_joined_with_their_metadata_ids(self):
+        self.read_recall(recall(dict(CODE, metadata=dict(chunk_id=CHUNK, evidence=[SEGMENT]))))
+        claim, = self.connector.claims
+        assert set(claim.graph_node_refs) == {node_hash(i) for i in (CHUNK, DOC, SYMBOL)} and len(claim.graph_node_refs) == 3
+
+    @pytest.mark.parametrize('references', [
+        pytest.param([evidence('triplet', 't-1')], id='declared_kind_no_builder_at_pin'),
+        pytest.param([evidence('mystery', 'x-1')], id='unknown_kind'),
+        pytest.param([evidence('graph_node', ALICE, 'mystery')], id='unknown_role'),
+        pytest.param([dict(NODE, kind=['graph_node'])], id='unhashable_kind'),
+        pytest.param([dict(NODE, role=None)], id='null_role')])
+    def test_evidence_of_an_unrecognized_kind_or_role_is_skipped_and_counted(self, references):
+        self.read_recall(recall(dict(HIT, metadata=dict(evidence=references))))
+        claim, = self.connector.claims
+        assert (claim.graph_node_refs, claim.graph_refs_status) == ((), 'none')
+        assert {'evidence_reference_unrecognized', 'result_without_provenance_refs'} <= set(self.connector.summary['warnings'])
+
+    @pytest.mark.parametrize('metadata', [
+        pytest.param(dict(evidence=[]), id='empty_list'), pytest.param(dict(evidence=None), id='null'), pytest.param({}, id='missing'),
+        pytest.param(dict(evidence=[EDGE | dict(source_node_id=None, target_node_id=None)]), id='edge_without_endpoints')])
+    def test_results_without_evidence_names_link_nothing_and_stay_explicit(self, metadata):
+        self.read_recall(recall(dict(HIT, metadata=metadata)))
+        claim, = self.connector.claims
+        assert (claim.graph_node_refs, claim.supporting_node_refs, claim.graph_refs_status) == ((), (), 'none')
+        assert 'result_without_provenance_refs' in self.connector.summary['warnings']
+
+    @pytest.mark.parametrize('bad', [
+        pytest.param(dict(evidence='x'), id='not_a_list'), pytest.param(dict(evidence=dict(NODE)), id='object_not_list'),
+        pytest.param(dict(evidence=['x']), id='item_not_object'),
+        pytest.param(dict(evidence=[dict(NODE, artifact_id=None)]), id='missing_artifact_id'),
+        pytest.param(dict(evidence=[dict(NODE, artifact_id='')]), id='empty_artifact_id'),
+        pytest.param(dict(evidence=[dict(SEGMENT, data_id=7)]), id='non_string_data_id'),
+        pytest.param(dict(evidence=[dict(SEGMENT, chunk_id='')]), id='empty_chunk_id'),
+        pytest.param(dict(evidence=[dict(EDGE, source_node_id=3)]), id='non_string_endpoint'),
+        pytest.param(dict(evidence=[dict(SEGMENT, chunk_id='node-other-chunk')]), id='segment_naming_two_chunks'),
+        pytest.param(dict(evidence=[dict(NODE, dataset_id=DATASET_B)]), id='other_dataset'),
+        pytest.param(dict(evidence=[dict(NODE, dataset_id=5)]), id='non_string_dataset')])
+    def test_malformed_or_cross_dataset_evidence_refuses_the_file(self, bad):
+        with pytest.raises(ValueError): self.read_recall(recall(dict(HIT, metadata=bad)))
+
+    @pytest.mark.parametrize('reference_dataset', [pytest.param(DATASET_A, id='string_id'), pytest.param(5, id='non_string_id')])
+    def test_evidence_naming_a_dataset_is_refused_when_none_was_declared(self, reference_dataset):
+        bad = dict(HIT, dataset_id=None, metadata=dict(evidence=[dict(NODE, dataset_id=reference_dataset)]))
+        with pytest.raises(ValueError, match='undeclared dataset'): self.read_recall(recall(bad), dataset_id=None)
+
+    def test_evidence_beyond_the_field_bound_is_refused_before_mapping(self):
+        many = dict(HIT, metadata=dict(evidence=[dict(kind='graph_node', artifact_id=f'node-{i}') for i in range(9)]))
+        assert len(self.read_recall(recall(many), limits=dict(max_fields=9)).records) == 2
+        with pytest.raises(HostileReport, match='field bound'): self.read_recall(recall(many), limits=dict(max_fields=8))
+        wide = dict(HIT, metadata=dict(evidence=[dict(kind='graph_node', artifact_id=ALICE, **{f'extra{i}': i for i in range(8)})]))
+        assert len(self.read_recall(recall(wide), limits=dict(max_fields=10)).records) == 2
+        with pytest.raises(HostileReport, match='field bound'): self.read_recall(recall(wide), limits=dict(max_fields=9))
+
+    def test_supporting_references_must_be_graph_references_of_the_same_claim(self):
+        self.read_recall(recall(dict(ANSWER, metadata=dict(evidence=[evidence('graph_node', ALICE, 'supports_assertion')]))))
+        claim, = self.connector.claims
+        assert claim.supporting_node_refs == claim.graph_node_refs
+        for change in (dict(supporting_node_refs=(node_hash('node-other'),)), dict(supporting_node_refs=('bad',))):
+            with pytest.raises(ValueError): cognee.RecallClaim(**dict(claim.to_dict(), **change))
 
     def test_recall_results_fail_closed_and_stay_bounded(self):
         for bad in ({}, ['text'], recall(dict(QA, used_graph_element_ids=dict(node_ids=[1])))):
