@@ -135,7 +135,7 @@ is missing or does not parse is undecidable.
 | `inventory` | Per source: counts of machine-checkable, reviewable and unverifiable instructions |
 | `calibration` | The measurements below |
 
-`compaction` says whether a recorded compaction fell after the instruction came into view (a harness rule's loading turn, a prompt's own turn) and by the last turn of the finding's `span`: `in_window`, `none_in_window` or `not_recorded` (the session has no `compactions`). It is a fact about the record, not a cause, and it never changes a finding's identity, status or counts.
+`compaction` says whether a recorded compaction fell after the instruction came into view (a harness rule's loading turn, a prompt's own turn, or the launch when the violating call came before the recorded loading turn and what came before is `unknown`: the rule may have been in view since launch) and by the last turn of the finding's `span`: `in_window`, `none_in_window` or `not_recorded` (the session has no `compactions`). It is a fact about the record, not a cause, and it never changes a finding's identity, status or counts.
 
 One finding is kept per instruction, mechanism and session; each further violating call raises `occurrences`
 and is listed in `turns` (at most five). A skipped required step, a `conflict` and a user reaction (a restated

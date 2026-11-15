@@ -375,7 +375,8 @@ def _session_findings(session, harness, detail):
             # A reaction counts as corroboration of a violation only when it came after the first violating call.
             reactions = dict(item['signals'], instruction_restated=item['restated'])
             corroboration = [label for name, label in SIGNALS if reactions.get(name) is not None and (name == 'instruction_restated' or reactions[name] > min(bad))]
-            found = _finding(session, dict(item, loading=state), status, MECHANISMS[item['rule']['kind']], bad,
+            # A call before the load turn, with what came before unknown: the rule may have been in view since launch, so the compaction window starts there.
+            found = _finding(session, dict(item, loading=state, begin=item['begin'] if live or state != 'unknown' else 0), status, MECHANISMS[item['rule']['kind']], bad,
                              [str(call['tool']), str(call.get('command')), str(call['path']), rules.key(item['rule'])], detail, corroboration=corroboration)
             findings.setdefault(found['finding_id'], found)
     for item in users:

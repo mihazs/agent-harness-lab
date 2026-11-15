@@ -12,6 +12,10 @@ PADDING = [agent('Working.')] * 4
 # user(0) agent(1-4) violation(5): positions 1..5 fall between the prompt and the violating call.
 EARLY = [user('Publish the change.'), *PADDING, VIOLATION]
 LATE = [user('Publish the change.'), *[agent('Working.')] * repair.LONG_SESSION_TURNS, VIOLATION]
+# The rule is first seen at turn 8 / 203 (after the violation), and what came before is unknown: it may have been in view since launch.
+AFTER_EARLY, AFTER_LATE = [*EARLY, *PADDING], [*LATE, *PADDING]
+UNKNOWN_BEFORE = {SOURCE: dict(state='loaded', turn=8, before='unknown')}
+UNKNOWN_BEFORE_LATE = {SOURCE: dict(state='loaded', turn=203, before='unknown')}
 PROMPT_RULE = [user('Do not edit `config/prod.yml`.'), *PADDING, dict(role='tool_call', tool='Edit', path='config/prod.yml')]
 
 
@@ -21,8 +25,8 @@ def finding_of(turns, *, rules=RULE, loaded=None, **extra):
     return report['findings'][0]
 
 
-def plan_of(turns, *, rules=RULE, **extra):
-    raw = [session('s1', turns, loaded={SOURCE: 'loaded'}, root='r1', **extra)]
+def plan_of(turns, *, rules=RULE, loaded=None, **extra):
+    raw = [session('s1', turns, loaded=loaded if loaded is not None else {SOURCE: 'loaded'}, root='r1', **extra)]
     report, files = report_for(raw, rules)
     return repair.diagnose(report, files)
 
@@ -84,6 +88,25 @@ def test_a_compaction_after_the_rule_was_loaded_is_in_the_window():
     assert finding_of(EARLY, compactions=[4], loaded={SOURCE: dict(state='loaded', turn=3)})['compaction'] == 'in_window'
 
 
+@pytest.mark.parametrize('compactions, expected', [([3], 'in_window'), ([5], 'in_window'), ([7], 'none_in_window'), ([0], 'none_in_window'), ([], 'none_in_window'), (None, 'not_recorded')],
+                         ids=['before the violation', 'directly before the violation', 'after the violation', 'before the first turn', 'none recorded', 'not recorded'])
+def test_a_rule_whose_earlier_loading_is_unknown_is_in_view_from_launch_not_from_the_turn_it_was_recorded(compactions, expected):
+    extra = {} if compactions is None else dict(compactions=compactions)
+    found = finding_of(AFTER_EARLY, loaded=UNKNOWN_BEFORE, **extra)
+    assert (found['status'], found['loading'], found['compaction']) == ('possible_violation', 'unknown', expected)
+
+
+def test_a_compaction_before_the_load_turn_is_not_in_the_window_of_a_violation_after_it_even_when_the_earlier_loading_is_unknown():
+    loaded = {SOURCE: dict(state='loaded', turn=2, before='unknown')}
+    found = finding_of(EARLY, loaded=loaded, compactions=[1])
+    assert (found['status'], found['loading'], found['compaction']) == ('observed_violation', 'loaded', 'none_in_window')
+
+
+def test_a_rule_that_was_not_loaded_before_its_load_turn_keeps_the_window_at_the_load_turn():
+    loaded = {SOURCE: dict(state='loaded', turn=8)}
+    assert finding_of(AFTER_EARLY, loaded=loaded, compactions=[3])['compaction'] == 'none_in_window'
+
+
 @pytest.mark.parametrize('position, expected', [(3, 'in_window'), (0, 'none_in_window'), (1, 'none_in_window')],
                          ids=['after the prompt', 'before the prompt', 'at the prompt'])
 def test_a_user_instruction_is_in_view_from_its_own_turn(position, expected):
@@ -120,6 +143,21 @@ def test_a_deep_session_without_a_compaction_record_still_says_it_is_not_recorde
 def test_an_early_violation_without_a_compaction_in_the_window_is_not_context_loss(compactions):
     extra = {} if compactions is None else dict(compactions=compactions)
     assert context_loss(plan_of(EARLY, **extra)) is None
+
+
+def test_a_compaction_between_launch_and_an_early_violation_opens_context_loss_when_the_load_turn_comes_later_and_the_earlier_state_is_unknown():
+    row = context_loss(plan_of(AFTER_EARLY, loaded=UNKNOWN_BEFORE, compactions=[3]))
+    assert row['support'] == ['compaction_in_window']
+
+
+def test_a_deep_session_with_a_compaction_before_the_violation_and_an_unknown_earlier_state_reports_the_compaction_in_the_window():
+    assert context_loss(plan_of(AFTER_LATE, loaded=UNKNOWN_BEFORE_LATE, compactions=[100]))['support'] == ['late_in_session', 'compaction_in_window']
+
+
+@pytest.mark.parametrize('compactions, support', [([], 'no_compaction_in_window'), (None, 'compaction_not_recorded')], ids=['none recorded', 'not recorded'])
+def test_a_deep_session_with_an_unknown_earlier_state_and_no_compaction_to_report_says_which_of_the_two_it_is(compactions, support):
+    extra = {} if compactions is None else dict(compactions=compactions)
+    assert context_loss(plan_of(AFTER_LATE, loaded=UNKNOWN_BEFORE_LATE, **extra))['support'] == ['late_in_session', support]
 
 
 def test_a_compaction_never_turns_a_rule_that_was_not_loaded_into_context_loss():
