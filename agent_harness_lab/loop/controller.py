@@ -14,6 +14,7 @@ import re
 from typing import Protocol, Sequence
 
 from agent_harness_lab.budget_stages import Stages
+from agent_harness_lab.evaluation import vacuity
 
 from .errors import LoopError
 from .ledger import MACHINE_EVENTS, LoopLedger
@@ -21,7 +22,7 @@ from .machine import Inputs, Run, decide, step
 from .spec import RELATIVE, LoopSpec
 
 PROFILE = 'ahl-loop-result-v1'
-VACUITY = ('no_eligible_cases', 'all_outcomes_unknown', 'arms_identical', 'grader_not_executed', 'zero_trials')
+VACUITY = vacuity.LABELS  # the shared closed set, not a copy; classify reads vacuity.LABEL_SET
 RESERVE_UNAVAILABLE = 'reserve_for_evaluation_unavailable'
 FINAL = dict(accepted='accepted', improved='improved', regressed='rejected', inconclusive='inconclusive')  # outcome -> mechanism disposition
 _DIGEST = re.compile('[0-9a-f]{64}')
@@ -31,10 +32,11 @@ _DIGEST = re.compile('[0-9a-f]{64}')
 class Evaluation:
     """One evaluation of one snapshot on the frozen inputs: an interval score and the evidence around it.
 
-    evidence: scored | provisional | no_evidence | blocked. vacuity: a label of VACUITY, or None for none. areas: per-area
+    evidence: scored | provisional | no_evidence | blocked. vacuity: a label of the closed set in evaluation.vacuity, or None for none. areas: per-area
     interval lower bounds. critical: a critical regression was observed. cause: who a regression is blamed on, candidate or
     other; None is unknown. inputs: the frozen-inputs digest the evaluation ran on; None is unknown. trials and seconds are
-    what it spent; None is unknown.
+    what it spent; None is unknown. reserve_trials and reserve_seconds, set on the baseline only, are what re-evaluating a
+    candidate will cost when that differs from what this evaluation spent (a paired run costs two arms); None means the same.
     """
     point: float
     lower: float
@@ -47,6 +49,8 @@ class Evaluation:
     trials: int | None = None
     seconds: float | None = None
     inputs: str | None = None
+    reserve_trials: int | None = None
+    reserve_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +98,7 @@ def _sound(e):
 
 def classify(evaluation):
     """valid only for a scored evaluation with a sound interval and no vacuity label; a vacuity label is vacuous, any other doubt is incomplete."""
-    if evaluation.vacuity in VACUITY: return 'vacuous'
+    if isinstance(evaluation.vacuity, str) and evaluation.vacuity in vacuity.LABEL_SET: return 'vacuous'  # a list or dict from the port is unhashable
     return 'valid' if evaluation.evidence == 'scored' and evaluation.vacuity is None and _sound(evaluation) else 'incomplete'
 
 
@@ -124,7 +128,7 @@ def _summary(e):
     """What the ledger keeps of an evaluation: numbers only when they are a sound score, so a malformed one still records."""
     text = lambda value: value if isinstance(value, str) and len(value) <= 64 else None
     base = dict(sound=_sound(e), evidence=text(e.evidence), vacuity=text(e.vacuity), trials=e.trials if _count(e.trials) else None,
-                seconds=e.seconds if _number(e.seconds) else None)
+                seconds=e.seconds if _number(e.seconds) else None, inputs=e.inputs if _digest(e.inputs) else None)
     return dict(base, point=e.point, lower=e.lower, upper=e.upper, areas=dict(e.areas), critical=e.critical is True) if base['sound'] else base
 
 
@@ -177,10 +181,12 @@ class _Loop:
     def budget(self):
         """covers_round when what is left pays for re-evaluating like the baseline did, else exhausted.
 
-        The reserve is the baseline's recorded usage; unknown usage reserves the whole evaluation allotment."""
+        The reserve is the baseline's declared reserve, else its recorded usage; unknown usage reserves the whole evaluation allotment."""
         used, (seconds, trials) = self.baseline_evaluation, self.allotment()
-        seconds = used.seconds if _number(used.seconds) and used.seconds >= 0 else seconds
-        trials = used.trials if _count(used.trials) else trials
+        known = [value for value in (used.reserve_seconds, used.seconds) if _number(value) and value >= 0]
+        seconds = known[0] if known else seconds
+        counted = [value for value in (used.reserve_trials, used.trials) if _count(value)]
+        trials = counted[0] if counted else trials
         return 'covers_round' if self.stages.remaining() >= seconds and self.spec.limit_trials - self.trials >= trials else 'exhausted'
 
     def pending(self):

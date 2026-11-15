@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_harness_lab.evaluation import vacuity
 from agent_harness_lab.loop import controller, ledger as ledger_module
 from agent_harness_lab.loop.controller import Candidate, Evaluation
 from agent_harness_lab.loop.errors import LoopError
@@ -224,6 +225,46 @@ def test_an_unsound_score_is_incomplete_is_still_recorded_and_never_accepts_or_i
 ])
 def test_classify_is_valid_only_for_a_scored_sound_evaluation_without_a_vacuity_label(evaluation, verdict):
     assert controller.classify(evaluation) == verdict
+
+
+MALFORMED_VACUITY = [
+    pytest.param(['zero_trials'], id='list-of-a-listed-label'),
+    pytest.param([], id='empty-list'),
+    pytest.param({}, id='empty-dict'),
+    pytest.param({'zero_trials'}, id='set-of-a-listed-label'),
+    pytest.param(('zero_trials',), id='tuple-of-a-listed-label'),
+    pytest.param(7, id='number'),
+    pytest.param('', id='empty-text'),
+]
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+def test_classify_calls_a_vacuity_value_that_is_not_one_label_incomplete_and_does_not_raise(malformed):
+    assert controller.classify(score(0.9, vacuity=malformed)) == 'incomplete'
+
+
+@pytest.mark.parametrize('malformed', MALFORMED_VACUITY)
+@pytest.mark.parametrize('where', ['baseline', 'candidate'])
+def test_a_run_with_a_malformed_vacuity_value_stops_as_evidence_insufficient_with_a_stop_event(tmp_path, where, malformed):
+    bad = score(0.95, vacuity=malformed)
+    result, ledger, ports = go(build('malformed-vacuity', [bad] if where == 'baseline' else [0.5, bad]), tmp_path)
+    assert (result['outcome'], result['stop'], result['best']['snapshot']) == ('inconclusive', 'evidence_insufficient', ports.baseline)
+    assert values(ledger, 'stopped') == ['evidence_insufficient'] and kinds(ledger)[-1] == 'stopped'
+    assert not {'accepted', 'improved'} & set(values(ledger, 'decided'))
+
+
+@pytest.mark.parametrize('label', vacuity.LABELS)
+def test_every_label_of_the_shared_closed_set_is_vacuous_for_the_loop(label):
+    assert controller.classify(score(0.9, vacuity=label)) == 'vacuous'
+
+
+@pytest.mark.parametrize('change, label, verdict', [
+    pytest.param(lambda labels: labels | {'a_future_label'}, 'a_future_label', 'vacuous', id='label-added-to-the-set'),
+    pytest.param(lambda labels: labels - {'zero_trials'}, 'zero_trials', 'incomplete', id='label-removed-from-the-set'),
+])
+def test_the_loop_follows_the_closed_set_of_the_vacuity_module_and_keeps_no_copy_of_it(monkeypatch, change, label, verdict):
+    monkeypatch.setattr(vacuity, 'LABEL_SET', frozenset(change(vacuity.LABEL_SET)))
+    assert controller.classify(score(0.9, vacuity=label)) == verdict
 
 
 MARGINS = build('margins', [0.5], declaration=dict(regression_margin=0.25, noise_margin=0.25)).spec  # 0.25 is exact in binary
@@ -450,3 +491,46 @@ def test_the_controller_and_ledger_import_no_workflow_clock_randomness_process_o
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     assert not any(name.split('.')[0] in ('subprocess', 'socket', 'time', 'datetime', 'random', 'urllib', 'http', 'requests') or 'workflow' in name for name in imported)
+
+
+@pytest.mark.parametrize('reserve, asked, spent', [
+    pytest.param(None, 2, 15, id='undeclared-reserve-is-the-baselines-one-arm-spend-and-the-limit-is-passed'),
+    pytest.param(6, 1, 9, id='a-declared-paired-reserve-stops-before-a-round-that-cannot-be-paid'),
+    pytest.param(3, 2, 15, id='a-declared-reserve-equal-to-the-spend-changes-nothing')])
+def test_a_baseline_that_declares_what_a_re_evaluation_costs_reserves_that_and_not_what_it_spent(tmp_path, reserve, asked, spent):
+    # The baseline spent 3 trials in one arm; every later evaluation is a paired run of 6. Limit 12.
+    script = build('declared_reserve', [score(0.5, trials=3, reserve_trials=reserve), score(0.6, trials=6), score(0.7, trials=6)], trials=12)
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked), result['usage']['trials']) == ('budget_exhausted', asked, spent)
+
+
+@pytest.mark.parametrize('reserve, asked', [pytest.param(None, 4, id='undeclared-reserves-the-baselines-five-seconds'),
+                                           pytest.param(40.0, 3, id='declared-reserves-forty-seconds')])
+def test_a_declared_time_reserve_replaces_the_baselines_seconds(tmp_path, reserve, asked):
+    # the baseline took 5 seconds and each later evaluation takes 25 of 100: a reserve of 40 leaves 45 after two rounds, so a third starts and a fourth does not
+    script = build('declared_seconds', [score(0.3, seconds=5.0, reserve_seconds=reserve), *[score(0.4 + 0.1*r, seconds=25.0) for r in range(4)]],
+                   seconds=100, declaration=dict(max_rounds=5, plateau_rounds=5))
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked)) == ('budget_exhausted', asked)
+
+
+@pytest.mark.parametrize('bad', [pytest.param(-1, id='negative'), pytest.param(True, id='boolean'), pytest.param('6', id='text'),
+                                 pytest.param(float('nan'), id='nan'), pytest.param(2.5, id='fraction')])
+def test_a_reserve_that_is_not_a_count_is_ignored_and_the_baselines_spend_is_reserved(tmp_path, bad):
+    script = build('bad_reserve', [score(0.5, trials=3, reserve_trials=bad), score(0.6, trials=6), score(0.7, trials=6)], trials=12)
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked), result['usage']['trials']) == ('budget_exhausted', 2, 15)
+
+
+@pytest.mark.parametrize('inputs, recorded', [pytest.param('not-a-digest', None, id='not-a-digest'), pytest.param('f'*64, 'f'*64, id='another-digest')])
+def test_the_ledger_records_the_frozen_inputs_digest_an_evaluation_ran_on_only_when_it_is_one(tmp_path, inputs, recorded):
+    script = build('recorded_inputs', [score(0.5, inputs=inputs)])
+    _, ledger, _ = go(script, tmp_path)
+    assert [payload['evaluation']['inputs'] for kind, payload in ledger.events() if kind == 'baseline_evaluated'] == [recorded]
+
+
+def test_every_evaluation_of_a_run_records_the_one_frozen_inputs_digest_it_ran_on(tmp_path):
+    script = loop_sim.converges_in_k_rounds(2)
+    result, ledger, _ = go(script, tmp_path)
+    assert [payload['evaluation']['inputs'] for kind, payload in ledger.events() if kind.endswith('_evaluated')] == [script.frozen_inputs]*3
+    assert result['frozen_inputs_sha256'] == script.frozen_inputs

@@ -99,3 +99,38 @@ def test_adherence_artifact_is_identical_across_two_analyses_of_the_same_capture
     text = (first / 'instruction-adherence.json').read_bytes()
     second, _ = analyze(home, name='again')
     assert (second / 'instruction-adherence.json').read_bytes() == text != b''
+
+
+def test_analysis_writes_a_recommendation_only_repair_plan_and_a_counts_only_brief_section(home):
+    capture(home, [('memory', str(home / 'AGENTS.md'), RULE_TEXT), ('user', f'Push {SECRET}.'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    folder, brief = analyze(home)
+    section = brief['instruction_adherence']['repair_plan']
+    assert (section['status'], section['authority'], section['candidates'], section['by_repair_class']) == (
+        'completed', 'recommendation_only', 1, dict(hook_or_feedback_sensor=1))
+    assert brief['sources']['instruction_repair_plan'] == 'instruction-repair-plan.json' == section['artifact']
+    plan = json.loads((folder / 'instruction-repair-plan.json').read_text())
+    assert (plan['change_authorized'], plan['causal_diagnosis']) == (False, False)
+    for text in (json.dumps(plan), json.dumps(section)):
+        assert SECRET not in text and 'git push' not in text and str(home) not in text
+
+
+def test_analysis_with_only_abstentions_plans_nothing_and_says_so(home):
+    write(home.parent / 'codex/sessions/rollout.jsonl', codex(home, [('user', 'go'), ('exec', FORBIDDEN)], session='codex-thread'))
+    folder, brief = analyze(home)
+    section = brief['instruction_adherence']['repair_plan']
+    assert (section['status'], section['candidates'], section['abstentions_not_diagnosed']) == ('completed', 0, 1)
+    assert json.loads((folder / 'instruction-repair-plan.json').read_text())['candidates'] == []
+
+
+def test_analysis_without_a_readable_native_session_writes_no_repair_plan(home):
+    capture(home, [('user', 'go')], version='9.9.9')
+    folder, brief = analyze(home)
+    assert 'repair_plan' not in brief['instruction_adherence'] and not (folder / 'instruction-repair-plan.json').exists()
+    assert 'instruction_repair_plan' not in brief['sources']
+
+
+def test_repair_plan_is_identical_across_two_analyses_of_the_same_captures(home):
+    capture(home, [('memory', str(home / 'AGENTS.md'), RULE_TEXT), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
+    first, _ = analyze(home)
+    second, _ = analyze(home, name='again')
+    assert (second / 'instruction-repair-plan.json').read_bytes() == (first / 'instruction-repair-plan.json').read_bytes() != b''

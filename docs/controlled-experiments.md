@@ -195,6 +195,23 @@ through `route()` with the same held dispositions as `dispositions`. A
 invoking the callback or charging the budget unless the caller passes
 `authorized_adapters=True`.
 
+`hook` is a separate component for deterministic event enforcement through a
+native target-project hook; it is not the presentation-only `tool_adapter`
+route, and neither capability authorizes the other. A `hook` record is deferred
+as `hook_route_not_authorized` unless the caller declares
+`authorized_hooks=True` (AHL does not infer the capability, and a proposer's
+`component: "hook"` claim is only a recorded `proposed_component`). An
+authorized `hook` record also needs at least one successful control, because a
+hook can block legitimate behavior; without one it is deferred as
+`hook_route_requires_successful_control`. Both holds happen before the callback
+and without a budget charge, in `run_queue` and in `dispositions` alike. The
+route needs the usual evidence, boundary, competing explanation and falsifier,
+and a smaller instruction or skill repair stays a competing explanation to
+weigh: adding a hook is not a success metric. The route only names a
+responsible component. A hook declaration embedded in a skill or agent file
+still needs its own hook contract (`hook_contract_required`), so a record
+routed to `skill` or `instruction` cannot carry one.
+
 Search persists charges and stages before callbacks. Restart returns recorded
 state without repeating charged work. An interrupted stage requires explicit
 recovery; it does not rerun inference automatically. Certification is a separate

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.210.0
+
+### Minor Changes
+
+- 64a9a90: Add an offline `sources.ci_join.join_quality_evidence` that relates one exact commit's imported SARIF quality findings to the GitHub Actions jobs captured for the same head. It keeps findings apart from test results under its own profile, links a finding to a job and step only through a caller-declared report origin, and keeps reruns correlated, causal status unknown and task outcomes unverified (part of #53).
+- db75703: Add a capability-gated `hook` route to mechanism routing (part of #10). `hook` is a new responsible component, distinct from the presentation-only `tool_adapter`: a reviewed `hook` record is held as `deferred` with `hook_route_not_authorized` unless the caller passes `authorized_hooks=True` to `route`, `run_queue` or `dispositions`, and an authorized one still needs a successful control (`hook_route_requires_successful_control`). Both holds run before the evaluation callback and charge no budget, a proposer's `component: "hook"` claim is admitted only as an unreviewed `proposed_component`, and the coverage report counts `hook` among the responsible components. Not yet done: the native hook change itself (#80), composed-repair evaluation, append-only prediction revisions and live utility.
+
+### Patch Changes
+
+- 72a655c: Add the first-use stress matrix, a failure-injection suite that runs `ahl improve` against a fake runtime that times out, is killed, returns garbage, prints nothing or too much, crashes or is interrupted at each stage, against corrupt, duplicated and empty history, unusual, symlinked and read-only harness files, concurrent runs, `--resume` and per-stage budget exhaustion, and checks that every scenario ends with a typed receipt. It found and fixed five bugs. A runtime whose output was not UTF-8 ended as a rejected input (exit 2) instead of an execution error. A dangling or looping instruction symlink was ignored instead of refused as an unsupported layout. A read-only instruction file made the staged candidate read-only, so the preparation call was spent and its edit failed; the staged copy is now writable for the proposer and gets its modes back. Resuming an unknown run ID ended as an operating-system error with the raw errno text and is now a rejected input. A resume with no completed proposal now says to rerun the command.
+
 ## 0.209.0
 
 ### Minor Changes

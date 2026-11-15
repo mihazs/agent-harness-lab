@@ -32,6 +32,13 @@ def test_trials_that_all_end_unknown_stop_vacuous_without_a_refinement_or_recomm
     assert receipt['evidence_strength']['label'] == 'insufficient' and receipt['evidence_strength']['adoption_support'] is False
 
 
+def test_the_before_after_block_of_a_vacuous_run_carries_the_labels_and_reports_no_score(stub, capsys):
+    _, receipt, _, _ = stub.run(capsys, dict(trial='mixed-unknown'))
+    block = receipt['before_after']
+    assert (block['verdict'], block['reasons'][0], block['vacuity']['labels']) == ('inconclusive', 'evaluation_vacuous', receipt['vacuity']['labels'])
+    assert (block['scores'], block['delta'], block['adoption_blocked']) == (None, None, False)
+
+
 def test_an_evaluation_stopped_as_uninformative_also_carries_the_labels_of_its_unknown_outcomes(stub, capsys):
     code, receipt, _, _ = stub.run(capsys, dict(trial='crash-all'))
     assert (code, receipt['status'], receipt['reason']) == (3, 'inconclusive', 'evaluation_uninformative'), receipt

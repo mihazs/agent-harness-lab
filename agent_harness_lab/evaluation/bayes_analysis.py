@@ -8,7 +8,7 @@ missing or ungraded arm bounded and never counted as a failure) and go with the 
 """
 from collections import defaultdict
 
-from . import bayes_descriptive, sign_permutation as signs
+from . import bayes_descriptive, sign_permutation as signs, vacuity
 from .bayes_decision import MAX_WORK, decide, independent_units, root_difference
 from .bayes_spec import BayesDecisionError
 from .plan import schedule
@@ -66,10 +66,10 @@ def block(spec, records, analysis, evidence, bank, resource_decision):
 def _validity(spec, expected, records, analysis):
     """The stage 1 reason in the words of the fixed analysis, or None. A missing trial is an unknown arm, not a failure."""
     if analysis.get('status') == 'blocked' or records is None:
-        return analysis.get('reason') or 'zero_trials'
+        return analysis.get('reason') or vacuity.ZERO_TRIALS
     ids = [row.trial_id for row in records]
     if not ids:
-        return 'zero_trials'  # the vacuity label of issue 805
+        return vacuity.ZERO_TRIALS
     if len(set(ids)) != len(ids):
         return 'missing_or_duplicate_trials'
     if not set(ids) <= set(expected):

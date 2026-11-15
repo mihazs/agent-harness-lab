@@ -13,7 +13,7 @@ reader purpose.
 - [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [reuse analysis work on unchanged input](incremental-analysis.md); [inspect CLI help](cli-help.md).
 - [Audit a long-lived checkout whose inventory is blocked](audit-long-lived-checkout.md), [repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
-- [Annotate pull requests with the static audit](audit-pull-requests.md) or [find where agents ignored instructions](detect-ignored-instructions.md).
+- [Annotate pull requests with the static audit](audit-pull-requests.md), [find where agents ignored instructions](detect-ignored-instructions.md), or [repair a harness whose instructions are ignored](repair-ignored-instructions.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), or [declare capability areas and tag bank tasks](declare-capability-areas.md).
 - [Preflight experiment precision](experiment-precision.md), [add a Bayesian decision score to a plan and read it](bayesian-decision-how-to.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
@@ -31,6 +31,7 @@ reader purpose.
 - [Repeat reliability profile](repeat-reliability.md), [controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), [judge controls](diagnostic-judge.md), and [audit sampling](audit-sampling.md).
 - [Instruction adherence](instruction-adherence.md): the sessions file, checkable sentence shapes, three-valued judging, the report and its calibration.
+- [Instruction repair](instruction-repair.md): candidate mechanisms, repair classes, the repair plan and the recorded-pair screen.
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
 - [Vacuity labels](vacuity-labels.md): the closed set of five labels for an evaluation that proves nothing, where each surface applies them, and the audit of reported numbers.
@@ -50,7 +51,7 @@ reader purpose.
 - [Why a managed region of the global instruction files](global-instructions-rationale.md), [newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Why there is one skill](single-skill-rationale.md), [why evidence reuse is split by authority](memory-reuse-rationale.md) and [why hypothesis probes are separate from analysis](hypothesis-probes.md).
 - [A paired Bayesian decision score with a ROPE](bayesian-decision-score.md): why a numeric, non-LLM better, equivalent, worse or insufficient-evidence score runs beside the unchanged Hoeffding path, how it treats unknown outcomes, how its false-recommendation rate was calibrated with the seeded power simulator under a frozen protocol, its descriptive-only desirability and Pareto epsilon-indicator report, its evidence status (no peer-reviewed work applies the method to agent harness scoring) and its limits.
-- [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md).
+- [Why instruction-adherence findings are separate and abstain](instruction-adherence-rationale.md), and [why a repair plan is a recommendation](instruction-adherence-rationale.md#why-a-repair-plan-is-a-recommendation).
 - [Where a tool-result adapter may attach to a runtime](adapter-runtime-decision.md): the evidence, decision and open blockers for the identity bridge.
 - [Scientific sources and limits](../skills/harness-self-improvement/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-self-improvement/references/trace-diagnosis.md), and [execution contract](../skills/harness-self-improvement/references/execution.md).
 

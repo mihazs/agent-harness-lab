@@ -14,6 +14,7 @@
 | `ahl analyze [project] --events FILE --memory-store DIR --incremental [--explain-reuse]` | Reuse the verified process-mining output of an unchanged capture and harness from an opt-in private store, and explain every hit and miss; offline, no model call; see [reuse analysis work on unchanged input](incremental-analysis.md) |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl instruction-adherence SESSIONS [--native claude\|codex --project DIR] [--rules LAYER=FILE]` | Report where captured sessions ignored harness rules or user-prompt instructions; offline, redacted by default, see [find where agents ignored instructions](detect-ignored-instructions.md) |
+| `ahl instruction-repair plan REPORT` / `judge --target REF ...` | List candidate mechanisms and repair classes for ignored instructions, or screen one repair against recorded arms; offline, recommendation only, see [repair a harness whose instructions are ignored](repair-ignored-instructions.md) |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
 | `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions (`--reject-leakage` fails on [shared projects or texts](validation.md#benchmark-leakage-disclosure)); optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |

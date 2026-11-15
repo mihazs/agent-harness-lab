@@ -310,7 +310,10 @@ def _evaluate(args):
         application_modules()
         from agent_harness_lab.evaluation.certification_access import admission
         admission(args, manifest)
-    versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
+    arms = tuple(getattr(args, 'arms', None) or ('baseline', 'candidate'))  # the loop's baseline-only pre-evaluation runs one arm (#813)
+    if len(set(arms)) != len(arms) or not set(arms) <= {'baseline', 'candidate'} or ('experiment' in manifest and len(arms) != 2):
+        raise ValueError('arms must name baseline, candidate or both once, and a repeated plan needs both')
+    versions = {v: Path(getattr(args, v)).resolve() for v in arms}
     output = Path(args.output).resolve()
     if source_sink is not None and any(source_sink.store.path.is_relative_to(root) or root.is_relative_to(source_sink.store.path)
             for root in (manifest_path.parent,output,*versions.values(),Path(image_root).resolve())):

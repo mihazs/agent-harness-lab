@@ -99,6 +99,11 @@ selected and write `instruction-adherence.json` beside `analysis.json`, reading 
 counts only. When no native session could be read it says `not_run` with the reason, which is not the
 same as zero findings.
 
+## Decide what to change
+
+To turn findings into candidate repairs and to screen a repair against recorded runs, see
+[repair a harness whose instructions are ignored](repair-ignored-instructions.md).
+
 ## Limits to keep in mind
 
 - Only a backticked command or tool, or a path, makes a sentence checkable. Anything else

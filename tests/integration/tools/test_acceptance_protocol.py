@@ -130,6 +130,29 @@ def test_a_worse_candidate_carries_no_plan_and_no_recommendation(protocol):
     assert 'improved' not in (receipt['status'], receipt.get('outcome'))
 
 
+def test_a_worse_candidate_ends_blocked_as_candidate_regressed_with_an_investigation_beside_the_receipt(protocol):
+    protocol.mode.write_text(json.dumps(dict(trial='candidate-worse')))
+
+    isolated, receipt = protocol.step('before-after-regressed', '--focus', 'synthetic hypothesis')
+
+    assert_untouched(protocol, isolated)
+    assert (receipt['status'], receipt['reason'], isolated['command_status']) == ('blocked', 'candidate_regressed', 3)
+    assert (receipt['before_after']['verdict'], receipt['before_after']['adoption_blocked']) == ('candidate_regressed', True)
+    investigation = Path(receipt['investigation']['path'])
+    assert investigation.parent == Path(receipt['output']) and (investigation.parent / 'workflow.json').is_file()
+    assert str(investigation).startswith(str(protocol.private)), 'the record stays under the private state home'
+    assert hashlib.sha256(investigation.read_bytes()).hexdigest() == receipt['investigation']['sha256']
+    assert json.loads(investigation.read_text())['cause']['class'] == receipt['investigation']['cause'] == 'candidate_caused'
+
+
+def test_a_candidate_that_is_not_worse_is_never_blocked_and_leaves_no_investigation(protocol):
+    isolated, receipt = protocol.step('before-after-not-worse', '--focus', 'synthetic hypothesis')
+
+    assert_untouched(protocol, isolated)
+    assert receipt.get('reason') != 'candidate_regressed' and receipt['before_after']['adoption_blocked'] is False
+    assert 'investigation' not in receipt and not list((protocol.private / 'state').rglob('investigation.json'))
+
+
 def test_a_vacuous_evaluation_is_labelled_and_never_reported_as_an_improvement(protocol):
     protocol.mode.write_text(json.dumps(dict(trial='mixed-unknown')))
 

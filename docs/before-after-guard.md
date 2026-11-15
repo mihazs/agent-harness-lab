@@ -30,7 +30,11 @@ loss behind a wide interval. `improved` also needs the interval, so a gain insid
 `inconclusive`, never `improved`. `delta.interval_excludes_margin` says whether the interval
 agrees with a regression. An outcome that is not an explicit pass or fail is unknown: it is
 never counted as a failure, never makes a pair eligible, and withholds `improved`. With no
-eligible pair the verdict is `inconclusive` with reason `no_paired_outcomes`.
+eligible pair the verdict is `inconclusive` with reason `no_paired_outcomes`. A run that a
+[vacuity label](vacuity-labels.md) applies to proves nothing: its verdict is `inconclusive` with
+`evaluation_vacuous` and the labels among the reasons, `scores` and `delta` are `null`,
+adoption is not blocked and a `vacuity` block names the labels, whatever the recorded pass
+and fail outcomes say.
 
 The default `ahl improve` evaluation runs one trial per task and arm. With seven or fewer
 roots even a clean sweep cannot lift the interval above a margin of `0.0`, so the guard reports

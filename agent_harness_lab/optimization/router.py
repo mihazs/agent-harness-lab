@@ -8,7 +8,8 @@ from agent_harness_lab.optimization.budget import Budget
 DISPOSITIONS_PROFILE = 'mechanism-route-dispositions-v1'
 
 
-def route(mechanism, *, reviewed_component=None, expected_negative=False, authorized_adapters=False):
+def route(mechanism, *, reviewed_component=None, expected_negative=False, authorized_adapters=False,
+          authorized_hooks=False):
     mechanism.validate()
     if expected_negative:
         return 'no_change'
@@ -16,7 +17,10 @@ def route(mechanism, *, reviewed_component=None, expected_negative=False, author
         return 'insufficient_evidence'
     if reviewed_component not in COMPONENTS:
         raise ValueError('unknown component')
+    # Each opt-in capability is declared separately; neither authorizes the other.
     if reviewed_component == 'tool_adapter' and not authorized_adapters:
+        return 'insufficient_evidence'
+    if reviewed_component == 'hook' and not authorized_hooks:
         return 'insufficient_evidence'
     return reviewed_component
 
@@ -42,23 +46,28 @@ def _held(mechanism, target, reviewed_component):
     if not mechanism.actionable:
         return 'deferred', 'missing_reviewed_boundary_evidence_or_falsifier'
     if target == 'insufficient_evidence':
-        return 'deferred', ('adapter_route_not_authorized'
-            if reviewed_component == 'tool_adapter' else 'route_requires_review')
+        return 'deferred', {'tool_adapter': 'adapter_route_not_authorized',
+                            'hook': 'hook_route_not_authorized'}.get(reviewed_component, 'route_requires_review')
+    if target == 'hook' and not mechanism.controls:
+        # A hook can block legitimate behavior, so it needs a successful control to be checked against.
+        return 'deferred', 'hook_route_requires_successful_control'
     return None
 
 
-def run_queue(mechanisms, evaluate, budget, *, authorized_adapters=False):
+def run_queue(mechanisms, evaluate, budget, *, authorized_adapters=False, authorized_hooks=False):
     """One evaluated mechanism cannot erase the rest; callback uses development only.
 
     A record's component is its reviewed route, checked through ``route`` like
-    ``dispositions``: an adapter route needs explicit ``authorized_adapters``.
+    ``dispositions``: an adapter route needs explicit ``authorized_adapters`` and
+    a hook route needs explicit ``authorized_hooks`` plus a successful control.
     """
     ordered, _ = _ordered(mechanisms)
     for mechanism in ordered:
         if mechanism.disposition != 'proposed':
             continue
         held = _held(mechanism, route(mechanism, reviewed_component=mechanism.component,
-                                      authorized_adapters=authorized_adapters), mechanism.component)
+                                      authorized_adapters=authorized_adapters,
+                                      authorized_hooks=authorized_hooks), mechanism.component)
         if held:
             mechanism.transition(*held); continue
         if not budget.consume('mechanism_evaluation',1,mechanism.key):
@@ -75,7 +84,8 @@ def run_queue(mechanisms, evaluate, budget, *, authorized_adapters=False):
     return [m.as_dict() for m in ordered]
 
 
-def dispositions(mechanisms, budget, *, reviewed=None, expected_negative=(), authorized_adapters=False):
+def dispositions(mechanisms, budget, *, reviewed=None, expected_negative=(), authorized_adapters=False,
+                 authorized_hooks=False):
     """Plan queue dispositions without evaluating, charging or mutating anything.
 
     The route comes only from ``reviewed`` ({mechanism_id: component}) through
@@ -101,7 +111,7 @@ def dispositions(mechanisms, budget, *, reviewed=None, expected_negative=(), aut
             continue
         target = route(mechanism, reviewed_component=entry['reviewed_component'],
                        expected_negative=mechanism.mechanism_id in expected_negative,
-                       authorized_adapters=authorized_adapters)
+                       authorized_adapters=authorized_adapters, authorized_hooks=authorized_hooks)
         held = _held(mechanism, target, entry['reviewed_component'])
         if held:
             disposition, reason = held
