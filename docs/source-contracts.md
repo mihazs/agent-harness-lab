@@ -4225,6 +4225,38 @@ a model caused it. Warnings from both sides, including the unread logs, artifact
 annotations, stay in the report, and `capture_completeness` is `partial`.
 `task test:sources:test-results` runs the synthetic controls.
 
+### Joining quality findings to Actions jobs
+
+`sources.ci_join.join_quality_evidence(quality, actions, *, repository_id,
+commit_sha, origins=())` does for SARIF findings what the test-results join does for
+test cases. `quality` is a read `QualityReportsExport`; `actions` is the same GitHub
+summary with the `actions` detail. It reads no file or network and runs nothing, and
+returns its own profile, `ci-quality-commit-join-v1` (rejected by public export), so a
+finding is never merged into the `ci-evidence-commit-join-v1` test statuses. The
+`status` and `reason` values are those of the test-results join, with
+`quality_reports_declare_another_commit` as the `stale` reason.
+
+A match lists the `fail`-kind findings (report, tool, rule and finding fingerprints,
+occurrence, SARIF `level`, `suppression`) plus the report's `levels`, `kinds` and
+`suppressed` counts. Results of other kinds stay in the `kinds` count and are not
+listed, a level SARIF does not state stays `unknown`, and a suppressed finding is
+neither dropped nor counted as fixed. A report with no findings is `matched` with an
+empty list and keeps `no_findings_is_not_clean`; a log whose tool reported failure
+keeps `tool_execution_failure_reported`. SARIF names no job, so a finding is linked to
+a job and step only when the caller declares `origins=[{"path": ..., "job_id": ...,
+"step": ...}]` for its report, resolved exactly as for test reports (`unmatched` when
+the capture lacks the job or step; a malformed or duplicate declaration, or one for a
+report that produced no finding, raises). Origins carry `origin_binding:
+caller_declared` and `origin_verified: false`.
+
+Reruns stay correlated replicates (`independent_trials: null`, `rerun_attempts`),
+`causal_status` is `unknown` and `task_outcomes_verified` is `false`, so neither a
+failed job nor a finding says a model caused it. The report holds fingerprints only,
+never a message, location or job name, and its warnings include the capture's own
+(unread logs, artifacts and annotations) and `finding_job_link_declared_only`;
+`capture_completeness` is `partial`. `task test:sources:test-results` runs the
+synthetic controls.
+
 ### Merged pull requests with failing CI
 
 `sources.ci_leads.merged_pull_failing_ci_leads(summary, *, repository_id)` turns the
@@ -4332,8 +4364,9 @@ checked before records are made. `limits` may only lower these ceilings:
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 |
 
-Not covered here: joining findings to Actions jobs, SARIF taxonomies, rule
-metadata and result fingerprints, and any live read of code-scanning alerts.
+Not covered here: SARIF taxonomies, rule metadata and result fingerprints, and any
+live read of code-scanning alerts. Joining findings to Actions jobs is described
+under "Joining quality findings to Actions jobs".
 `task test:sources:test-results` runs the synthetic controls: level and kind
 mapping, malformed and contradictory results, external references, hostile
 nesting and size bounds, commit-identity validation, changed-during-capture and
