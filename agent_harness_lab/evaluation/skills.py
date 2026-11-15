@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 import stat
 from pathlib import Path
 
@@ -237,18 +238,71 @@ def utility(records):
                 automatic_compilation=False)
 
 
-def compile_procedure(value, *, enabled=False):
+COMPILE_BYTES = 16384
+COMPILED_KEYS = ('procedure', 'prerequisites', 'activate_when', 'do_not_activate_when', 'counterexamples', 'evidence_refs')
+PROVENANCE_KEYS = ('approved', 'outcome_provenance', 'verified_success', 'scope')
+MIN_SCREENED_ANSWER = 4
+# shortcut: well-known credential shapes and key=value assignments only, not a secret scanner; extend when a real format slips through.
+CREDENTIAL = re.compile(
+    r'-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_\w{20,}'
+    r'|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}'
+    r'|(?i:\bbearer\s+[A-Za-z0-9._~+/=-]{16,}|\b(?:password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*\S{12,})')
+
+
+def _normal(text):
+    return ' '.join(text.casefold().split())
+
+
+def _copied(answer, text):
+    """Whole-word match, so a short answer does not flag the longer words that contain it."""
+    head = r'(?<!\w)' if re.match(r'\w', answer) else ''
+    tail = r'(?!\w)' if re.search(r'\w$', answer) else ''
+    return re.search(head + re.escape(answer) + tail, text) is not None
+
+
+def _text_list(name, rows, *, required=False):
+    if (isinstance(rows, (str, bytes)) or not isinstance(rows, (list, tuple)) or (required and not rows)
+            or any(not isinstance(row, str) or not row.strip() for row in rows)):
+        raise ValueError(f'{name} must hold non-empty text entries')
+    return list(rows)
+
+
+def compile_procedure(value, *, enabled=False, held_out=(), existing=(), max_bytes=COMPILE_BYTES):
+    """Return a bounded, screened project-skill hypothesis from one approved, verified procedure; never installs anything.
+
+    `held_out` holds answers the compiled text must not copy (each at least four characters, or it cannot be screened),
+    `existing` the target's current instructions, and `max_bytes` the share of the parent budget granted to the record
+    (at most 16 KiB). An unsupplied list leaves that screen `not_run`, which is not a pass.
+    """
     if not enabled: return dict(status='disabled')
-    required=('procedure','prerequisites','activate_when','do_not_activate_when','counterexamples','evidence_refs')
+    if not isinstance(value, dict): raise ValueError('compilation input must be an object')
+    if set(value) - {*COMPILED_KEYS, *PROVENANCE_KEYS}:
+        raise ValueError('undeclared fields cannot reach compilation; held-out tasks and grader feedback stay outside it')
+    if type(max_bytes) is not int or not 0 < max_bytes <= COMPILE_BYTES:
+        raise ValueError(f'max_bytes must be an integer from 1 to {COMPILE_BYTES}')
     if (value.get('approved') is not True or value.get('outcome_provenance')!='executable_grader'
             or value.get('verified_success') is not True or value.get('scope')!='project'
-            or any(not value.get(k) for k in required)):
+            or any(not value.get(k) for k in COMPILED_KEYS)):
         raise ValueError('skill compilation requires approved verified procedures, exclusions and counterexamples')
+    steps = [line for line in value['procedure'].splitlines() if line.strip()] if isinstance(value['procedure'], str) else None
+    fields = {k: _text_list(k, steps if k == 'procedure' else value[k], required=True) for k in COMPILED_KEYS}
+    if len(json.dumps(value, ensure_ascii=False).encode())>max_bytes: raise ValueError('procedure exceeds compilation bound')
+    texts = [row for rows in fields.values() for row in rows]
+    if any(CREDENTIAL.search(text) for text in texts): raise ValueError('compiled text contains a credential-shaped string')
+    answers = [_normal(answer) for answer in _text_list('held_out', held_out)]
+    if any(len(answer)<MIN_SCREENED_ANSWER for answer in answers):
+        raise ValueError(f'held_out answers shorter than {MIN_SCREENED_ANSWER} characters cannot be screened')
+    normal = [_normal(text) for text in texts]
+    if any(_copied(answer, text) for answer in answers for text in normal):
+        raise ValueError('compiled text copies a held-out answer')
+    known = {line for text in _text_list('existing', existing) for line in map(_normal, text.splitlines()) if line}
+    if any(len({_normal(row) for row in rows})<len(rows) for rows in fields.values()) or known & {_normal(row) for row in fields['procedure']}:
+        raise ValueError('redundant instruction: a repeated entry or one the existing instructions already hold')
     # Returns a hypothesis, never installs a skill or grants authority.
-    import json
-    if len(json.dumps(value))>16384: raise ValueError('procedure exceeds compilation bound')
-    return dict(status='hypothesis',procedure={k:value[k] for k in required},
-                needs_independent_evaluation=True,global_install=False,automatic_promotion=False)
+    return dict(status='hypothesis',procedure={k:value[k] for k in COMPILED_KEYS},
+                needs_independent_evaluation=True,global_install=False,automatic_promotion=False,
+                screens=dict(credential='no_pattern_match',answer_copy='no_match' if answers else 'not_run',
+                             redundancy='no_match' if known else 'within_record_only'))
 
 
 TRANSFER_SCHEMA = 'skill-paired-transfer-v1'
