@@ -176,6 +176,45 @@ def test_conditional_power_supports_no_op_without_superiority_and_candidate_all_
     assert not feasibility(spec,aa,baseline=True)['safe']
 
 
+def _supported_analysis():
+    spec,binding=math_fixtures.freeze(math_fixtures.plan())
+    positive=math_fixtures.analyze(spec,math_fixtures.records(spec,math_fixtures.successful_preservation),cohort_binding=binding)|dict(oracle_validity='current')
+    return spec,positive
+
+
+def test_baseline_retry_reports_the_observed_effect_of_an_unchanged_comparison_while_the_baseline_arm_stays_zero():
+    spec,observed=_supported_analysis()
+    retry=feasibility(spec,observed,baseline=True,retry=True)
+    assert retry['qualified_feasible'] and retry['retain_no_op']
+    assert retry['metrics'] == {'primary_effect':observed['primary']['mean']} and retry['metrics']['primary_effect'] > 0
+    assert feasibility(spec,observed,baseline=True)['metrics'] == {'primary_effect':0.0}
+
+
+@pytest.mark.parametrize('mean', [pytest.param(None, id='missing'), pytest.param(float('nan'), id='nan'),
+                                  pytest.param(float('inf'), id='infinite'), pytest.param('0.5', id='text'),
+                                  pytest.param(True, id='boolean')])
+def test_baseline_retry_without_a_finite_numeric_effect_is_not_feasible_and_carries_no_metric(mean):
+    spec,observed=_supported_analysis(); observed['primary']['mean']=mean
+    retry=feasibility(spec,observed,baseline=True,retry=True)
+    assert not retry['safe'] and not retry['qualified_feasible'] and retry['metrics'] == {}
+
+
+def test_baseline_retry_without_a_primary_summary_is_not_feasible():
+    spec,observed=_supported_analysis(); del observed['primary']
+    assert feasibility(spec,observed,baseline=True,retry=True)['metrics'] == {}
+
+
+def test_baseline_retry_stage_runs_the_unchanged_harness_and_refuses_a_patch(history):
+    fixture=history; context=search_context(fixture)
+    retry=evaluate(fixture,context,candidate('base',{}),'baseline_retry','synthetic:retry:1')
+    assert retry['binding']['stage'] == 'baseline_retry' and retry['retain_no_op']
+    assert retry['binding']['harness_sha256'] == context.spec.baseline_hash
+    program=(fixture.baseline/'solve.py').read_text()+'\n# independently synthetic authorized variant\n'
+    with patch.object(context.store,'run',side_effect=AssertionError('a patched retry must not dispatch')):
+        with pytest.raises(ValueError, match='baseline'):
+            context.evaluate(candidate('patched',{'solve.py':program}),stage='baseline_retry',event_id='synthetic:retry:2')
+
+
 def test_export_empty_directory_amplification_rejects_before_prepared_allocation(history):
     fixture=history; profile=resources(fixture); work=Path(profile['work_root'])
     for task in fixture.manifest['tasks']:
@@ -299,4 +338,10 @@ Path('result.json').write_text(json.dumps(dict(value=answer)))
     assert trials[1].isdisjoint(trials[2])
     assert not result['adoption_authority']; assert not result['automatic_promotion']
     assert not result['publication_allowed']
-
+    with patch.object(SandboxBackend,'capability',return_value={'status':'available'}), \
+            patch.object(SandboxBackend,'run',side_effect=fixture.execute) as workers:
+        retry=context.evaluate(candidate('base',{}),stage='baseline_retry',event_id='synthetic:retry:1',
+            parent_deadline=time.monotonic()+600)
+    assert workers.call_count == 48
+    assert (retry['safe'],retry['retain_no_op'],retry['metrics']) == (True,True,{'primary_effect':0.0})
+    assert retry['binding']['run_id'] not in {binding['run_id'] for binding in bindings}
