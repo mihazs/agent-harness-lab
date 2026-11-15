@@ -40,7 +40,9 @@ ACCESS_PROFILE = 'diagnostic-corpus-protected-access-v1'
 ACCESS_PARTITION = 'validation'  # certification stays reserved: no genuine qualification issuer exists
 ACCESS_LIMITATIONS = ('Validation labels are operator-attested declarations, not gold labels; reviewer and root independence are unverified.',
     'Retirement records the exposure in this store only; it cannot stop a model owner from refitting on the reported result.')
+APPROVAL_STATES = ('operator_attested','partial_key_approvals_recorded','key_approvals_recorded')  # exported rows always hold three review events
 LIMITATIONS = ('Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
+    'review_approval reports stored key approvals that are not re-verified at export or benchmark time; gold_label_policy verifies signatures, and no approval is a gold label or evidence of independent reviewers.',
     'Near-duplicate detection is lexical only; recorded lineage groupings are operator-attested links over frozen cache revisions, not verified native lineage, and held-out classifier evaluation is not implemented.')
 
 
@@ -349,6 +351,12 @@ class CorpusStore(PrivateJournal):
             if prior in seen or len(seen)>=MAX_CASES: raise ValueError('invalid incident revision ancestry')
             seen.add(prior); _,previous,history,_,_=self._opened(prior); key=prior; prior=previous['supersedes']
 
+    def _approvals(self, case_id, events):
+        """Whether the review events of a case carry stored key approvals; signatures are not re-verified here."""
+        found=[self._approval(case_id,event) is not None for event,_ in events if event['kind'] in REVIEW_KINDS]
+        return ('no_review_events' if not found else 'key_approvals_recorded' if all(found) else
+            'partial_key_approvals_recorded' if any(found) else 'operator_attested')
+
     def _summary(self, case_id, inputs, events, submissions, final):
         labels=[s['label'] for s in submissions]
         disposition=('unresolved' if final is not None and final['outcome']=='unknown' else 'adjudicated' if final is not None else
@@ -357,6 +365,7 @@ class CorpusStore(PrivateJournal):
         return dict(schema_version=1,case_id=case_id,event_sha256=events[-1][1],state=events[-1][0]['state'],
             partition='development' if exposed else inputs['partition'],
             submissions=len(submissions),disposition=disposition,review_authentication='operator_attested',
+            review_approval=self._approvals(case_id,events),
             reviewer_independence='unverified',root_independence='unverified',gold_label=False,
             classifier_selection_allowed=False,task_outcome_oracle=False,publication_allowed=False)
 
@@ -656,7 +665,7 @@ class CorpusStore(PrivateJournal):
                 if partition not in ('fitting','development') or final is None or final['outcome']=='unknown': continue
                 if not _eligible(inputs): continue
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
-                    review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,
+                    review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,review_approval=summary['review_approval'],
                     retirement=self._retirement(key,inputs,events)))
             ids={row['case_id'] for row in exported}; revisions={row['record']['source_revision_sha256'] for row in exported}
             body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
@@ -699,12 +708,13 @@ def development_export(value):
     if not isinstance(rows,list) or len(rows)>MAX_CASES: raise ValueError('bounded diagnostic corpus records required')
     groups={}; texts={}; seen=set(); entries=[]
     for row in rows:
-        _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label retirement')
+        _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label review_approval retirement')
         inputs=incident(row['record']); _sha(row['review_event_sha256']); partition=row['partition']
         if row['case_id']!=_digest(inputs) or row['case_id'] in seen: raise ValueError('diagnostic corpus record identity differs')
         seen.add(row['case_id']); _retired(row,inputs)
         if (partition not in ('fitting','development') or row['label_provenance']!=PROVENANCE or row['gold_label'] is not False or not _eligible(inputs)):
             raise ValueError('diagnostic corpus export has protected, ineligible or relabelled items')
+        if row['review_approval'] not in APPROVAL_STATES: raise ValueError('diagnostic corpus approval status differs from the frozen states')
         if annotation(row['annotation'],inputs)['outcome']=='unknown': raise ValueError('unknown annotations are not exported labels')
         _separate(groups,texts,inputs,partition); entries.append((row['case_id'],partition,inputs))
     decisions={}

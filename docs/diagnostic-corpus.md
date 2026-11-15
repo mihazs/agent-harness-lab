@@ -172,6 +172,14 @@ It cannot show that the keys belong to distinct independent humans or that the d
 report keeps `gold_labels_issued: 0`, `reviewer_independence: unverified` and `root_independence: unverified`,
 and no export, benchmark, protected-access or classifier-selection output changes.
 
+The queue summary (`snapshot()`) and each exported row also carry `review_approval`, which only reports whether
+stored approval records exist: `no_review_events` (a case not yet submitted; never exported),
+`operator_attested` (no review event carries an approval), `partial_key_approvals_recorded` or
+`key_approvals_recorded` (every submission and the adjudication carry one). It does not run the signature
+check, so `key_approvals_recorded` is not a pass of the policy above; run `gold_label_policy` for that. The
+field never changes `label_provenance`, `gold_label: false` or the other authority fields. Older exports lack
+it and no longer validate; export again from the same store revision.
+
 ## Benchmark input profile
 
 Each development export carries `manifest_sha256` over all of its other fields.
@@ -216,6 +224,10 @@ reports a Brier score that weights each labeled root once, averaging its own row
 first. Roots with conflicting labels are excluded and counted in
 `conflicting_label_roots_excluded`, not averaged. Root independence remains
 `unverified`.
+
+A corpus report also states `review_approval_counts` per split from each row's `review_approval`, and
+`review_approval_verification: not_performed`: the benchmark reads the exported status, which an edited
+manifest can forge, and does not re-verify any signature.
 
 Every report states `label_provenance_counts` for `adjudicated`, `single_review`
 and `adapter_smoke`, plus `reviewed_annotations` and `gold_labels: 0`. Corpus
