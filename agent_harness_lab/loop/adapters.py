@@ -16,7 +16,6 @@ import json
 import math
 from pathlib import Path
 import shutil
-import time
 
 from agent_harness_lab.evaluation import before_after, integrity, statistics, vacuity
 from agent_harness_lab.evidence_label import grader_fingerprint
@@ -100,8 +99,8 @@ class ExecutorRunner:
 
     def run(self, arms, snapshots, manifest, out):
         options = dict(self.options)
-        deadline = options.pop('deadline', None)  # a callable returning the seconds the shared budget has left, so each run is capped by them
-        if deadline is not None: options['parent_deadline'] = time.monotonic() + max(0.0, deadline())
+        deadline = options.pop('deadline', None)  # a callable returning the monotonic time the shared budget ends, so each run is capped by it
+        if deadline is not None: options['parent_deadline'] = deadline()
         self.evaluate(Namespace(manifest=str(manifest), output=str(out), agent=self.agent, codex=self.binary, claude=self.binary,
                                 arms=tuple(arms), **{arm: str(snapshots[arm]) for arm in arms}, **options))
         return json.loads((Path(out)/'results.json').read_text())

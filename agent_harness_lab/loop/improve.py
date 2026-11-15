@@ -9,6 +9,7 @@ nothing is applied, promotion stays off and certification stays unverified.
 import json
 import re
 import shutil
+import time
 
 from agent_harness_lab import surfaces
 from agent_harness_lab.evaluation import integrity
@@ -168,7 +169,7 @@ def run(args, context):
     spec = entry.spec_for(args, args._loop)
     manifest = dict(context['bank_manifest'], skills=[], harness_paths=sorted(context['allowed']))
     workflow.write_json(context['manifest_path'], manifest)
-    options = dict(inherit_env=getattr(args, 'inherit_env', False), config=args.project/'ahl.json', deadline=stages.remaining, **context['grading'])
+    options = dict(inherit_env=getattr(args, 'inherit_env', False), config=args.project/'ahl.json', deadline=lambda: time.monotonic() + max(0.0, stages.remaining()), **context['grading'])
     backend = ExecutorRunner(runner.evaluate, context['agent'], context['binary'], **options)
     baseline_digest = integrity.digest(context['baseline'])
     folders = {baseline_digest: context['baseline']}
