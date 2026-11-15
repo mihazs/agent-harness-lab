@@ -246,7 +246,8 @@ MIN_SCREENED_ANSWER = 4
 CREDENTIAL = re.compile(
     r'-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_\w{20,}'
     r'|\bsk-[A-Za-z0-9_-]{16,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]{8,}'
-    r'|(?i:\bbearer\s+[A-Za-z0-9._~+/=-]{16,}|\b(?:password|passwd|secret|token|api[_-]?key)\b\s*[:=]\s*\S{12,})')
+    # The assignment name may carry an identifier prefix or suffix (DB_PASSWORD=, SECRET_KEY=), so only letters and digits bound it.
+    r'|(?i:\bbearer\s+[A-Za-z0-9._~+/=-]{16,}|(?<![A-Za-z0-9])(?:password|passwd|secret|token|api[_-]?key)(?:_\w*)?\s*[:=]\s*\S{12,})')
 
 
 def _normal(text):
@@ -292,8 +293,9 @@ def compile_procedure(value, *, enabled=False, held_out=(), existing=(), max_byt
     answers = [_normal(answer) for answer in _text_list('held_out', held_out)]
     if any(len(answer)<MIN_SCREENED_ANSWER for answer in answers):
         raise ValueError(f'held_out answers shorter than {MIN_SCREENED_ANSWER} characters cannot be screened')
-    normal = [_normal(text) for text in texts]
-    if any(_copied(answer, text) for answer in answers for text in normal):
+    # One folded text per record, so an answer that spans lines, entries or fields is found as well as one inside a single row.
+    normal = _normal(' '.join(texts))
+    if any(_copied(answer, normal) for answer in answers):
         raise ValueError('compiled text copies a held-out answer')
     known = {line for text in _text_list('existing', existing) for line in map(_normal, text.splitlines()) if line}
     if any(len({_normal(row) for row in rows})<len(rows) for rows in fields.values()) or known & {_normal(row) for row in fields['procedure']}:

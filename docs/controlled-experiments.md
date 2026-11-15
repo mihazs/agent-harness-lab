@@ -342,8 +342,9 @@ procedure, prerequisites, activation and non-activation conditions, counterexamp
 references; any other field, such as a held-out task or grader feedback, is rejected rather than ignored.
 `max_bytes` (at most 16 KiB) is the share of the parent budget granted to the record. The text is rejected when
 it matches a credential shape (private-key headers, cloud and source-host tokens, bearer values, key
-assignments; a heuristic, not a scanner), copies a `held_out` answer as a whole word after case and
-whitespace folding (an answer under four characters cannot be screened and is rejected, not skipped), or
+assignments including environment-variable names such as `DB_PASSWORD=`; a heuristic, not a scanner), copies a
+`held_out` answer as a whole word after case and whitespace folding, including an answer that spans lines,
+entries or fields (an answer under four characters cannot be screened and is rejected, not skipped), or
 repeats an entry or restates a line of `existing` instructions. Each result names its `screens`; a screen
 whose list was not supplied reports `not_run` (or `within_record_only` for redundancy), never a pass, and a
 passed screen is not evidence that the procedure helps: it still needs an independent paired evaluation.

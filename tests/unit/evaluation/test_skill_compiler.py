@@ -37,6 +37,10 @@ CREDENTIALS = {
     'jwt': 'ey' + 'J' + 'a' * 10 + '.' + 'b' * 10 + '.' + 'c' * 10,
     'bearer': 'Bear' + 'er ' + 'abcdefgh12345678',
     'assignment': 'pass' + 'word = ' + 'correcthorse123',
+    'prefixed_env_assignment': 'export DB_PASS' + 'WORD=' + 'hunter2' * 3,
+    'suffixed_env_assignment': 'SEC' + 'RET_KEY=' + 'a1b2c3d4' * 3,
+    'prefixed_and_suffixed_env_assignment': 'AWS_SEC' + 'RET_ACCESS_KEY=' + 'a1b2' * 10,
+    'lowercase_prefixed_colon_assignment': 'db_pass' + 'word: ' + 'hunter2' * 3,
 }
 
 
@@ -136,6 +140,10 @@ class TestCredentials:
         pytest.param('Prefer a task-queue check before the risk-register edit', id='sk-inside-words'),
         pytest.param('Set the password policy field in the fixture only', id='password-word-without-value'),
         pytest.param('Record the secret: none', id='short-value'),
+        pytest.param('Read DB_PASSWORD from the environment and never inline it', id='env-name-without-value'),
+        pytest.param('Rotate the SECRET_KEY after each release', id='suffixed-env-name-in-prose'),
+        pytest.param('Export DB_PASSWORD=changeme before the run', id='short-env-value'),
+        pytest.param('Keep TOKENS: a long list of unrelated words here', id='plural-word-is-not-a-key'),
     ])
     def test_ordinary_prose_that_mentions_credential_words_compiles(self, text):
         assert compiled(record(procedure=text))['status'] == 'hypothesis'
@@ -155,6 +163,36 @@ class TestAnswerCopying:
     def test_a_procedure_that_copies_a_held_out_answer_is_rejected(self, text):
         with pytest.raises(ValueError, match='held-out answer'):
             compiled(record(procedure=text), held_out=[self.ANSWER])
+
+    MULTILINE_ANSWER = 'the quick brown fox\njumps over the lazy dog'
+
+    @pytest.mark.parametrize('procedure', [
+        pytest.param('the quick brown fox\njumps over the lazy dog', id='verbatim-lines'),
+        pytest.param('Step one\nThe  QUICK brown fox\n\nJumps over the lazy dog.\nStep last', id='folded-lines-around-other-steps'),
+        pytest.param('the quick brown fox\r\njumps over the lazy dog', id='crlf-lines'),
+    ])
+    def test_a_multi_line_answer_copied_across_procedure_lines_is_rejected(self, procedure):
+        with pytest.raises(ValueError, match='held-out answer'):
+            compiled(record(procedure=procedure), held_out=[self.MULTILINE_ANSWER])
+
+    @pytest.mark.parametrize('changes', [
+        pytest.param(dict(activate_when=['the quick brown fox', 'jumps over the lazy dog']), id='entries-of-one-field'),
+        pytest.param(dict(procedure='Read the check\nuse the quick brown fox', prerequisites=['jumps over the lazy dog']),
+                     id='procedure-end-and-next-field-start'),
+        pytest.param(dict(counterexamples=['the quick brown fox'], evidence_refs=['jumps over the lazy dog']), id='adjacent-fields'),
+    ])
+    def test_a_multi_line_answer_split_across_entries_or_fields_is_rejected(self, changes):
+        with pytest.raises(ValueError, match='held-out answer'):
+            compiled(record(**changes), held_out=[self.MULTILINE_ANSWER])
+
+    @pytest.mark.parametrize('changes', [
+        pytest.param(dict(procedure='the quick brown fox'), id='first-line-only'),
+        pytest.param(dict(procedure='jumps over the lazy dog\nthe quick brown fox'), id='lines-in-reverse-order'),
+        pytest.param(dict(procedure='the quick brown fox\nRerun the check\njumps over the lazy dog'), id='lines-with-a-step-between'),
+        pytest.param(dict(procedure='the quick brown fox\njumps over the lazy dogs'), id='last-word-extended'),
+    ])
+    def test_a_multi_line_answer_that_is_not_present_in_order_and_whole_compiles(self, changes):
+        assert compiled(record(**changes), held_out=[self.MULTILINE_ANSWER])['status'] == 'hypothesis'
 
     @pytest.mark.parametrize('field', ['prerequisites', 'activate_when', 'do_not_activate_when', 'counterexamples', 'evidence_refs'])
     def test_a_copied_answer_is_rejected_in_every_text_field(self, field):
