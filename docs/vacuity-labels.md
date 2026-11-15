@@ -37,7 +37,6 @@ reads a recorded paired run.
 | `evidence_strength` block | `label: insufficient`, `adoption_support: false`, reasons `evaluation_vacuous` followed by the labels. |
 | `ahl experiment` analyses (fixed, preservation and sequential) | An analysis that would be `supported` for a plan whose baseline and candidate hashes are equal is returned as `status: blocked`, `reason: arms_identical` with the `vacuity` block, and its promotion decision is blocked. The plan still schedules and executes, and an A/A control that finds no effect keeps its analysis, so mechanics checks and noise-floor controls can run one harness against itself; only a reported positive difference is refused. |
 | `ahl compare` and the side-by-side report | An experiment whose arm hashes are equal marks every pair `not_comparable` with the reason `arms_identical`; no pair is `improved`. |
-| Loop evaluator (`FrozenBankEvaluator`) | `Evaluation.vacuity` is the first label that applies to the arm it scored; the controller stops a vacuous baseline `evidence_insufficient` before any improvement and records a vacuous candidate `inconclusive`. See the [validity gate](loop-reference.md#the-validity-gate). |
 | Trial coverage (`legacy_coverage`) | A manifest with no declared task is never covered, even by zero trials. |
 
 ## Audit of reported numbers
