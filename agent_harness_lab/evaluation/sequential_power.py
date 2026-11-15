@@ -16,8 +16,8 @@ import random
 import statistics
 from . import sequential as core
 from .plan import ExperimentSpec, schedule
-from .power import (DISPOSITIONS, MAX_PLANNED_TRIALS, MAX_SIMULATED_TRIALS, Z95, _completion, _declare, _draw, _effect,
-                    _ungrade, wilson)
+from .power import (DEADLINE, DISPOSITIONS, MAX_PLANNED_TRIALS, MAX_SIMULATED_TRIALS, Z95, _completion, _cut, _declare,
+                    _draw, _effect, _ungrade, wilson)
 from .statistics import analyze as fixed_analyze
 
 PROFILE = 'sequential-root-power-simulation-v1'
@@ -54,11 +54,14 @@ def _cells(plan, records):
     return {(t['task'], t['repetition'], t['version']): record for t, record in zip(plan, records)}
 
 
-def _sequential(spec, binding, potential, rows_by_root):
+def _sequential(spec, binding, potential, rows_by_root, deadline=math.inf):
     """Run the controller's stopping rule over a drawn root order; return (analysis, roots, trials)."""
     seen, analysis, observed = [], None, 0
     for root in binding['root_order'][:spec.sequential['max_roots']]:
+        # No root starts past the deadline (the controller's inconclusive budget stop); one cut mid-root is a partial root.
+        if len(seen) >= deadline: return dict(analysis, status='inconclusive', reason='root_budget_not_reserved'), observed, len(seen)
         for row in rows_by_root[root]:
+            if len(seen) >= deadline: return core.analyze(spec, seen, binding), observed, len(seen)
             seen.append(replace(potential[row['task'], row['repetition'], row['version']], trial_id=row['trial_id']))
             if seen[-1].critical_regression: break  # the controller stops at the first critical trial
         observed += 1
@@ -97,15 +100,16 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
         drawn = _draw(fixed, fixed_plan, declared, rng)
         # Both profiles see the same lost grades; the finite-bank truth below keeps every drawn outcome.
         seen_grades = _ungrade(drawn, fixed_plan, declared, rng)
-        ungraded.append(sum(r.status != 'graded' for r in seen_grades))
+        fixed_seen = _cut(seen_grades, declared)  # the same deadline ends the fixed comparator in its own order
+        ungraded.append(fixed_trials - sum(r.status == 'graded' for r in fixed_seen))
         truth_cells, potential = _cells(fixed_plan, drawn), _cells(fixed_plan, seen_grades)
         # A seeded uniform permutation stands in for the controller's system-random draw.
         order = roots[:]; rng.shuffle(order)
         binding = dict(template, root_order=order)
         rows_by_root = defaultdict(list)
         for row in core.schedule(spec, binding): rows_by_root[row['root']].append(row)
-        result, observed, trials = _sequential(spec, binding, potential, rows_by_root)
-        comparator = fixed_analyze(fixed, seen_grades)
+        result, observed, trials = _sequential(spec, binding, potential, rows_by_root, declared.get(DEADLINE, math.inf))
+        comparator = fixed_analyze(fixed, fixed_seen)
         # The sequential claim concerns this bank's realized root-block means, not the model's expectation.
         families_truth, primary_truth = _realized(spec, truth_cells, weights)
         benefit = primary_truth > effect_margin and all(v >= -family_margin for v in families_truth.values())
@@ -154,7 +158,7 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
             'The sequential target is this bank\'s realized root-block mean, which a random null draw can place above the margin; '
             'only false_support measures a wrong sequential claim, and fixed-comparator rates carry the fixed-profile interpretation.',
             'The two profiles estimate different targets under different assumptions; matching dispositions are not equivalent claims.',
-            'Only a declared ungraded probability simulates unknown outcomes; partial roots and time-budget exhaustion are not simulated.',
+            'The model creates unknown outcomes only when it declares grade loss or a deadline; the deadline counts arm trials, not seconds.',
             'No worker, model or grader is run; nothing is observed, certified or adopted.',
             'A low supported rate is not evidence of noninferiority; rates and means carry Monte Carlo uncertainty.',
             'The plan, margins, method and budgets are unchanged; no trials are added.'])

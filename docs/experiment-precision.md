@@ -122,10 +122,16 @@ probability that a trial reuses its root's one shared draw for that arm instead 
 an independent draw) and `critical_regression_probability` (per candidate trial).
 `baseline_ungraded_probability` and `candidate_ungraded_probability` (each in
 `[0, 1]`, per trial of that arm) declare grade loss: a hit trial keeps no outcome
-and no critical flag and is recorded as unknown, never as success or failure. They
-are absent from the normalized model unless declared, so models that omit them keep
-their hash and report bytes. Unknown fields, booleans, nonfinite or out-of-range
-values and unknown families are rejected.
+and no critical flag and is recorded as unknown, never as success or failure.
+`root_ungraded_probability` (in `[0, 1]`, per root and arm) loses every grade of
+that arm in a whole root, and `failure_ungraded_probability` (in `[0, 1]`) adds a
+loss chance for each trial whose drawn outcome is a failure, so lost grades can
+depend on a root or on the outcome. `deadline_trials` (an integer in
+`[1, 100000]`) declares how many arm trials the parent deadline lets complete, in
+execution order; the rest are never run. These are absent from the normalized
+model unless declared, so models that omit them keep their hash and simulated results.
+Unknown fields, booleans, nonfinite or out-of-range values and unknown families
+are rejected.
 
 Each simulation draws one synthetic `TrialRecord` per scheduled trial and passes
 the full set to `statistics.analyze`, so roots, repeats, Bonferroni allocation,
@@ -180,31 +186,49 @@ the fixed comparator finishes, a large harm has a Wilson lower bound of rejectio
 at or above .9 with no false harm call, a harm in one family hidden by a large
 primary gain is never supported, a family below the root minimum never supports
 and any critical regression rejects at its first trial. A partial-inspection null
-plan can only return `maximum_roots` inconclusive results. Partial roots and
-time-budget exhaustion are not simulated; unknown grades are simulated only when
-the model declares them (see below). The two profiles estimate different targets under different
+plan can only return `maximum_roots` inconclusive results. Unknown grades,
+partial roots and a deadline are simulated only when the model declares them (see
+below). The two profiles estimate different targets under different
 assumptions, so matching dispositions are not equivalent claims, and simulated
 roots stay independent by construction. The report stays private, runs no worker,
 model or grader, changes no plan, margin or budget and cannot authorize promotion.
 
-### Declared grade loss
+### Declared grade loss and deadline
 
-With a declared ungraded probability, both simulators lose grades independently
-per trial and arm, after the outcome draw, and hand the same lost grades to the
-fixed analysis and, when the plan is sequential, to the controller's rule. The
-fixed analysis stays `incomplete` (`unknown_or_invalid_grade`) in every simulation
-that lost any grade; the sequential controller ends at the first inspected root
-holding one (`unknown_root_outcome`). Nothing is imputed, so grade loss cannot
-turn a harmful or null candidate into support; it can only withhold a decision.
-The report then adds a `completion` block with the declared probabilities, the
-planned fixed trials, the mean number of ungraded trials per simulation and how
-many simulations kept every grade (count, rate and Wilson 95% interval). The
-comparison shows how an early stop can keep a decision that a fixed-final analysis
-over every task loses. Loss is independent per trial: missingness that depends on
-the outcome, on a root or on resource limits is not modeled, so these rates
-describe withheld decisions under that one declared pattern, not recovered
-evidence. The identified range over completions for a real incomplete record set
-is reported by the analysis itself, not by the simulator.
+With a declared ungraded probability, both simulators lose grades per trial and
+arm, after the outcome draw, and hand the same lost grades to the fixed analysis
+and, when the plan is sequential, to the controller's rule. The fixed analysis
+stays `incomplete` (`unknown_or_invalid_grade`) in every simulation that lost any
+grade; the sequential controller ends at the first inspected root holding one
+(`unknown_root_outcome`). Nothing is imputed, so grade loss cannot turn a harmful
+or null candidate into support; it can only withhold a decision. The report then
+adds a `completion` block with the declared fields, the loss pattern
+(`loss_model`), the planned fixed trials, the mean number of ungraded trials per
+simulation and how many simulations kept every grade (count, rate and Wilson 95%
+interval). The comparison shows how an early stop can keep a decision that a
+fixed-final analysis over every task loses.
+
+Three patterns are available, alone or together. Independent loss per trial and
+arm is the default. `root_ungraded_probability` clusters loss: at the same marginal
+rate it hits fewer roots, so more simulations stay whole. `failure_ungraded_probability`
+ties loss to the drawn outcome, as when a failing attempt is the one that times
+out. Each changes only how often a decision is withheld and when a sequential run
+meets its first unknown grade; because nothing is imputed, none can bias a
+supported result.
+
+`deadline_trials` simulates exhaustion of the time budget without modeling
+durations. The fixed comparator keeps its first trials in schedule order and is
+`incomplete` (`missing_or_duplicate_trials`) when any are cut. The sequential run
+executes root blocks in its drawn order and keeps every stop it reached earlier. A
+deadline on a root boundary ends it `inconclusive` (`root_budget_not_reserved`, the
+controller's budget reason); a deadline inside a root leaves a partial root, which
+the unchanged engine reports as `incomplete` (`partial_or_nonprefix_root`). Trials
+a deadline cuts count as ungraded in the `completion` block. The deadline is a
+count of arm trials, not seconds: a real run's time budget also depends on trial
+durations, setup and quotas that the report does not model. These rates describe
+withheld decisions under the declared patterns, not recovered evidence. The
+identified range over completions for a real incomplete record set is reported by
+the analysis itself, not by the simulator.
 
 A separate fixed-interval check draws 100 paired root differences of −1 or +1
 with true mean zero, 1,000 times with seed 394. With independent roots, the

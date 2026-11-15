@@ -163,6 +163,58 @@ def test_models_without_declared_grade_loss_keep_their_sequential_reports():
     assert zero['fixed_comparator'] == report['fixed_comparator']
 
 
+def test_a_deadline_ends_the_run_at_a_root_boundary_or_inside_a_partial_root():
+    # Predeclared invariants for plan(16), repeats 1: two arm trials per root, 32 in all. A deadline of 4 ends the
+    # run at the boundary after two roots, too few for support; a deadline of 3 cuts the second root, which the
+    # unchanged engine reports as a partial root. The fixed comparator never has every trial under either.
+    spec, declared = plan(16), outcome(.1, .8)
+    boundary = simulate(spec, dict(declared, deadline_trials=4), simulations=20, seed=3)
+    assert boundary['sequential']['reasons'] == {'root_budget_not_reserved': 20} and count(boundary, 'inconclusive') == 20
+    assert (boundary['sequential']['observed_roots']['max'], boundary['sequential']['observed_trials']['max']) == (2, 4)
+    partial = simulate(spec, dict(declared, deadline_trials=3), simulations=20, seed=3)
+    assert partial['sequential']['reasons'] == {'partial_or_nonprefix_root': 20} and count(partial, 'incomplete') == 20
+    assert (partial['sequential']['observed_roots']['max'], partial['sequential']['observed_trials']['max']) == (1, 3)
+    for report in (boundary, partial):
+        assert report['fixed_comparator']['reasons'] == {'missing_or_duplicate_trials': 20}
+        assert report['completion']['fully_graded']['count'] == 0
+        assert report['completion']['loss_model'] == 'time_budget_in_arm_trials'
+
+
+def test_a_deadline_that_cuts_the_fixed_comparator_keeps_the_sequential_stops_made_before_it():
+    # Predeclared: plan(40) has 80 fixed trials; a deadline of 60 always leaves the fixed comparator incomplete, no
+    # sequential run inspects past it, and a large benefit is still supported by runs that stopped within it.
+    report = simulate(plan(40), outcome(.1, .8, deadline_trials=60), simulations=100, seed=3)
+    assert report['fixed_comparator']['reasons'] == {'missing_or_duplicate_trials': 100}
+    assert report['sequential']['observed_trials']['max'] <= 60
+    assert count(report, 'supported') > 0 and count(report, 'supported', fixed=True) == 0
+    assert report['finite_bank_claims']['false_support']['count'] == 0
+
+
+def test_root_and_outcome_dependent_loss_end_an_inspection_at_the_first_root_that_holds_it():
+    # Predeclared invariants: losing every root, or every failed trial of an all-failing bank, leaves no grade, so
+    # the first root ends the controller; a bank where nothing fails loses nothing to outcome-dependent loss.
+    for declared in (outcome(.1, .8, root_ungraded_probability=1), outcome(0, 0, failure_ungraded_probability=1)):
+        report = simulate(plan(16), declared, simulations=10, seed=3)
+        assert report['sequential']['reasons'] == {'unknown_root_outcome': 10}
+        assert report['sequential']['observed_roots']['max'] == 1
+        assert report['fixed_comparator']['reasons'] == {'unknown_or_invalid_grade': 10}
+    clean = simulate(plan(16), outcome(1, 0, failure_ungraded_probability=1), simulations=10, seed=3)
+    assert clean['completion']['fully_graded']['count'] == 10 and clean['completion']['mean_ungraded_trials'] == 0
+
+
+def test_models_without_dependent_loss_or_a_binding_deadline_keep_their_sequential_reports():
+    report = simulate(plan(8), outcome(.5, .3), simulations=5, seed=1)
+    zero = simulate(plan(8), outcome(.5, .3, root_ungraded_probability=0, failure_ungraded_probability=0), simulations=5, seed=1)
+    roomy = simulate(plan(8), outcome(.5, .3, deadline_trials=16), simulations=5, seed=1)  # 16 trials is the whole plan
+    assert 'completion' not in zero and roomy['completion']['fully_graded']['count'] == 5
+    for same in (zero, roomy):
+        assert same['sequential'] == report['sequential'] and same['fixed_comparator'] == report['fixed_comparator']
+    for bad in (dict(root_ungraded_probability=1.5), dict(failure_ungraded_probability=True), dict(deadline_trials=0),
+                dict(deadline_trials=True), dict(deadline_trials=2.5), dict(deadline_trials=power.MAX_PLANNED_TRIALS + 1)):
+        with pytest.raises(ValueError):
+            simulate(plan(8), outcome(.5, .3, **bad), simulations=1)
+
+
 def test_sequential_report_is_private_and_never_public_exportable():
     report = simulate(plan(8), outcome(.5, .3), simulations=5, seed=1)
     public = dict(publication_allowed=True, provenance=dict(source_kind='synthetic', approved_publication=True,

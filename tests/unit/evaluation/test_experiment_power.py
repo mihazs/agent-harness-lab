@@ -141,6 +141,58 @@ class PowerSimulationTests(unittest.TestCase):
             with self.subTest(model=bad), self.assertRaises(ValueError):
                 simulate(spec, bad, simulations=1)
 
+    def test_whole_root_loss_clusters_the_same_marginal_loss_into_fewer_incomplete_runs(self):
+        # Predeclared: 100 simulations, seed 7, 30 roots of 3 repeats, a 1% loss chance. A root-arm of three repeats
+        # survives per-trial loss with .99**3 but whole-root loss with .99, so clustered loss keeps more runs whole.
+        spec = plan(30, 3)
+        spread = simulate(spec, outcome(.1, .8, baseline_ungraded_probability=.01, candidate_ungraded_probability=.01),
+                          simulations=100, seed=7)
+        clustered = simulate(spec, outcome(.1, .8, root_ungraded_probability=.01), simulations=100, seed=7)
+        self.assertGreater(clustered['completion']['fully_graded']['count'], spread['completion']['fully_graded']['count'])
+        self.assertEqual(clustered['completion']['loss_model'], 'whole_root_by_arm')
+        self.assertEqual(clustered['completion']['declared'], dict(root_ungraded_probability=.01))
+        self.assertEqual(clustered['dispositions']['incomplete']['count'], 100 - clustered['completion']['fully_graded']['count'])
+        total = simulate(plan(20), outcome(.1, .8, root_ungraded_probability=1), simulations=10, seed=7)
+        self.assertEqual((total['reasons'], total['completion']['mean_ungraded_trials']), ({'unknown_or_invalid_grade': 10}, 40))
+
+    def test_loss_that_depends_on_the_outcome_only_hits_failed_trials(self):
+        # Predeclared invariants: where every trial passes nothing can be lost; where every trial fails all are.
+        spec = plan(20)
+        passing = simulate(spec, outcome(1, 0, failure_ungraded_probability=1), simulations=10, seed=2)
+        self.assertEqual((passing['completion']['mean_ungraded_trials'], passing['completion']['fully_graded']['count']), (0, 10))
+        failing = simulate(spec, outcome(0, 0, failure_ungraded_probability=1), simulations=10, seed=2)
+        self.assertEqual((failing['completion']['mean_ungraded_trials'], failing['reasons']), (40, {'unknown_or_invalid_grade': 10}))
+        self.assertEqual(failing['completion']['loss_model'], 'failure_dependent_per_trial')
+
+    def test_a_deadline_cuts_the_fixed_run_into_a_withheld_decision(self):
+        spec = plan(20)  # 40 planned arm trials
+        cut = simulate(spec, outcome(.1, .8, deadline_trials=39), simulations=10, seed=2)
+        self.assertEqual(cut['reasons'], {'missing_or_duplicate_trials': 10})
+        self.assertEqual(cut['dispositions']['incomplete']['count'], 10)
+        self.assertEqual((cut['completion']['mean_ungraded_trials'], cut['completion']['fully_graded']['count']), (1, 0))
+        self.assertEqual((cut['completion']['loss_model'], cut['completion']['declared']), ('time_budget_in_arm_trials', dict(deadline_trials=39)))
+        # A deadline that lets every trial finish changes no decision and draws nothing.
+        whole, plain = simulate(spec, outcome(.1, .8, deadline_trials=40), simulations=10, seed=2), simulate(spec, outcome(.1, .8), simulations=10, seed=2)
+        self.assertEqual((whole['dispositions'], whole['reasons']), (plain['dispositions'], plain['reasons']))
+        self.assertEqual(whole['completion']['fully_graded']['count'], 10)
+        # Lost grades and unrun trials both count as ungraded; only graded trials among the first 30 remain.
+        both = simulate(spec, outcome(.1, .8, deadline_trials=30, candidate_ungraded_probability=1), simulations=5, seed=2)
+        graded = sum(t['version'] == 'baseline' for t in schedule(spec)[:30])
+        self.assertEqual(both['completion']['mean_ungraded_trials'], 40 - graded)
+        self.assertEqual(both['completion']['loss_model'], 'independent_per_trial_by_arm+time_budget_in_arm_trials')
+
+    def test_zero_dependent_loss_keeps_reports_and_invalid_declarations_fail_closed(self):
+        spec, plain = plan(10), outcome(.4, .3, repeat_correlation=.5)
+        legacy = simulate(spec, plain, simulations=20, seed=3)
+        zero = simulate(spec, dict(plain, root_ungraded_probability=0, failure_ungraded_probability=0), simulations=20, seed=3)
+        self.assertNotIn('completion', zero)
+        self.assertEqual(zero['dispositions'], legacy['dispositions'])
+        for bad in (dict(root_ungraded_probability=1.5), dict(failure_ungraded_probability=True), dict(deadline_trials=0),
+                    dict(deadline_trials=True), dict(deadline_trials=1.5), dict(deadline_trials='5'), dict(deadline_trials=-3),
+                    dict(deadline_trials=power.MAX_PLANNED_TRIALS + 1)):
+            with self.subTest(model=bad), self.assertRaises(ValueError):
+                simulate(spec, dict(plain, **bad), simulations=1)
+
     def test_invalid_models_specs_and_budgets_fail_closed(self):
         spec = plan(10)
         for bad in ({}, dict(outcome(.5, 0), schema='other'), dict(outcome(.5, 0), extra=1), {'schema': MODEL_SCHEMA},
