@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_harness_lab.diagnostics.predictions import PredictionLedger, PredictionRecord
+from agent_harness_lab.optimization import strategies
 from agent_harness_lab.optimization.budget import Budget
 from agent_harness_lab.optimization.history_evidence import HistorySearchContext
 from agent_harness_lab.optimization.search import CandidateRecord
@@ -358,3 +360,33 @@ def test_a_baseline_changed_during_a_guarded_retry_blocks_the_comparison(tmp_pat
                                 controller=controller.context, retry_comparator=True)
     retry = row(report, 'single-revision')['retry_comparator']
     assert (retry['status'], retry['attempts'], retry['exceeds_best_retry']) == ('blocked', [], None)
+
+
+def predicted(request):
+    c = candidate(f'p{request["index"]}', f'text {request["index"]}')
+    if request['index'] == 2:
+        return c  # No prediction: this proposal must never reach the controller.
+    return c, PredictionRecord(prediction_id=f'pred-{c.candidate_id}', mechanism_id='m', baseline_hash=BASE.digest,
+        candidate_hash=c.digest, bank_version='bank1', grader_version='g1', kind='deterministic_boundary',
+        observable_effect='recovers on the development task', competing_explanation='grader defect',
+        falsifier='the development task still fails', criterion='fail_to_pass',
+        development_task_ids=('dev',), evidence_refs=('e1',))
+
+
+def test_guarded_route_freezes_each_prediction_before_dispatch_and_never_dispatches_an_unpredicted_proposal(tmp_path, controller):
+    predictions, frozen_at_dispatch = strategies.PredictionGate(PredictionLedger(), 'bank1', 'g1'), {}
+    dispatch = controller.evaluate
+
+    def recording(value, **kwargs):
+        frozen_at_dispatch[value.candidate_id] = [r.candidate_hash for r, _ in predictions.ledger.entries()]
+        return dispatch(value, **kwargs)
+    controller.evaluate = recording
+    report = compare(tmp_path, controller, propose=predicted, strategies=[('reflective-gepa-inspired', 1)],
+                     predictions=predictions)
+    reflective = row(report, 'reflective-gepa-inspired')
+    assert [(r['index'], r['prediction_id']) for r in reflective['predictions']['receipts']] == [(1, 'pred-p1'), (3, 'pred-p3')]
+    assert [(r['index'], r['reason']) for r in reflective['predictions']['rejected']] == [(2, 'missing_prediction')]
+    assert [name for name, _ in controller.calls if name == 'p2'] == []
+    assert candidate('p1', 'text 1').digest in frozen_at_dispatch['p1']
+    assert candidate('p3', 'text 3').digest in frozen_at_dispatch['p3']
+    assert [r['reason'] for r in reflective['rejections']] == ['invalid_or_unauthorized_proposal']
