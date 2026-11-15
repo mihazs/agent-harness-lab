@@ -1,8 +1,8 @@
 """Map the declared lifecycle and validity fields of knowledge pages to temporal facets; never authority.
 
-facets() reads `status`, `valid_from`, `valid_until`, `open_ended`, `supersedes` and `superseded_by` from the
-metadata of pages an authorized caller already holds, such as `knowledge_bundle.read(...).pages`, and returns one
-`TemporalFacet` per usable page for `temporal.resolve`. Knowledge time comes only from the caller's `recorded_at`,
+facets() reads `status`, `valid_from`, `valid_until`, `stale_after`, `open_ended`, `supersedes` and `superseded_by`
+from the metadata of pages an authorized caller already holds, such as `knowledge_bundle.read(...).pages`, and
+returns one `TemporalFacet` per usable page for `temporal.resolve`. Knowledge time comes only from the caller's `recorded_at`,
 never from a timestamp the page declares about itself. A page whose declared field cannot be read is left out and
 reported as a finding instead of being guessed, so it is never reported in force. A reference to a page the
 bundle does not hold keeps the declaring page visible as unknown or dangling in the resolver. Nothing is read,
@@ -84,7 +84,7 @@ def facets(pages, source_sha256, recorded_at=None):
     found, findings, withheld = [], [], []
     for page in sorted(pages, key=lambda p: p.path):
         values, bad, missing = {}, [], []
-        for field in ('valid_from', 'valid_until'):
+        for field in ('valid_from', 'valid_until', 'stale_after'):
             try: values[field] = _time(page.metadata.get(field))
             except ValueError: bad.append(field+'_unreadable')
         flag = page.metadata.get('open_ended', False)
