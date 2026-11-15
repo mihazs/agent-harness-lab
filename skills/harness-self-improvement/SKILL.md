@@ -50,7 +50,7 @@ reason to return a proposal. Follow the [evaluation methodology](references/eval
 The user's words choose the scope; nothing widens it (rules: "Scope mapping" in [invocation routing](references/invocation.md)).
 With the CLI available, never edit a global file by hand instead of its `--scope` path.
 
-- No scope word, "this project", "my repo": omit `--scope` (`project`, no user-level files).
+- No scope word, "this project", "my repo": `--scope project` (no user-level files). Always write the scope out, so no default decides it.
 - "global", "my user-level harness": `--scope global --agent codex|claude`.
 - "both", "global and project": `--scope project+global --agent codex|claude`.
 - Either layer could be meant ("my skills", "my setup"): ask one question or run `project`; never guess toward global.

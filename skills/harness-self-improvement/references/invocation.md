@@ -13,7 +13,7 @@ named. Run from that project so its configuration and relative paths resolve
 there:
 
 ```sh
-ahl skills invoke .
+ahl skills invoke . --scope project
 ```
 
 The adapter enters the existing `improve` controller once, using its configuration,
@@ -99,11 +99,12 @@ crash may leave a lock; verify its recorded PID before removing a stale lock.
 
 The command's `--scope` selects the harness layers; the user's words choose it and
 the skill never widens it. Only the command line selects global scope: a project
-file cannot.
+file cannot. The skill writes the scope out on every run, `project` included, so a
+default never decides it.
 
 | The user says | Run |
 | --- | --- |
-| nothing about scope, "this project", "my repo" | no `--scope` flag (`project`; never reads or writes user-level files) |
+| nothing about scope, "this project", "my repo" | `--scope project` (never reads or writes user-level files) |
 | "global", "my user-level/global harness" | `--scope global --agent codex\|claude` |
 | "both", "global and project", "everywhere" | `--scope project+global --agent codex\|claude` |
 | could be either layer ("my skills", "my setup") | one question, or a `project` run |
