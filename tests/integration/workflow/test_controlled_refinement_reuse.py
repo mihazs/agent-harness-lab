@@ -6,10 +6,15 @@ In the `reuse` scenarios the second author writes only fresh tasks, as the reuse
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import time
+from unittest.mock import patch
 
 import pytest
 
+from agent_harness_lab import refinement_reuse
+from agent_harness_lab.evaluation.derivations import _snapshot_pin
 from agent_harness_lab.evaluation.integrity import digest
+from agent_harness_lab.evaluation.working_state import WorkingState
 from agent_harness_lab.evaluation.manifest_contract import ContractError
 from tests.integration.sandbox import test_sandbox_construction as fixtures
 
@@ -73,8 +78,70 @@ def test_a_refinement_author_that_writes_a_task_that_is_not_heldout_gets_one_rep
     assert receipt['contract_violation']['field'] == 'tasks[0].split' and 'evaluation_reuse' not in receipt
 
 
-def test_the_evaluation_store_route_still_rebuilds_the_whole_evaluation_on_refinement(store):
-    store.mode = 'refine'
+def test_an_evaluation_store_refinement_keeps_the_frozen_tasks_and_adds_only_fresh_heldout_inputs(store):
+    store.mode = 'reuse'
     result = store.run_controlled()
-    assert result['status'] == 'inconclusive' and store.authors == 2
-    assert 'evaluation_reuse' not in result and not any(REUSE_LINE in prompt for prompt in author_prompts(store))
+    assert result['status'] == 'inconclusive', result
+    assert store.authors == 2
+    assert result['evaluation_reuse'] == dict(attempt=1, reused_tasks=2, fresh_heldout_tasks=1, frozen_digests_verified=True)
+    first, second = (json.loads((evaluation(result, attempt) / 'manifest.json').read_text()) for attempt in (0, 1))
+    assert [task['id'] for task in first['tasks']] == ['development', 'regression', 'heldout']
+    assert [task['id'] for task in second['tasks']] == ['development', 'regression', 'fresh-heldout']
+    for name in ('development', 'regression', 'oracle', 'development-complete', 'regression-complete'):
+        assert digest(evaluation(result, 1) / name) == digest(evaluation(result, 0) / name)
+    assert not (evaluation(result, 1) / 'heldout').exists()
+    assert all(str(evaluation(result, 1)) in task['grader'][1] for task in second['tasks'])
+
+
+def test_an_evaluation_store_refinement_tells_only_the_second_author_to_reuse(store):
+    store.mode = 'reuse'
+    store.run_controlled()
+    first, second = author_prompts(store)
+    assert REUSE_LINE not in first and REUSE_LINE in second
+
+
+def test_the_custody_receipt_of_an_evaluation_store_refinement_binds_the_merged_evaluation(store):
+    store.mode = 'reuse'
+    result = store.run_controlled()
+    stages = result['construction_access']['stages']
+    assert [stage['role'] for stage in stages] == ['proposer', 'evaluator_author', 'proposer', 'evaluator_author']
+    merged = WorkingState(evaluation(result, 1), time.monotonic() + 60).snapshot
+    assert stages[3]['consumer_tree_sha256'] == _snapshot_pin(merged)
+    assert stages[3]['consumer_tree_sha256'] != stages[1]['consumer_tree_sha256']
+
+
+def test_an_evaluation_store_refinement_author_that_writes_a_task_that_is_not_heldout_gets_one_repair_and_then_a_typed_defect(store):
+    store.mode = 'reuse-split'
+    with pytest.raises(ContractError) as caught:
+        store.run_controlled()
+    assert (caught.value.reason, caught.value.field) == ('evaluation_manifest_field_invalid', 'tasks[0].split')
+    assert store.roles.count('evaluator_author') == 3  # the first attempt's author, then the refinement author and its one repair
+    assert 'evaluation_reuse' not in json.loads((Path(store.args._run_output) / 'workflow.json').read_text())
+
+
+def _change_a_frozen_file(destination):
+    (destination / 'development' / 'task.json').write_text('{"split": "development", "scenario": 99}')
+
+
+def _change_an_authored_file(destination):
+    (destination / 'fresh-oracle' / 'expected.json').write_text('{"scenario": 99}')
+
+
+def _add_a_stray_file(destination):
+    (destination / 'stray.txt').write_text('not from any construction')
+
+
+@pytest.mark.parametrize('tamper', [
+    pytest.param(_change_a_frozen_file, id='frozen-file-changed'),
+    pytest.param(_change_an_authored_file, id='authored-file-changed'),
+    pytest.param(_add_a_stray_file, id='stray-file-added')])
+def test_a_merged_evaluation_that_differs_from_the_custody_copies_is_never_adopted(store, tamper):
+    store.mode = 'reuse'
+    merge = refinement_reuse.merge
+
+    def merge_then_tamper(reuse, destination, manifest):
+        merged = merge(reuse, destination, manifest)
+        tamper(Path(destination))
+        return merged
+    with patch.object(refinement_reuse, 'merge', side_effect=merge_then_tamper), pytest.raises(ValueError, match='refinement reuse'):
+        store.run_controlled()

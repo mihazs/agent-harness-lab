@@ -114,8 +114,17 @@ Where reuse applies:
 | --- | --- |
 | Cooperative (Codex and Claude) | Reuses the frozen tasks; the author writes fresh held-out tasks only |
 | Controlled (Responses), direct | The same: the author's prompt asks for fresh held-out tasks only, and a task that is not held out, a reused id or a file at a reserved path gets the one repair pass, then a typed `evaluation_manifest_field_invalid` stop |
-| Controlled (Responses), evaluation store | Rebuilds the whole evaluation: the store seals each author output under its own custody record, and no reuse path into a sealed output exists yet |
+| Controlled (Responses), evaluation store | The same: the author's sealed output holds the fresh held-out tasks only, and the controller merges the frozen parts into the consumer copy, which it then re-binds to the store's custody record (see below) |
 | Pinned task bank | Nothing to reuse: a pinned bank is evaluated in a single attempt and never refines |
+
+On the evaluation-store route the custody record of the refinement author's output is never rewritten: it holds
+the fresh tasks only, and the receipt's `construction_access` lists it as its own stage. After the merge the controller
+re-binds the consumer copy (the tree the trials run on) and refuses the merge unless that copy differs from the sealed
+author output only by the merged manifest and by files and directories that match the first author's consumer copy
+byte for byte; any other difference ends the run with a `ValueError` before any trial. The stage's
+`consumer_tree_sha256` is the digest of the merged tree. Feedback on the refinement's trials accepts the reused tasks with
+the splits their own sealed author output recorded. A run with a closed-input domain has no merge path (its author output is sealed
+under a proof) and keeps rebuilding the whole evaluation.
 
 ## Receipt fields
 
