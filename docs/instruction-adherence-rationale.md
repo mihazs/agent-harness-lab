@@ -87,7 +87,7 @@ rule that never reached the agent, one buried in a long file, a hedged sentence,
 would have enforced, a constraint lost over a long session or plain agent variance. The repair plan
 therefore lists every mechanism the structural facts leave open, each beside the others as a competing
 explanation and always beside "the agent erred for a reason unrelated to the harness". A mechanism the
-evidence cannot show, such as a compaction nobody recorded, is `not_excluded`, never asserted. Skill
+evidence cannot show, such as whether a recorded compaction removed the instruction, or a compaction nobody recorded, is `not_excluded`, never asserted. Skill
 activation is listed as not assessed because the report holds no such evidence.
 
 Only a controlled comparison can show that a repair works, and a comparison that grades itself is not
