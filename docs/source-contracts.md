@@ -1066,10 +1066,53 @@ denominator is zero). It is offline, reads nothing and has profile
 The score describes only the supplied fixture. It sets `diagnostic_utility_claimed`,
 `agent_success_claimed` and `publication_allowed` to false and `independent_roots`
 to `None`: it does not measure incremental diagnostic utility against a session-only
-baseline, production precision or agent success. Use reproducible synthetic or
+baseline (see [the preregistered utility study](#preregistered-utility-study-against-a-session-only-baseline)),
+production precision or agent success. Use reproducible synthetic or
 public cases only. `task test:sources:commit-join` also runs the commit join over
 seven synthetic controls (exact, fork, unrelated checkout, force-push, different
 commit, Git-reference-only, missing repository identity) and expects zero false links.
+
+### Preregistered utility study against a session-only baseline
+
+`sources.utility_study.register(cases)` freezes a case set and its verdict rule under
+one `preregistration_sha256`. Each case is exactly `case_id`, `kind` (`join` or
+`contradiction`), `truth` (`positive`, `negative` or a deliberately `ambiguous`
+control), `session_visible` (the session alone could show the signal) and
+`sources_needed` (distinct source-kind labels). Record the returned hash before any
+arm is scored.
+
+`evaluate(prereg, arms, preregistered_sha256=HASH)` scores two arms, `session_only`
+and `cross_source`. Each arm supplies exactly one observation per preregistered case:
+`case_id`, `reported` (`positive` or `not_positive`), `sources_seen` (possibly empty)
+and `records_read`. An edited case or rule, a different hash, a dropped, repeated or
+extra case, a third arm or a malformed observation is rejected, so a result cannot be
+chosen after the fact. Observations come from whatever produced them: the commit join
+and the merged-pull failing-CI leads are scored this way by the shipped tests, and a
+resolver that cannot join a record reports `not_positive`.
+
+Per arm, overall and per kind, the report gives counts, precision, recall and the
+false-finding rate (an `ambiguous` control reported as positive is a false finding),
+all with 95% Wilson intervals, plus `actionable_findings` (true positives),
+`actionable_yield` per case, `source_coverage` (needed source kinds seen) and
+`overhead` (records read, per case and per true finding). Recall is also split into
+`needs_cross_source` and `session_visible` cases. The `incremental` block gives the
+cross-source recall gain on each split and the extra records read.
+
+The verdict applies the preregistered rule `utility-verdict-v1` in order:
+
+| Verdict | Reasons |
+| --- | --- |
+| `not_supported` | `false_finding` (the cross-source arm reported a false link or contradiction), `session_visible_regression` (it lost a signal the baseline found) or `no_recall_gain` on cases needing other sources |
+| `inconclusive` | `no_comparable_cases`, or `too_few_negative_controls_for_ceiling`: the upper false-finding bound exceeds the preregistered ceiling (default 0.1, which needs about 35 negative controls with no false finding) |
+| `supported_on_fixture` | none of the above |
+
+A result describes the frozen fixture only. It sets `diagnostic_utility_claimed` and
+`agent_success_claimed` to false, `independent_roots` to `None` and
+`publication_allowed` to false, so it neither shows that agents succeed more nor
+validates production precision. The session-only baseline is a declared arm, not a
+measured human or model analyst, and `records_read` counts resolver reads, not
+wall time. Use reproducible synthetic or public cases only; private-derived results
+are not for publication.
 
 ### Declared Codex project instruction inventory
 
