@@ -5,9 +5,9 @@ evaluate > improve > evaluate state machine and the loop controller in
 `agent_harness_lab.loop`. The declaration and the machine are pure: no model call,
 clock, network or file access beyond reading configuration. The controller drives
 the machine through two injected ports and writes only its private round ledger.
-Nothing calls the controller yet: `ahl improve` still makes one pass, and no
-command, receipt or exit code changes. Adapters that wrap the real evaluation come
-in a later slice.
+The [frozen-bank evaluator](#frozen-bank-evaluator) adapts the real evaluation to
+the controller's evaluator port. Nothing calls the controller yet: `ahl improve`
+still makes one pass, and no command, receipt or exit code changes.
 
 The loop only recommends. A declaration sets a bar and a stop policy; it never
 grants apply, global scope, promotion or certification, and every resolved spec
@@ -206,7 +206,9 @@ false` and `certification: unverified`.
 An `Evaluation` holds `point`, `lower` and `upper`, an `evidence` state (`scored`,
 `provisional`, `no_evidence` or `blocked`), a `vacuity` label or `None`, per-area
 lower bounds in `areas`, a `critical` flag, a regression `cause` (used only when the evaluator has no `investigate`), the `trials` and
-`seconds` it spent, and the `inputs` digest it ran on. An evaluation is `valid`
+`seconds` it spent, the `inputs` digest it ran on, and, on the baseline only, a `reserve_trials` and `reserve_seconds`: what
+re-evaluating a candidate will cost when that is more than the baseline spent (a paired run costs two arms). The budget
+reserve is the baseline's declared reserve when it is a valid count or finite number of seconds, else what it spent. An evaluation is `valid`
 only when it is `scored`, has no vacuity label and its interval is sound: finite
 numbers with `0 <= lower <= point <= upper <= 1`, and area bounds inside `[0, 1]`.
 A listed vacuity label gives `vacuous`; any other doubt gives `incomplete`. An
@@ -242,8 +244,9 @@ bound below its best by more than `regression_margin`, or a point value below th
 best by more than `regression_margin`. A candidate that omits an area the best
 scored is unknown. Whether a regression rolls back is decided by who `investigate`
 blames: only `candidate` lets `rollback_continue` go on, and `other`, `None` and any
-other answer stop the loop. The real investigation artifact is wired in a later
-slice; the simulation test-bed answers with the cause its script gives.
+other answer stop the loop. [`FrozenBankEvaluator.investigate`](#regression-and-the-investigation-artifact)
+answers from the real investigation artifact; the simulation test-bed answers with
+the cause its script gives.
 
 ### Mechanism dispositions
 
@@ -285,7 +288,9 @@ before the proposer is called, so every improvement that starts can be evaluated
 | `recommendation_only`, `automatic_promotion`, `certification` | `true`, `false` and `unverified` |
 
 An evaluation summary keeps its numbers only when the interval is sound, so a
-malformed score is still recorded without breaking the ledger. An interrupt (a
+malformed score is still recorded without breaking the ledger. It also records the
+`inputs` digest the evaluation ran on, or `null` when that is not a digest, so the
+equality of the frozen inputs across evaluations can be read from the ledger. An interrupt (a
 `KeyboardInterrupt`) stops the run `interrupted` and records it, unless nothing was
 recorded yet, when it propagates. Any other exception propagates and leaves a
 ledger that replays without a `stopped` event.
@@ -319,6 +324,139 @@ through the state machine and returns the final `Run`; it refuses a ledger
 recorded under another declaration. An append that crashes before it is published
 leaves no event and no temporary file, so a ledger stays replayable at every
 prefix.
+
+## Frozen-bank evaluator
+
+`agent_harness_lab.loop.adapters.FrozenBankEvaluator` implements the controller's
+evaluator port over the existing trial runner and `evaluation/statistics`. It adds
+no optimizer and no statistics engine, and like the controller it only recommends:
+nothing here applies, promotes or certifies a candidate. It is not wired into
+`ahl improve` yet.
+
+```python
+evaluator = FrozenBankEvaluator(manifest, runner, snapshots, work, spec=spec, min_roots=2)
+result = controller.run(spec, evaluator, proposer, ledger, clock)
+```
+
+| Argument | Meaning |
+| --- | --- |
+| `manifest` | The bank's evaluation manifest. Only its development and regression tasks are kept. |
+| `runner` | `ExecutorRunner(run_evaluation.evaluate, agent, binary)`, or anything with `runtime_sha256()` and `run(arms, snapshots, manifest, out)` that returns the `results.json` shape. |
+| `snapshots` | A callable from a snapshot digest to its directory. |
+| `work` | An owner-only directory outside the bank and the snapshots; each run writes `evaluation-N/` and each investigation `investigation-N.json` there. |
+| `spec` | The resolved `LoopSpec`: its per-look alpha, `regression_margin` and `noise_margin` bound every interval and paired comparison. |
+| `min_roots` | The plan minimum of independent roots, 2 by default. |
+
+### What is frozen
+
+The constructor writes `loop-scoring-manifest.json` beside the bank's manifest: the
+tasks whose split is `development` or `regression`, with their graders and controls.
+A task with any other split (`heldout`, `transfer`, `certification`, a missing or
+unknown one) is counted in `excluded` and is never run, hashed, graded or read, so
+no held-out or certification input is opened to choose a candidate. A manifest that
+declares `protected_access` or a certification plan is refused with
+`loop_port_invalid` on the field `bank`, and so is one that cannot be read or has
+duplicate or non-text task ids. An `experiment` or `cohort_manifest` declaration never
+reaches the scoring manifest. The file is
+written once; a bank that would freeze to other bytes is refused.
+
+`frozen_inputs` is the identity of five facts: the bank (the task content and the
+digest of every fixture), the grader (`grader_fingerprint`), the seed schedule, the
+per-arm budget share (the number of scoring tasks) and the runtime (the launch
+identity of the agent and executable). The evaluator observes them again before and
+after every run and reports the digest it observed as `Evaluation.inputs`, so a
+difference from the frozen digest is `comparison_invalid` in the controller, and a
+fact that cannot be read, or an input that moved during the run, leaves `inputs`
+unknown, which is `incomplete`. When the inputs already differ before a run, no trial
+is spent: the evaluation reports no trials and the evidence `blocked`.
+
+### One arm first, a fresh paired run after
+
+The first evaluation scores the baseline alone, so it costs one arm (the trial runner
+takes `arms=('baseline',)`). Every later evaluation is a fresh paired run of the best
+snapshot against the candidate, so a round costs two arms, and no trial of an earlier
+run is reused as fresh execution. The best snapshot is the one the proposer staged the
+candidate from: the proposer records it in `evaluator.bases[candidate]`, and the first
+evaluated snapshot is the default. The baseline evaluation declares `reserve_trials`
+as twice the number of scoring tasks, so the controller starts a round only when two
+arms are still affordable.
+
+### The absolute score
+
+The score of an arm is the mean of per-root mean outcomes in [0, 1], where a task
+counts only with exactly one row that ended `passed` (1) or `failed` (0), and a root
+counts only when all of its tasks do. The interval is `statistics.bound` over those
+roots with the loop's per-look alpha, cut to [0, 1]. Its radius is derived for
+differences in [-1, 1], so on [0, 1] it is valid but conservative; a tighter bound
+needs its own derivation and is not part of this slice. The radius shrinks with the
+square root of the number of roots: at alpha 0.05 it is 0.27 for 100 roots and 0.78
+for 12, so a small bank rarely supports an improvement.
+
+| Evidence | When | Effect |
+| --- | --- | --- |
+| `scored` | at least `min_roots` roots, none unknown | can be valid |
+| `provisional` | fewer than `min_roots` roots, or any root with an unknown outcome | `incomplete`: the baseline cannot be accepted and a candidate cannot improve |
+| `no_evidence` | no root counts | the interval is [0, 1]; `incomplete` |
+| `blocked` | the inputs already differed, so no trial ran | `comparison_invalid` or `incomplete` |
+
+An outcome that is not `passed` or `failed` (an execution error, a budget stop, an
+unknown trajectory, a missing row, two rows for one task) leaves its root unscored.
+It is never counted as a pass or a fail, and a root left out never raises the score:
+any unscored root keeps the evaluation `provisional`.
+
+### The validity gate
+
+The evaluation labels itself with `evaluation.vacuity.classify` over the rows of the
+arm it scored, with the best snapshot and the evaluated snapshot as the arm digests
+of a paired run (a baseline-only run has no second arm, so `arms_identical` is not
+applied). `Evaluation.vacuity` is the first label in the closed-set order; the other
+labels are in `evaluator.runs[-1]['labels']`.
+
+| Label | A synthetic bank that triggers it | In the loop |
+| --- | --- | --- |
+| `no_eligible_cases` | every task is outside the scoring partitions; the runner is never called | baseline: `evidence_insufficient` with no improvement and no trial spent |
+| `zero_trials` | the runner returns no row for the arm | as below |
+| `all_outcomes_unknown` | every row ends in an execution error | as below |
+| `grader_not_executed` | rows end `passed` or `failed` with no recorded grader execution | as below |
+| `arms_identical` | the candidate is the best snapshot | candidate only |
+
+A vacuous baseline stops the loop `evidence_insufficient` before any improvement is
+proposed. A vacuous candidate is `inconclusive`: it is recorded with the mechanism's
+disposition `inconclusive`, never becomes the best and can never be accepted.
+
+### Regression and the investigation artifact
+
+Each paired run also goes through `evaluation.before_after.decide`, with the loop's
+regression and noise margins, against the frozen identity. Its block is kept in
+`evaluator.runs[i]['guard']`: `candidate_regressed` with `adoption_blocked: true` when
+the paired delta is below the negative margin, `improved`, or `inconclusive`. The
+controller decides from the absolute intervals as before; the guard feeds the
+investigation. When the controller asks `investigate(best, candidate)` about a
+regression, the evaluator writes `investigation-N.json` (per-task and per-area deltas,
+the flipped trials, what changed between the arms and a classified cause) and answers
+`candidate` for `candidate_caused`, `other` for `pipeline_caused` and `None` for
+`undetermined`. It is asked only about an evaluation that ran on the frozen inputs, so
+there the grader and inputs are known to be unchanged.
+
+A pipeline-caused regression cannot reach that question: a change of the grader, the
+bank or the runtime changes the observed digest, so the loop ends `comparison_invalid`
+with no verdict and no `decided` event. The evaluator then writes the same artifact
+with the cause `pipeline_caused` and the changed fact in `comparison.mismatched`, and
+its `next_step` names the AHL defect so it gets a regression test.
+
+### First use
+
+`FrozenBankEvaluator.first_use(construct, runner, snapshots, work, spec=spec, stages=stages)`
+calls `construct()` once, charged to the construction stage of the budget (`stages`,
+see [budget stages](budget-stages.md)), freezes the manifest it returns, and sets
+`constructions` to 1. The evaluator keeps no reference to `construct`, so no later
+round can rebuild the evaluation: every round scores on that bank.
+
+### The trial runner's arms
+
+`ExecutorRunner.run` passes `arms` to `run_evaluation.evaluate`, which runs only the
+named versions (`baseline`, `candidate` or both, each at most once; a repeated plan
+needs both). Without `arms` it runs both, so every other caller is unchanged.
 
 ## Simulation test-bed
 
@@ -400,6 +538,6 @@ Each reason has one remediation in the [exit reason table](analysis.md#exit-reas
 | `loop_alpha_invalid` | `alpha` outside (0, 1) |
 | `loop_limits_invalid` | project limits that are not positive |
 | `loop_order_violation` | an event the table does not allow |
-| `loop_port_invalid` | an evaluator, proposer, candidate, evaluation or clock outside its port contract |
+| `loop_port_invalid` | an evaluator, proposer, candidate, evaluation or clock outside its port contract; a bank that cannot be frozen as a scoring bank (`bank`) or whose frozen inputs cannot be read (`frozen_inputs`) |
 | `loop_ledger_invalid` | a ledger root inside the project or on a link, an event out of order, a reused ledger, or a tampered or incomplete ledger read back |
 | `loop_ledger_full` | a ledger event beyond `4 * max_rounds + 8` |
