@@ -36,7 +36,30 @@ Leave `capture` out, or say `unknown`, when you do not know whether the turns ar
 whole session: an unknown capture is reported as unknown and decides nothing. Leave
 `root` out when you do not know which sessions share a lineage; those sessions are
 counted apart and never as independent roots. Give a `loaded` state only when you know
-it (`loaded`, `truncated`, `not_loaded`); a source you do not list is `unknown`.
+it (`loaded`, `truncated`, `not_loaded`); a source you do not list is `unknown`. If you know a file
+was in context only from some turn on, write `{"state": "loaded", "turn": N, "before": "unknown"}`;
+without `before`, a call made before turn N is reported as `not_loaded`.
+
+## 1b. Or read native Claude Code and Codex sessions directly
+
+You do not have to write the sessions file. Name the session files of one project and the runtime
+that wrote them:
+
+```sh
+ahl instruction-adherence --native claude --project . ~/.claude/projects/PROJECT/SESSION.jsonl --rules project=AGENTS.md
+```
+
+Each file must be a session of that project (or of a directory inside it), written by a release the
+repository's adapters verify, and a user session rather than a subagent transcript. The command refuses
+the whole run and names the reason counts when any file is not (for example `foreign_project=1`), so
+nothing is dropped silently. A native capture is always read as `partial` with unknown lineage. Claude
+Code records a root `AGENTS.md` or `CLAUDE.md` it attached with the text it attached. That rule file is
+`loaded` from the attachment onward only when the attached text is exactly the text of the file you pass
+with `--rules` (or the project file, in an analysis); a path with no text, or a file that has changed since,
+leaves loading `unknown`. Calls before the first such attachment are `unknown` too, since a file loaded at
+launch leaves no attachment. Codex records no loading signal. In every unknown case a violation of a harness
+rule is only a `possible_violation` and is held back as an abstention, never an `observed_violation` or
+`not_loaded`. A prompt instruction is judged either way.
 
 ## 2. Run it
 
@@ -67,6 +90,14 @@ findings across reports without the report containing prompt text, paths or sess
 identifiers. Add `--private-detail` to include each instruction sentence (at most 240
 characters) when you need to see which rule a digest names; the report is then still
 private and never publishable.
+
+## Find it in an analysis
+
+`ahl analyze` and `ahl improve` run the same report over the Claude Code and Codex sessions they already
+selected and write `instruction-adherence.json` beside `analysis.json`, reading the project's own
+`AGENTS.md` and `CLAUDE.md` as rules. The analysis brief gets an `instruction_adherence` section with
+counts only. When no native session could be read it says `not_run` with the reason, which is not the
+same as zero findings.
 
 ## Limits to keep in mind
 
