@@ -3,7 +3,7 @@
 New in 0.43, `ahl sources lineage` records explicit operator assessments of
 relationships between exact source records. It uses an explicitly selected
 private `SourceStore` cache, project/scope fingerprints and a separate private
-review store. It reads no original source text, discovers no accounts, makes no
+review store. It reads no original source text (the `near-duplicates` action reads only a text file you supply), discovers no accounts, makes no
 network/model calls and never modifies the source cache or an active task bank.
 
 A reviewed annotation is an operator assertion over frozen metadata. It is not
@@ -47,6 +47,19 @@ Append one action:
    `capture_completeness` stays `unknown` with `target_project_binding`
    `unverified`. Contradictions are investigation leads. The report contains
    counts and hashes only, keeps `independent_roots` null, and never labels a task a success or failure.
+6. `near-duplicates --cache CACHE_JSON --texts TEXTS_JSON` queues pairs of cache
+   records whose caller-held text is lexically near-identical, for you to review.
+   `TEXTS_JSON` is `{"schema_version": 1, "items": [{"record": RecordRef, "text": "..."}]}`;
+   every record must be present, unsuperseded and unambiguous in the selected cache.
+   The command also runs the `query` checks (before any review exists the store is
+   absent, and every pair is simply pending), marks each pair `pending_review`,
+   `covered_by_reviewed_link`, `adjudicated_independent_case` or `conflicting_review`
+   from the reviewed components and independent-case assertions, and exits 3 while
+   pairs await review or the query finds stale cases or conflicts. A pair is a lead:
+   record your decision with `propose` and `review` (`same_observation`, `derived_from`
+   or `independent_case`). The report holds counts, hashes and exact record
+   references only, never text. See the
+   [near-duplicate review queue](source-lineage-reference.md#near-duplicate-review-queue).
 
 The cache locator must match the one recorded for a case. Quarantine, rejection
 and retirement can still be recorded if that cache is missing or stale; they do
