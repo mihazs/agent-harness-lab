@@ -1,5 +1,8 @@
-"""Optional user-level choices: a remembered runtime (selects among installed runtimes, grants nothing) and a default harness scope.
+"""Optional user-level choices: a remembered runtime with an optional loop declaration, and a default harness scope. Neither grants anything.
 
+The runtime file is a versioned {schema_version, runtime} object plus an optional loop object, at most MAX_BYTES in total.
+The runtime selects among installed runtimes; the loop object declares an acceptance bar and is checked by the loop resolver.
+remember() keeps an existing loop object and clear() deletes the whole runtime file. The default scope lives in its own file.
 Neither file is read from or written to a project. An unreadable, unsafe or foreign file is ignored.
 """
 import json
@@ -22,7 +25,7 @@ def path():
     return Path(os.environ.get('XDG_CONFIG_HOME') or Path.home()/'.config')/'agent-harness-lab'/FILENAME
 
 
-def _read(name):
+def _read(name=FILENAME):
     """Return (value, reason) for an owner-only regular JSON file beside the runtime file; (None, None) when absent."""
     target = path().with_name(name)
     try:
@@ -39,14 +42,27 @@ def _read(name):
     return (value, None) if isinstance(value, dict) else (None, 'corrupt')
 
 
+def _read_runtime():
+    """Return (value, reason) for the validated runtime file."""
+    value, reason = _read()
+    if value is None: return None, reason
+    # loop is an optional declaration, checked by the loop resolver, never here.
+    if not (set(value) - {'loop'} == {'schema_version', 'runtime'} and value['schema_version'] == 1
+            and value['runtime'] in RUNTIMES and isinstance(value.get('loop', {}), dict)):
+        return None, 'corrupt'
+    return value, None
+
+
 def load():
     """Return dict(runtime, reason): runtime is None when unset or ignored; reason names why it was ignored."""
-    value, reason = _read(FILENAME)
-    if value is None: return dict(runtime=None, reason=reason)
-    if not (set(value) == {'schema_version', 'runtime'} and value['schema_version'] == 1
-            and value['runtime'] in RUNTIMES):
-        return dict(runtime=None, reason='corrupt')
-    return dict(runtime=value['runtime'], reason=None)
+    value, reason = _read_runtime()
+    return dict(runtime=value and value['runtime'], reason=reason)
+
+
+def load_loop():
+    """Return dict(loop, reason): the user-declared loop object, unvalidated, or None when unset or the file was ignored."""
+    value, reason = _read_runtime()
+    return dict(loop=value and value.get('loop'), reason=reason)
 
 
 def load_scope():
@@ -61,7 +77,8 @@ def load_scope():
 
 def remember(runtime):
     if runtime not in RUNTIMES: raise ValueError('only a supported codex or claude runtime can be remembered')
-    atomic_json(path(), dict(schema_version=1, runtime=runtime))
+    previous, _ = _read_runtime()
+    atomic_json(path(), dict(schema_version=1, runtime=runtime, **({'loop': previous['loop']} if previous and 'loop' in previous else {})))
 
 
 def clear():
@@ -82,9 +99,10 @@ def clear_scope():
 def main(argv):
     import argparse
     parser = argparse.ArgumentParser(prog='ahl config', description='Show or change user-level choices (never a project file): the remembered runtime '
-        '(ahl improve --agent codex|claude --remember-runtime) and the default harness scope.')
+        '(ahl improve --agent codex|claude --remember-runtime) and the default harness scope. The runtime file may also hold an optional loop object '
+        'that declares the acceptance bar; the 1 KiB cap applies to each file as a whole.')
     parser.add_argument('action', choices=('show', 'clear', 'set-scope', 'clear-scope'),
-        help='show prints each file path, its value and why a file was ignored; clear deletes the remembered runtime; '
+        help='show prints each file path, its value and why a file was ignored, not the loop object; clear deletes the whole runtime file, runtime and loop object; '
              'set-scope SCOPE --agent codex|claude saves the default --scope for runs that name none; clear-scope returns to the project default')
     parser.add_argument('scope', nargs='?', choices=SCOPES, help='With set-scope: global or project+global (project is the default and is not saved)')
     parser.add_argument('--agent', choices=RUNTIMES, help='With set-scope: the runtime whose user skill directory the scope edits; an explicit --agent on a run overrides it')

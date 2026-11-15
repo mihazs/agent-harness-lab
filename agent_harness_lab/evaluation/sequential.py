@@ -7,6 +7,7 @@ import math
 import secrets
 
 from agent_harness_lab.private_journal import encoded, record_bytes
+from . import vacuity
 from .regressions import fields, sha256
 
 PROFILE = 'conditional-finite-bank-sequential-v1'
@@ -250,7 +251,12 @@ def _missing_identification(spec, records, binding, cohorts):
         input_authority='caller_declared_unverified',automatic_promotion=False,publication_allowed=False)
 
 
-def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False):
+def analyze(spec,records,binding,**options):
+    """The sequential analysis; a supported result for arms with one harness hash is blocked as noise (#805)."""
+    return vacuity.refuse_noise(spec,_analyze(spec,records,binding,**options))
+
+
+def _analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False):
     spec.validate();validate_binding(spec,binding,current_engine=False)
     cohorts=membership(spec,cohort_json);groups=channels(spec,cohorts)
     expected=schedule(spec,binding);byid={r['trial_id']:r for r in expected}

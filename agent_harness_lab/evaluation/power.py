@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import random
+from dataclasses import replace
 from .plan import ExperimentSpec, schedule
 from .statistics import TrialRecord, analyze
 
@@ -22,6 +23,8 @@ DISPOSITIONS = ('supported', 'rejected', 'inconclusive', 'incomplete', 'blocked'
 Z95 = 1.959963984540054
 _RANGES = dict(baseline_success=(0, 1), candidate_effect=(-1, 1), root_spread=(0, 1),
                repeat_correlation=(0, 1), critical_regression_probability=(0, 1))
+# Optional and absent unless declared, so models and reports that never lose a grade keep their bytes.
+UNGRADED = ('baseline_ungraded_probability', 'candidate_ungraded_probability')
 _DEFAULTS = dict(family_effects={}, root_spread=0, repeat_correlation=0, critical_regression_probability=0)
 
 
@@ -35,7 +38,7 @@ def model(value, families):
     """Validate one declared outcome model against the plan's frozen families."""
     if not isinstance(value, dict) or value.get('schema') != MODEL_SCHEMA:
         raise ValueError(f'outcome model requires schema {MODEL_SCHEMA}')
-    unknown = set(value) - {'schema', *_RANGES, 'family_effects'}
+    unknown = set(value) - {'schema', *_RANGES, *UNGRADED, 'family_effects'}
     if unknown: raise ValueError('unknown outcome model fields: ' + ', '.join(sorted(unknown)))
     if not {'baseline_success', 'candidate_effect'} <= set(value):
         raise ValueError('outcome model requires baseline_success and candidate_effect')
@@ -44,6 +47,7 @@ def model(value, families):
     effects = merged['family_effects']
     if not isinstance(effects, dict) or set(effects) - set(families):
         raise ValueError('family_effects may only name frozen plan families')
+    normalized.update({k: _number(k, value[k], 0, 1) for k in UNGRADED if k in value})
     normalized['family_effects'] = {f: _number('family effect ' + f, effects[f], -1, 1) for f in sorted(effects)}
     return normalized
 
@@ -85,6 +89,26 @@ def _draw(spec, plan, declared, rng):
     return records
 
 
+def _ungrade(records, plan, declared, rng):
+    """Lose grades per arm; draws nothing when none is declared, so legacy seeded streams are unchanged."""
+    chance = {arm: declared.get(arm + '_ungraded_probability', 0) for arm in ('baseline', 'candidate')}
+    if not any(chance.values()): return records
+    # An unknown trial carries no grader verdict, so it cannot carry a critical regression either.
+    return [replace(r, outcome=None, status='unknown', critical_regression=False) if rng.random() < chance[t['version']] else r
+            for r, t in zip(records, plan)]
+
+
+def _completion(declared, ungraded, planned):
+    """Report the declared grade loss and how often a simulation still had every grade."""
+    chances = {k: declared[k] for k in UNGRADED if k in declared}
+    if not any(chances.values()): return {}
+    whole = ungraded.count(0)
+    return dict(completion=dict(declared=chances, loss_model='independent_per_trial_by_arm', planned_trials=planned,
+        mean_ungraded_trials=sum(ungraded) / len(ungraded),
+        fully_graded=dict(count=whole, rate=whole / len(ungraded), wilson_95=wilson(whole, len(ungraded))),
+        interpretation='unknown_grades_are_never_imputed_so_any_one_withholds_the_decision'))
+
+
 def _declare(spec, outcome_model, simulations, seed):
     """Validate the simulation count and seed, then the outcome model against the plan's families."""
     if type(simulations) is not int or not 1 <= simulations <= MAX_SIMULATIONS:
@@ -110,9 +134,11 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     if simulations * planned > MAX_SIMULATED_TRIALS:
         raise ValueError(f'power simulation exceeds {MAX_SIMULATED_TRIALS} simulated trials')
     plan = schedule(spec)
-    rng, counts, reasons = random.Random(seed), dict.fromkeys(DISPOSITIONS, 0), {}
+    rng, counts, reasons, ungraded = random.Random(seed), dict.fromkeys(DISPOSITIONS, 0), {}, []
     for _ in range(simulations):
-        result = analyze(spec, _draw(spec, plan, declared, rng))
+        observed = _ungrade(_draw(spec, plan, declared, rng), plan, declared, rng)
+        ungraded.append(sum(r.status != 'graded' for r in observed))
+        result = analyze(spec, observed)
         counts[result['status']] += 1
         reasons[result['reason']] = reasons.get(result['reason'], 0) + 1
     rates = {status: dict(count=n, rate=n / simulations, wilson_95=wilson(n, simulations)) for status, n in counts.items()}
@@ -132,6 +158,7 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
         monte_carlo_interval='Wilson_score_95', power='simulated_under_declared_model',
         root_independence='assumed_by_model', model_authority='caller_declared_synthetic',
         executions=0, automatic_budget_change=False, automatic_promotion=False, publication_allowed=False,
+        **_completion(declared, ungraded, len(plan)),
         limitations=['Rates hold only under the declared synthetic outcome model; real task dependence may differ.',
             'Simulated roots are independent by construction; repeats share one root-level draw per arm.',
             'No worker, model or grader is run; nothing is observed, certified or adopted.',

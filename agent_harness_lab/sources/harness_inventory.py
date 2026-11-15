@@ -442,6 +442,31 @@ _UNATTRIBUTED = dict(observed_attachment='attachment', observed_hook_output='hoo
     declared_agent_invocation='agent', declared_mcp_invocation='mcp')
 
 
+def loading_records(events):
+    """Pinned loading records of one capture as (records, ignored, duplicates, contested).
+
+    A record of another source version, or with an unknown loading_signal, counts as ignored and never claims an
+    identity, so it cannot shadow a pinned copy. A record repeating an earlier (case_id, event_id) is counted once
+    under duplicates; when the copies disagree beyond capture placement (claude_native.UNORDERED) the identity is
+    contested and appears in no record, whatever the input order."""
+    from agent_harness_lab.telemetry import claude_native
+    from agent_harness_lab.telemetry.schema import event
+    seen, ignored, duplicates, contested = {}, 0, 0, set()
+    unplaced = lambda record: {key: value for key, value in record.items() if key not in claude_native.UNORDERED}
+    for record in map(event, events):
+        signal = record.get('loading_signal')
+        if signal is None: continue
+        if record.get('source_version') != claude_native.VERSION or signal not in _UNATTRIBUTED:
+            ignored += 1; continue
+        identity = (record['case_id'], record['event_id'])
+        if identity in seen:  # one capture read twice: count the event once
+            duplicates += 1
+            if unplaced(seen[identity]) != unplaced(record): contested.add(identity)  # placement alone never conflicts
+            continue
+        seen[identity] = record
+    return [record for identity, record in seen.items() if identity not in contested], ignored, duplicates, len(contested)
+
+
 def join_loading(inventory, events=None):
     """Overlay native loading evidence on declared nodes by exact identity; the nodes stay declarations.
 
@@ -457,13 +482,11 @@ def join_loading(inventory, events=None):
     independence and every outcome stay unknown.
     """
     from agent_harness_lab.telemetry import claude_native, codex_rollout
-    from agent_harness_lab.telemetry.schema import event
     if type(inventory) is not HarnessInventory: raise ValueError('loading attribution needs a harness inventory')
     rows = [dict(path_sha256=node.path_sha256, root=node.root, kind=node.kind, observed_loading='unknown', effective='unknown',
         exact_attachments=0, path_only_attachments=0, declared_invocations=0) for node in inventory.nodes]
-    unattributed, ignored = dict.fromkeys(('attachment', 'hook_output', 'agent', 'mcp'), 0), 0
-    seen, duplicates, contested = {}, 0, set()
-    unplaced = lambda record: {key: value for key, value in record.items() if key not in claude_native.UNORDERED}
+    unattributed = dict.fromkeys(('attachment', 'hook_output', 'agent', 'mcp'), 0)
+    records, ignored, duplicates, contested = [], 0, 0, 0
     status = (inventory.status if inventory.status != 'declared' else codex_rollout.LOADING_SIGNAL if inventory.runtime == 'codex'
               else 'no_capture' if events is None
               else 'task_cwd_not_checkout_root' if inventory.task_cwd_sha256 != digest('.') else 'joined')
@@ -475,19 +498,8 @@ def join_loading(inventory, events=None):
         for row in agents_inventory.definitions(inventory, '.'):
             if row.precedence == 'selected_by_declared_precedence':  # implies a declared definition
                 agents[row.name_sha256] = nodes[(row.root, row.path_sha256)]  # at most one per name
-        for record in map(event, events):
-            signal = record.get('loading_signal')
-            if signal is None: continue
-            if record.get('source_version') != claude_native.VERSION or signal not in _UNATTRIBUTED:
-                ignored += 1; continue  # never claims an identity, so it cannot shadow a pinned copy
-            identity = (record['case_id'], record['event_id'])
-            if identity in seen:  # one capture read twice: count the event once
-                duplicates += 1
-                if unplaced(seen[identity]) != unplaced(record): contested.add(identity)  # placement alone never conflicts
-                continue
-            seen[identity] = record
-        for identity, record in seen.items():
-            if identity in contested: continue  # copies disagree: the event counts nowhere, whatever the order
+        records, ignored, duplicates, contested = loading_records(events)
+        for record in records:
             signal = record['loading_signal']
             if signal == 'observed_attachment' and record.get('loading_path_sha256') in paths:
                 row = rows[paths[record['loading_path_sha256']]]
@@ -508,7 +520,7 @@ def join_loading(inventory, events=None):
         inventory_version=inventory.version, capture_version=claude_native.VERSION if joined else None,
         version_alignment='exact' if joined and claude_native.VERSION.endswith('-' + inventory.version) else 'unverified',
         nodes=tuple(rows), unattributed=unattributed, ignored_records=ignored, duplicate_events=duplicates,
-        conflicting_events=len(contested), warnings=sorted(warnings), loading_evidence='observed_pattern' if observed else 'none',
+        conflicting_events=contested, warnings=sorted(warnings), loading_evidence='observed_pattern' if observed else 'none',
         attachment_shapes='unverified_fixture_only' if shaped else 'none', effective='unknown', outcome='unknown',
         independence='unknown', publication_allowed=False)
 

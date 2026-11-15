@@ -71,7 +71,7 @@ The file is `user-scope.json` beside the remembered-runtime file (see
 its location and safety rules) and has the same limits: owner-only, regular, at most
 1 KiB and never read from or written to a project. A corrupt, oversized, non-regular or
 not owner-only file is ignored and the run stays on the project; `ahl config show` names
-the `reason`. `ahl config clear` forgets the remembered runtime only.
+the `reason`. `ahl config clear` deletes the remembered-runtime file (the runtime and any loop object) and leaves the saved default scope alone.
 
 ## Read the receipt
 

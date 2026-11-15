@@ -447,7 +447,8 @@ def test_changed_frame_is_refused():
 
 @pytest.mark.parametrize('rates', [dict(random=0), dict(random=-.1), dict(random=1.5), dict(random=float('nan')),
                                    dict(random=True), dict(random='0.5'), dict(alerted=.5),
-                                   dict(random=.1, alerted=0), dict(random=.1, keyword=.2)])
+                                   dict(random=.1, alerted=0), dict(random=.1, keyword=.2),
+                                   dict(random=10**400), dict(random=-10**400)])
 def test_zero_or_invalid_inclusion_probability_is_refused(rates):
     value = frame([unit('a')])
     with pytest.raises(ValueError):
@@ -465,6 +466,17 @@ def test_tampered_receipt_probability_is_refused(population):
     body['draws'][0]['inclusion_probability'] = 0
     resealed = audit._seal(body)
     with pytest.raises(ValueError, match='invalid inclusion probability'):
+        audit.estimate(resealed, labels(resealed, truth))
+
+
+@pytest.mark.parametrize('expected', [10**400, -10**400], ids=['huge-integer', 'huge-negative-integer'])
+def test_receipt_resealed_with_an_out_of_range_integer_expected_draws_is_refused(population, expected):
+    value, truth = population
+    receipt = audit.draw(value, plan(value))
+    body = {k: v for k, v in json.loads(json.dumps(receipt)).items() if k != 'receipt_sha256'}
+    body['expected_draws'] = expected
+    resealed = audit._seal(body)
+    with pytest.raises(ValueError, match='expected draws or weights differ'):
         audit.estimate(resealed, labels(resealed, truth))
 
 

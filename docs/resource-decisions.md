@@ -111,7 +111,7 @@ Results retain the conditional and private-data limitations described above. No 
 from live or completed trial summaries to a resource decision is provided. Version 4 results are
 private and explicitly marked as disallowed for publication.
 
-Not included yet: ratio inference (`decide` still reports `cost_per_success` as `not_computed`; see the descriptive view below), currency, automatic provenance capture and report integration.
+Not included yet: ratio inference (`decide` still reports `cost_per_success` as `not_computed`; see the descriptive view below), currency, automatic provenance capture, and total optimization spend in reports. A supplied decision and cost-per-success views can be shown in the [static review page](side-by-side-reports.md#resource-decision-and-cost-per-success).
 
 ## Responses controller usage
 
