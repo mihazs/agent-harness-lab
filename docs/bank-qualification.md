@@ -88,6 +88,11 @@ controller, grouping and ledger; missing authority must stay unknown. IDs,
 checksums, operator strings and distinct files do not establish scientific
 independence. OS isolation and statistical analysis remain #7/#9 responsibilities.
 
+[Blind lineage adjudication](blind-lineage-adjudication.md) compares independent
+reviewers' relatedness verdicts with the declared roots and partitions and lists
+`reviewed` labels no quorum supports. Its reviewers are operator-declared and it is
+descriptive only; it supplies no independence issuer.
+
 Other remaining work includes derivation/exposure integration for paraphrases,
 scripted replies, rubrics and discovered failures; the complete #123 interaction
 boundary; unsupported transient/hidden-read/external-delivery effects in COMP-11;

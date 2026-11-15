@@ -6,7 +6,7 @@ root are never treated as independent. Not a bootstrap or a power guarantee.
 from collections import defaultdict
 from dataclasses import dataclass
 import math
-from . import reliability
+from . import reliability, vacuity
 from .plan import schedule
 
 
@@ -87,7 +87,12 @@ def incomplete_bounds(spec, expected, records, groups):
                 multiplicity='Bonferroni_primary_and_families', automatic_promotion=False)
 
 
-def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None,
+def analyze(spec, records, **options):
+    """The fixed analysis; a supported result for arms with one harness hash is blocked as noise (#805)."""
+    return vacuity.refuse_noise(spec, _analyze(spec, records, **options))
+
+
+def _analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None,
             include_empty_bounds=False, include_reliability=False):
     from .root_similarity import binding
     try:

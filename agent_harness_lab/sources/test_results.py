@@ -1,8 +1,9 @@
-"""Offline JUnit XML and pytest JSON results bound to a declared commit; CI evidence, never task grades."""
+"""Offline JUnit XML, pytest JSON and TAP results bound to a declared commit; CI evidence, never task grades."""
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+import io
 import math
 import re
 import xml.etree.ElementTree as ElementTree
@@ -16,12 +17,12 @@ from .snapshot import LocalExport, Snapshot
 PROVIDER = 'test-results'
 SOURCE_VERSION = 'v1'
 PROFILE = 'ci-test-results-v1'
-FORMATS = ('junit-xml', 'pytest-json')
+FORMATS = ('junit-xml', 'pytest-json', 'tap')
 STATUSES = ('passed', 'failed', 'error', 'skipped', 'unknown')
 FULL_SHA = re.compile('(?:[0-9a-f]{40}|[0-9a-f]{64})')
 # Hard ceilings; a selection may only lower them.
 LIMITS = dict(max_reports=64, max_report_bytes=16*1024*1024, max_cases=100000, max_elements=500000,
-              max_depth=32, max_attributes=64, max_attribute_length=4096, max_json_depth=64,
+              max_depth=32, max_attributes=64, max_attribute_length=4096, max_line_length=4096, max_json_depth=64,
               max_json_containers=1000000, max_json_values=2500000)
 CHUNK = 64*1024
 JUNIT_STATUS = {'failure': 'failed', 'error': 'error', 'skipped': 'skipped'}
@@ -33,6 +34,14 @@ PYTEST_STATUS = {'passed': 'passed', 'failed': 'failed', 'error': 'error', 'skip
 # Expected-failure outcomes carry inverted semantics; they stay unknown, labelled as reported.
 PYTEST_KNOWN = ('passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'rerun')
 DECLARATION = re.compile(rb'\A(?:\xef\xbb\xbf)?<\?xml[ \t\r\n][^?>]*?encoding[ \t\r\n]*=[ \t\r\n]*["\']([^"\']*)["\']')
+# TAP 13/14 test points are matched at column zero only; indented lines are YAML diagnostics or subtests and never cases.
+TAP_VERSIONS = (13, 14)
+TAP_VERSION = re.compile(r'TAP version ([0-9]+)')
+TAP_PLAN = re.compile(r'([0-9]+)\.\.([0-9]+)[ \t]*(?:#.*)?')
+TAP_POINT = re.compile(r'(not )?ok(?=[ \t]|$)(?:[ \t]+([0-9]+)(?=[ \t]|$))?[ \t]*(?:-(?=[ \t]|$)[ \t]*)?(.*)')
+TAP_SUBTEST_POINT = re.compile(r'[ \t]+(?:not )?ok(?=[ \t]|$)')
+TAP_UNESCAPED_HASH = re.compile(r'(?<!\\)#')
+TAP_DIRECTIVE = re.compile(r'[ \t]*(skip|todo)(\w*)', re.I)
 # Any markup declaration (DOCTYPE, ENTITY, ELEMENT, ATTLIST, NOTATION, conditional sections) is refused.
 MARKUP_DECLARATION = re.compile(rb'<!(?!--|\[CDATA\[)')
 
@@ -199,6 +208,56 @@ def parse_pytest(raw, bounds, warnings):
         yield (['pytest-json', suite], nodeid, status, reported, total)
 
 
+def parse_tap(raw, bounds, warnings):
+    """Yield (suite identity, case name, status, reported outcome, None) for each top-level TAP 13/14 test point.
+
+    The stream is read one bounded line at a time and the read ends at the first bound exceeded or a bail out. A plan
+    that disagrees with the test points is flagged, never filled in, so missing tests stay unknown instead of failing.
+    """
+    if b'\0' in raw: raise HostileReport('only UTF-8 TAP is supported')
+    plan, points, bailed = None, 0, False
+    for position, chunk in enumerate(io.BytesIO(raw)):
+        chunk = chunk.rstrip(b'\r\n')
+        if len(chunk) > bounds['max_line_length']: raise HostileReport('TAP line length bound exceeded')
+        try: line = chunk.decode('utf-8')
+        except UnicodeDecodeError: raise HostileReport('TAP is not valid UTF-8') from None
+        version = TAP_VERSION.fullmatch(line) if position == 0 else None
+        if version:
+            if int(version[1]) not in TAP_VERSIONS: raise ValueError('only TAP versions 13 and 14 are supported')
+        elif not line.strip() or line.startswith(('#', 'pragma ')): continue
+        elif line[0] in ' \t':
+            if TAP_SUBTEST_POINT.match(line): warnings.add('tap_subtest_lines_not_imported')
+        elif line[:9].lower() == 'bail out!': warnings.add('tap_bail_out_reported'); bailed = True; break
+        elif planned := TAP_PLAN.fullmatch(line):
+            first, last = int(planned[1]), int(planned[2])
+            if plan is not None: raise ValueError('duplicate TAP plan')
+            if first != 1: raise ValueError('a TAP plan must start at 1')
+            if last > bounds['max_cases']: raise HostileReport('TAP plan exceeds the case bound')
+            if last == 0: warnings.add('tap_plan_skipped')
+            plan = last
+        elif point := TAP_POINT.match(line):
+            points += 1
+            if points > bounds['max_cases']: raise HostileReport('TAP case bound exceeded')
+            if point[2] is not None and int(point[2]) != points: warnings.add('tap_test_number_out_of_sequence')
+            description, hash_at = point[3], TAP_UNESCAPED_HASH.search(point[3])
+            directive = TAP_DIRECTIVE.match(description, hash_at.end()) if hash_at else None
+            if hash_at: description = description[:hash_at.start()]
+            if directive is None: status, reported = ('failed', 'not_ok') if point[1] else ('passed', 'ok')
+            elif directive[2]: status, reported = 'unknown', 'unrecognized_directive'; warnings.add('unrecognized_directive')
+            # TODO inverts the meaning of the result, and SKIP on a failing line contradicts itself: neither is a verdict.
+            elif directive[1].lower() == 'todo': status, reported = 'unknown', 'todo'
+            elif point[1]: status, reported = 'unknown', 'conflicting'; warnings.add('conflicting_case_status')
+            else: status, reported = 'skipped', 'skip'
+            yield ['tap'], description.strip() or '#%d' % points, status, reported, None
+        else: warnings.add('tap_unrecognized_line')
+    if plan is None and not points and not bailed: raise ValueError('TAP report has neither a plan nor a test point')
+    if plan is None: warnings.add('tap_plan_absent')
+    elif plan != points: warnings.add('tap_plan_mismatch')
+
+
+PARSERS = {'junit-xml': parse_junit, 'pytest-json': parse_pytest, 'tap': parse_tap}
+
+
 class TestResultsExport(LocalExport):
     """Imports only selected local report files; never runs tests, scripts or report-embedded content."""
     __test__ = False
@@ -232,7 +291,7 @@ class TestResultsExport(LocalExport):
             nonlocal cases
             report = reports[position]
             path_sha256 = digest(report['path'])
-            parse = parse_junit if report['format'] == 'junit-xml' else parse_pytest
+            parse = PARSERS[report['format']]
             seen = Counter()
             for suite, case, status, reported, seconds in parse(raw, bounds, warnings):
                 cases += 1

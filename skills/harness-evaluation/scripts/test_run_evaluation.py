@@ -538,6 +538,50 @@ class TrialWorkspaceTests(unittest.TestCase):
         self.assertEqual([(v['name'], v['state'], v['bundle_sha256'], v['activated'])
                           for v in by_route['harness_paths']['baseline']], [('example', 'absent', None, None)])
 
+    def stage_user_skill_case(self, runtime_folder):
+        """A candidate that stages `example` through harness_paths, a baseline that lacks it, and a synthetic user copy."""
+        (self.root / 'candidate' / runtime_folder / 'example').mkdir(parents=True)
+        (self.root / 'candidate' / runtime_folder / 'example/SKILL.md').write_text('staged copy')
+        return [f'{runtime_folder}/example/SKILL.md']
+
+    def user_skill_snapshot(self, folder):
+        return sorted((str(p.relative_to(folder)), p.read_bytes()) for p in folder.rglob('*') if p.is_file())
+
+    def test_a_same_name_user_skill_is_reported_as_a_shadowing_candidate_and_left_untouched(self):
+        for agent, staged_folder, user_folder in (('codex', '.agents/skills', '.agents/skills'),
+                                                  ('claude', '.claude/skills', '.claude/skills')):
+            with self.subTest(agent=agent):
+                shutil.rmtree(self.root / 'out', ignore_errors=True)
+                shutil.rmtree(self.root / 'candidate/.agents', ignore_errors=True)
+                shutil.rmtree(self.root / 'candidate/.claude', ignore_errors=True)
+                shutil.rmtree(self.home, ignore_errors=True)
+                paths = self.stage_user_skill_case(staged_folder)
+                ambient = self.home / user_folder / 'example'
+                ambient.mkdir(parents=True)
+                (ambient / 'SKILL.md').write_text('user copy')
+                before = self.user_skill_snapshot(self.home / user_folder)
+                if agent == 'claude':
+                    self.use_claude_fake()
+                result, data = self.run_isolated(agent=agent, harness_paths=paths)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = {t['version']: t['skill_shadowing'] for t in data['trials']}
+                (staged,), (removed,) = rows['candidate'], rows['baseline']
+                self.assertEqual((staged['state'], staged['staged_state'], staged['effective_layer']), ('ambient_same_name', 'present', 'unknown'))
+                self.assertEqual(staged['ambient'][0]['bundle_match'], False)
+                self.assertEqual((removed['state'], removed['staged_state']), ('ambient_same_name', 'absent'))
+                self.assertEqual(self.user_skill_snapshot(self.home / user_folder), before)
+
+    def test_a_scanned_user_layer_without_a_same_name_skill_reports_none_found_for_that_layer_only(self):
+        paths = self.stage_user_skill_case('.agents/skills')
+        (self.home / '.agents/skills/private-unrelated').mkdir(parents=True)
+        (self.home / '.agents/skills/private-unrelated/SKILL.md').write_text('private unrelated skill')
+        result, data = self.run_isolated(harness_paths=paths)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (row,) = [t['skill_shadowing'] for t in data['trials'] if t['version'] == 'candidate'][0]
+        self.assertEqual((row['state'], row['ambient'], row['layers_scanned']), ('none_found', [], ['user']))
+        self.assertNotIn('private unrelated skill', json.dumps(data['trials']))
+        self.assertNotIn('private-unrelated', json.dumps([t['skill_shadowing'] for t in data['trials']]))
+
     def test_codex_run_records_unverified_isolation_and_uses_only_the_trial_home(self):
         result, data = self.run_isolated()
         self.assertEqual(result.returncode, 0, result.stderr)

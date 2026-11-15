@@ -11,8 +11,9 @@ import time
 from copy import deepcopy
 from types import SimpleNamespace
 
-from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
+from agent_harness_lab.private_journal import PrivateJournal, encoded, record, scratch_dir, sync_directory, write_bytes
 from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
+from .bayes_analysis import attach
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
@@ -106,7 +107,7 @@ def bank_authority(source, *, export_root=None, expected=None):
         files_total += len(entries)
         bytes_total += sum(regular_size(contained(fixture,p),MAX_BYTES) for p in entries)
         if files_total>4096 or bytes_total>MAX_BYTES: raise ValueError('bank selection bound exceeded')
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=scratch_dir(None)) as temporary:
             prepared = Path(temporary)/'fixture'; copy_frozen(fixture,prepared,original['fixture_digest'])
             materialize_sources(prepared)
             declaration,_ = record(prepared/'task.json',1024*1024)
@@ -179,6 +180,11 @@ class HistoryStore(PrivateJournal):
             return dict(bundle_sha256=bundle,state='quarantined',event_sha256=events[-1][1],
                 historical_comparisons_invalidated=True,corrected_oracle_approved=False,publication_allowed=False)
 
+    def declared_bank_store(self, run_id):
+        """The review store a bound run claims, read with no lock or validation; None when absent or unreadable."""
+        try: return Path(record(self.case(run_id)/'manifest.json', 1024*1024)[0]['bank_authority']['bank_path']).parents[2]
+        except (ValueError, OSError, KeyError, TypeError, IndexError): return None
+
     def opened(self, run_id, *, read_only=False):
         return self._opened(run_id,current_bank=True,read_only=read_only)
 
@@ -186,9 +192,9 @@ class HistoryStore(PrivateJournal):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
-        if read_only and (type(version) is not int or version != 1
+        if read_only and (type(version) is not int or version not in (1, 2)
                 or any(key in inputs for key in ('protected_access_sha256', 'derivation_binding_sha256'))):
-            raise ValueError('read-only saved analysis supports only unbound fixed history without protected access or derivation')
+            raise ValueError('read-only saved analysis supports only fixed history, optionally bound to its bank, without protected access or derivation')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6,7,8) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4,5,6,7,8) else '')
@@ -553,6 +559,7 @@ class HistoryStore(PrivateJournal):
             membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
         effects = behavior.report(spec,result['trials'],inputs['behavior_policies'],
             sampling=record(case/'sequential/binding.json',1024*1024)[0] if spec.sequential is not None else None) if result is not None and inputs.get('behavior_policies') else None
+        records = similarity = similarity_path = None
         if validity != 'current':
             value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
         elif spec.sequential is not None:value=dict(result['sequential_analysis'])
@@ -566,7 +573,8 @@ class HistoryStore(PrivateJournal):
             except (ValueError, TypeError, KeyError, OSError, RecursionError):
                 value = dict(status='blocked', reason='root_similarity_binding_missing_or_invalid')
             else:
-                value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership,
+                records = self.trials(inputs,spec,result)
+                value = analyze(spec,records,cohort_binding=membership,
                     root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
         retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
         if validity=='current' and effects is not None:
@@ -585,7 +593,7 @@ class HistoryStore(PrivateJournal):
         if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
-        return result
+        return attach(spec,records,result,root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
 
     def decision(self, run_id):
         """Persist private recomputed analysis evidence, never adoption authority."""

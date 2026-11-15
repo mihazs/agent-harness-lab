@@ -128,6 +128,10 @@ The receipt holds the facts a final report may state. Hazards it closes, and the
   hypotheses. `coverage.open` entries are not covered, whatever happened to the candidate, and
   `coverage_complete: false` means unseen mechanisms are possible. Do not say a mechanism was repaired
   or diagnosed from this field; quote `admission[].rejection_reasons` for entries the contract refused.
+- **Preparation outcome.** `preparation.outcome` and its `reason_codes`, `missing_evidence` and `baseline_checks_passed` are
+  the preparation agent's own declaration against a fixed vocabulary (`controller_verified: false`). Quote them as
+  declared; `no_change_supported` is not a claim that the harness is correct, and `spend_label: spent_without_evaluation`
+  means the stage spent budget and no trial was evaluated.
 - **Pre-edit check.** Before staging or applying an edit to a harness file, check read-only for open pull
   requests (`gh pr list --state open --search PATH`) and uncommitted changes touching it. The controller's
   `pre_edit_check` covers local Git status only; report `open_pull_requests: not_checked` unless you checked.

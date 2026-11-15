@@ -85,7 +85,7 @@ class InstructionNode:
                 or self.mode is not None and (type(self.mode) is not int or not 0 <= self.mode <= 0o7777)
                 or self.applicability not in ('declared_applicable', 'shadowed', 'unknown', 'out_of_scope', 'unsupported',
                                               'private_excluded')
-                or self.observed_loading != 'unknown' or self.origin not in ('project', 'external_reference', 'codex_home')
+                or self.observed_loading != 'unknown' or self.origin not in ('project', 'external_reference', 'codex_home', 'claude_managed', 'claude_user')
                 or self.origin == 'external_reference' and (self.presence, self.applicability) != ('unknown', 'unknown')):
             raise ValueError('invalid declared instruction node')
         label(self.reason)
@@ -145,10 +145,21 @@ def read_node(folder, checkout, path, applicability, reason):
     return value, data
 
 
-def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None, _audit_facts=None):
-    """codex_home is an optional caller-declared folder-relative CODEX_HOME; it is never discovered or defaulted."""
+def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None,
+            claude_managed_root=None, claude_user_home=None, _audit_facts=None):
+    """codex_home is an optional caller-declared folder-relative CODEX_HOME; it is never discovered or defaulted.
+
+    claude_managed_root and claude_user_home are likewise optional folder-relative directories that hold the
+    managed-policy and the user CLAUDE.md of a Claude Code profile; only a declared one is read."""
     validate(profile)
     relative(checkout)
+    roots = {origin: root for origin, root in (('claude_managed', claude_managed_root), ('claude_user', claude_user_home))
+             if root is not None}
+    if roots:
+        paths = [checkout, *map(relative, roots.values())]
+        if profile['runtime'] != 'claude-code' or any('.git' in Path(p).parts for p in paths) or any(
+                a == b or a.startswith(b+'/') for i, a in enumerate(paths) for j, b in enumerate(paths) if i != j):
+            raise ValueError('Claude instruction roots must be separate declared Claude Code roots')
     if codex_home is not None:
         relative(codex_home)
         if profile['runtime'] != 'codex' or '.git' in Path(codex_home).parts or any(
@@ -168,7 +179,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
     scopes = ['.']+[str(Path(*cwd.parts[:i])) for i in range(1, len(cwd.parts)+1)]
     if pair == CLAUDE:
         from .claude_instructions import capture as capture_claude
-        nodes, edges, status = capture_claude(profile, scopes, selected, folder, checkout, audit_facts=_audit_facts)
+        nodes, edges, status = capture_claude(profile, scopes, selected, folder, checkout, audit_facts=_audit_facts, influence_roots=roots)
         return InstructionInventory(**identity, nodes=nodes, edges=edges, resolution_status=status)
     inspected = set()
     def node(path, applicability, reason):
