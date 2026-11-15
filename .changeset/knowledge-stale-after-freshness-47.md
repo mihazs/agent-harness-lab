@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Report declared staleness in the temporal resolver (part of #47). `TemporalFacet` takes an optional `stale_after` instant, `sources.knowledge_facets.facets` maps a page's `stale_after`, and each `temporal.resolve` row now carries `freshness` (`current`, `stale` or `unknown`) with a `freshness_reason`, plus a `freshness_counts` summary. The instant is stale from `stale_after` on, offsets compare as instants, and a missing, unparseable (a duration included) or timezone-less value is `unknown`, never `current`. Freshness never changes the validity status, reads only the revision's own declaration and ignores revisions first recorded after a historical replay's instant. The real clock is never consulted. Adding the field changes `inputs_sha256` for the same facets. Not yet done: claim identity across sources, project-scope compatibility, review provenance, binding link edges to `RecordRef`s, storing facets, contradiction detection, a CLI and the #43/#58/#11 integrations.
