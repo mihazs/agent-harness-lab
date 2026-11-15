@@ -10,13 +10,14 @@
 | `ahl improve [project] --repair-contracts --scope project\|global\|project+global [--agent codex\|claude]` | Repair skill headers in the project (default), the named runtime's user-level skill directory, or both; see [choose the project or user-level scope](improve-scope.md) |
 | `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
+| `ahl analyze [project] --events FILE --memory-store DIR --incremental [--explain-reuse]` | Reuse the verified process-mining output of an unchanged capture and harness from an opt-in private store, and explain every hit and miss; offline, no model call; see [reuse analysis work on unchanged input](incremental-analysis.md) |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl instruction-adherence SESSIONS [--rules LAYER=FILE]` | Report where captured sessions ignored harness rules or user-prompt instructions; offline, redacted by default, see [find where agents ignored instructions](detect-ignored-instructions.md) |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
 | `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions (`--reject-leakage` fails on [shared projects or texts](validation.md#benchmark-leakage-disclosure)); optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |
 | `ahl apply RUN [--project DIR] [--authorize-plan SHA256]` | Review the saved change plan of an improvement run (read-only); with the exact plan hash, apply only an independently reproduced skill-header repair ([details](one-call-improvement.md#review-and-apply-a-saved-plan)) |
-| `ahl compare --experiment FILE --output DIR` | Render a private baseline/candidate experiment record as a static offline HTML review page ([details](side-by-side-reports.md#static-viewer-ahl-compare)) |
+| `ahl compare --experiment FILE --output DIR [--public]` | Render a baseline/candidate experiment record as a static offline HTML review page, private unless `--public` exports approved synthetic or public data without events ([details](side-by-side-reports.md#static-viewer-ahl-compare), [public export](side-by-side-reports.md#public-export)) |
 | `ahl memory init\|status\|verify\|reindex\|gc --store DIR` | Create and maintain an opt-in private evidence store; offline, see [private memory store](memory-store.md) |
 | `ahl memory history --history-store DIR` | Read-only list of existing evaluation histories by reference with live authority checks; see [history index](memory-store.md#list-existing-evaluation-histories) |
 | `ahl sources claude pin-check --events FILE` | Compare one Claude Code capture with the verified profile contract by field name only; read-only, see [verify a new Claude Code release](verify-claude-release.md) |

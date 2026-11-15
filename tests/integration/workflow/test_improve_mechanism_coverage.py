@@ -16,6 +16,7 @@ CITING = ("p('proposer-prompt.txt').write_text(prompt); import re; named=re.sear
           "proposal={'status':'candidate','falsifiers':[],'mechanisms':[dict(mechanism_id='repeat-error',symptom='synthetic repeated error',"
           "evidence_refs=[brief['mechanisms'][0]['mechanism_id']],component='instruction',boundary='error repeats after the same call',"
           "competing_explanations=['expected negative test'],falsifier='no repeat after the edit')]}")
+TYPED = "; proposal.update(reason_codes=['baseline_conforms'], missing_evidence=['verified_outcomes'], baseline_checks_passed=['skill_routing_collision'])"
 assert LEGACY in FAKE
 
 
@@ -32,9 +33,9 @@ def wf():
         yield WorkflowTests(cleanups.callback)
 
 
-def run(wf, pipeline, *, tied=False):
+def run(wf, pipeline, *, tied=False, proposal=CITING):
     wf.collect.stop()
-    wf.agent.write_text(FAKE.replace(LEGACY, CITING))
+    wf.agent.write_text(FAKE.replace(LEGACY, proposal))
     pipeline.capture(history(3))
     if tied:
         (wf.project/'AGENTS.md').write_text('good')
@@ -58,6 +59,15 @@ def test_a_cited_mechanism_stays_tracked_whatever_the_candidate_outcome(wf, pipe
     prompt = ' '.join((output/'preparation/proposer-prompt.txt').read_text().split())
     assert ' '.join(MECHANISM_GUIDANCE.split()) in prompt
     assert json.loads((output/'workflow.json').read_text())['mechanism_coverage'] == receipt
+
+
+def test_a_candidate_with_the_typed_preparation_lists_is_admitted_and_its_lists_reach_the_preparation_block(wf, pipeline):
+    result = run(wf, pipeline, proposal=CITING + TYPED)
+    admission = result['mechanism_coverage']['admission'][0]
+    assert (admission['status'], admission['rejected'], admission['rejection_reasons']) == ('admitted', 0, [])
+    assert (result['preparation']['reason_codes'], result['preparation']['missing_evidence']) == (
+        ['baseline_conforms'], ['verified_outcomes'])
+    assert result['preparation']['baseline_checks_passed']['classes'] == ['skill_routing_collision']
 
 
 def test_a_proposal_in_the_old_free_text_form_is_recorded_as_refused(wf):

@@ -88,6 +88,13 @@ def test_decision_for_a_class_of_inputs(given, spec, expected):
     assert decide(given, spec) == expected
 
 
+@pytest.mark.parametrize('cause', [pytest.param('candidate', id='candidate-caused'), pytest.param('other', id='other-cause'), pytest.param(None, id='unknown-cause')])
+@pytest.mark.parametrize('kind', ['critical', 'area'])
+def test_a_critical_or_per_area_regression_stops_even_under_rollback_continue_with_a_mechanism_and_a_round_left(kind, cause):
+    # fails on the decision table that let a candidate-caused critical or area regression roll back and continue
+    assert decide(inputs(regression=kind, regression_cause=cause, mechanism='available', round=1), ROLLBACK) == ('regressed', 'regression')
+
+
 def test_a_default_inputs_object_is_all_unknown_and_never_accepts():
     assert decide(Inputs(), SPEC) == ('inconclusive', 'evidence_insufficient')
 

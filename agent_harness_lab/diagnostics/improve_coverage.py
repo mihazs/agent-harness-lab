@@ -6,13 +6,14 @@ admitted record stays ``proposed`` and unreviewed, so a tie or an accepted patch
 """
 import hashlib
 
+from agent_harness_lab import preparation
 from agent_harness_lab.diagnostics import brief as analysis_brief
 from agent_harness_lab.diagnostics.coverage import COVERAGE_PROFILE, render_markdown, report
 from agent_harness_lab.diagnostics.mechanisms import from_proposal
 from agent_harness_lab.monitoring.state import atomic_json
 
-# The controller owns these proposal fields; the admission contract does not know them.
-CONTROLLER_FIELDS = ('instruction_plan',)
+# The controller owns these proposal fields (the preparation lists are asked for beside a candidate); the admission contract does not know them.
+CONTROLLER_FIELDS = ('instruction_plan', *preparation.FIELDS)
 
 
 def citable(brief):

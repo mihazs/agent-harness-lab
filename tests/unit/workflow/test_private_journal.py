@@ -1,11 +1,12 @@
 """Optional unlimited journal sizes preserve strict storage and default policies."""
+from datetime import datetime,timedelta
 import hashlib
 import json
 
 import pytest
 
 from agent_harness_lab.evaluation.integrity import digest,read_regular,tree,tree_digest
-from agent_harness_lab.private_journal import MAX_EVENTS,MAX_METADATA,PrivateJournal,encoded,record,record_bytes
+from agent_harness_lab.private_journal import MAX_EVENTS,MAX_METADATA,PrivateJournal,encoded,record,record_bytes,scratch_dir,scratch_in
 
 
 def transition(previous,kind,state,previous_kind=None):
@@ -56,6 +57,15 @@ def test_unlimited_metadata_roundtrips_large_event_without_expanding_default(roo
     with pytest.raises(ValueError):limited.history(case)
     with pytest.raises(ValueError):limited.append(case,events,'observed','observed',payload)
     assert len(list((case/'events').iterdir()))==1
+
+
+def test_an_explicit_recorded_time_is_stored_as_given_and_the_default_stays_a_utc_timestamp(root):
+    store=journal(root);case=make_case(store);events=[]
+    store.append(case,events,'observed','observed',{},recorded_at='12.500000')
+    store.append(case,events,'observed','observed',{})
+    assert events[0][0]['recorded_at']=='12.500000'
+    assert datetime.fromisoformat(events[1][0]['recorded_at']).utcoffset()==timedelta(0)
+    assert [event['recorded_at'] for event,_ in store.history(case)]==[events[0][0]['recorded_at'],events[1][0]['recorded_at']]
 
 
 def test_default_operation_count_remains_limited_and_optin_allows_next_event(root):
@@ -145,3 +155,18 @@ def test_tree_optin_exceeds_previous_bytes_files_and_depth_without_changing_defa
     (('max_files',1000),('max_bytes',10*1024*1024),('max_entries',1000),('max_depth',64))])
 def test_each_previous_tree_bound_still_applies_when_set(oversized_inputs,key,value):
     with pytest.raises(ValueError):tree(oversized_inputs,**dict(UNLIMITED,**{key:value}))
+
+
+def test_validation_scratch_defaults_to_the_caller_choice_and_restores_after_nesting(tmp_path):
+    outer,inner=tmp_path/'outer',tmp_path/'inner'
+    assert scratch_dir('default')=='default'
+    with scratch_in(outer):
+        assert scratch_dir('default')==outer
+        with scratch_in(inner):assert scratch_dir('default')==inner
+        assert scratch_dir('default')==outer
+    assert scratch_dir('default')=='default'
+
+
+def test_validation_scratch_is_restored_when_the_guarded_block_raises(tmp_path):
+    with pytest.raises(RuntimeError),scratch_in(tmp_path):raise RuntimeError('synthetic failure')
+    assert scratch_dir(None) is None

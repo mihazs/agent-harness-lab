@@ -138,7 +138,8 @@ def decide(i, spec):
         return 'inconclusive', _next_round_stop(i, spec, 0)
     if i.regression not in ('none', 'margin', 'critical', 'area'): return 'inconclusive', 'evidence_insufficient'
     if i.regression != 'none':
-        if spec.on_regression == 'rollback_continue' and i.regression_cause == 'candidate' and i.mechanism == 'available':
+        if (spec.on_regression == 'rollback_continue' and i.regression == 'margin' and i.regression_cause == 'candidate'
+                and i.mechanism == 'available'):  # a critical or per-area regression always stops
             return 'regressed', _next_round_stop(i, spec, _streak(i, False))
         return 'regressed', 'regression'
     if i.acceptance == 'met': return 'accepted', 'acceptance_score_reached'

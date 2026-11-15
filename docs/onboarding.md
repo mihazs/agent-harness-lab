@@ -153,6 +153,11 @@ Configuration references may be absolute or safe project-relative paths;
 relative paths use the project containing ahl.json, never another current directory.
 Symlinked, missing or unsafe local references fail before transport.
 
+`limits` may also carry `construction_fraction`, a number strictly between 0 and 1,
+as the default share of `seconds` given to each evaluation-construction pass; the
+`--construction-fraction` option overrides it and the default is 0.25. See
+[stage budgets and early stops](budget-stages.md).
+
 Doctor validates local references and settings schema, checks credential metadata
 without opening its contents, and reads delegation metadata without creating or
 changing controls. Its Responses `ready` result explicitly means

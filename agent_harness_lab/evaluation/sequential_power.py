@@ -16,7 +16,8 @@ import random
 import statistics
 from . import sequential as core
 from .plan import ExperimentSpec, schedule
-from .power import DISPOSITIONS, MAX_PLANNED_TRIALS, MAX_SIMULATED_TRIALS, Z95, _declare, _draw, _effect, wilson
+from .power import (DISPOSITIONS, MAX_PLANNED_TRIALS, MAX_SIMULATED_TRIALS, Z95, _completion, _declare, _draw, _effect,
+                    _ungrade, wilson)
 from .statistics import analyze as fixed_analyze
 
 PROFILE = 'sequential-root-power-simulation-v1'
@@ -47,6 +48,10 @@ def _realized(spec, potential, weights):
     for (family, _), differences in blocks.items(): means[family].append(Fraction(sum(differences), len(differences)))
     families = {family: sum(values) / len(values) for family, values in means.items()}
     return families, sum(weights[family] * value for family, value in families.items())
+
+
+def _cells(plan, records):
+    return {(t['task'], t['repetition'], t['version']): record for t, record in zip(plan, records)}
 
 
 def _sequential(spec, binding, potential, rows_by_root):
@@ -87,19 +92,22 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     rng, sequential_counts, fixed_counts = random.Random(seed), dict.fromkeys(DISPOSITIONS, 0), dict.fromkeys(DISPOSITIONS, 0)
     reasons, fixed_reasons, agreement = Counter(), Counter(), Counter()
     stop_roots, stop_trials, by_status = [], [], defaultdict(lambda: ([], []))
-    realized_primary, truth = [], Counter()
+    realized_primary, truth, ungraded = [], Counter(), []
     for _ in range(simulations):
         drawn = _draw(fixed, fixed_plan, declared, rng)
-        potential = {(t['task'], t['repetition'], t['version']): record for t, record in zip(fixed_plan, drawn)}
+        # Both profiles see the same lost grades; the finite-bank truth below keeps every drawn outcome.
+        seen_grades = _ungrade(drawn, fixed_plan, declared, rng)
+        ungraded.append(sum(r.status != 'graded' for r in seen_grades))
+        truth_cells, potential = _cells(fixed_plan, drawn), _cells(fixed_plan, seen_grades)
         # A seeded uniform permutation stands in for the controller's system-random draw.
         order = roots[:]; rng.shuffle(order)
         binding = dict(template, root_order=order)
         rows_by_root = defaultdict(list)
         for row in core.schedule(spec, binding): rows_by_root[row['root']].append(row)
         result, observed, trials = _sequential(spec, binding, potential, rows_by_root)
-        comparator = fixed_analyze(fixed, drawn)
+        comparator = fixed_analyze(fixed, seen_grades)
         # The sequential claim concerns this bank's realized root-block means, not the model's expectation.
-        families_truth, primary_truth = _realized(spec, potential, weights)
+        families_truth, primary_truth = _realized(spec, truth_cells, weights)
         benefit = primary_truth > effect_margin and all(v >= -family_margin for v in families_truth.values())
         harm = primary_truth < -family_margin or any(v < -family_margin for v in families_truth.values())
         realized_primary.append(float(primary_truth))
@@ -140,12 +148,13 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
         power='simulated_under_declared_model', root_independence='assumed_by_model',
         model_authority='caller_declared_synthetic', executions=0, automatic_budget_change=False,
         automatic_promotion=False, publication_allowed=False,
+        **_completion(declared, ungraded, fixed_trials),
         limitations=['Rates hold only under the declared synthetic outcome model; real task dependence may differ.',
             'Simulated roots are independent by construction and drawn without regard to the sampling order.',
             'The sequential target is this bank\'s realized root-block mean, which a random null draw can place above the margin; '
             'only false_support measures a wrong sequential claim, and fixed-comparator rates carry the fixed-profile interpretation.',
             'The two profiles estimate different targets under different assumptions; matching dispositions are not equivalent claims.',
-            'Every simulated trial is graded: unknown outcomes, partial roots and time-budget exhaustion are not simulated.',
+            'Only a declared ungraded probability simulates unknown outcomes; partial roots and time-budget exhaustion are not simulated.',
             'No worker, model or grader is run; nothing is observed, certified or adopted.',
             'A low supported rate is not evidence of noninferiority; rates and means carry Monte Carlo uncertainty.',
             'The plan, margins, method and budgets are unchanged; no trials are added.'])

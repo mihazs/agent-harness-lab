@@ -317,8 +317,9 @@ Labels are unauthenticated, and capture outside the frame is unknown.
 This first slice of #75 covers the frame, plan, receipt and fixed-window
 estimates. Later sections cover fixed and stratified budgets, corpus review
 linkage and observe-only monitoring, and the logged budget and adaptive
-decisions below, the versioned summary and the requirement gate at the end. The issue
-still tracks cluster designs beyond the declared unit and review-queue export.
+decisions below, the versioned summary and the requirement gate, with its monitor-step
+entry point, at the end. The issue still tracks cluster designs beyond the declared unit
+and review-queue export.
 Prediction-powered e-values remain an experimental extension for later.
 
 ## Opt-in fixed-size hard-budget design
@@ -465,5 +466,21 @@ limitations and adds `requirement_preregistration_unverified` and
 fixed before labels were seen or that the sampling assumptions hold. It is `observe_only`,
 grants no promotion authority, issues no certification, forbids publication and automatic
 policy updates and rollback, and a recalibrated policy still needs a new revision and a new
-evaluation. This is a library API with no CLI, and no existing promotion or monitor step
-calls it yet.
+evaluation. This is a library API with no CLI.
+
+### Applying the gate in the monitor step
+
+`agent_harness_lab.promotion.monitor.triage_audit_gate(policy, receipt, frame, store_path,
+binding, rubric, requirement, *, decision_report=None, plan=None, trusted_heads=None)`
+runs the whole local chain once: it recomputes the private `triage_audit_observation` for
+the supplied triage policy and receipt, compacts it with `audit_summary.summarize` (with
+the optional `audit_decisions.check` report) and returns `audit_gate.evaluate` over that
+summary. Monitoring, the summary and the gate therefore read one policy, model and receipt
+identity, and a policy or model declaration that differs from the receipt or plan is refused
+before the corpus is read. A requirement with a missing, unknown or out-of-range field is
+refused and yields no verdict. The arguments are those of `triage_audit_observation`, plus
+the requirement and the decision report, and `plan` is required for the fixed and
+stratified designs. The result is the `audit-gate-v1` record: it names the summary hash it
+judged, grants no promotion authority, issues no certification and updates no policy. No
+promotion decision reads it: `promotion.policy.decide` takes no triage policy or audit
+evidence, and this release adds no such input.

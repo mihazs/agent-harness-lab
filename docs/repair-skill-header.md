@@ -46,4 +46,6 @@ example when its time budget ran out). A project `ahl.json` keeps the plan
 recommendation-only: the packet is `blocked`, or `stale` if the file was added or
 removed after the plan. A `stale` packet means the project, configuration, baseline,
 candidate or policy changed since the plan; rerun `ahl improve . --repair-contracts`
-to make a new plan. See the [packet and binding contract](one-call-improvement.md#review-and-apply-a-saved-plan).
+to make a new plan. If you press Ctrl-C during an authorized `ahl apply`, repeat the same command: it applies once, or
+reports `stale` when the reviewed bytes are already installed, in which case finish the deployment the message names with
+`ahl promotion PROJECT --deployment ID --action recover`. See the [packet and binding contract](one-call-improvement.md#review-and-apply-a-saved-plan).

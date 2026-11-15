@@ -1,6 +1,9 @@
 """Keep injection, observable activation and independently graded utility separate."""
 import hashlib
 import json
+import os
+import stat
+from pathlib import Path
 
 
 def activation(*, injected=False, signal=None, provenance=None, evidence_ref=None):
@@ -22,6 +25,102 @@ def skill_availability(route, name, files):
     bundle = json.dumps(sorted(files.items()), separators=(',', ':')).encode()
     return dict(name=name, route=route, state='present', entry_sha256=entry,
                 bundle_sha256=hashlib.sha256(bundle).hexdigest(), activated=None)
+
+
+SHADOWING_SCHEMA = 'skill-shadowing-v1'
+UNREADABLE = 'unreadable'  # a same-name bundle exists but its content could not be read in full
+MAX_AMBIENT_FILES = 512
+MAX_AMBIENT_BYTES = 8 * 1024 * 1024
+
+
+def _kind(path):
+    """'dir', 'file', 'other', False (absent) or None (could not be determined).
+
+    os.stat is used directly: Path.exists, is_dir and is_file swallow every OSError on newer Pythons and raise it on
+    older ones, so a permission error would read as absent on one and as an error on the other."""
+    try:
+        mode = os.stat(path).st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return None
+    return 'dir' if stat.S_ISDIR(mode) else 'file' if stat.S_ISREG(mode) else 'other'
+
+
+def _ambient_bundle(root, name, max_files, max_bytes):
+    """A bundle hash, UNREADABLE, None (existence undetermined) or False (no same-name skill) for one name."""
+    if name in ('', '.', '..') or Path(name).name != name:
+        return None
+    folder = root / name
+    for path, wanted in ((folder, 'dir'), (folder / 'SKILL.md', 'file')):
+        kind = _kind(path)
+        if kind is None:
+            return None
+        if kind != wanted:
+            return False
+    try:
+        files, size = {}, 0
+        for path in sorted(folder.rglob('*')):
+            if path.is_file():
+                size += path.stat().st_size
+                if len(files) >= max_files or size > max_bytes:
+                    return UNREADABLE
+                files[path.relative_to(folder).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return UNREADABLE
+    return skill_availability('ambient', name, files)['bundle_sha256']
+
+
+def ambient_skill_copies(roots, names, *, max_files=MAX_AMBIENT_FILES, max_bytes=MAX_AMBIENT_BYTES):
+    """Read-only look for same-name bundles in user-level skill folders; it never lists a folder or returns other skills.
+
+    roots maps a layer label to a skills folder. Each layer gives {name: bundle sha256 | UNREADABLE | None} for the
+    names whose folder holds a SKILL.md (None: existence could not be determined, for example a permission error),
+    or is None when the folder is not a directory or could not be inspected. A missing folder is a scanned layer with
+    no copies. A bundle over max_files files or max_bytes bytes is UNREADABLE rather than truncated."""
+    found = {}
+    for layer, root in roots.items():
+        root = Path(root)
+        kind = _kind(root)
+        if kind is False:
+            found[layer] = {}
+        elif kind != 'dir':
+            found[layer] = None
+        else:
+            found[layer] = {name: copy for name in names if (copy := _ambient_bundle(root, name, max_files, max_bytes)) is not False}
+    return found
+
+
+def skill_shadowing(availability, ambient):
+    """Same-name copies of each staged skill in the scanned user-level layers, from ambient_skill_copies.
+
+    The row says a candidate shadow exists, never which copy the runtime used: effective_layer stays unknown. An
+    ambient copy beside an absent (removed) skill means the removal arm still has the skill. `none_found` covers
+    only layers_scanned (managed, plugin and enterprise layers are not scanned); an unscanned layer, an unreadable
+    folder or an undetermined name is unknown, never none_found."""
+    rows = []
+    for row in availability:
+        name, found, scanned, open_question = row['name'], [], [], False
+        for layer, copies in (ambient or {}).items():
+            if copies is None or (name in copies and copies[name] is None):
+                open_question = True
+                continue
+            scanned.append(layer)
+            if name in copies:
+                digest = None if copies[name] == UNREADABLE else copies[name]
+                match = None if digest is None or row['bundle_sha256'] is None else digest == row['bundle_sha256']
+                found.append(dict(layer=layer, bundle_sha256=digest, bundle_match=match))
+        state = ('ambient_same_name' if found else 'none_found' if scanned and not open_question else 'unknown')
+        rows.append(dict(name=name, route=row['route'], staged_state=row['state'], state=state, ambient=found,
+                         layers_scanned=scanned, effective_layer='unknown'))
+    return rows
+
+
+def shadowing_state(rows):
+    """One label per trial: a copy beats unknown, and clear needs every staged skill scanned."""
+    states = {row['state'] for row in rows}
+    return ('ambient_same_name' if 'ambient_same_name' in states else 'unknown' if not states or 'unknown' in states
+            else 'none_found')
 
 
 ACTIVATION_RECEIPT_PROFILE = 'ahl-skill-activation-receipt-v1'
@@ -203,7 +302,7 @@ def paired_transfer(records, *, policy):
             role=role.get(condition, 'diagnostic' if condition == 'preload' else 'undeclared'),
             matched_roots=0, unmatched_roots=0, improved_roots=0, unchanged_roots=0, harmed_roots=0,
             mean_delta=None, excluded_records=0, present_observed_activations=0, present_unknown_activations=0,
-            absent_observed_activations=0, critical_regressions=0))
+            absent_observed_activations=0, present_shadowed_records=0, absent_shadowed_records=0, critical_regressions=0))
         # Excluded records never reach the counters that decide the disposition.
         task, root = record.get('task_id'), record.get('root_id')
         if not (isinstance(task, str) and task and isinstance(root, str) and root):
@@ -211,6 +310,7 @@ def paired_transfer(records, *, policy):
         outcome = record.get('outcome')
         if type(outcome) is not bool or record.get('outcome_provenance') != 'executable_grader':
             excluded['unverified_records'] += 1; group['excluded_records'] += 1; continue
+        group[f'{arm}_shadowed_records'] += record.get('shadowing') == 'ambient_same_name'
         if arm == 'present':
             group['present_observed_activations' if _observed(record) else 'present_unknown_activations'] += 1
             group['critical_regressions'] += record.get('critical_regression') is True
@@ -237,6 +337,9 @@ def paired_transfer(records, *, policy):
         disposition, reason = 'rejected', 'negative_transfer'
     elif any(g['absent_observed_activations'] for g in groups.values()):
         disposition, reason = 'inconclusive', 'absent_arm_activation'
+    elif any(g['present_shadowed_records'] or g['absent_shadowed_records'] for g in groups.values()):
+        # A same-name ambient copy means the arms may not differ by the staged skill alone.
+        disposition, reason = 'inconclusive', 'shadowed_skill_copy'
     elif not any(c in deltas for c in declared['target_conditions']):
         disposition, reason = 'inconclusive', 'no_matched_target_roots'
     elif not all(c in deltas for c in declared['control_conditions']):
