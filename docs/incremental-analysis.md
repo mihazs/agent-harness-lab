@@ -74,6 +74,12 @@ harness file is refused with exit 2, because its target cannot be pinned.
   unusable index stops the run with exit 2 before any output is written. A store opened
   read-only by an older release can still be read, so a hit works and `commit` reports `failed`.
 
+## Use it with improve
+
+`ahl improve` takes the same three flags and the same store. It reuses the stage on an unchanged capture
+and harness and reports it as the `evidence_collection` row of its `incremental` block; the model
+stages and every trial still run. See [incremental runs](incremental-runs.md#reuse-the-evidence-stage).
+
 ## Limits
 
 Only the process-mining stage is reused, and the rest of the analysis still reads every

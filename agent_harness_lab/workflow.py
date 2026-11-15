@@ -645,7 +645,11 @@ def _improve(args):
     stages = args._stages
     remaining = stages.remaining
     runner = evaluator()
+    if getattr(args, 'incremental', False):  # decide stage reuse before any output exists, as analyze does; no import cost without the flag
+        from .memory.incremental import Incremental
+        args._incremental = Incremental(args)
     output = output_dir(args,deadline=started+args.timeout)
+    if getattr(args, '_incremental', None) is not None: args._incremental.bind_output(output)
     access_path=None
     if getattr(args,'evaluation_store',None) is not None:
         from .evaluation.construction_access import selection
@@ -1318,7 +1322,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
                                                   brief=getattr(args, '_analysis_brief', None))
         with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
-    incremental.attach(result, args._incremental, original)
+    incremental.attach(result, args._incremental, original, getattr(args, '_reuse', None))
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
     result['provenance'] = seeded_provenance(getattr(args,'focus',None), 'static_audit' if getattr(args,'_static_automatic',False) else 'from_audit' if audited else 'focus')
@@ -1368,7 +1372,7 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
     if hasattr(args,'_automatic_focus'): args.focus = None
-    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental'):
+    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental','_reuse'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started
@@ -1495,6 +1499,7 @@ def construction_receipt(result, args):
     result['authored_digest_ignored'] = getattr(args, '_authored_digest_ignored', 0)
     result['evaluation_construction_seconds'] = round(getattr(args, '_construction_seconds', 0.0), 1)
     if getattr(args, '_evaluation_reuse', None): result['evaluation_reuse'] = args._evaluation_reuse
+    if getattr(args, '_reuse', None): result['reuse'] = args._reuse
     stages = getattr(args, '_stages', None)
     if stages is None:  # a result that ended before the run built its ledger still states the budget and where it stands
         timeout = getattr(args, 'timeout', None)

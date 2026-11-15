@@ -395,3 +395,41 @@ def test_a_previous_receipt_of_the_wrong_shape_is_unknown_and_never_stops_the_ru
     run_after(args, folder, 'run-00', dict(file=B), receipt)
     state, _ = start(args, folder, 'run-01')
     assert (state['prior'], state['problem'], state['regressions']) == (None, 'previous_run_unreadable', [])
+
+
+DEFAULT_EVIDENCE = dict(action='rerun', reason='no_verified_prior_output')
+
+
+def evidence_stage(store, reuse):
+    """The `evidence_collection` row a second run reports, given the stage-reuse summary of this run (or none)."""
+    args, folder = store
+    start(args, folder, 'run-one')
+    state, _ = start(args, folder, 'run-two')
+    result = {}
+    incremental.attach(result, state, dict(file=A), reuse)
+    return result['incremental']['stages']
+
+
+@pytest.mark.parametrize('reuse, expected', [
+    pytest.param(dict(outcome='reused', reason='hit_verified'), dict(action='reused', reason='hit_verified'), id='verified_hit'),
+    pytest.param(dict(outcome='executed', reason='miss_input_changed'), dict(action='rerun', reason='miss_input_changed'), id='input_changed'),
+    pytest.param(dict(outcome='executed', reason='miss_no_prior'), dict(action='rerun', reason='miss_no_prior'), id='no_prior_record'),
+    pytest.param(dict(outcome='executed', reason='invalid_integrity'), dict(action='rerun', reason='invalid_integrity'), id='stored_record_failed_verification'),
+    pytest.param(None, DEFAULT_EVIDENCE, id='reuse_not_requested'),
+    pytest.param('reused', DEFAULT_EVIDENCE, id='summary_not_an_object'),
+    pytest.param({}, DEFAULT_EVIDENCE, id='empty_summary'),
+    pytest.param(dict(outcome='reused'), DEFAULT_EVIDENCE, id='reused_without_a_reason'),
+    pytest.param(dict(outcome='reused', reason='miss_input_changed'), DEFAULT_EVIDENCE, id='reused_with_a_miss_reason'),
+    pytest.param(dict(outcome='reused', reason=['hit_verified']), DEFAULT_EVIDENCE, id='reason_not_a_string'),
+    pytest.param(dict(outcome='unknown', reason='hit_verified'), DEFAULT_EVIDENCE, id='unknown_outcome_is_never_a_hit'),
+    pytest.param(dict(outcome='executed'), DEFAULT_EVIDENCE, id='executed_without_a_reason'),
+    pytest.param(dict(outcome='executed', reason='x' * 500), DEFAULT_EVIDENCE, id='oversized_reason'),
+])
+def test_the_evidence_stage_is_reused_only_for_a_verified_hit_and_says_why_otherwise(store, reuse, expected):
+    assert evidence_stage(store, reuse)['evidence_collection'] == expected
+
+
+def test_a_reused_evidence_stage_leaves_every_other_stage_rerun(store):
+    stages = evidence_stage(store, dict(outcome='reused', reason='hit_verified'))
+    assert {name: row['action'] for name, row in stages.items()} == dict(
+        evidence_collection='reused', candidate_preparation='rerun', evaluation_construction='rerun', trials='rerun')
