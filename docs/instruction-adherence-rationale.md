@@ -16,7 +16,9 @@ A rule can only be ignored by an agent that had it. When the capture shows the i
 file was never loaded, a prohibited call says something about loading, not about the agent,
 so it is reported as `not_loaded`. When loading is truncated or unknown the call is only a
 possible violation. The `turn` in a `loaded` entry matters for the same reason: a call made
-before the rule arrived is not an ignored rule.
+before the rule arrived is not an ignored rule. A native capture cannot say what was in context
+before its first attachment, so there the earlier calls stay unknown rather than `not_loaded`, and
+a path-only or different-text attachment is not evidence that the judged file was loaded.
 
 ## Unknown stays unknown
 
@@ -36,6 +38,21 @@ recognize (a supersession cue, a repeat straight after the agent's question) and
 restatement override checkable evidence. What remains is a `possible_violation`. On the shipped
 sample its precision is far below the threshold, so it is reported as an abstention rather than a
 finding. The abstention is the honest outcome, not a defect to tune away.
+
+## Why native sessions are partial and Codex rules abstain
+
+The telemetry adapters never keep text, because analysis must not depend on private content. This
+report needs the command and the prompt, so it reads the capture again and keeps only turns, in memory.
+It reads no more than those adapters would accept: a verified release, the project's own directory, a user
+session. A capture that cannot be attributed is counted by reason and, in an analysis, reported as
+`not_run`; an empty result never stands for a clean one.
+
+A native capture can be cut at the tail, can omit records the runtime did not write and has no verified
+lineage, so it is partial with unknown lineage. That keeps a prohibited call a violation (it was seen) and
+a skipped required step unknown (it may be in the part not seen). Claude Code records the memory file it
+attached, which is the only proof that a rule reached the agent. The pinned Codex rollout records none, so
+a harness-rule violation there is a possible violation and, with the shipped calibration, an abstention:
+the report would rather say it cannot tell than blame an agent for a rule it may never have received.
 
 ## Why not the controller trajectory engine
 

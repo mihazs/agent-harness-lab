@@ -1,4 +1,5 @@
 """The before/after guard decides from synthetic paired outcomes only (#804); no model, project or recorded history is read."""
+import argparse
 import json
 import math
 
@@ -6,6 +7,8 @@ import pytest
 
 from agent_harness_lab.evaluation import before_after as guard, vacuity
 from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS, public_export_allowed
+from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
+from agent_harness_lab.evaluation.statistics import TrialRecord
 
 SHA = {name: format(index, 'x') * 64 for index, name in enumerate(guard.IDENTITY_FIELDS, 1) if name.endswith('_sha256')}
 
@@ -312,3 +315,100 @@ def test_a_vacuous_regression_is_not_reported_as_a_blocked_candidate(tmp_path):
     guard.attach(result, tmp_path, vacuous_run(labels=['grader_not_executed'], trials_status=('passed', 'failed')))
     assert result['status'] == 'evaluation_failed' and result['before_after']['adoption_blocked'] is False
     assert not (tmp_path / 'investigation.json').exists()
+
+
+def test_the_gain_margin_raises_the_bar_for_improved_and_leaves_the_regression_margin_alone():
+    helpful = bank('F' * 12, 'P' * 12)
+    assert decide(helpful, margin=0.0)['verdict'] == 'improved'
+    demanding = decide(helpful, margin=0.0, gain_margin=0.9)
+    assert (demanding['verdict'], demanding['adoption_blocked'], demanding['gain_margin']) == ('inconclusive', False, 0.9)
+    assert 'interval_not_above_margin' in demanding['reasons']
+    loss = bank('P' * 10, 'F' + 'P' * 9)
+    assert decide(loss, margin=0.0, gain_margin=0.9)['verdict'] == 'candidate_regressed'
+    assert decide(loss, margin=0.2, gain_margin=0.0)['verdict'] == 'inconclusive'
+    assert 'gain_margin' not in decide(helpful, margin=0.0)
+
+
+@pytest.mark.parametrize('gain_margin', [
+    pytest.param(-0.01, id='negative'), pytest.param(1, id='one'), pytest.param(math.nan, id='nan'), pytest.param(True, id='boolean')])
+def test_an_unsupported_gain_margin_is_refused(gain_margin):
+    with pytest.raises(ValueError, match='gain_margin'):
+        decide(bank('PP', 'FF'), gain_margin=gain_margin)
+
+
+@pytest.mark.parametrize('text, value', [pytest.param('0', 0.0, id='zero'), pytest.param('0.05', 0.05, id='fraction'), pytest.param('0.999', 0.999, id='just_below_one')])
+def test_the_margin_option_accepts_a_number_from_zero_up_to_but_not_including_one(text, value):
+    assert guard.margin_option(text) == value
+
+
+@pytest.mark.parametrize('text', [
+    pytest.param('', id='empty'), pytest.param('abc', id='word'), pytest.param('-0.1', id='negative'), pytest.param('1', id='one'),
+    pytest.param('nan', id='nan'), pytest.param('inf', id='infinite'), pytest.param('1e3', id='above_one')])
+def test_the_margin_option_refuses_anything_else_as_an_input_error(text):
+    with pytest.raises(argparse.ArgumentTypeError, match='margin'):
+        guard.margin_option(text)
+
+
+def fixed_spec(tasks=3, repeats=2):
+    return ExperimentSpec('synthetic', tuple((f't{i}', f'r{i}', 'fam' if i % 2 else 'other') for i in range(tasks)), repeats, 7, 2 * tasks * repeats,
+                          2, 0.01, 0.02, 0.05, (('fam', 0.5), ('other', 0.5)), 'b' * 64, 'c' * 64, 'd' * 64, 'e' * 64)
+
+
+def graded(spec, outcome, **changes):
+    """One graded record per scheduled trial; ``outcome(row)`` is the verdict and ``changes`` overrides record fields for one version."""
+    rows = []
+    for row in schedule(spec):
+        value = outcome(row)
+        fields = dict(trial_id=row['trial_id'], outcome=value, status='graded', provenance='executable_grader', baseline_hash=spec.baseline_hash,
+                      candidate_hash=spec.candidate_hash, grader_hash=spec.grader_hash, runtime_hash=spec.runtime_hash)
+        rows.append(TrialRecord(**{**fields, **(changes if row['version'] == 'candidate' else {})}))
+    return rows
+
+
+def test_a_sealed_fixed_comparison_yields_one_pair_per_task_and_repeat_with_the_declared_family_as_area():
+    spec = fixed_spec()
+    pairs, baseline, candidate = guard.experiment_inputs(spec, graded(spec, lambda row: row['version'] == 'baseline'), bank_sha256='a' * 64,
+                                                         tasks=[dict(id='t0', split='development'), dict(id='t1', split='regression')])
+    assert sorted((p['task'], p['repeat']) for p in pairs) == [(f't{i}', n) for i in range(3) for n in range(2)]
+    assert all((p['baseline'], p['candidate']) == (True, False) for p in pairs)
+    assert {(p['task'], p['root'], tuple(p['areas']), p['split']) for p in pairs} == {
+        ('t0', 'r0', ('other',), 'development'), ('t1', 'r1', ('fam',), 'regression'), ('t2', 'r2', ('other',), None)}
+    assert guard.compare_identities(baseline, candidate) == dict(status='identical', mismatched=[], unknown=[])
+    assert baseline['budget_share'] == dict(trials=6) and baseline['bank_sha256'] == 'a' * 64
+    assert (baseline['grader_sha256'], baseline['runtime_sha256']) == ('d' * 64, 'e' * 64)
+    assert baseline['seed_schedule_sha256'] == candidate['seed_schedule_sha256'] and baseline['seed_schedule_sha256'] is not None
+
+
+def test_a_fixed_comparison_that_lost_a_candidate_record_is_unverified_and_never_a_match():
+    spec = fixed_spec()
+    records = [r for r in graded(spec, lambda row: True) if r.trial_id != next(row['trial_id'] for row in schedule(spec) if row['version'] == 'candidate')]
+    pairs, baseline, candidate = guard.experiment_inputs(spec, records, bank_sha256='a' * 64)
+    comparison = guard.compare_identities(baseline, candidate)
+    assert comparison['status'] == 'unverified' and 'budget_share' in comparison['unknown']
+    assert [p['candidate'] for p in pairs].count(None) == 1
+    result = guard.decide(pairs, baseline=baseline, candidate=candidate)
+    assert result['verdict'] != 'improved' and result['pairs']['unknown'] == 1
+
+
+@pytest.mark.parametrize('status, provenance, outcome', [
+    pytest.param('ungraded', 'executable_grader', True, id='not_graded'),
+    pytest.param('graded', 'self_reported', True, id='grader_not_executable'),
+    pytest.param('graded', 'executable_grader', None, id='no_outcome'),
+    pytest.param('graded', 'executable_grader', 1, id='integer_outcome_is_not_coerced'),
+])
+def test_a_trial_that_is_not_an_executable_graded_pass_or_fail_is_an_unknown_outcome(status, provenance, outcome):
+    spec = fixed_spec(tasks=2, repeats=1)
+    odd = next(row['trial_id'] for row in schedule(spec) if row['version'] == 'candidate')
+    records = [TrialRecord(**{**vars(r), **(dict(status=status, provenance=provenance, outcome=outcome) if r.trial_id == odd else {})}) for r in graded(spec, lambda row: True)]
+    pairs, _, _ = guard.experiment_inputs(spec, records, bank_sha256='a' * 64)
+    assert [p['candidate'] for p in pairs].count(None) == 1 and all(p['baseline'] is True for p in pairs)
+
+
+@pytest.mark.parametrize('field, name', [
+    pytest.param('grader_hash', 'grader_sha256', id='grader'), pytest.param('runtime_hash', 'runtime_sha256', id='runtime')])
+def test_a_candidate_arm_recorded_under_another_grader_or_runtime_is_a_named_mismatch(field, name):
+    spec = fixed_spec()
+    pairs, baseline, candidate = guard.experiment_inputs(spec, graded(spec, lambda row: True, **{field: 'f' * 64}), bank_sha256='a' * 64)
+    assert guard.compare_identities(baseline, candidate) == dict(status='mismatch', mismatched=[name], unknown=[])
+    block = guard.decide(pairs, baseline=baseline, candidate=candidate)
+    assert guard.investigate(pairs, block, grader_changed=False, inputs_unchanged=True)['cause']['class'] == 'pipeline_caused'

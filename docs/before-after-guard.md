@@ -3,9 +3,11 @@
 Reference for how `ahl improve` judges a candidate against its baseline on identical
 frozen inputs, and for what it records when the candidate is worse. The same
 `improve` run that executes both arms adds a `before_after` block to `workflow.json`
-(also printed on stdout). A candidate that regressed ends `blocked` with reason
-`candidate_regressed` and an `investigation.json` beside the receipt, instead of the
-bare `evaluation_failed` it ended with before.
+(also printed on stdout), in the default evaluation and in the
+[fixed repeated-bank lane](#the-fixed-repeated-bank-lane). A candidate that regressed ends
+`blocked` with reason `candidate_regressed` and an `investigation.json` beside the receipt,
+instead of the bare `evaluation_failed` (default lane) or the `candidate_not_supported`
+recommendation (fixed lane) it ended with before.
 
 Everything here is an observed pattern. No verdict grants recommendation, adoption,
 promotion or publication authority; `adoption_authority`, `automatic_promotion` and
@@ -39,6 +41,17 @@ roots even a clean sweep cannot lift the interval above a margin of `0.0`, so th
 `inconclusive` for a helpful candidate and `candidate_regressed` for a harmful one. The existing
 certification prerequisites are unchanged.
 
+## Declare a margin
+
+`ahl improve --regression-margin 0.1` tolerates a paired loss of up to `0.1` (a number from 0
+up to but not including 1; the default `0` blocks any net loss). A candidate worse by more is
+`candidate_regressed`; a loss equal to the margin is tolerated and stays `inconclusive`. The same
+margin is the bar the delta interval must clear for `improved`, so a larger margin makes `improved`
+harder, never easier. The value is recorded as `before_after.margin` and in `investigation.json`.
+An out-of-range or non-numeric value is an input error (exit 2) before any run, and the option cannot be
+combined with `--experiment-request`, whose request declares its own margins. A project `ahl.json` cannot
+set it.
+
 ## The `before_after` block
 
 | Field | Meaning |
@@ -47,6 +60,7 @@ certification prerequisites are unchanged.
 | `verdict`, `reasons` | One verdict above and the reasons that produced it. |
 | `adoption_blocked` | True only for `candidate_regressed`. |
 | `margin`, `alpha` | The tolerated loss (default `0.0`: any net loss) and the interval error level (`0.05`). |
+| `gain_margin` | Present only when the bar for `improved` differs from `margin`, as in the fixed lane. |
 | `pairs` | `eligible`, `unknown`, `flipped_to_fail`, `flipped_to_pass`, `unchanged` and `repeats_per_task_arm`. |
 | `scores.baseline`, `scores.candidate` | Mean pass share with a conservative interval (Hoeffding over roots, as in the fixed analysis). |
 | `delta` | `mean`, `low`, `high`, `method` and `interval_excludes_margin`; `null` without an eligible pair. |
@@ -108,12 +122,30 @@ unknown fact is never turned into either cause.
    add a regression test for it and rerun. For `undetermined`, establish the unknown fact first.
 3. Rerun `ahl improve` once the cause is addressed.
 
+## The fixed repeated-bank lane
+
+A sealed `--experiment-request` comparison carries the same `before_after` block, built from the
+controller's recorded graded trials after the decision receipt is verified. The request supplies
+what the default lane takes from the command line: the tolerated loss is its `family_margin`, the bar
+for `improved` its `effect_margin` (recorded as `gain_margin`) and the interval error level its `alpha`.
+Each trial repetition of a task is one pair, a root's repeats weigh the root once, and the declared
+family is the area in `investigation.json`. Each arm's identity is read from its own records: a missing
+trial, or records that disagree on the grader or runtime, make the comparison `unverified` or a named
+`mismatch` instead of a match, and `bank_sha256` is the request's bank digest. `bindings` carries the
+`controller_run_id` and `describes_final_attempt: true`; the fixed lane runs one attempt.
+
+When the observed paired delta is below `-family_margin` the run ends `blocked` with reason
+`candidate_regressed` (exit 3) and carries no `recommendation`; the fixed analysis, the decision receipt and
+the controller run id stay on the receipt unchanged. Otherwise the status, reason and recommendation are
+exactly what the fixed analysis produced, and the block only adds the observed pattern beside them. If the
+guard cannot be built the block is `{"status": "unavailable"}` and the run result is unchanged. The guard
+weighs roots equally and does not merge roots the request marks as similar, so it never replaces the
+fixed analysis, which keeps its family weights and root grouping.
+
 ## Limits
 
-- The guard reads the default single-run evaluation. The fixed repeated-bank
-  (`--experiment-request`) lane keeps its own analysis and `candidate_not_supported`
-  recommendation and does not yet write this block.
-- The margin is fixed at `0.0` for `ahl improve`; callers of `before_after.decide` pass their own.
+- Only a sealed comparison with a current, verified decision carries the block; a run that ended
+  earlier (incomplete, quarantined, quota or permission stop) keeps its own status.
 - Independence of roots stays unverified, intervals are conservative and not a power guarantee,
   and nothing here certifies a candidate. See [report integrity](report-integrity.md) for the
   evidence-strength label and [decision receipts](decision-receipts.md#default-improve-single-run-dispositions)
