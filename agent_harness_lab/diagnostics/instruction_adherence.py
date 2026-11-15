@@ -340,6 +340,73 @@ def _undecided(item, session):
     return _verdict(item['rule'], session, item['lo'], item['hi'])[0] == 'unknown'
 
 
+def outcomes(session, rows):
+    """{rule key: 'violated' | 'satisfied' | 'unknown'} for every machine-checkable rule in force in one session, harness rows and the user's own.
+
+    A rule is credited or faulted only when the agent demonstrably had it: a harness rule not recorded as loaded (or a call before its
+    loading turn) and any rule of an unknown capture are unknown, so a pass or a miss is never attributed to a rule the agent may not
+    have seen. A pass or a fault counts only over the turns from the loading turn on: calls before it never satisfy the rule and a trigger
+    before it never breaks it. The same rule from several sources reports its worst outcome.
+    """
+    count, found = len(session['turns']), {}
+    items = [dict(row, lo=0, hi=count, loading=session['loaded'].get(row['source'], ('unknown', 0))[0], begin=session['loaded'].get(row['source'], ('unknown', 0))[1])
+             for row in rows if row['rule']]
+    items += [item for item in _user_items(session) if item['rule']]
+    for item in items:
+        verdict = _verdict(item['rule'], session, item['lo'], item['hi'])[0]
+        start = max(item['lo'], item['begin'])
+        if verdict != 'unknown' and start > item['lo']:
+            # A pass or a fault counts only over the turns the agent had the rule: a call or trigger before its loading turn is no evidence, so a window that
+            # does not repeat the verdict (a fault narrowed to no trigger, a pass narrowed to a violation) is unknown, never a new claim.
+            verdict = verdict if start < item['hi'] and _verdict(item['rule'], session, start, item['hi'])[0] == verdict else 'unknown'
+        if session['capture'] == 'unknown' or item['loading'] != 'loaded':
+            verdict = 'unknown'
+        key = rules.key(item['rule'])
+        found[key] = min(found.get(key, verdict), verdict, key=('violated', 'unknown', 'satisfied').index)
+    return found
+
+
+def prompt_rules(session):
+    """{instruction ref: rule key} of the machine-checkable instructions the user gave in one session."""
+    return {item['ref']: rules.key(item['rule']) for item in _user_items(session) if item['rule']}
+
+
+def emit(value, output):
+    """The value as sorted JSON in a new private file, or on stdout without one."""
+    from ..private_journal import write_bytes
+    text = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n'
+    if output:
+        write_bytes(output, text.encode())
+    else:
+        sys.stdout.write(text)
+
+
+def finish(prog, work, describe, output):
+    """Print the JSON of work() to output or stdout and its short summary to stderr; invalid input exits 2."""
+    try:
+        result = work()
+        emit(result, output)
+    except (OSError, ValueError, UnicodeError) as error:
+        print(f'{prog}: {error}', file=sys.stderr)
+        return 2
+    print(describe(result), file=sys.stderr)
+    return 0
+
+
+def read_harness(entries, scope):
+    """Harness sources from LAYER=FILE entries; a layer outside the scope or a duplicate file is refused."""
+    from ..evaluation.integrity import read_regular
+    harness = []
+    for entry in entries:
+        layer, _, name = entry.partition('=')
+        if layer not in LAYERS or not name or layer not in scope.split('+'):
+            raise ValueError('--rules LAYER=FILE needs a layer inside --scope: ' + ' '.join(scope.split('+')))
+        harness.append(dict(layer=layer, name=Path(name).name, text=read_regular(Path(name), rules.MAX_SOURCE_BYTES).decode('utf-8')))
+    if len({(h['layer'], h['name']) for h in harness}) != len(harness) or len(harness) > 16:
+        raise ValueError('rule files need distinct layer and file name pairs, at most 16')
+    return harness
+
+
 def _recurrence(findings):
     groups = {}
     for finding in findings:
@@ -407,32 +474,16 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, help='New private file for the JSON report instead of stdout')
     parser.add_argument('--private-detail', action='store_true', help='Add each instruction sentence (at most 240 characters) to findings; the report stays private')
     args = parser.parse_args(argv)
-    from ..evaluation.integrity import read_regular
-    from ..private_journal import record, write_bytes
-    try:
+    from ..private_journal import record
+
+    def work():
         if args.native is None and args.project is not None or args.native is None and len(args.sessions) != 1:
             raise ValueError('pass one sessions file, or --native RUNTIME with session files (--project belongs to --native)')
-        harness = []
-        for entry in args.rules:
-            layer, _, name = entry.partition('=')
-            if layer not in LAYERS or not name or layer not in args.scope.split('+'):
-                raise ValueError('--rules LAYER=FILE needs a layer inside --scope: ' + ' '.join(args.scope.split('+')))
-            harness.append(dict(layer=layer, name=Path(name).name, text=read_regular(Path(name), rules.MAX_SOURCE_BYTES).decode('utf-8')))
-        if len({(h['layer'], h['name']) for h in harness}) != len(harness) or len(harness) > 16:
-            raise ValueError('rule files need distinct layer and file name pairs, at most 16')
+        harness = read_harness(args.rules, args.scope)
         if args.native:
             from .adherence_native import sessions_document
             document = sessions_document(args.sessions, args.native, args.project or Path('.'), harness)
         else:
             document = record(args.sessions[0], MAX_BYTES)[0]
-        report = build(load_sessions(document), harness, detail=args.private_detail)
-        text = json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + '\n'
-        if args.output:
-            write_bytes(args.output, text.encode())
-        else:
-            sys.stdout.write(text)
-    except (OSError, ValueError, UnicodeError) as error:
-        print(f'ahl instruction-adherence: {error}', file=sys.stderr)
-        return 2
-    print(summary(report), file=sys.stderr)
-    return 0
+        return build(load_sessions(document), harness, detail=args.private_detail)
+    return finish('ahl instruction-adherence', work, summary, args.output)
