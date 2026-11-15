@@ -21,6 +21,8 @@ TIMED_PROFILES = (TIMING_PROFILE, TOKEN_PROFILE)
 TOKEN_CATEGORIES = ('input_tokens', 'output_tokens', 'total_tokens', 'cached_input_tokens')
 TOKEN_SCOPE = 'controller_provider_responses'
 MAX_TOKEN_ENDPOINTS, MAX_TOKEN_REQUESTS, MAX_TOKEN_COUNT = 64, 1000, 10**15
+ATTEMPT_STATUSES = ('completed', 'agent_timeout', 'infrastructure_interruption', 'cancelled')
+MAX_ATTEMPTS = 1000
 TIMING_COMPONENTS = {'setup', 'queueing', 'retries', 'tool_calls', 'user_wait', 'extraction', 'grading'}
 TIMING_INTERVAL = 'target_subprocess_launch_through_collection'
 KINDS = ('elapsed_wall_seconds', 'measured_tokens')  # currency needs frozen dated rates: not supported yet
@@ -42,6 +44,37 @@ def _finite_number(value):
     except OverflowError: return False
 
 
+def account(trial, name):
+    """Return (status, value, reason) for one trial and endpoint.
+
+    A trial without `attempts` is read as supplied. With them, every retried, interrupted or resumed
+    attempt must carry a known status and a usable measurement; the value is their sum, so a resume can
+    only add spend. A supplied status or total that disagrees with the attempts is unknown, never preferred.
+    """
+    measurements = trial.get('measurements')
+    supplied = measurements.get(name) if isinstance(measurements, dict) else None
+    attempts = trial.get('attempts')
+    if attempts is None: return trial.get('status'), supplied, None
+    if (not isinstance(attempts, list) or not 0 < len(attempts) <= MAX_ATTEMPTS
+            or not all(isinstance(a, dict) and a.get('status') in ATTEMPT_STATUSES for a in attempts)
+            or trial.get('status', attempts[-1]['status']) != attempts[-1]['status']):
+        return trial.get('status'), None, 'attempt_record_invalid'
+    values = [a['measurements'].get(name) if isinstance(a.get('measurements'), dict) else None for a in attempts]
+    if not all(_finite_number(value) for value in values): return attempts[-1]['status'], None, 'attempt_measurement_missing'
+    total = sum(values)
+    if not _finite_number(total): return attempts[-1]['status'], None, 'attempt_record_invalid'
+    if supplied is not None and not (_finite_number(supplied) and math.isclose(supplied, total, rel_tol=1e-9, abs_tol=1e-9)):
+        return attempts[-1]['status'], None, 'attempt_total_mismatch'
+    return attempts[-1]['status'], total, None
+
+
+def _refuse_duplicate_trials(pairs):
+    """Rows may name their trial; two rows for one trial would let a cheaper attempt replace a dearer one."""
+    ids = [pair['trial'] for pair in pairs if 'trial' in pair]
+    if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
+        raise ValueError('resource trial identifiers must be unique nonempty strings')
+
+
 def _complete_requests(details):
     attempts, known, unknown = (details.get(name) for name in ('request_attempts', 'known_requests', 'unknown_requests'))
     if (any(type(value) is not int or value < 0 for value in (attempts, known, unknown))
@@ -50,12 +83,12 @@ def _complete_requests(details):
 
 
 def _token_conflicts(trial, endpoints):
-    measurements, provenance = trial.get('measurements'), trial.get('measurement_provenance')
-    if not isinstance(measurements, dict) or not isinstance(provenance, dict): return set()
+    provenance = trial.get('measurement_provenance')
+    if not isinstance(provenance, dict): return set()
     entries = []
     for endpoint in endpoints:
         if endpoint['kind'] != 'measured_tokens': continue
-        name = endpoint['name']; details = provenance.get(name); value = measurements.get(name)
+        name = endpoint['name']; details = provenance.get(name); value = account(trial, name)[1]
         if (not isinstance(details, dict) or details.get('token_category') != endpoint['token_category']
                 or details.get('token_scope') != endpoint['token_scope'] or type(value) is not int or not 0 <= value <= MAX_TOKEN_COUNT): continue
         attempts = _complete_requests(details)
@@ -165,7 +198,8 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scop
                 return None, 'token_scope_missing_or_mismatch'
             attempts = _complete_requests(details)
             if attempts is None: return None, 'request_coverage_incomplete'
-    status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
+    status, value, reason = account(trial, endpoint['name'])
+    if reason: return None, reason
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
     if token_scoped and endpoint['kind'] == 'measured_tokens':
         if value is None: return None, 'missing_measurement'
@@ -219,10 +253,11 @@ def _arm_spend(rows, endpoint):
     """Spend over every assigned trial, failures included; any unusable row makes the arm unknown."""
     total, successes, conditional, reasons = 0, 0, [], Counter()
     for row in rows:
-        value = row.get('measurements', {}).get(endpoint) if isinstance(row.get('measurements'), dict) else None
-        if row.get('status') not in ('completed', 'agent_timeout'): reasons['status_' + str(row.get('status'))] += 1
+        status, value, reason = account(row, endpoint)
+        if reason: reasons[reason] += 1
+        elif status not in ('completed', 'agent_timeout'): reasons['status_' + str(status)] += 1
         elif not _finite_number(value): reasons['missing_measurement'] += 1
-        elif type(row.get('success')) is not bool or row['success'] and row['status'] != 'completed': reasons['success_unknown_or_contradictory'] += 1
+        elif type(row.get('success')) is not bool or row['success'] and status != 'completed': reasons['success_unknown_or_contradictory'] += 1
         else:
             total += value; successes += row['success']
             if row['success']: conditional.append(value)
@@ -243,6 +278,7 @@ def success_cost(pairs, endpoint, *, public=False):
     if not isinstance(pairs, list) or not all(isinstance(p, dict) and isinstance(p.get('baseline'), dict)
                                               and isinstance(p.get('candidate'), dict) for p in pairs):
         raise ValueError('paired resource rows required')
+    _refuse_duplicate_trials(pairs)
     arms = {name: _arm_spend([pair[name] for pair in pairs], endpoint) for name in ('baseline', 'candidate')}
     base, cand = (arms[name]['cost_per_success'] for name in ('baseline', 'candidate'))
     if base and cand is not None: ratio, status = cand / base, 'descriptive'
@@ -258,6 +294,7 @@ def decide(contract, pairs, quality_status):
     validate(contract)
     if not isinstance(pairs, list) or not all(isinstance(p, dict) and 'root' in p and 'baseline' in p and 'candidate' in p for p in pairs):
         raise ValueError('paired resource rows required')
+    _refuse_duplicate_trials(pairs)
     required = sum(e['required'] for e in contract['endpoints'])
     alpha = contract['alpha'] / required  # Bonferroni across required endpoints; advisory ones share the same level
     token_scoped = contract['profile'] == TOKEN_PROFILE
