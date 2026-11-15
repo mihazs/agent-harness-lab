@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-A refinement attempt on the controlled evaluation-store route (custody-sealed author outputs) now reuses the frozen development and regression tasks, their grader bundles and controls, and asks the evaluation author for fresh held-out tasks only, as the cooperative and direct controlled routes already do. The author's sealed output and its custody record hold only the fresh tasks; the controller merges the frozen parts into the consumer copy, checks every copied byte against the digest taken at freeze, and re-binds the consumer copy to the store's custody record only when it differs from the sealed output by nothing but the merged manifest and files that match the first author's consumer copy byte for byte. Otherwise the merge is refused before any trial. Trial feedback accepts the reused tasks with the splits their own sealed output recorded, and the receipt records `evaluation_reuse` as on the other routes. A run with a closed-input domain and a pinned task bank keep their current behavior. Part of #739.
