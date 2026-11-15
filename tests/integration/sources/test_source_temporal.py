@@ -194,6 +194,75 @@ class TestSupersession:
         assert not public_export_allowed([dict(result, publication_allowed=True, provenance=provenance)])
 
 
+class TestStaleAfter:
+    AT = '2026-02-01T00:00:00Z'
+
+    def freshness(self, result, name='page', revision='r1'):
+        row, = [r for r in result['records'] if r['record']['revision_sha256'] == rec(name, revision).revision_sha256]
+        return row['freshness'], row['freshness_reason']
+
+    @pytest.mark.parametrize('at, expected', [
+        pytest.param('2026-01-31T23:59:59Z', ('current', 'before_declared_stale_after'), id='one-second-before'),
+        pytest.param('2026-02-01T00:00:00Z', ('stale', 'at_or_after_declared_stale_after'), id='at-the-instant'),
+        pytest.param('2026-02-01T00:00:01Z', ('stale', 'at_or_after_declared_stale_after'), id='after'),
+        pytest.param('2026-01-31T21:00:00-03:00', ('stale', 'at_or_after_declared_stale_after'), id='offset-compares-as-instant'),
+    ])
+    def test_declared_stale_after_is_a_half_open_instant(self, at, expected):
+        page = facet('page', stale_after='2026-02-01T00:00:00Z')
+        assert self.freshness(resolve([page], at, knowledge='as_known_now')) == expected
+
+    @pytest.mark.parametrize('declared, reason', [
+        pytest.param(None, 'stale_after_missing', id='missing'),
+        pytest.param('after the next review', 'stale_after_unparseable', id='unparseable'),
+        pytest.param('90d', 'stale_after_unparseable', id='duration-is-not-an-instant'),
+        pytest.param('2026-06-01', 'stale_after_timezone_missing', id='date-without-offset'),
+        pytest.param('2026-06-01T00:00:00', 'stale_after_timezone_missing', id='time-without-offset'),
+    ])
+    def test_unestablished_staleness_stays_unknown_never_current(self, declared, reason):
+        result = resolve([facet('page', stale_after=declared)], self.AT)
+        assert self.freshness(result) == ('unknown', reason)
+        assert result['freshness_counts'] == {'unknown': 1}
+
+    def test_a_stale_declaration_does_not_change_the_validity_status(self):
+        stale = facet('page', stale_after='2026-01-15T00:00:00Z')
+        result = resolve([stale], self.AT)
+        assert status(result, 'page') == ('in_force', ['open_ended_by_declaration'])
+        assert self.freshness(result)[0] == 'stale'
+
+    def test_a_future_stale_after_cannot_make_an_expired_record_in_force(self):
+        expired = facet('page', valid_until='2026-01-15T00:00:00Z', stale_after='2027-01-01T00:00:00Z')
+        result = resolve([expired], self.AT)
+        assert status(result, 'page')[0] == 'expired' and self.freshness(result)[0] == 'current'
+
+    def test_a_reverification_first_known_after_the_instant_does_not_refresh_a_replay(self):
+        first = facet('page', 'r1', stale_after='2026-02-01T00:00:00Z')
+        second = facet('page', 'r2', recorded_at='2026-03-01T00:00:00Z', stale_after='2026-09-01T00:00:00Z')
+        edge = [SOURCE, digest('page'), rec('page', 'r1').revision_sha256, rec('page', 'r2').revision_sha256]
+        at = '2026-02-15T00:00:00Z'
+        replay = resolve([first, second], at, revisions=[edge])
+        assert self.freshness(replay) == ('stale', 'at_or_after_declared_stale_after')
+        assert replay['not_known_at_instant'] == [rec('page', 'r2').to_dict()]
+        retrospective = resolve([first, second], at, revisions=[edge], knowledge='as_known_now')
+        assert self.freshness(retrospective, revision='r2')[0] == 'current'
+
+    def test_freshness_counts_follow_the_rows(self):
+        facets = [facet('a', stale_after='2026-01-15T00:00:00Z'), facet('b', stale_after='2026-06-01T00:00:00Z'),
+                  facet('c'), facet('d', stale_after='2026-01-01T00:00:00Z')]
+        assert resolve(facets, self.AT)['freshness_counts'] == {'current': 1, 'stale': 2, 'unknown': 1}
+
+    def test_stale_after_round_trips_and_changes_the_input_fingerprint(self):
+        page = facet('page', stale_after='2026-06-01T00:00:00Z')
+        assert TemporalFacet.parse(json.loads(json.dumps(page.to_dict()))) == page
+        other = replace(page, stale_after='2026-07-01T00:00:00Z')
+        assert resolve([page], self.AT)['inputs_sha256'] != resolve([other], self.AT)['inputs_sha256']
+
+    @pytest.mark.parametrize('value', [
+        pytest.param('2026\n', id='control-character'), pytest.param('x'*65, id='oversized'),
+        pytest.param('', id='empty'), pytest.param(20260601, id='number')])
+    def test_an_unreadable_stale_after_is_rejected_at_construction(self, value):
+        with pytest.raises(ValueError): TemporalFacet(rec('page'), stale_after=value)
+
+
 class TestStoreBinding:
     @pytest.fixture(autouse=True)
     def _store(self, tmp_path):

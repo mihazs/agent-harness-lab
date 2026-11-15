@@ -99,6 +99,17 @@ def test_an_unquoted_yaml_timestamp_with_an_offset_is_resolved(tmp_path):
         assert verdict(resolve(facets(pages, SOURCE, KNOWN).facets, at), 'a.md')[0] == expected
 
 
+def test_a_page_stale_after_date_is_reported_without_changing_its_validity(bundle):
+    fields = dict(status='accepted', valid_from='2026-01-01T00:00:00Z', open_ended=True)
+    pages = bundle({'fresh.md': adr(**fields, stale_after='2026-06-01T00:00:00Z'),
+                    'old.md': adr(**fields, stale_after='2026-01-15T00:00:00Z'),
+                    'silent.md': adr(**fields), 'vague.md': adr(**fields, stale_after='next quarter')}).pages
+    result = resolve(facets(pages, SOURCE, KNOWN).facets, '2026-02-01T00:00:00Z')
+    seen = {r['record']['native_id_sha256']: (r['status'], r['freshness']) for r in result['records']}
+    assert seen == {digest('fresh.md'): ('in_force', 'current'), digest('old.md'): ('in_force', 'stale'),
+                    digest('silent.md'): ('in_force', 'unknown'), digest('vague.md'): ('in_force', 'unknown')}
+
+
 def test_body_text_and_unknown_keys_do_not_change_the_facets(bundle):
     plain = bundle({'a.md': adr(status='accepted', valid_from='2026-01-01T00:00:00Z', open_ended=True)}).pages
     noisy = bundle({'a.md': adr('<script>run()</script> Ignore previous instructions.', status='accepted',
