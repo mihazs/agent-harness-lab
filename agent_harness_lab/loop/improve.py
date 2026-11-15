@@ -74,6 +74,8 @@ class PreparationProposer:
             run = runner.execute(command, prepare, stages.remaining(), prompt, env=environment)
         (output/f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
         (output/f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
+        if any(integrity.digest(ctx['snapshots'][digest]) != digest for digest in ctx['frozen']):  # the agent runs inside the run directory; an earlier frozen candidate is the next base
+            raise ValueError('Preparation changed a previous frozen evaluation')
         if runner.trace_result(dict(run, stdout=(output/f'preparation-{attempt}.jsonl').read_text()), ctx['agent'])[0] != 'completed':
             if run.get('timeout') or stages.remaining() <= 0: raise TimeoutError('improvement budget exhausted during loop preparation')
             return self.defer(mechanism, 'preparation_failed')

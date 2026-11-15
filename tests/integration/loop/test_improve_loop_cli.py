@@ -149,6 +149,14 @@ def test_a_preparation_that_produces_no_candidate_is_deferred_with_a_closed_reas
     assert loop['mechanisms'] == dict(m1='deferred', m2='deferred', m3='deferred') and [call['mechanism'] for call in project.calls()] == ['m1', 'm2', 'm3']
 
 
+@pytest.mark.parametrize('later', [pytest.param(dict(harness=li.EVERYTHING + ' x'), id='candidate'), pytest.param(dict(invalid=True), id='deferred')])
+def test_a_later_round_that_edits_an_earlier_frozen_candidate_stops_the_run_before_it_is_evaluated_or_used_as_a_base(stack, monkeypatch, later):
+    project = li.LoopProject(stack, monkeypatch, script={0: dict(harness=li.EVERYTHING), 1: dict(tamper_frozen=0, **later)}, loop=HIGH)
+    code, found, stderr = project.invoke('--accept-score', '0.9', '--max-rounds', '3')
+    assert code != 0 and 'Preparation changed a previous frozen evaluation' in stderr and 'loop' not in (found or {})
+    assert [call['attempt'] for call in project.calls()] == [0, 1] and (project.project/'AGENTS.md').read_text().startswith(li.NOTHING)
+
+
 def test_a_candidate_identical_to_the_best_is_deferred_and_never_evaluated(stack, monkeypatch):
     project, flags = make(stack, monkeypatch, 'no_actionable_mechanism', baseline=li.EVERYTHING)
     same = li.EVERYTHING + '\n'  # the baseline file is written with a trailing newline, so only this text is byte-identical to it

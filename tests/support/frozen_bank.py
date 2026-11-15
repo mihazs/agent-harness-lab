@@ -162,12 +162,12 @@ def outcome_table(passing, scoring=8):
 
 class StubRuntime:
     """A frozen bank, snapshots and the stub agent under tmp_path, wired to the real trial runner."""
-    def __init__(self, base, scoring=8, heldout=2, agent='claude'):
+    def __init__(self, base, scoring=8, heldout=2, agent='claude', **options):
         from agent_harness_lab.cli import evaluator as load
         self.base = Path(base)
         self.manifest = write_bank(base, scoring, heldout)
         self.binary = stub_agent(base, agent)
-        self.runner = ExecutorRunner(load().evaluate, agent, str(self.binary))
+        self.runner = ExecutorRunner(load().evaluate, agent, str(self.binary), **options)
         self.snapshots = Snapshots(base)
 
     def snapshot(self, name, solves=(), text=None):

@@ -40,9 +40,16 @@ never 0.
 
 `0` completed; `1` execution, conflict, interruption or budget; `2` usage, input or setup
 error (any operating-system or network error before a run is `setup_error`/`system_error`; only a manifest
-contract error keeps its own registered reason); `3` blocked or inconclusive. Exit `2` stays reserved for usage, input and setup errors,
+contract error keeps its own registered reason); `3` blocked, inconclusive or not accepted. Exit `2` stays reserved for usage, input and setup errors,
 and they carry a typed reason too. A busy workspace is a `conflict` (`1`), not a usage
 error.
+
+An `ahl improve` loop run ends in one of three statuses, mapped from its stop criterion:
+`accepted` (0), `requires_intervention` (1) and `not_accepted` (3). A non-zero loop result records the
+reason `loop_<stop criterion>` with that criterion's one remediation step; without a recorded reason,
+`not_accepted` gets `loop_not_accepted` and `requires_intervention` gets `intervention_required`. See
+[the loop reference](loop-reference.md#stop-criteria-statuses-and-exit-codes) for which stop
+criterion maps to which status.
 
 ## Vocabulary
 
@@ -71,6 +78,7 @@ error.
 | `capability_unavailable` | `blocked` (3) | `run` | Run where the required filesystem capabilities exist; there is no unsafe fallback. |
 | `nested_invocation_refused` | `blocked` (3) | `usage` | Run ahl from the user shell, not from a managed preparation session. |
 | `legacy_attempted` | `legacy_attempted` (3) | `run` | Read the recorded legacy operation in the private receipt before retrying. |
+| `loop_not_accepted` | `not_accepted` (3) | `run` | Read loop.stop_criterion and loop.remediation in the private receipt, then act on that one step. |
 
 `budget_exhausted` names the stage that consumed the budget in `exit_receipt.stage`
 (`preparation`, `construction`, `trials` or `refinement`) when the run observed it.

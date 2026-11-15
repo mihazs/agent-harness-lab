@@ -6,6 +6,7 @@ Every bank, snapshot and outcome is synthetic.
 import hashlib
 import json
 from pathlib import Path
+import time
 
 import pytest
 
@@ -46,6 +47,16 @@ def test_the_baseline_is_scored_from_one_arm_and_a_later_evaluation_is_a_fresh_p
     assert (second.point, second.lower, second.upper) == (1.0, pytest.approx(1 - RADIUS), 1.0)
     assert (tmp_path/'work/evaluation-1/baseline/t0/workspace').is_dir()  # the best arm ran again; nothing of evaluation 0 was reused
     assert hashlib.sha256((tmp_path/'work/evaluation-0/results.json').read_bytes()).hexdigest() == kept
+
+
+@pytest.mark.parametrize('ahead, trials', [pytest.param(-1.0, 0, id='ceiling-already-passed'), pytest.param(600.0, 8, id='ceiling-ahead')])
+def test_the_shared_deadline_caps_the_real_trial_runner_so_a_passed_ceiling_runs_no_trial(tmp_path, ahead, trials):
+    stub = fb.StubRuntime(tmp_path, deadline=lambda: time.monotonic() + ahead)
+    evaluator = stub.evaluator(fb.declare())
+    found = evaluator.evaluate(stub.snapshot('base', [0, 1]), evaluator.frozen_inputs)
+    results = json.loads((tmp_path/'work/evaluation-0/results.json').read_text())
+    assert (found.trials, len(results['trials'])) == (trials, trials)
+    assert (results.get('status'), results.get('reason')) == (('budget_exhausted', 'preflight_budget_exhausted') if not trials else (None, None))
 
 
 def test_trials_the_agent_crashes_on_are_unknown_outcomes_and_the_evaluation_is_vacuous(tmp_path):

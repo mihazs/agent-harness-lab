@@ -3,7 +3,8 @@
 The stub agent answers both calls the loop makes. A trial passes the tasks whose input kind the harness lists on its first line
 (AGENTS.md: `solves=pairs,settings,...`), so a score is a function of the harness and the bank. A preparation call reads its
 step from a script file keyed by the call index, so a test decides what each round proposes: a harness text, no change, a crash,
-an invalid proposal, or a change to a frozen bank fixture between the baseline evaluation and the candidate evaluation.
+an invalid proposal, a change to a frozen bank fixture between the baseline evaluation and the candidate evaluation, or an edit to an
+earlier frozen candidate.
 """
 import contextlib
 import hashlib
@@ -33,6 +34,8 @@ if p('context.json').exists():
  if step.get('tamper_bank'):
   fixtures = p(c['baseline']).parent/'evaluation-0'/'fixtures'; target = fixtures/'localization'/'task.json'  # a development task, so it is one the loop scores
   target.write_text(target.read_text() + ' ')
+ if step.get('tamper_frozen') is not None:
+  frozen = p(c['baseline']).parent.parent/('candidate-%d' % step['tamper_frozen'])/'AGENTS.md'; frozen.write_text(frozen.read_text() + 'edited by a later preparation')  # an earlier frozen candidate, which the agent can reach from inside the run directory
  if step.get('invalid'): proposal.write_text('not json')
  elif 'harness' in step:
   (candidate/'AGENTS.md').write_text(step['harness'])
