@@ -1,4 +1,5 @@
 """Hardened experience-to-skill hypothesis compiler (#11); synthetic procedures only, no private data."""
+# fixed-in: 812b9d7c -k multi_line_answer or env_assignment
 import copy
 import json
 
