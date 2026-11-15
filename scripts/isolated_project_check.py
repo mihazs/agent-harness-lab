@@ -12,6 +12,7 @@ Exit 0 when the command succeeded and nothing drifted, 1 on drift, 2 on a setup 
 The receipt names changed files and hashes; it holds no file contents. Keep it private: it describes a real project.
 """
 import argparse
+import contextlib
 import hashlib
 import fnmatch
 import json
@@ -25,6 +26,7 @@ import tempfile
 VERSION = 2
 NO_HOOKS = ('-c', 'core.hooksPath=/dev/null')
 BUS_VARIABLES = ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')
+SLOTS = 16  # overlapping checks of one repository
 
 
 def _git(repo, *args, check=True):
@@ -130,6 +132,30 @@ def substitute(argv, worktree):
     return [part.replace('{worktree}', str(worktree)) for part in argv]
 
 
+@contextlib.contextmanager
+def private_directory(repo):
+    """An owner-only directory in the temporary root, removed on exit.
+
+    The name is the repository's hash plus the lowest free slot, so checks of one repository that run one after another
+    get the same worktree path, and a tool that keys its private records by project path (a second `ahl improve`
+    reading the first) finds them. A check that overlaps another takes the next slot; mkdir never follows a planted link.
+    """
+    stem = hashlib.sha256(str(repo).encode(errors='surrogateescape')).hexdigest()[:12]
+    for slot in range(SLOTS):
+        path = Path(tempfile.gettempdir()) / f'ahl-isolated-{stem}-{slot}'
+        try:
+            path.mkdir(mode=0o700)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise RuntimeError(f'all {SLOTS} temporary slots of this repository are taken: remove leftover ahl-isolated-{stem}-* directories')
+    try:
+        yield str(path)
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def changed_in(worktree):
     status = _git(worktree, 'status', '--porcelain=v1', '-uall')
     return sorted(line[3:] for line in status.splitlines())
@@ -144,7 +170,7 @@ def run(repo, command, ref='HEAD', patch=None, timeout=None, memory_cap_gib=None
     before, tips_before = fingerprint(repo, ignore_refs), ref_tips(repo)
     receipt = {'tool_version': VERSION, 'commit': commit, 'command': list(command), 'timeout_seconds': timeout,
                'memory_cap_gib': memory_cap_gib, 'inherit_home': inherit_home, 'pass_env': sorted(pass_env), 'before': before}
-    with tempfile.TemporaryDirectory(prefix='ahl-isolated-') as temporary:
+    with private_directory(repo) as temporary:
         worktree, state = Path(temporary) / 'worktree', Path(temporary) / 'state'
         state.mkdir()
         _git(repo, 'worktree', 'add', '--detach', '--quiet', str(worktree), commit)

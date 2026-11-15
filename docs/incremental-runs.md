@@ -18,6 +18,10 @@ promotion or publication authority: `adoption_authority`, `automatic_promotion` 
 | The previous `workflow.json` | The previous outcome, its `before_after` block and its `investigation.cause`. |
 | The project's harness files now | Whether the earlier candidate was applied, ignored or edited. |
 
+The run store is keyed by the project path you pass, so two runs in different temporary worktrees never see each other. The
+[isolated project check](isolated-project-check.md) gives checks of one repository that run in turn the same worktree path;
+share `AHL_STATE_HOME` with them to make a second check find the first.
+
 A run started with `--output` outside the private run store still reads the previous run but is
 not recorded, so a later run cannot find it. A record or pointer that is unreadable, oversized,
 malformed, symlinked or names a missing run is `unavailable` with reason `previous_run_unreadable`:

@@ -63,10 +63,10 @@ class Protocol(Mixed):
         path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
         os.utime(path, (PINNED_DAY, PINNED_DAY))
 
-    def step(self, name, *arguments, history_from=True, patch=None):
+    def step(self, name, *arguments, history_from=True, patch=None, shared_state=True):
         """One protocol step as the how-to runs it; returns the isolated-check receipt and the `improve` receipt."""
         command = [sys.executable, str(CHECK), str(self.project), '--ref', 'HEAD', '--timeout', '300', '--inherit-home',
-                   '--pass-env', 'AHL_STATE_HOME', '--pass-env', 'CODEX_HOME', '--pass-env', 'PYTHONPATH',
+                   *(['--pass-env', 'AHL_STATE_HOME'] if shared_state else []), '--pass-env', 'CODEX_HOME', '--pass-env', 'PYTHONPATH',
                    '--receipt', str(self.private / f'{name}.isolated.json'), '--log-dir', str(self.private / name),
                    *(['--patch', str(patch)] if patch else []),
                    '--', sys.executable, '-m', 'agent_harness_lab', 'improve', '{worktree}',
@@ -187,6 +187,77 @@ def test_an_edit_between_two_runs_reaches_the_second_baseline_and_never_the_real
     assert_untouched(protocol, second_isolated)
     assert (protocol.project / 'AGENTS.md').read_text() == 'bad\n' and 'AGENTS.md' in second_isolated['changed_files']
     assert first['decision']['bindings']['baseline_sha256'] != second['decision']['bindings']['baseline_sha256']
+
+
+def edit_patch(protocol, text):
+    """A patch that rewrites AGENTS.md, made in the real checkout and undone there, so only the isolated worktree holds it."""
+    (protocol.project / 'AGENTS.md').write_text(text)
+    patch = protocol.root / 'edit.patch'
+    patch.write_text(git(protocol.project, 'diff') + '\n')
+    git(protocol.project, 'checkout', '-q', '--', 'AGENTS.md')
+    return patch
+
+
+@pytest.mark.parametrize(('edit', 'disposition'), [(None, 'ignored'), ('good\n', 'applied'), ('bad\nan edit between the runs\n', 'edited')],
+                         ids=['ignored', 'applied', 'edited'])
+def test_a_second_run_names_the_first_run_and_says_what_became_of_its_candidate(protocol, edit, disposition):
+    _, first = protocol.step('incremental-1', '--focus', 'synthetic hypothesis')
+    patch = edit_patch(protocol, edit) if edit else None
+
+    isolated, second = protocol.step('incremental-2', '--focus', 'synthetic hypothesis', patch=patch)
+
+    assert_untouched(protocol, isolated)
+    block = second['incremental']
+    assert 'incremental' not in first, 'the first run has no earlier run to name'
+    assert (block['disposition'], block['previous']['run']) == (disposition, Path(first['output']).name)
+    assert block['stages']['trials']['action'] == 'rerun', 'earlier trials are never reused as fresh execution'
+    assert block['adoption_authority'] is block['automatic_promotion'] is block['publication_allowed'] is False
+
+
+def test_a_second_run_that_evaluates_again_labels_the_earlier_score_historical_beside_its_own_fresh_trials(protocol):
+    protocol.step('incremental-fresh-1', '--focus', 'synthetic hypothesis')
+
+    _, second = protocol.step('incremental-fresh-2', '--focus', 'synthetic hypothesis')
+
+    block = second['incremental']
+    assert (block['historical']['label'], block['fresh']['label']) == ('historical_observation', 'fresh_evaluation')
+    assert (Path(second['output']) / 'evaluation-0/results.json').is_file(), 'this run scored its own trials'
+
+
+def test_a_second_run_that_evaluates_nothing_reports_the_earlier_score_as_historical_only(protocol):
+    protocol.step('incremental-applied-1', '--focus', 'synthetic hypothesis')
+
+    _, second = protocol.step('incremental-applied-2', '--focus', 'synthetic hypothesis', patch=edit_patch(protocol, 'good\n'))
+
+    block = second['incremental']
+    assert block['historical']['label'] == 'historical_observation' and block['fresh'] is None
+    assert not {'plan', 'recommendation'} & second.keys() and not (Path(second['output']) / 'evaluation-0').exists()
+
+
+def test_a_candidate_the_first_run_measured_worse_is_not_evaluated_again_by_the_second(protocol):
+    protocol.mode.write_text(json.dumps(dict(trial='candidate-worse')))
+    _, first = protocol.step('incremental-regressed-1', '--focus', 'synthetic hypothesis')
+
+    isolated, second = protocol.step('incremental-regressed-2', '--focus', 'synthetic hypothesis')
+
+    assert_untouched(protocol, isolated)
+    assert first['reason'] == 'candidate_regressed'
+    assert (second['status'], second['reason'], isolated['command_status']) == ('blocked', 'candidate_already_regressed', 3)
+    assert second['previous_run'] == Path(first['output']).name
+    block = second['incremental']
+    assert block['previous']['candidate_regressed'] is True and block['stages']['trials']['action'] == 'skipped'
+    assert block['stages']['evaluation_construction']['action'] == 'skipped'
+    assert not (Path(second['output']) / 'evaluation-0').exists() and not {'plan', 'recommendation'} & second.keys()
+
+
+def test_a_second_run_cannot_see_the_first_when_the_state_home_is_not_shared_between_the_checks(protocol):
+    protocol.step('incremental-private-1', '--focus', 'synthetic hypothesis', shared_state=False)
+
+    isolated, second = protocol.step('incremental-private-2', '--focus', 'synthetic hypothesis', shared_state=False)
+
+    assert_untouched(protocol, isolated)
+    assert 'incremental' not in second and 'previous_run' not in second
+    assert not list((protocol.private / 'state').rglob('workflow.json')), 'the run directories went with the temporary state'
 
 
 def test_a_worktree_without_its_own_history_ends_typed_when_the_main_checkout_is_not_named(protocol):

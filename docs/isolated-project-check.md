@@ -22,6 +22,12 @@ temporary worktree path, which is also the command's working directory.
 - The command gets a private temporary `AHL_STATE_HOME` and, unless you pass `--inherit-home`, a private empty `HOME`. Use
   `--pass-env NAME` for other host variables a runtime login needs. `--log-dir DIR` keeps the command's stdout and stderr in a private folder; the receipt itself keeps only their hashes.
 - The worktree is removed and pruned even when the command fails or times out.
+- Checks of one repository that run one after another use the same worktree path
+  (`ahl-isolated-<hash of the repository path>-0/worktree` in the temporary directory). A tool that keeps private records
+  by project path, such as a second `ahl improve` reading the first, therefore finds them when you also share its state
+  directory (`--pass-env AHL_STATE_HOME`, see [incremental runs](incremental-runs.md)). A check that overlaps another takes the next
+  free slot (`-1`, `-2`, up to 16), and a leftover directory from an interrupted check is skipped, never reused or followed.
+  Remove leftover `ahl-isolated-*` directories, then run `git worktree prune`; until you do, the later checks use another slot.
 - The real checkout is fingerprinted before and after: HEAD, all refs, stash count, linked worktrees, working-tree status,
   the index, the content of tracked changes (`git diff HEAD`), the content of every untracked file, the size and modification
   time of every ignored file, and the shared git config (found through `git rev-parse --git-common-dir`, so it also works when
