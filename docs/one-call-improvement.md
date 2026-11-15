@@ -697,7 +697,8 @@ one unit before evaluation, because an adoptable path does not make a bundle
 valid. A bundle is a folder directly below a `skills/` folder
 (`.claude/skills`, `.agents/skills`, an owned root `skills/` or a nested
 `<dir>/.claude/skills`). Each change is a `create` (no baseline file), `remove`
-(no candidate file) or `update`, and a complete removal is always valid. Any
+(no candidate file) or `update`. A complete removal needs no membership check but
+is blocked (`removed_bundle_referenced`) while a remaining file names the bundle. Any
 other candidate membership must keep `SKILL.md` (`missing_entry_point`, so
 deleting only the entry point cannot orphan the assets), open it with a
 frontmatter fence on line 1 that parses (`missing_frontmatter`,
@@ -720,6 +721,13 @@ A newly created bundle whose name equals another bundle's in the candidate state
 the same kind of folder (`.claude/skills`, `.agents/skills` or a bare `skills`, never across kinds) at
 the same, an enclosing or a nested directory, is blocked as `shadowed_name`; sibling
 packages do not collide, and updates and removals are not compared.
+A complete removal is blocked as `removed_bundle_referenced` while a file that remains in the
+candidate state outside the removed bundle (the root `AGENTS.md` or `CLAUDE.md`, or any file of
+another bundle) links into the bundle or names its folder as a whole path, either project-relative
+or relative to that file's folder. A reference the same candidate also removes does not count, so a
+consolidation passes once the surviving files stop naming the removed bundle. A bare skill name in
+prose is not a reference, and the reason names no file; search for the removed folder path to find
+the referrer.
 
 The check reads staged bytes and never runs them; executable files and
 hook-bearing frontmatter still go through the hook contract. `ahl improve`
@@ -731,8 +739,9 @@ When `ahl.json` `harness_paths` is configured, the snapshot holds only the liste
 files, so bundle membership is unknown: the entry point, dangling reference and
 orphan asset checks are skipped, the action is reported as `scoped`, and only
 the listed `SKILL.md` frontmatter, name and escaping links are judged.
-References from other bundles to a removed one, name collisions across kinds of folder, and runtime activation are not checked or
-claimed.
+Name-only mentions of a removed skill, references from files outside the snapshot, name collisions
+across kinds of folder, and runtime activation are not checked or claimed. A scoped snapshot cannot
+judge removals, so it skips the reference check.
 
 Each reviewed bundle, adoptable or blocked, is one typed row: `bundle`, `action`, `reasons`, `placement`,
 `before_sha256` and `after_sha256`. `placement` names the runtime whose documented skills root holds the bundle
