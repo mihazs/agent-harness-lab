@@ -35,16 +35,21 @@ MAX_TEXT = 65536
 MAX_FINDINGS = 5000
 MAX_TURN_REFS = 5
 # The turns of these mechanisms bound one absence, pairing or repetition (the span); no call broke the rule, so they count once.
-ONCE = ('required_step_skipped', 'conflicting_instructions', 'instruction_restated')
+ONCE = ('required_step_skipped', 'conflicting_instructions', 'instruction_restated', 'revert_requested', 'task_reopened', 'steering_message')
 MAX_USER_ITEMS = 200
 _SEPARATORS = re.compile(r'\s*(?:&&|\|\||;|\||\n)\s*')
 _WRAPPERS = ('sudo', 'time', 'nohup', 'command', 'exec')
 _SUPERSEDE = re.compile(r"\b(?:actually|never\s*mind|scratch\s+that|disregard|go\s+ahead|you\s+(?:can|may)|it'?s\s+(?:fine|ok|okay)|changed\s+my\s+mind|ignore\s+(?:that|the\s+previous|my\s+previous))\b", re.IGNORECASE)
 _CORRECTION = re.compile(r"\b(?:i\s+(?:already\s+)?(?:told|said|asked)|as\s+i\s+(?:said|mentioned)|again)\b", re.IGNORECASE)
+_REVERT = re.compile(r"\b(?:revert(?:ed|ing)?|undo(?:ing)?|roll(?:ed|ing)?\s*back|rollback|restore|put\s+(?:it|that|this|them)\s+back|change\s+it\s+back)\b", re.IGNORECASE)
+_REOPEN = re.compile(r"\b(?:not\s+(?:done|finished|fixed|complete\w*)|isn'?t\s+(?:done|finished|fixed)|still\s+(?:fail\w*|broken|wrong|missing)|you\s+(?:missed|forgot|skipped|did\s*n'?t|did\s+not)|re-?open\w*|redo|try\s+again)\b", re.IGNORECASE)
+# A user's weak outcome signals on an instruction, strongest first: (signal, corroboration label); a restated instruction is the weakest.
+SIGNALS = (('revert_requested', 'user_revert_requested'), ('task_reopened', 'user_task_reopened'), ('steering_message', 'user_steering_message'),
+           ('instruction_restated', 'user_restated'))
 LIMITATIONS = (
     'Lexical extraction: only a backticked command or tool, or a path, makes a sentence machine-checkable; the rest is reviewable or unverifiable.',
     'A finding is an observed pattern or a possible violation, never a cause, and a harness rule counts as ignored only when it was loaded.',
-    'Restatement, supersession and clarification are read from sentence shapes; a model judge is not used and revert requests are not read.',
+    'Restatement, revert requests, reopened tasks, steering messages, supersession and clarification are read from sentence shapes that name the instruction\'s operand; a model judge is not used.',
     'Calibration labels are authored synthetic fixtures: they measure that the documented rules behave as documented, not accuracy on real sessions.')
 
 
@@ -250,7 +255,26 @@ def _user_items(session):
         if item['rule'] and item['rule']['kind'] == 'halt':
             item['hi'] = min(item['hi'], next((u for u in sentences if u > item['turn']), len(turns)))
         item['restated'] = next((u for u in sentences if item['turn'] < u < item['until'] and _restates(item, at, sentences[u], u, turns)), None)
+        item['signals'] = _signals(item, sentences, turns)
     return items
+
+
+def _signals(item, sentences, turns):
+    """{signal: first later user turn} of the user reactions that name what the rule constrained: a revert request, a reopened task, a steering message.
+
+    A reaction that names nothing the rule constrains is not about it, and a reply straight after the agent's question answers it. A steering message
+    is a user turn that comes while the agent was acting: the last turn before it is a tool call, not the agent's own word.
+    """
+    found, names = {}, rules.subjects(item['rule']) if item['rule'] else []
+    for later in (u for u in sentences if names and item['turn'] < u < item['until']):
+        named = [s for s in sentences[later] if any(name in s for name in names)]
+        between = [turn for turn in turns[item['turn'] + 1:later] if turn['role'] != 'user'] if named else []
+        if between and not _question(between[-1]):
+            for signal, seen in (('revert_requested', any(_REVERT.search(s) for s in named)), ('task_reopened', any(_REOPEN.search(s) for s in named)),
+                                 ('steering_message', between[-1]['role'] == 'tool_call')):
+                if seen:
+                    found.setdefault(signal, later)
+    return found
 
 
 def _restates(item, at, sentences, later, turns):
@@ -300,7 +324,7 @@ def _session_findings(session, harness, detail):
         counts['undecided_unknown_capture'] = sum(1 for row in harness if row['rule'])
         return [], counts, Counter()
     n = len(session['turns'])
-    items = [dict(row, direction='harness', turn=None, lo=0, hi=n, until=n, restated=None, **dict(zip(
+    items = [dict(row, direction='harness', turn=None, lo=0, hi=n, until=n, restated=None, signals={}, **dict(zip(
                   ('loading', 'begin', 'before'), session['loaded'].get(row['source'], ('unknown', 0, 'not_loaded')))))
              for row in harness if row['rule']]
     users = _user_items(session)
@@ -317,21 +341,27 @@ def _session_findings(session, harness, detail):
     for item in items:
         verdict, bad, reason = _verdict(item['rule'], session, item['lo'], item['hi'])
         counts['violated' if verdict == 'violated' else 'satisfied' if verdict == 'satisfied' else 'undecided_' + reason] += 1
-        corroboration = ['user_restated'] if item['restated'] is not None else []
         if verdict == 'violated' and item['ref'] not in conflicted:
             # Only calls at or after the turn the rule was loaded can have ignored it; earlier calls are not_loaded or unknown, as the entry says.
             live = [turn for turn in bad if turn >= item['begin']]
             state, bad = (item['loading'], live) if live else (item.get('before', 'not_loaded'), bad)
             call = next((c for c in session['calls'] if c['turn'] == bad[0]), dict(tool='', command='', path=''))
             status = 'not_loaded' if state == 'not_loaded' else 'observed_violation' if state == 'loaded' else 'possible_violation'
+            # A reaction counts as corroboration of a violation only when it came after the first violating call.
+            reactions = dict(item['signals'], instruction_restated=item['restated'])
+            corroboration = [label for name, label in SIGNALS if reactions.get(name) is not None and (name == 'instruction_restated' or reactions[name] > min(bad))]
             found = _finding(session, dict(item, loading=state), status, MECHANISMS[item['rule']['kind']], bad,
                              [str(call['tool']), str(call.get('command')), str(call['path']), rules.key(item['rule'])], detail, corroboration=corroboration)
             findings.setdefault(found['finding_id'], found)
     for item in users:
-        if item['restated'] is not None and item['ref'] not in conflicted and not any(
+        reactions = dict(item['signals'], instruction_restated=item['restated'])
+        seen = [(name, label) for name, label in SIGNALS if reactions.get(name) is not None]
+        if seen and item['ref'] not in conflicted and not any(
                 f['instruction_ref'] == item['ref'] for f in findings.values()) and (not item['rule'] or _undecided(item, session)):
-            found = _finding(session, item, 'possible_violation', 'instruction_restated', [item['turn'], item['restated']],
-                             ['restated', item['ref'], str(item['turn'])], detail)
+            # One weak finding per instruction: the strongest reaction names it, the others corroborate it.
+            (name, _), rest = seen[0], [label for _, label in seen[1:]]
+            found = _finding(session, item, 'possible_violation', name, [item['turn'], reactions[name]],
+                             ['restated' if name == 'instruction_restated' else name, item['ref'], str(item['turn'])], detail, corroboration=rest)
             findings.setdefault(found['finding_id'], found)
     return list(findings.values()), counts, prompts
 

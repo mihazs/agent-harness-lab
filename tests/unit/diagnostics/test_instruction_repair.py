@@ -109,6 +109,13 @@ def test_a_restated_prompt_instruction_is_diagnosed_without_an_edit_to_the_promp
     assert 'never_edit_the_users_prompt' in candidate['guards']
 
 
+def test_a_prompt_instruction_the_user_asked_to_revert_is_diagnosed_without_a_cause_or_an_edit_to_the_prompt():
+    turns = [user('Do not edit `config/prod.yml`.'), agent('Working.'), agent('Done.'), user('Please revert `config/prod.yml`.')]
+    candidate = first(plan_for([session('s1', turns, capture='partial', root='r1')], ''))
+    assert (candidate['finding_mechanism'], mechanisms(candidate)) == ('revert_requested', ['no_self_check_for_user_instruction'])
+    assert 'never_edit_the_users_prompt' in candidate['guards']
+
+
 def test_a_global_layer_rule_requires_the_explicit_global_scope():
     rules = harness(RULE, name='GLOBAL.md', layer='global')
     report, harness_files = report_for([session('s1', BROKEN, loaded={'global:GLOBAL.md': 'loaded'}, root='r1')], rules)
