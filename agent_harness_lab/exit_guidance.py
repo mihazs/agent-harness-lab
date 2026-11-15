@@ -43,6 +43,7 @@ REMEDIATION = {
     'shared_trial_budget_exhausted': 'Review and increase the shared trial budget if appropriate.',
     'no_change_harness_supported': 'Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion.',
     'no_change_evidence_insufficient': 'The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence.',
+    'resume_requires_intervention': 'The run left no completed no-change proposal to finalize, so it cannot be resumed; rerun ahl improve PROJECT.',
     'no_outcome_evidence': 'Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate.',
     'candidate_identical_to_baseline': 'Review the unchanged candidate and its supporting evidence.',
     'evaluation_uninformative': 'Both arms ended every task the same way without a pass, so the evaluation cannot separate baseline from candidate; follow the class-specific next_step in the receipt, then rerun.',

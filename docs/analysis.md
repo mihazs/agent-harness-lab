@@ -559,6 +559,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
 | `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
+| `resume_requires_intervention` | The run left no completed no-change proposal to finalize, so it cannot be resumed; rerun ahl improve PROJECT. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
