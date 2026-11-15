@@ -4,12 +4,15 @@ Pairs records by task/root/family/repeat identity, never by array position, and
 aligns timelines by stable event IDs or explicit mappings only. Events are
 projected onto an allowlist of metadata fields, so message bodies, tool
 arguments/results and reasoning never reach the report. Missing data is unknown,
-not failure; a supplied backend analysis is copied verbatim, never recomputed.
+not failure; a supplied backend analysis is copied verbatim, never recomputed. A supplied resource
+decision or cost-per-success view is validated, then copied the same way (#124). A public export is a separate,
+explicit mode: it needs the #16 provenance declaration and drops events and event mappings.
 """
 from collections import Counter
 import json
 import math
 
+from . import benchmark, resource_report
 from .regressions import sha256
 
 PROFILE = 'ahl-side-by-side-experiment-v1'
@@ -93,6 +96,7 @@ def _trial(raw, experiment):
 def _verdict(key, arms, planned, experiment, duplicate_ids):
     reasons = []
     if key not in planned: reasons.append('unplanned_pair')
+    if experiment['baseline_hash'] == experiment['candidate_hash']: reasons.append('arms_identical')  # one harness against itself proves nothing (#805)
     for arm in ARMS:
         if len(arms[arm]) > 1: reasons.append('duplicate_' + arm)
     records = [record for records in arms.values() for record in records]
@@ -159,9 +163,30 @@ def _usage_summary(pairs):
     return result
 
 
+def _public_provenance(declared, execution_kind):
+    """Apply #16's export gate to one provenance declaration. Its record shape needs a runtime pair, so a placeholder stands in."""
+    runtime = {name: 'side-by-side' for name in benchmark.MATCH_FIELDS}
+    gate = dict(baseline_runtime=runtime, candidate_runtime=runtime, provenance=declared, execution_kind=execution_kind)
+    if not benchmark.public_export_allowed([gate]) or not _text(declared['source_ref']):
+        raise ValueError('public export requires an approved synthetic or public provenance declaration that is not derived from private data')
+    return dict(declared)
+
+
+def _public_inputs(experiment):
+    """Refuse a public export of anything that is, or may be, private; return the experiment's provenance declaration."""
+    declared = _public_provenance(experiment.get('provenance'), experiment['execution_kind'])
+    for raw in experiment['trials']:  # one private or mixed trial refuses the whole export
+        if isinstance(raw, dict) and 'provenance' in raw: _public_provenance(raw['provenance'], experiment['execution_kind'])
+    analysis = experiment.get('analysis')
+    if isinstance(analysis, dict) and (analysis.get('publication_allowed', True) is not True or analysis.get('publication') == 'private'):
+        raise ValueError('the supplied analysis is labelled private; public export refuses private-derived aggregates')
+    if experiment.get('resource_decision') is not None or experiment.get('resource_success_cost') is not None:
+        raise ValueError('resource decisions and cost views are private resource material and cannot be exported')
+    return declared
+
+
 def build(experiment, *, public=False):
-    """Validate one synthetic/replay/live experiment record and return the private review model."""
-    if public: raise ValueError('side-by-side review reports are private; public export is not implemented')
+    """Validate one synthetic/replay/live experiment record and return the review model, private unless `public` is explicit."""
     if not isinstance(experiment, dict) or experiment.get('profile') != PROFILE:
         raise ValueError('unsupported side-by-side experiment profile')
     if not _text(experiment.get('experiment_id')): raise ValueError('experiment identity required')
@@ -179,19 +204,24 @@ def build(experiment, *, public=False):
     if analysis is not None:
         if not isinstance(analysis, dict) or not _text(analysis.get('status')): raise ValueError('analysis object with status required')
         analysis = json.loads(json.dumps(analysis, allow_nan=False))
+    resource = {name: None if experiment.get(key) is None else check(experiment[key])
+                for name, key, check in (('decision', 'resource_decision', resource_report.decision),
+                                         ('success_cost', 'resource_success_cost', resource_report.success_costs))}
+    declared = _public_inputs(experiment) if public else None
     grouped, invalid_records = {key: {arm: [] for arm in ARMS} for key in planned}, []
     for index, raw in enumerate(trials_raw):
         key = _key(raw)
         if key is None:
             invalid_records.append(dict(index=index, reason='invalid_pair_identity')); continue
         record = _trial(raw, experiment)
+        if public: record.update(events=[], events_truncated=False, events_omitted=True)  # counts stay, event metadata does not
         arm = record['arm'] if record['arm'] in ARMS else 'invalid_arm'
         if arm == 'invalid_arm': invalid_records.append(dict(index=index, reason='unknown_arm'))
         grouped.setdefault(key, {name: [] for name in ARMS}).setdefault(arm, []).append(record)
     counts = Counter(record['trial_id'] for arms in grouped.values() for records in arms.values() for record in records if record['trial_id'])
     duplicate_ids = {value for value, count in counts.items() if count > 1}
     mappings, invalid_mappings = {}, []
-    for index, raw in enumerate(mappings_raw):
+    for index, raw in enumerate([] if public else mappings_raw):  # a public export reads no event mappings
         key = _key(raw)
         if key is None or key not in grouped or not all(_text(raw.get(name)) for name in ('baseline_event_id', 'candidate_event_id')):
             invalid_mappings.append(dict(index=index, reason='invalid_mapping')); continue
@@ -200,7 +230,7 @@ def build(experiment, *, public=False):
     for key in [*planned, *sorted(set(grouped) - plan)]:
         arms = grouped[key]
         verdict, reasons = _verdict(key, arms, plan, experiment, duplicate_ids)
-        timeline, rejected = _timeline(arms, mappings.get(key, []))
+        timeline, rejected = (dict(alignment='omitted', reason='public_export_omits_events', rows=[]), []) if public else _timeline(arms, mappings.get(key, []))
         invalid_mappings += [dict(index=mapping['index'], reason='unresolvable_or_conflicting_mapping') for mapping in rejected]
         capture = {arm: [record['capture'] for record in arms[arm]] or ['unknown'] for arm in ARMS}
         pairs.append(dict(dict(zip(IDENTITY, key)), planned=key in plan, verdict=verdict, reasons=reasons, arms=arms,
@@ -218,10 +248,15 @@ def build(experiment, *, public=False):
                      coverage_gaps=sum(1 for pair in pairs if pair['coverage_gap']), usage=_usage_summary(pairs)),
         pairs=pairs, invalid_records=invalid_records, invalid_mappings=sorted(invalid_mappings, key=lambda item: item['index']),
         analysis=analysis, analysis_source='supplied_verbatim' if analysis is not None else 'not_supplied',
-        pooled_treatment_effect=None, causal_attribution='none', publication='private', publication_allowed=False,
-        automatic_promotion=False, trace_bodies='omitted_metadata_only',
+        resource_decision=resource['decision'], resource_success_cost=resource['success_cost'],
+        resource_source='supplied_verbatim' if any(value is not None for value in resource.values()) else 'not_supplied',
+        pooled_treatment_effect=None, causal_attribution='none', publication='explicit_public_export' if public else 'private',
+        publication_allowed=False, automatic_promotion=False, trace_bodies='omitted_metadata_only',
         bounds=dict(max_trials=MAX_TRIALS, max_events_per_trial=MAX_EVENTS, max_mappings=MAX_MAPPINGS, max_text=MAX_TEXT),
         limitations=['Per-pair verdicts are descriptive; any treatment effect comes only from the supplied analysis.',
                      'Missing, ungraded or uncaptured observations are unknown, not failures or zero usage.',
                      'A tool error is not a task failure, and timeline alignment is not a causal attribution.',
-                     'Synthetic and replay executions are not model capability evidence.'])
+                     'Synthetic and replay executions are not model capability evidence.']
+        + (['Public export: events and event mappings are omitted, only their counts remain.',
+            'The provenance declaration is the caller\'s attestation and is not authenticated; this tool publishes nothing.'] if public else []),
+        **(dict(public_export=dict(provenance=declared)) if public else {}))

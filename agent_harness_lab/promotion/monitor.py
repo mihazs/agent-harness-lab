@@ -78,3 +78,10 @@ def triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,*,pl
         reviewer_identity='unverified',assignment_timing='unauthenticated',frame_origin='unauthenticated',
         action='observe_only',causal_attribution='unestablished',automatic_policy_update=False,
         automatic_rollback=False,promotion_authority='none',publication_allowed=False)
+
+
+def triage_audit_gate(policy,receipt,frame,store_path,binding,rubric,requirement,*,decision_report=None,plan=None,trusted_heads=None):
+    """Judge a recomputed private audit against a preregistered requirement; the verdict carries no authority."""
+    from agent_harness_lab.diagnostics import audit_gate, audit_summary
+    observation=triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,plan=plan,trusted_heads=trusted_heads)
+    return audit_gate.evaluate(audit_summary.summarize(observation,decision_report),policy,requirement)

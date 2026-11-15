@@ -47,9 +47,9 @@ enforce filesystem/network boundaries.
 
 - [Execution identity and coverage](#execution-identity-and-declared-coverage) · [Private checkpoint journal](#private-checkpoint-journal) · [Local exports](#explicit-local-export-operations)
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
-- [ai-memory exports](#ai-memory-okf-project-exports) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
+- [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [Knowledge facets](#knowledge-page-temporal-facets) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports)
 
 ## Execution identity and declared coverage
 
@@ -699,8 +699,10 @@ prove that an agent loaded them. Preview includes these metadata in `git_summary
 import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
 execution's version. Declared Codex and Claude Code instruction inventories are
-described below, as are the static hook inventory and path-scoped rules. Managed
-and global instruction capture remains open in #46. Observed loading and
+described below, as are the static hook inventory and path-scoped rules. A Claude Code
+inventory can also record a caller-declared managed-policy and user `CLAUDE.md` as
+read-only influences; discovering them and governing them as a policy stay open in
+#46. Observed loading and
 independently evidenced execution bindings remain open in #58/#77–#80 (the
 Git/GitHub, Git/GitLab and Git/Gitea commit joins are below).
 
@@ -1214,8 +1216,9 @@ What the receipt declares, never verifies:
   classifies them. Launch filenames below `task_cwd` (`on_demand_subdirectory`)
   also stay unknown.
   Files below `task_cwd` are discovered by the whole-tree walk described below.
-  Managed and user files, approval decisions, the session's on-demand
-  truncation point and path-scoped rule matching are not captured. A selected
+  Approval decisions, the session's on-demand
+  truncation point and path-scoped rule matching are not captured, and a managed
+  or user file is captured only as declared below. A selected
   `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
 
 An import from the launch chain whose path crosses a symbolic link, a
@@ -1232,8 +1235,60 @@ nodes per expanded file, one per unresolved reason, and the selected files. The
 receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
 record. Observed loading stays `unknown`, and the receipt grants no edit authority.
 Content, import, cwd and profile changes invalidate it. Managed
-and global capture remains open in #46; native `InstructionsLoaded` evidence, rules
-and on-demand modeling, and execution binding remain open in #58/#77–#80.
+and user files are captured only when the caller declares their folders
+([below](#declared-managed-and-user-claude-code-instructions)); native
+`InstructionsLoaded` evidence, rules and on-demand modeling, and execution
+binding remain open in #58/#77–#80.
+
+### Declared managed and user Claude Code instructions
+
+`capture(..., claude_managed_root='managed', claude_user_home='user')` takes
+two optional, folder-relative directories that each hold one `CLAUDE.md`: the
+managed-policy directory (`/etc/claude-code` on Linux) and the user's
+`~/.claude`. Neither is ever discovered, defaulted or read from the environment,
+so an undeclared root is never opened. Only the Claude Code profile accepts
+them. A root that is, or sits inside or above, the checkout or the other root,
+contains `..`, or names `.git` is refused with an error, as is a declaration
+under any other runtime. An unsupported runtime version still returns
+`unsupported` without reading either root.
+
+Each declared file becomes one node with origin `claude_managed` or
+`claude_user` and a path identity made only of the origin and the file name, so
+the receipt carries neither folder path. The node is a read-only influence: it
+grants no edit authority, and observed loading and `ambient_state` stay
+`unknown`. Following the public memory documentation (checked 2026-11-14,
+unversioned like the mapping above):
+
+- A non-empty UTF-8 file is `declared_applicable` with reason
+  `declared_managed_policy` or `declared_user_instructions`. The managed file
+  precedes the user file and the user file precedes the first applicable
+  project launch file, each as a `parent` edge. An influence that is not
+  applicable takes no edge.
+- A missing file or folder is `missing` (`unknown`, `missing`), never an error.
+  A whitespace-only file is `unknown` (`empty`), a non-UTF-8 file `unknown`
+  (`non_utf8_instruction`) and a file over the 4 MiB runtime skip size `unknown`
+  (`runtime_size_limit_unverified`).
+- The `instruction_files` profile setting affects only the user file:
+  `managed-only` makes it `out_of_scope`
+  (`excluded_by_declared_instruction_files`) and an unknown label leaves it
+  `unknown` (`instruction_files_setting_unknown`). The managed file is never
+  excluded. Any declared `claude_md_excludes` leaves the user file `unknown`
+  (`claude_md_excludes_match_unverified`), because the runtime matches absolute
+  paths that are not declared here; they never apply to the managed file.
+- `@path` imports are never followed. A file whose text holds an import token
+  gets one content-free `external_reference` node (reason
+  `influence_imports_not_followed`) and an `imports` edge to it, so the
+  closure is flagged as incomplete rather than assumed.
+- A link, hard link or other non-regular file, or a linked folder, fails the
+  capture. A file that exists but cannot be read stays `unknown`
+  (`instruction_file_unreadable`) and the receipt is `blocked`.
+- A user `CLAUDE.md` is not a project `CLAUDE.md`, so it does not shadow a
+  project `AGENTS.md`.
+
+Changing either declared file, or declaring or dropping a root, changes the
+receipt fingerprint. Synthetic tests check this documentation-derived
+resolver; they are not native loading evidence, and a declared root says nothing
+about which files the runtime read.
 
 ### Whole-tree instruction inventory and declared instruction settings
 
@@ -1537,6 +1592,10 @@ nodes themselves are unchanged and still reject any loading claim.
   count, whatever the input order, and `warnings` adds
   `duplicate_event_conflict`. An ignored record never claims an identity, so
   it cannot hide a later pinned copy.
+- `instruction_validation.loading_evidence` reuses this record selection
+  (`harness_inventory.loading_records`) for the changed instruction and rule files of a
+  [scoped instruction validation](one-call-improvement.md#scoped-instruction-rewrites-and-pruning),
+  so the two joins count duplicate, contested and foreign records alike.
 
 `effective`, `outcome` and `independence` are always `unknown`, and
 `publication_allowed` is `false`. The caller pairs the capture with the
@@ -2695,18 +2754,18 @@ the author's declarations agree at that instant. It does not mean the statement 
 true or reviewed, that an agent retrieved it, or that it helps with a task.
 Synthetic fixtures establish this contract, not factual accuracy.
 
-Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
-fields to facets, bind their [link edges](#knowledge-bundle-link-edges) to
-`RecordRef`s, or store facets. Claim
-identity across sources, project-scope compatibility checks, review provenance and
-`stale_after` handling in the resolver, contradiction detection between statements,
-a CLI and the #43/#58/#11 integrations are also still open.
+Still open in #47: the [facet mapper](#knowledge-page-temporal-facets) reads declared
+fields from bundle pages, but the resolver does not yet use `stale_after`, claim identity
+across sources, project-scope compatibility or review provenance, link edges are not yet
+bound to `RecordRef`s, and facets are not stored. Contradiction detection between
+statements, a CLI and the #43/#58/#11 integrations are also still open.
 
 ### Knowledge-bundle link edges
 
 `sources.knowledge_links.links(pages)` reads the links between the Markdown pages of
 one selected bundle: an OKF export (`(p.path, p.body) for p in OKFExport.pages(source)`),
-a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory. It is an
+a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory, for example the
+pages of the [bundle reader](#portable-knowledge-bundle-reader). It is an
 offline Python API with no CLI exposure. The caller supplies `(path, body)` pairs it
 is already authorized to hold; paths must be distinct, normalized, bundle-relative
 POSIX `.md` paths, and bodies are the Markdown text after any frontmatter. The
@@ -2728,7 +2787,7 @@ code blocks, one-line code spans and after a backslash-escaped bracket are not e
 | `ambiguous` | Several pages share the wikilink's page name or path suffix (`several_pages`) |
 | `outside_bundle` | A relative link climbs above the bundle root (`parent_traversal`) |
 | `remote` | A URL scheme or `//host` reference; it stays an opaque reference |
-| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
+| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path` (unless `root_relative=True`), or a `./` or `../` wikilink whose base is not documented |
 | `invalid` | An empty target, malformed percent-encoding, a backslash or NUL, or a target over 2,048 characters |
 
 A wikilink `[[name]]`, `[[name|alias]]` or `[[name#heading]]` matches a page named
@@ -2738,6 +2797,14 @@ percent-decoding, ignoring its `#fragment` and `?query`. Matching is exact and
 case-sensitive. Page order, arrival order and similarity never choose between
 candidates. Destinations accept three levels of balanced parentheses, the CommonMark
 minimum.
+
+OKF v0.2 defines a Markdown link that begins with `/` as relative to the bundle root.
+`links(pages, root_relative=True)` reads such a link that way: the path is normalized
+from the root, resolves with reason `bundle_root_path`, and a `/../` climb above the root
+is still `outside_bundle`. Without the option a site-root path stays `unknown`, because
+the root of a wiki or docs site is not documented. The option changes nothing for
+wikilinks or relative links, and `summary(edges, root_relative=True)` then omits
+`site_root_paths` from `unsupported`.
 
 `summary(edges, pages=None)` reports counts only: links per status, kind and reason,
 pages with links, distinct resolved targets, self links and, given the page paths,
@@ -2786,6 +2853,124 @@ count, not proof that the cited source exists, is true, or that clusters are
 independent. Citations of a different spelling of one resource are not merged.
 Synthetic metadata establishes this contract
 (`tests/unit/sources/test_source_knowledge_origins.py`).
+
+### Portable knowledge-bundle reader
+
+`sources.knowledge_bundle` reads the Markdown pages of one authorized bundle under an
+explicit manifest. It serves the source families in #47 that are plain files: a
+canonical OKF v0.2 bundle, a Git-backed LLM wiki checkout, repository documentation
+(READMEs, `docs/`, ADRs, runbooks, postmortems, agents and skills documentation, which
+are read as claims only), a GitHub Wiki repository and a local Obsidian, MkDocs or
+Docusaurus export, plus a generated DeepWiki export only when the caller already holds
+that file. It is an offline Python API with no CLI exposure. It runs no Git command,
+makes no network call and starts no process, and it never extracts an archive to disk.
+Notion, Confluence and live services are not read.
+
+`read(root, manifest)` walks an extracted directory; `read_zip(archive, manifest)` parses
+one explicitly supplied ZIP in memory. Both return a `Bundle`: `pages` as `okf.Page`
+values (path, SHA-256 of the bytes, preserved metadata, body) sorted by path, `findings`,
+the OKF version state and counts of the files they set aside. Feed the pages to
+[`knowledge_links.links`](#knowledge-bundle-link-edges) with `root_relative=True` for OKF
+and to [`knowledge_origins.clusters`](#knowledge-page-correlated-origins).
+
+| `Manifest` field | Meaning |
+| --- | --- |
+| `roots` | One to 100 distinct, non-overlapping bundle-relative directories or `.md` files, or `.` for the whole bundle; nothing outside them is read |
+| `doc_types` | Optional allowlist of frontmatter `type` values; other pages are reported and not returned |
+| `format` | `markdown` (default) reads every Markdown page; `okf-0.2` sets aside `index.md` and `log.md`, reads `okf_version` from the root index and expects a `type` on every concept |
+| `max_pages`, `max_page_bytes`, `max_bytes` | At most 10,000 pages, 1 MiB per page and 64 MiB in all; a smaller value tightens a bound |
+
+Exceeding a bound raises `BundleLimit` (more than the page, byte, directory-entry or
+depth limit); nothing is truncated. A page over `max_page_bytes` is a finding and is
+never read. The reader refuses the whole directory for a symlink, hardlink or special
+file under an allowed root (hidden entries are counted, not inspected), and the whole archive for a traversal, absolute,
+backslash, `:` or control-character member name, a symlink, encrypted, duplicate or
+unsupported member, a spoofed directory, a forged size or CRC, or a name that repeats
+a local header offset. An archive member's declared size is compared with the manifest
+before decompression, so a compression bomb is a finding and is not inflated. Hidden
+entries (a leading `.`, so `.git` and `.obsidian`) and non-Markdown files are counted
+and never read.
+
+Frontmatter uses the same safe parser as the ai-memory reader, so it needs
+`pip install 'agent-harness-lab[okf]'` only when a page has a frontmatter block; plain
+Markdown needs no dependency. Anchors, aliases, object tags, duplicate or non-text keys
+and malformed YAML are not executed or guessed. Such a page is left out and appears in
+`findings` with a reason such as `frontmatter_unsupported_yaml`,
+`frontmatter_unterminated`, `frontmatter_not_a_mapping`, `frontmatter_fence_padded`
+(`--- ` with trailing blanks), `not_utf8`, `page_too_large` or `path_unsafe`, and the
+other pages are still read. A page without a frontmatter block has empty metadata. In the
+`okf-0.2` format a concept without a usable `type` is kept and reported as
+`frontmatter_missing` or `type_missing`, and an absent, unreadable or non-`"0.2"`
+`okf_version` is reported (`okf_version_missing`, `okf_version_unreadable`,
+`okf_version_unsupported`) while the concepts are still read best-effort. With
+`doc_types`, an untyped or unlisted page is left out. A missing root is a
+`root_missing` finding, never an empty success. Unknown extension keys are preserved in
+`Page.metadata`. Bodies, HTML, scripts, remote media and `executor`/`attester`
+fields are inert text; nothing runs, and no link is followed.
+
+`trust_tier(metadata)` maps the OKF `verified` claim to `unverified`,
+`machine_confirmed_claim`, `human_reviewed_claim` or `unknown` (a malformed claim, never
+a tier), and `lifecycle(metadata)` maps `status` to `unspecified`, `draft`, `stable`,
+`deprecated` or `unknown`. Both are author claims keyed on the actor prefix and a
+declared value. A `human:` actor is a claimed human review, not independent task
+validation, and an absent `status` is `unspecified`, not `stable`.
+
+`summary(bundle)` reports counts only under profile `knowledge-bundle-v1`: pages,
+findings by reason, source form, OKF version state, set-aside counts, and the trust and
+lifecycle claim counts. It leaves out paths, bodies, actors and page text, sets
+`executed`, `remote_fetched`, `archive_extracted`, `content_included`,
+`independently_verified`, `truth_established` and `publication_allowed` to false (and
+`archive_opened` to true only for a ZIP) with `authority: none`, and
+`public_export_allowed` rejects that profile. Pages that summarize one source stay one
+correlated origin only after `knowledge_origins.clusters`; reading them does not make
+them independent. The directory read is not an atomic snapshot of a concurrently edited
+wiki, so extract or supply a static copy. Per-revision Git provenance, page-edit
+histories and the contradiction report are not part of this reader, and `stale_after`
+is evaluated only through `okf.Page.freshness`. Synthetic bundles establish this
+contract
+(`tests/unit/sources/test_source_knowledge_bundle.py`,
+`tests/integration/sources/test_source_knowledge_bundle.py`).
+
+### Knowledge-page temporal facets
+
+`sources.knowledge_facets.facets(pages, source_sha256, recorded_at=None)` maps the
+declared lifecycle fields of pages an authorized caller already holds, such as
+`knowledge_bundle.read(...).pages`, to the `TemporalFacet`s that
+[`temporal.resolve`](#declared-validity-as-of-an-instant) takes. It is an offline Python API
+with no CLI exposure and reads no file. `ref(source_sha256, page)` is the exact
+`RecordRef` of one page revision: the path digest and the SHA-256 of its bytes, which
+`OKFExport.read` stores as the record's native id and revision.
+
+| Page field | Facet |
+| --- | --- |
+| `status` | `proposed` and `draft` give `proposed`; `accepted` and `stable` give `accepted`; `rejected`, `deprecated` and `superseded` map to themselves; absent is `unspecified` |
+| `valid_from`, `valid_until` | Text, or a YAML timestamp as ISO text; a bare date or a time without an offset stays unknown in the resolver |
+| `open_ended` | `true` declares no end; absent is `false` |
+| `supersedes`, `superseded_by` | One bundle path or a list of up to 100. A path is relative to the page, or to the bundle root with a leading `/` |
+
+Knowledge time (`recorded_at`) is never read from a page, not even `generated.at`: the
+caller passes one instant for every page or a `{path: instant}` mapping, normally the
+collection time. A page without one blocks a historical replay in the resolver.
+
+A field that cannot be read (a status outside the table or in another letter case, a
+time that is not text or a timestamp, a non-boolean `open_ended`, a malformed or
+oversized reference list) leaves the page without a facet and adds a finding such as
+`status_unrecognized` or `valid_from_unreadable`. A page without a facet is never
+reported in force, and a predecessor that names it stays unknown. A reference to a path the
+bundle does not hold (absent, different letter case, above the root, with a backslash,
+or a remote URL) is kept as a placeholder reference without a facet and reported as
+`supersedes_unresolved` or `superseded_by_unresolved`, so a page whose successor is
+missing resolves as `unknown` rather than in force. Unknown keys, `executor`, `attester`
+and bodies are ignored; nothing runs.
+
+`summary(result)` reports counts only under profile `knowledge-facets-v1`: pages, facets,
+withheld pages, findings by reason and decision statuses. It leaves out paths and text and sets `executed`,
+`files_read`, `remote_fetched`, `content_included`, `truth_established` and
+`publication_allowed` to false with `authority: none`; `public_export_allowed` rejects it.
+A facet is an author claim. It does not make a page true, reviewed or current. Synthetic
+bundles establish this contract
+(`tests/unit/sources/test_source_knowledge_facets.py`,
+`tests/integration/sources/test_source_knowledge_facets.py`).
 
 ## Shared HTTPS transport
 
@@ -3770,7 +3955,8 @@ Select `local_file/test-results/v1` in the existing local source declaration, wi
 ```json
 {"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
  "reports": [{"path": "reports/junit.xml", "format": "junit-xml"},
-             {"path": "reports/pytest.json", "format": "pytest-json"}],
+             {"path": "reports/pytest.json", "format": "pytest-json"},
+             {"path": "reports/results.tap", "format": "tap"}],
  "limits": {"max_cases": 5000}}
 ```
 
@@ -3787,7 +3973,8 @@ Each test case becomes one `test_case_result` development-artifact record and ea
 report one `test_report` record. The record identity binds the declared commit, the
 report path fingerprint, the case identity and an occurrence index. The case identity
 is the report's own declaration: JUnit's nested `testsuite` names plus `classname`
-and `name`, or pytest's `nodeid`. Journals and preview output keep only
+and `name`, pytest's `nodeid`, or a TAP test point's description (`#N` for its
+position when it has none). Journals and preview output keep only
 fingerprints. Raw suite and case names stay in memory as `declared_cases` for
 in-process callers. The same test at another commit or in another report is a
 different record. A repeated identity within one report is kept as a further
@@ -3816,14 +4003,38 @@ and `reported_outcome` keeps the native label:
 | pytest `passed` with a setup, call or teardown phase whose outcome is not `passed` | `unknown` (`conflicting`) |
 | pytest `xfailed`, `xpassed`, `rerun` | `unknown` with that label |
 | any other pytest outcome | `unknown` (`unrecognized`) |
+| TAP `ok` / `not ok` with no directive | `passed` (`ok`) / `failed` (`not_ok`) |
+| TAP `ok # SKIP` | `skipped` (`skip`) |
+| TAP `not ok # SKIP` | `unknown` (`conflicting`) |
+| TAP `# TODO` on `ok` or `not ok` | `unknown` (`todo`) |
+| TAP directive that starts with `skip` or `todo` but continues the word (`# skipped`, `# todos`) | `unknown` (`unrecognized_directive`) |
 
 Suite-level JUnit `failure`/`error` elements name no case; they are never
 attributed to one and add `suite_level_status_unattributed`. `duration_seconds`
-is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations.
-It is `null` when absent, and also when a value is malformed, negative or
-non-finite, or when finite pytest phases sum to a non-finite total (with
-`invalid_duration`). pytest collector failures add
+is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations;
+a TAP test point has none. It is `null` when absent, and also when a value is
+malformed, negative or non-finite, or when finite pytest phases sum to a non-finite
+total (with `invalid_duration`). pytest collector failures add
 `collection_failures_reported`; they create no case.
+
+A TAP 13 or 14 stream (the `TAP version` line is optional; any other version is
+refused) yields one case per top-level test point, in lowercase `ok` / `not ok`
+form with an optional number and `- description`. A `#` ends the description
+unless it is escaped as `\#`, and only a `SKIP` or `TODO` word after it is a
+directive; other comments are ignored. Indented lines (YAML diagnostic blocks and
+TAP 14 subtests) are never cases: an indented test point adds
+`tap_subtest_lines_not_imported` and the parent's own result is the case. Comments,
+`pragma` lines and blank lines are skipped; any other line is ignored with
+`tap_unrecognized_line`. A `Bail out!` line ends the read with
+`tap_bail_out_reported`, and the tests after it are neither imported nor invented.
+The plan (`1..N`, before or after the tests, starting at 1, at most once) is
+checked against the test points but never fills them in: a disagreement adds
+`tap_plan_mismatch`, no plan adds `tap_plan_absent`, `1..0` adds `tap_plan_skipped`,
+and a test number that differs from the point's position adds
+`tap_test_number_out_of_sequence`. A stream with neither a plan, a test point nor
+a bail out is refused, a second plan or one that does not start at 1 raises, and a
+plan larger than `max_cases` is a `HostileReport` before any case is read.
+Diagnostic text, messages and YAML are neither stored nor summarized.
 
 These results are CI evidence about the declared commit only. Every result carries
 `commit_binding: caller_declared`, `commit_verified: false` and
@@ -3888,9 +4099,14 @@ these bounds.
 | `max_depth` (XML) | 32 |
 | `max_attributes` | 64 |
 | `max_attribute_length` | 4,096 characters |
+| `max_line_length` (TAP) | 4,096 bytes, excluding the line break |
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 (100,000 tests of about 25 values) |
+
+TAP is read one line at a time with no tree or element state: NUL bytes, invalid
+UTF-8 and an over-long line are `HostileReport`, and the read ends at the first test
+point past `max_cases`.
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
@@ -3905,10 +4121,10 @@ byte bound.
 `task test:sources:test-results` runs the synthetic controls: status mapping,
 billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
-numbers, deep nesting, duplicate case names, commit-identity validation and CLI
-journals that hold hashes only. Still open in #53: artifact download or zip
-handling; TAP, coverage and lint reports; and expired-artifact coverage warnings
-from a live read.
+numbers, deep nesting, duplicate case names, TAP directives, plans, bail outs,
+subtests and line bounds, commit-identity validation and CLI journals that hold
+hashes only. Still open in #53: artifact download or zip handling; coverage and
+lint reports; and expired-artifact coverage warnings from a live read.
 
 ### Joining test results to Actions jobs
 
@@ -4238,7 +4454,8 @@ No real export has been read; the tests use invented fixtures only.
 | Observations, summaries, prompts, sessions in that file | separate claim types |
 | Search `query` and per-row `rank`/`score` | separate `search_hit` claims |
 | `tool_uses` rows, advisor calls, pending queue | not in the export; not read (the `get_tool_uses` MCP tool is only checked for presence and shape) |
-| Worker HTTP API (`/api/search`, `/api/sdk-sessions/batch`) | not contacted |
+| Worker HTTP API: `/api/version`, `/api/observations`, `/api/summaries`, `/api/prompts` | not contacted by the export reader; read by the separate [worker source](#explicit-claude-mem-worker-reads) |
+| Worker HTTP API: `/api/search`, `/api/timeline`, `/api/observations/batch`, `/api/tool-uses`, `/api/sdk-sessions/batch` | not contacted by either source |
 | MCP `search`, `timeline`, `get_observations`, `get_tool_uses` | not called; a saved `tools/list` result can be [checked offline](#saved-mcp-tool-listing-check-claude-mem) |
 | SQLite `~/.claude-mem/claude-mem.db` (WAL) | not opened |
 | Chroma vector projection | not read; never authoritative |
@@ -4352,10 +4569,11 @@ synthetic controls: each claim type, summary/observation separation, search-hit
 targets, unknown and mismatched versions, duplicate IDs, unknown fields, missing
 and conflicting timestamps, malformed JSON, bounds, path containment, capture
 changes, repeat import, edits and CLI output with no body, ID or path. Still open
-in #48: reading a configured worker or MCP server (bounded `search`/`timeline`,
-batched `get_observations`; only the tool-schema check exists, see below), an
-authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
-rows, verifying the shape against a real export, and further releases.
+in #48: the worker's `search`/`timeline` and batched `get_observations` (the
+[worker source](#explicit-claude-mem-worker-reads) reads the paged list routes
+only), an authorized read-only SQLite snapshot mode with a verified schema,
+`tool_uses` rows, verifying the shape against a real export or a real worker,
+and further releases.
 
 ### Native session correlation (Claude-Mem)
 
@@ -4453,6 +4671,129 @@ covers the check with synthetic listings only: a matching listing, an older tool
 set, a partial page, changed and added properties, a missing, duplicated or
 unhinted tool, a mismatched version, a server-runtime listing, malformed,
 hostile and linked files, and no process or connection.
+
+### Explicit Claude-Mem worker reads
+
+`claude-mem-worker` (`api/claude-mem-worker/v1`, profile `claude-mem-worker-v1`)
+reads one project from a Claude-Mem worker you already run, through the paged
+list routes of the pinned release, so the claims mean what the
+[offline export](#claims) claims mean. It is opt-in: no manifest, no read. It
+never starts a worker, calls an MCP tool, opens the SQLite database or the Chroma
+store, or discovers a port. The shared transport is HTTPS only, so the worker's
+default plain `http://127.0.0.1` listener needs a TLS proxy in front of it, or
+the [offline export](#offline-claude-mem-exports) is the path (the same limit as
+the [Mem0 OSS server](#explicit-mem0-oss-rest-and-platform-v3-reads)).
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "claude-mem-worker", "version": "v1", "...": "..."},
+ "endpoint": "https://claude-mem.example.test",
+ "selection": {"base_url": "https://claude-mem.example.test", "instance": "laptop-a", "release": "15.9.0",
+               "project": "my-project", "platform_source": null, "max_rows": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+The manifest has the Mem0 configuration shape. `source.project_sha256` must be
+`selection.project_sha256`, a digest of `instance`, host, path, the project (the
+worker compares it without regard to ASCII case, so `A` and `a` are one scope) and
+`platform_source`; `scope_sha256` is `selection.sha256`. `endpoint` must equal
+`base_url`, a canonical HTTPS origin without a trailing slash or `/api` suffix.
+`project` is required: the unfiltered list would also return every other
+project's memory, so there is no all-projects mode. `platform_source`, when set,
+is one of the pinned labels (`claude`, `codex`, `cursor`, `kimi`, `pi`,
+`antigravity-cli`) and is sent as `platformSource`. `max_rows` (1 to 10,000,
+default 1,000) bounds each list. A worker behind an authenticating proxy takes its
+complete `Authorization` header value from `--authorization-file PRIVATE_FILE` or
+`--authorization-env NAME` with `auth_mode: "configured"`; only that named file or
+variable is read, never by `probe` or `status`, and `auth_mode: "none"` sends no
+header.
+
+| Request | Route at the pin | Used for |
+| --- | --- | --- |
+| `GET /api/version` | [`src/services/server/Server.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/server/Server.ts) | the reported release, `{"version": "15.9.0"}` |
+| `GET /api/observations?project=P&limit=N&offset=K` | [`DataRoutes.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) and [`PaginationHelper.getObservations`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/PaginationHelper.ts) | `observation` claims |
+| `GET /api/summaries?...` | `PaginationHelper.getSummaries` | `generated_summary` claims |
+| `GET /api/prompts?...` | `PaginationHelper.getPrompts` | `user_prompt` claims |
+
+Nothing else is requested. The reader never sends a save, import, delete, project
+merge, corpus or Chroma request, and never calls `/api/search`, `/api/timeline`,
+`/api/observations/batch` or `/api/tool-uses`. Those routes and the MCP tools wrap
+their results in text meant for a model (`mcp-text-format.ts`), so reading them
+needs a parser verified against real output, which is still missing. The list
+routes answer structured JSON: `{items, hasMore, offset, limit}` with at most 100
+rows, ordered by creation time, newest first.
+
+Pages are requested 100 rows at a time (fewer for the last part of a bounded
+list). A page must echo the exact `offset` and `limit` that were requested, carry
+only those four envelope fields and a boolean `hasMore`, hold at most `limit`
+rows, and be full when `hasMore` is true, otherwise the capture fails with no
+snapshot. A list ends only when the worker says `hasMore: false`
+(`captured`); one that reaches `max_rows` while the worker still reports more is
+`pagination_incomplete: max_rows_reached`. A row ID seen twice in one list also
+fails the capture: offset paging over a live database can shift between
+requests, so a moved listing is never repaired by guessing. The summary warns
+`reads_non_atomic`.
+
+`/api/version` is read first. A worker that reports the selected release is
+`version_attestation: worker_reported`; any other value (including a `v` prefix)
+refuses the capture before any list is read. A worker without the route, or an
+answer that is not a plain version string, leaves the release
+`caller_declared` and warns `worker_version_unreported` or
+`worker_version_unrecognized`. Like the export, the profile stays
+`upstream_shape: source_inferred` and `compatibility: unverified`: the row fields
+come from `PaginationHelper.ts` at the pinned commit, and no real worker has been
+read.
+
+Rows become the same `MemoryClaim` objects as in the export, with the same
+native-ID namespace (`digest(['claude-mem', instance, claim_type, id, 0])`), so
+the two paths deduplicate by ID, but the sources stay separate and the claims differ in four ways:
+
+- No `search_hit` claim exists, because a list is not a query.
+- No `memory_session` claim exists, because sessions are not listed (`sessions_not_read`). An observation carries
+  `memory_session_id`, which is fingerprinted as `memory_session_sha256`; a
+  summary's `session_id` is its content session and goes to
+  `content_session_sha256`.
+- Body fingerprints are not comparable with an export's. The worker projects
+  list rows (file paths are made project-relative and `metadata` is replaced by
+  `media`), so the same observation can have another `body_sha256`
+  (`worker_list_projection`).
+- A row the filter would not return is not kept. A row whose `project` and
+  `merged_into_project` both differ from the selected project, whose project is
+  missing, or whose `platform_source` differs from a selected platform is excluded and counted in
+  `excluded.rows_outside_selection` (`row_outside_selection`).
+
+A row without a positive integer `id` or its session field (`memory_session_id`
+for observations, `session_id` for summaries, `content_session_id` for prompts)
+is counted in `rows_rejected` (`row_without_native_identity`). A field outside the
+pinned list shape is counted in `rows_with_unknown_fields`; names are not printed.
+Missing, naive, unparseable or disagreeing timestamps are `missing`, `invalid` or
+`conflicting`, never guessed. A row object over 128 fields, a non-object row, a
+`NaN` or `Infinity` value or a duplicate JSON key fails the capture. Text bodies are
+fingerprinted together and never stored or printed; the capture record
+`claude_mem_capture` hashes every row digest, so a change to any unmodelled field or body is
+still a new capture. The snapshot is partial, the summary reports `network_used`,
+`server_contacted`, `read_methods: ["GET"]`, `worker_started`, `database_opened`
+and `bodies_stored` (the last three `false`), and `public_export_allowed` rejects
+the profile. `ahl sources preview` prints it as `claude_mem_summary`.
+
+Limits and stops follow the [Mem0 reader](#explicit-mem0-oss-rest-and-platform-v3-reads):
+`max_pages` (default 1,000), `max_bytes` (256 MiB), `seconds` (900) and `timeout`
+bound the whole capture, each response is limited to 8 MiB, and a spent budget is
+`budget_exhausted` partial coverage. There is no retry. HTTP 401, 403, 404 and 429
+become coverage states (`unauthorized`, `forbidden`, `not_found`, `rate_limited`);
+other statuses, malformed JSON and non-JSON content fail the capture. A 404 on one
+list is only that list's gap and the next list is still read; a 401, 403, 429 or
+spent budget ends every later request. A denied first page is blocked coverage
+with no data, and a denied later page is `pagination_incomplete`. Any coverage
+other than `captured` makes the snapshot `checkpoint_ready: false`, so the registry
+refuses to commit it and `ahl sources import` prints `status: "blocked"`, commits
+nothing and exits 3. The rate-limit state is the shared one described in the
+[forge rate-limit guide](forge-rate-limits.md).
+
+`task test:sources:claude-mem` runs the synthetic controls against a fake HTTPS
+wire: the request allowlist, scope and platform exclusion, paging, `max_rows`,
+malformed pages and responses, denials and budget stops, release checks, edits as
+new revisions, idempotent import and the CLI flow. Compatibility with a real
+worker is not established by these fixtures.
 
 ## Offline Mem0 OSS memory and history exports
 
@@ -4960,16 +5301,114 @@ later file is decoded.
 | `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
 
 `limits` may only lower these ceilings. `task test:sources:hindsight` runs the
-synthetic controls. Still open in #51, and not implementable offline: an optional
-bank-specific read mode over a verified read-only API with an explicit URL and
-least-privilege token, verifying the shape against a real archive, and further
-releases. The pinned OpenAPI lists GET operations for `memories/list`, `documents`
-and `mental-models`, but whether they are free of side effects and inference cost,
-and which token scopes they need, can be shown only against a Hindsight server.
+synthetic controls. Still open in #51: verifying the archive shape against a real
+v1.1.0 export, and further releases. The optional bank-specific read mode is
+[below](#explicit-hindsight-rest-reads).
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
+
+## Explicit Hindsight REST reads
+
+`api/hindsight-rest/v1` reads one selected bank of a running Hindsight server and
+maps its memory units to the same claims, times and assertion statuses as the
+[offline archive](#offline-hindsight-bank-archives). It is opt-in: no manifest,
+no read. The manifest has the GitHub, Gitea and GitLab configuration shape, with
+an `endpoint` that equals the selection's `base_url`, a canonical HTTPS origin
+(a sub-path is allowed; a trailing slash or a `/v1` suffix is not):
+
+```json
+{"schema_version": 1, "source": {"kind": "api", "provider": "hindsight-rest", "version": "v1", "...": "..."},
+ "endpoint": "https://hindsight.example.test",
+ "selection": {"base_url": "https://hindsight.example.test", "instance": "laptop-a", "release": "1.1.0",
+               "bank_id": "team-notes", "max_memories": 1000, "schema_version": 1},
+ "limits": {"max_pages": 400, "seconds": 300}}
+```
+
+`source.project_sha256` must be `selection.project_sha256`, a digest of the
+provider, `instance`, host, path and `bank_id`, so another server or bank is another
+project. It deliberately differs from the archive's project fingerprint: the two
+sources are separate, and whether a listed `id` equals an exported `source_id` is
+unverified, so the paths do not dedup. `scope_sha256` is `selection.sha256`.
+Pass the credential with `--authorization-file PRIVATE_FILE` or
+`--authorization-env NAME`; it is the complete `Authorization` header value, for
+example `Bearer ...`, read only from that named file or variable and never by `probe`
+or `status`. `auth_mode: "none"` reads an open development server. The shared
+transport is HTTPS only.
+
+### What is requested and why it is eligible
+
+Two routes are ever requested, both `GET`, both built from fixed templates. A bank ID
+becomes a path segment only when it is one plain token (`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`).
+
+| Request | Purpose |
+| --- | --- |
+| `GET /version` | The server must report `api_version` equal to the selected `release` (`1.1.0`) before any bank is read. |
+| `GET /v1/default/banks/{bank_id}/memories/list?limit=N&offset=M&state=valid` | Live facts and observations. |
+| the same route with `state=invalidated` | The archive of facts a person curated out. |
+
+The eligibility finding is from reading the [pinned source](https://github.com/vectorize-io/hindsight/tree/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5),
+not from a live server. At that commit `list_memories` authenticates, authorizes a
+bank read, requires the bank to exist (a missing bank is a 404, never a creation)
+and runs `SELECT` statements over the live or archive table; its `q` filter is an
+`ILIKE` scan and is never sent. The reader sends no filter other than `limit`,
+`offset` and `state`. No embedding, LLM or write is on that path. This holds for the
+stock server; a deployment that adds a tenant or validator extension can run its own
+code on a read, and the extension and its token scopes are the operator's to
+audit. The reader therefore sends only the credential you name, and the claim stays
+`compatibility: unverified`.
+
+The reader never calls `retain`, `recall` (it can use inference), `reflect`, the
+asynchronous transfer, document or knowledge-base export operations (they create
+server-side state), the document, mental-model, directive, entity, graph or webhook
+reads, a per-memory `GET` or history route, or the bank listing, so no other bank is
+discovered. A selection is refused when `bank_id` is not a plain token, `release` is
+not pinned, the origin is not canonical HTTPS, or `max_memories` is outside
+1 to 10,000.
+
+### Pagination, stops and coverage
+
+Each curation state is read by offset, 100 rows per page (fewer for the last page
+under `max_memories`), until the reported `total`. The reply must be exactly
+`items`, `total`, `limit` and `offset`, and must echo the requested `limit` and
+`offset`; a row that disagrees with its listing's `state` fails the capture. A
+total that changes between pages is `pagination_incomplete: total_count_changed`, a
+repeated ID is `listing_moved`, an empty page before the total is `short_page`, and
+a total beyond `max_memories` is `max_memories_reached`. HTTP 401, 403, 404 and 429
+become the coverage states `unauthorized`, `forbidden`, `not_found` and
+`rate_limited`; a spent budget is `budget_exhausted`; there is no retry. A server
+that reports another release or an unrecognized `/version` answer is
+`unsupported_release` (`release_mismatch` or `unrecognized`) and nothing else is
+requested. A denied live listing ends the capture without claims. Other statuses,
+non-JSON replies and malformed shapes fail the capture without a snapshot. Any
+state other than `captured` makes the snapshot `checkpoint_ready: false`: the
+registry commits nothing and `ahl sources import` prints `status: "blocked"` and
+exits 3. Reads are not atomic (`reads_non_atomic`).
+
+### Claims and what the list view cannot say
+
+Rows become `extracted_fact` (`world`, `experience`), `consolidated_observation` and
+`invalidated_fact` claims, hash-only, with the archive's derivations, provenance and
+the five `false` flags that `BankClaim` enforces. Validity windows are judged at the
+capture instant, which stands in for the archive's `exported_at`, with the same
+statuses and placeholders. An observation counts only the `source_memory_ids` that
+appear in the same capture (`observation_source_unresolved` otherwise). The list view
+of the pinned server carries no creation time, only a write watermark, so `recorded_at`
+is always unknown (`recorded_at_unavailable`) rather than borrowed from another field.
+Documents, relations, mental models, knowledge pages, directives, history and
+attachments are not read (`documents_not_read`, `relations_not_read`), `proof_count` and
+any score are never used, and `native_session_correlation` stays `not_attempted`.
+The `hindsight_summary` printed by `ahl sources preview` carries `network_used: true`,
+`read_methods: ["GET"]`, the `operations` table, `coverage`, `requests` and
+`checkpoint_ready`; the profile `hindsight-rest-v1` is rejected by
+`public_export_allowed`.
+
+`task test:sources:hindsight` runs the controls against a fake HTTPS wire on
+`hindsight.example.test`: the route and method allowlist, the credential header,
+pagination and truncation, hostile pages, release, 401/403/404/429 and budget stops,
+idempotent import and the CLI flow. Live compatibility, the real token scopes a
+deployment needs and a real v1.1.0 archive remain unverified.
 
 ## Offline Cognee graph exports
 
@@ -5002,12 +5441,13 @@ commit `37f788bd287750e10d7610173e5332b3843f6ebd`. Any other `cognee_version` is
 refused. `cognee.export(dataset, format=...)` in
 [`cognee/api/v1/export/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/api/v1/export/export.py)
 checks read permission on one dataset and writes that dataset's graph. Two of
-its file shapes are accepted:
+its file shapes and one archive directory are accepted:
 
 | `format` | Upstream writer at the pin | Shape |
 | --- | --- | --- |
 | `graph_snapshot` | `format="pydantic"` with a `destination`: `GraphSnapshot.save()` in [`cognee/modules/migration/snapshot.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/snapshot.py) | `dataset_name`, `dataset_id`, `nodes`, and `edges` of `source_id`/`target_id`/`relationship`/`properties` |
 | `nodes_edges` | `format="json"`: `write_json` in [`cognee/modules/migration/formats.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/formats.py) | `nodes`, and `edges` of `source`/`target`/`relationship_name` with properties flattened beside them |
+| `cogx_archive` | `format="cogx"`: `_write_cogx` in [`cognee/modules/migration/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/export.py) and `COGXArchiveWriter` in [`cognee/modules/migration/cogx.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/cogx.py) | a directory of `manifest.json` and the JSONL files `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` (see [COGX archives](#cogx-archives)) |
 
 Node types come from the `DataPoint` subclasses at the pin:
 [`DataPoint`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/infrastructure/engine/models/DataPoint.py),
@@ -5016,8 +5456,8 @@ and its subclasses,
 [`DocumentChunk`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/chunking/models/DocumentChunk.py)
 (`document_id` and the `is_part_of` and `contains` fields), and
 [`Entity`/`EntityType`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/engine/models/Entity.py)
-(`is_a`). The `cogx`, `graphml` and `cypher` formats, an in-memory
-`GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
+(`is_a`). The `graphml` and `cypher` formats, a packed `.cogx.tar.gz` file, an
+in-memory `GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
 selection whose file has no `dataset_id` key is refused, and so is a
 `nodes_edges` selection whose file has one. The shape is read from code, not
 from a published schema, and no real export has been read: the profile reports
@@ -5138,6 +5578,43 @@ references, conflicting chunk documents, edge and version revisions, refused
 releases and formats, bounds, capture changes, and CLI output and cache with no
 body, ID, name or path while Cognee is unimportable.
 
+### COGX archives
+
+`format: "cogx_archive"` reads the directory `cognee.export(dataset, format="cogx",
+destination=...)` writes, selected by `export` as a directory path relative to the
+manifest. Only the files the pinned writer emits are opened: `manifest.json`, then
+whichever of `documents.jsonl`, `entities.jsonl`, `facts.jsonl` and `nodes.jsonl` exist.
+Any other entry (another record file such as `memories.jsonl`, a stray file, a
+subdirectory) is never opened; it is counted in `archive.entries_not_read` with
+`archive_entries_not_read`. A directory of more than 64 entries, a symlinked
+directory or file, and a packed `.cogx.tar.gz` (a file, not a directory) are refused.
+Unpacking is the user's own step, so no archive extraction happens here.
+
+| Archive part | Behaviour |
+| --- | --- |
+| `permissions.json` | Present under any letter case or as a symlink: the whole archive is refused before any file is opened. `export(include_permissions=True)` writes owner and grant accounts with emails and password hashes into it, so a directory holding it is a secret and is never imported. |
+| `manifest.json` | `cogx_version` must be `0.1` and `source_system` `cognee`; another release, producer, a non-object or a malformed `counts` is refused. An archive written by a failed export has no manifest and is refused. `migration_revision` (the source store's data-migration revision) is kept only as `archive.migration_revision_sha256`, or `null` when absent. A key the writer does not emit is `unknown_manifest_fields`. |
+| `nodes.jsonl` | Each line is one node's own property dict (`id`, `type`, ...): every node the writer has no typed record for, and each chunk beside its typed copy. Mapped exactly as a graph export's node. |
+| `entities.jsonl` | A named `Entity` the writer wrote as a typed record instead of a raw node; `external_id` is its node ID. Its `created_at` and `updated_at` are ISO instants and are read as native timestamps. |
+| `documents.jsonl` | The text copy of a `DocumentChunk`. A chunk that also has a raw node is that one claim; one without it becomes a chunk claim with no `document_id`, so its origin is `missing`, never guessed. |
+| `facts.jsonl` | One edge each, from `subject_ref` through `predicate` to `object_ref`; the other fields (`fact_text`, `valid_at`, `invalid_at`) are fingerprinted as the edge body. Edge and origin rules are the graph export's. |
+
+Every record file's lines must be objects, typed records must carry their own `kind`
+and `external_system: "cognee"`, and a duplicate key, `NaN`, non-UTF-8 byte or truncated
+line refuses the archive. Counts in the manifest are compared with the records read:
+a difference, or a count for a record kind that was not read, is
+`manifest_counts_mismatch`; the archive is still read so the gap is visible, never
+silently complete. The archive carries no dataset ID (the dataset name appears only
+in a free-text note, which is not read as an identity), so lineage is
+`caller_declared` with the selection's `dataset_id`, or `unknown` without one,
+`cross_source_joins` is `disabled` and `dataset_lineage_unverified` is set; a claim
+is still namespaced by instance, `dataset` label and declared `dataset_id`, so two
+datasets' archives share no claim. `export_sha256` covers the manifest and each record
+file read, in the fixed order above. The limits are the graph export's: `max_export_bytes`
+counts all files together, and `max_rows` counts record lines plus the export record,
+checked before mapping. The shape is read from code and no real archive has been
+read: `compatibility: unverified`, `upstream_shape: source_inferred`.
+
 ### Saved recall results
 
 `format: "recall_results"` reads a JSON list the user saved from their own
@@ -5160,7 +5637,8 @@ refused.
 | Evidence type | `derivation` separates a `session_qa_entry`, `agent_trace_step`, `distilled_lesson`, `retrieved_item` (chunk, summary, code, rule, skill kinds), `generated_answer` (completion kinds), `tool_result` and `system_marker`; an unrecognized kind is `unclassified`. |
 | Score | The number is kept with `score_semantics`: `unspecified` (retriever-defined) or `vector_distance_lower_is_better` for skills. It is relevance, never correctness. |
 | Origin | A session entry's `used_graph_element_ids.node_ids` become node hashes equal to the claims of a graph export of the same instance, dataset and dataset ID; an entry without any is `session_entry_without_graph_refs`. Edge IDs cannot be joined and are not kept. |
-| Retrieval provenance | A `graph` or `code` entry's `metadata.data_id` (the ingested Data, which is the Document node) and `metadata.chunk_id` become node hashes under the same rule. A `code` entry whose `raw.type` is one of the 14 code-graph node types at the pin (`CodeSymbol`, `CodeModule`, `ApiEndpoint` and the rest, from `code_retriever.py`) also hashes `raw.id` as its code-symbol reference and keeps that type as `code_node_type`; its name, file and line stay only in the body fingerprint. `graph_refs_status` is `named` or `none`; a retrieved item with none is `result_without_provenance_refs`, and a code fact with an unpinned type is `code_fact_type_unrecognized`. A non-string or empty ID, or non-object `metadata` or `raw`, refuses the file. `metadata.evidence` is not read, because its artifact IDs are untyped at the pin. A link is a candidate join to a graph export claim, never proof that the claim is correct. |
+| Retrieval provenance | A `graph` or `code` entry's `metadata.data_id` (the ingested Data, which is the Document node) and `metadata.chunk_id` become node hashes under the same rule. A `code` entry whose `raw.type` is one of the 14 code-graph node types at the pin (`CodeSymbol`, `CodeModule`, `ApiEndpoint` and the rest, from `code_retriever.py`) also hashes `raw.id` as its code-symbol reference and keeps that type as `code_node_type`; its name, file and line stay only in the body fingerprint. `graph_refs_status` is `named` or `none`; a retrieved item with none is `result_without_provenance_refs`, and a code fact with an unpinned type is `code_fact_type_unrecognized`. A non-string or empty ID, or non-object `metadata` or `raw`, refuses the file. A link is a candidate join to a graph export claim, never proof that the claim is correct. |
+| Evidence references | `metadata.evidence` is read by each reference's `kind` (`EvidenceReference` and `retrieval/utils/evidence.py` at the pin). A `segment` hashes its `artifact_id`, which is the chunk, and its `data_id`; a `graph_node` hashes its `artifact_id`; a `graph_edge` hashes only `source_node_id` and `target_node_id`, because its own `artifact_id` is a generated edge ID that no export carries. All are added to the result's graph references. A reference with `role: supports_assertion` (a chunk the edge-evidence sidecar ties to an edge) is also listed in `supporting_node_refs`, apart from `used_as_context`, which says only that the node was in the completion context. `triplet` (declared but built nowhere at the pin), any other `kind` and any other `role` are skipped and counted as `evidence_reference_unrecognized`; the reference's rank, score, label, document name and `source_ref_key` stay in the body fingerprint only. A non-list `evidence`, a non-object reference, a missing, empty or non-string ID, a segment whose `chunk_id` differs from its `artifact_id`, or a `dataset_id` other than the declared one refuses the file, and more references (or fields in one) than `max_fields` is a bound failure. |
 
 Every claim keeps `independent_case`, `factually_verified` and
 `task_outcome_verified` false, so a generated answer is never a graded harness
@@ -5169,8 +5647,8 @@ Bodies, questions, answers and text are fingerprinted only. `max_rows`,
 `max_fields` and the JSON screens bound the file before mapping; a saved list is
 always `partial` because top-k truncation cannot be seen.
 
-Still open in #52: verifying either shape against a real export or result list;
-`cogx` archives; evidence-reference mapping; an opt-in, explicitly authorized
+Still open in #52: verifying any shape, including COGX archives and evidence
+references, against a real export or result list; an opt-in, explicitly authorized
 live `recall` connector with verified read-only API semantics and bounded
 cancellation of result streams; further releases and backends.
 

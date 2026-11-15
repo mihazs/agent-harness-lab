@@ -2,45 +2,19 @@
 
 Every cell builds a synthetic project and recorded sessions under tmp_path with pinned dates and a counting fake runtime.
 """
+import io
 import json
 from contextlib import redirect_stderr, redirect_stdout
-import io
 
 import pytest
 
 from agent_harness_lab import cli
-from tests.support.first_use_history import Home
+from tests.support.first_use_history import Home, assert_candidate_or_typed_reason, improve
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     return Home(tmp_path, monkeypatch)
-
-
-def improve(home, *extra):
-    out, err = io.StringIO(), io.StringIO()
-    with redirect_stdout(out), redirect_stderr(err):
-        code = cli.main(['improve', str(home.project), '--history', '--agent', 'codex', '--codex', str(home.runtime),
-                         '--timeout', '30', *extra])
-    return code, json.loads(out.getvalue()), err.getvalue()
-
-
-def candidates(receipt):
-    return len(receipt.get('candidates') or []) + int('plan' in receipt)
-
-
-def assert_candidate_or_typed_reason(receipt):
-    """The first-use rule: an evidenced candidate, or a typed reason with a remediation that explains the findings per cause."""
-    if candidates(receipt):
-        assert all(row.get('evidence') for row in receipt.get('candidates', []))
-        return
-    assert isinstance(receipt.get('reason'), str) and receipt['reason'], receipt
-    assert receipt.get('remediation'), receipt
-    findings = receipt['analysis']['findings'] if 'analysis' in receipt else 0
-    if findings:
-        explained = receipt['findings_not_candidates']
-        assert explained['reason'] == 'findings_not_actionable' and explained['findings'] == findings
-        assert explained['causes'] and all(type(count) is int and 0 < count <= findings for count in explained['causes'].values())
 
 
 def test_recurring_failures_without_outcomes_end_typed_and_spend_nothing(home):

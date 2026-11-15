@@ -11,6 +11,8 @@ import pytest
 from agent_harness_lab.evaluation.trial_surfaces import stage_harness
 from agent_harness_lab.one_call import check_scope
 from agent_harness_lab.sources import instruction_validation as iv
+from agent_harness_lab.sources.schema import digest as schema_digest
+from agent_harness_lab.telemetry import claude_native
 
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src')
 CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src', fallback_filenames=[])
@@ -547,3 +549,128 @@ def test_a_blocked_validation_cannot_be_reviewed(ws):
     document = ws.validate()
     assert document['status'] == 'blocked'
     with pytest.raises(ValueError): iv.review(document)
+
+
+NEW_SRC = FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n'
+
+
+def capture(ws, name, attachments):
+    """Pinned Claude events of a synthetic session that attached each (project-relative path, text); no real session.
+    The reader refuses a transcript with no scoped record, so an empty capture is an empty event list."""
+    if not attachments: return []
+    rows = [dict(uuid=f'a{index}', parentUuid=None, timestamp='2026-01-01T00:00:00Z', sessionId='synthetic-session',
+                 cwd=str(ws.project), version='2.1.316', isSidechain=False, type='attachment',
+                 attachment=dict(type='nested_memory', path=str(ws.project / path),
+                                 content=dict(path=str(ws.project / path), type='Project', content=text)))
+            for index, (path, text) in enumerate(attachments)]
+    transcript = ws.root / f'session-{name}.jsonl'
+    transcript.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+    return claude_native.read(transcript, ws.project)[0]
+
+
+@pytest.fixture
+def updated(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', NEW_SRC)
+    return ws.validate()
+
+
+def observed(evidence, version, path='src/CLAUDE.md'):
+    return next(row[version] for row in evidence['operations'] if row['path'] == path)
+
+
+def test_an_exact_attachment_in_each_versions_capture_marks_only_that_version_observed(ws, updated):
+    baseline = capture(ws, 'baseline', [('src/CLAUDE.md', FILES['src/CLAUDE.md'])])
+    candidate = capture(ws, 'candidate', [('src/CLAUDE.md', NEW_SRC)])
+    evidence = iv.loading_evidence(updated, baseline, candidate)
+    assert observed(evidence, 'baseline') == dict(observed_loading='observed_pattern', exact_attachments=1, path_only_attachments=0)
+    assert observed(evidence, 'candidate') == dict(observed_loading='observed_pattern', exact_attachments=1, path_only_attachments=0)
+    assert (evidence['loading_evidence'], evidence['capture_version']) == ('observed_pattern', claude_native.VERSION)
+    assert (evidence['effective'], evidence['outcome'], evidence['independence']) == ('unknown',) * 3
+    assert evidence['sha256'] == iv.loading_evidence(updated, baseline, candidate)['sha256']
+    only_candidate = iv.loading_evidence(updated, None, candidate)
+    assert (observed(only_candidate, 'baseline')['observed_loading'], only_candidate['captures']['baseline']['status']) == (
+        'unknown', 'no_capture')
+    assert observed(only_candidate, 'candidate')['observed_loading'] == 'observed_pattern'
+
+
+@pytest.mark.parametrize('events', [
+    pytest.param(None, id='no-capture'),
+    pytest.param([], id='empty-capture'),
+    pytest.param([('docs/CLAUDE.md', 'Synthetic unrelated docs guidance.\n')], id='only-an-unrelated-path'),
+    pytest.param([('src/CLAUDE.md', FILES['src/CLAUDE.md'])], id='the-other-versions-text'),
+    pytest.param([('src/CLAUDE.md', 'Text the runtime changed before attaching it.\n')], id='path-only-match'),
+])
+def test_anything_short_of_an_exact_attachment_stays_unknown_never_not_loaded(ws, updated, events):
+    capture_events = None if events is None else capture(ws, 'candidate', events)
+    evidence = iv.loading_evidence(updated, None, capture_events)
+    row = observed(evidence, 'candidate')
+    assert row['observed_loading'] == 'unknown' and row['exact_attachments'] == 0
+    assert row['path_only_attachments'] == sum(path == 'src/CLAUDE.md' for path, _ in events or ())
+    assert evidence['loading_evidence'] == 'none'
+    assert set(row) == {'observed_loading', 'exact_attachments', 'path_only_attachments'}
+
+
+def test_a_version_that_lacks_the_file_never_counts_an_attachment_of_it_as_exact(ws):
+    (ws.candidate / '.claude/rules/ts.md').unlink()
+    document = ws.validate()
+    text = FILES['.claude/rules/ts.md']
+    evidence = iv.loading_evidence(document, capture(ws, 'baseline', [('.claude/rules/ts.md', text)]),
+                                   capture(ws, 'candidate', [('.claude/rules/ts.md', text)]))
+    assert observed(evidence, 'baseline', '.claude/rules/ts.md')['observed_loading'] == 'observed_pattern'
+    assert observed(evidence, 'candidate', '.claude/rules/ts.md') == dict(
+        observed_loading='unknown', exact_attachments=0, path_only_attachments=1)
+
+
+def test_one_capture_read_twice_counts_once_and_contested_copies_count_nowhere(ws, updated):
+    events = capture(ws, 'candidate', [('src/CLAUDE.md', NEW_SRC)])
+    twice = iv.loading_evidence(updated, None, events + events)
+    assert observed(twice, 'candidate')['exact_attachments'] == 1
+    assert (twice['captures']['candidate']['duplicate_events'], twice['captures']['candidate']['conflicting_events']) == (1, 0)
+    forged = dict(events[0], loading_content_sha256=schema_digest('SYNTHETIC_OTHER'))
+    for order in ([events[0], forged], [forged, events[0]]):
+        contested = iv.loading_evidence(updated, None, order)
+        assert observed(contested, 'candidate') == dict(observed_loading='unknown', exact_attachments=0, path_only_attachments=0)
+        assert contested['captures']['candidate']['conflicting_events'] == 1 and contested['loading_evidence'] == 'none'
+
+
+def test_a_codex_validation_gets_no_loading_evidence_from_a_capture(ws):
+    for root in (ws.project, ws.baseline, ws.candidate): ws.write(root, 'src/AGENTS.md', 'Synthetic codex guidance.\n')
+    ws.write(ws.candidate, 'src/AGENTS.md', 'Synthetic codex guidance.\nCheck the synthetic build.\n')
+    document = ws.validate(ws.plan(CODEX, required=[]))
+    assert document['status'] == 'valid' and document['runtime'] == 'codex'
+    evidence = iv.loading_evidence(document, capture(ws, 'baseline', [('src/AGENTS.md', 'Synthetic codex guidance.\n')]), [])
+    assert [capture_['status'] for capture_ in evidence['captures'].values()] == ['no_native_loading_signal'] * 2
+    assert observed(evidence, 'baseline', 'src/AGENTS.md')['observed_loading'] == 'unknown'
+    assert (evidence['loading_evidence'], evidence['capture_version']) == ('none', None)
+
+
+def test_a_blocked_validation_cannot_carry_loading_evidence(ws):
+    ws.write(ws.candidate, 'docs/CLAUDE.md', 'Changed outside the governing scope.\n')
+    with pytest.raises(ValueError): iv.loading_evidence(ws.validate())
+
+
+def test_the_review_carries_each_operations_loading_and_still_claims_no_closure_loading(ws, updated):
+    candidate = capture(ws, 'candidate', [('src/CLAUDE.md', NEW_SRC)])
+    evidence = iv.loading_evidence(updated, None, candidate)
+    review = iv.review(updated, loading=evidence)
+    assert review['operations'][0]['loading'] == dict(baseline=observed(evidence, 'baseline'), candidate=observed(evidence, 'candidate'))
+    assert (review['loading_evidence'], review['loading_sha256']) == ('observed_pattern', evidence['sha256'])
+    assert (review['observed_loading'], review['effective'], review['applied']) == ('unknown', 'unknown', [])
+    assert 'Synthetic build' not in json.dumps(review) and review['sha256'] != iv.review(updated)['sha256']
+    bare = iv.review(updated)
+    assert (bare['operations'][0]['loading'], bare['loading_evidence'], bare['loading_sha256']) == (None, None, None)
+
+
+@pytest.mark.parametrize('forge', [
+    pytest.param(lambda evidence, changed: (changed, evidence), id='another-validation'),
+    pytest.param(lambda evidence, changed: (None, dict(evidence, operations=[dict(evidence['operations'][0], path='src/other.md')])),
+                 id='edited-operations'),
+    pytest.param(lambda evidence, changed: (None, dict(evidence, sha256='0' * 64)), id='wrong-hash'),
+    pytest.param(lambda evidence, changed: (None, {}), id='empty-record'),
+    pytest.param(lambda evidence, changed: (None, 'record'), id='not-a-record'),
+])
+def test_the_review_refuses_loading_evidence_of_another_validation_or_a_tampered_record(ws, updated, forge):
+    evidence = iv.loading_evidence(updated, None, capture(ws, 'candidate', [('src/CLAUDE.md', NEW_SRC)]))
+    ws.write(ws.candidate, 'src/CLAUDE.md', NEW_SRC + 'Another synthetic line.\n')
+    document, record = forge(evidence, ws.validate())
+    with pytest.raises(ValueError, match='does not describe'): iv.review(document or updated, loading=record)

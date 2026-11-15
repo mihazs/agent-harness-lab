@@ -7,6 +7,7 @@ from agent_harness_lab.diagnostics import cascade
 
 SEVERE, OTHER = 'tool_misuse', 'instruction_drift'
 _MISSING = object()
+HUGE = 10**400  # an integer too large for a float: math.isfinite raises OverflowError on it
 
 
 def policy(**changes):
@@ -105,7 +106,8 @@ def test_unmeasured_resources_stay_unknown_not_zero():
 
 @pytest.mark.parametrize('bad', [
     dict(split='train'), dict(root_case_id=''), dict(first='invented'), dict(first=_MISSING), dict(second='invented'),
-    dict(label=['x']), dict(first_cost=-1), dict(first_cost=float('nan')), dict(first_cost=True)])
+    dict(label=['x']), dict(first_cost=-1), dict(first_cost=float('nan')), dict(first_cost=True),
+    dict(first_cost=HUGE), dict(second=OTHER, second_latency_seconds=HUGE)])
 def test_invalid_rows_are_refused(bad):
     value = {**row('a', OTHER, SEVERE), **bad}
     if bad.get('first') is _MISSING:
@@ -123,7 +125,8 @@ def test_duplicate_roots_and_empty_input_are_refused():
 
 @pytest.mark.parametrize('bad', [
     dict(min_net_errors_removed=0), dict(max_introduced_errors=-1), dict(max_total_cost=-1), dict(classes=[SEVERE]),
-    dict(severe_classes=['other']), dict(profile='x'), dict(schema_version=True), dict(max_review_roots=1.5)])
+    dict(severe_classes=['other']), dict(profile='x'), dict(schema_version=True), dict(max_review_roots=1.5),
+    dict(max_total_cost=HUGE)])
 def test_policy_must_be_explicit_and_valid(bad):
     with pytest.raises(ValueError):
         cascade.evaluate(policy(**bad), [row('a', OTHER, OTHER)])

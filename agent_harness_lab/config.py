@@ -10,11 +10,12 @@ import uuid
 import stat
 from .evaluation.areas import parse_registry
 from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
+from .loop.spec import parse_declaration
 from . import surfaces
 
 RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
 RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit')
-INVOCATION_OPTIONS=('agent','codex','claude','timeout',*RESPONSE_OPTIONS,'sandbox_graders')
+INVOCATION_OPTIONS=('agent','codex','claude','timeout','construction_fraction',*RESPONSE_OPTIONS,'sandbox_graders')
 PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 MAX_PLUGIN_CHECKOUTS = 32
 DEFAULT_TRIALS = 20
@@ -53,10 +54,11 @@ def validate(value):
     if isinstance(value, dict) and {'scope', 'global', 'global_root', 'harness_scope'} & set(value):
         raise ValueError('a project configuration cannot select a harness scope; only the --scope option on the command line can include the user-level harness')
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) - {'plugin_checkouts', 'areas'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) - {'plugin_checkouts', 'areas', 'loop'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
     if 'plugin_checkouts' in value: plugin_checkouts(value['plugin_checkouts'])
-    if 'areas' in value: parse_registry(value['areas'])
+    areas = parse_registry(value['areas']) if 'areas' in value else ()
+    if 'loop' in value: parse_declaration(value['loop'], 'project', areas)  # a declared bar, never an authority
     if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
         raise ValueError('invalid profile or recommendation policy')
     runtime = value['runtime']
@@ -99,10 +101,14 @@ def validate(value):
     if any(surfaces.classify(path).writability == 'private_excluded' for path in paths):
         raise ValueError('unsafe configured path')
     limits = value['limits']
-    if not isinstance(limits, dict) or set(limits) != {'seconds', 'trials'}:
+    if not isinstance(limits, dict) or not {'seconds', 'trials'} <= set(limits) <= {'seconds', 'trials', 'construction_fraction'}:
         raise ValueError('invalid configured resource caps')
     if type(limits['seconds']) not in (int, float) or not math.isfinite(limits['seconds']) or limits['seconds'] <= 0 or type(limits['trials']) is not int or limits['trials'] <= 0:
         raise ValueError('invalid configured resource caps')
+    # The construction share of the whole budget (#739): a finite number strictly between 0 and 1, as --construction-fraction takes.
+    if 'construction_fraction' in limits and (type(limits['construction_fraction']) not in (int, float)
+            or not 0 < limits['construction_fraction'] < 1):
+        raise ValueError('invalid configured construction fraction')
     return value
 
 
@@ -135,6 +141,7 @@ def execution_options(project,settings,requested,explicit):
     """Pure selection: configuration supplies defaults, never execution authority."""
     result=dict(requested);runtime=settings['runtime'] if settings else None
     if result.get('timeout') is None:result['timeout']=settings['limits']['seconds'] if settings else 2700
+    if result.get('construction_fraction') is None and settings:result['construction_fraction']=settings['limits'].get('construction_fraction')
     if result.get('agent','auto')=='auto' and runtime and '--agent' not in explicit:result['agent']=runtime['name']
     if runtime and runtime['name'] in ('codex','claude') and '--'+runtime['name'] not in explicit:
         result[runtime['name']]=runtime['executable']

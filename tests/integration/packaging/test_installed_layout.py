@@ -2,11 +2,13 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
 from agent_harness_lab.cli import version
 import agent_harness_lab
+from tests.unit.evaluation.test_compare_viewer import GOLDEN, fixture
 
 
 def test_application_is_loaded_from_the_selected_layout():
@@ -109,3 +111,14 @@ def test_review_and_apply_of_a_saved_plan_reach_the_same_target_bytes_in_every_l
     assert run('apply', first['output'], *authorize, code=3)['status'] == 'stale' and skill.read_bytes() == valid
     run('rollback', applied['receipt']['deployment'], '--project', project)
     assert skill.read_bytes() == b'\xef\xbb\xbf' + valid
+
+
+def test_compare_viewer_writes_the_golden_report_from_the_selected_layout(tmp_path):
+    source, output = tmp_path / 'experiment.json', tmp_path / 'review'
+    source.write_text(json.dumps(fixture()))
+    result = invoke('compare', '--experiment', str(source), '--output', str(output))
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in output.iterdir()) == ['report.html', 'report.json']
+    assert (output / 'report.html').read_text() == GOLDEN.read_text()
+    assert not re.search(r'https?://|<script|<link', (output / 'report.html').read_text())
+    assert invoke('compare', '--experiment', str(source), '--output', str(output)).returncode == 2

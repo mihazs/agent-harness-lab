@@ -479,3 +479,117 @@ def test_validation_labels_change_the_report_but_never_the_frozen_policy_artifac
     tuning = _v6_policy(threshold_tuning_roots_sha256=[sha('tuning-root')])
     with pytest.raises(ValueError, match='threshold_tuning_roots_sha256'):
         triage.evaluate(tuning, _v6_rows([row('tuning-root', NONE, NONE)]), report_version=6)
+
+
+FITTED = sha('synthetic-calibrator')
+
+
+def _v7_policy(per_class=None, **changes):
+    """A v7 policy whose declared calibration roots are split by class; the total is always the sum of the lists."""
+    lists = {name: [sha(f'{name}-c{i}') for i in range(count)] for name, count in {SEVERE: 2, NORMAL: 2, NONE: 2, **(per_class or {})}.items()}
+    scope = dict(min_calibration_roots_per_class=2, calibration_class_roots_sha256=lists,
+                 calibration_roots_sha256=[h for hashes in lists.values() for h in hashes])
+    return _v6_policy(**{**scope, **changes})
+
+
+def _v7_report(rows=None, **kwargs):
+    return triage.evaluate(_v7_policy(**kwargs), _v6_rows(rows or [row('a', NONE, NONE)]), report_version=7)
+
+
+def test_v7_rejects_a_declared_calibrator_when_the_rare_class_has_too_few_declared_calibration_roots():
+    tiny = _v7_report(per_class={SEVERE: 1}, calibrator_sha256=FITTED)
+    assert tiny['status'] == 'rejected'
+    assert f'class:{SEVERE}:calibration_roots_below_minimum' in tiny['reasons']
+    # The pooled count (5 >= 3) is enough, so only the per-class check can catch this.
+    assert 'calibration_roots_below_minimum' not in tiny['reasons']
+    assert tiny['calibration_class_roots'] == dict(minimum=2, counts={NONE: 2, NORMAL: 2, SEVERE: 1})
+
+
+@pytest.mark.parametrize('count, rejected', [(0, True), (1, True), (2, False), (3, False)], ids=['none', 'below', 'exactly-minimum', 'above'])
+def test_v7_class_calibration_minimum_is_inclusive(count, rejected):
+    reasons = _v7_report(per_class={NORMAL: count}, calibrator_sha256=FITTED)['reasons']
+    assert (f'class:{NORMAL}:calibration_roots_below_minimum' in reasons) is rejected
+    assert not any(f'class:{name}:calibration_roots_below_minimum' in reasons for name in (SEVERE, NONE))
+
+
+def test_v7_names_every_class_below_the_minimum():
+    reasons = _v7_report(per_class={SEVERE: 0, NORMAL: 1}, calibrator_sha256=FITTED)['reasons']
+    assert [r for r in reasons if r.endswith('calibration_roots_below_minimum')] == [
+        f'class:{NORMAL}:calibration_roots_below_minimum', f'class:{SEVERE}:calibration_roots_below_minimum']
+
+
+def test_v7_still_applies_the_pooled_calibration_minimum():
+    report = _v7_report(calibrator_sha256=FITTED, min_calibration_roots=7)
+    assert report['status'] == 'rejected' and 'calibration_roots_below_minimum' in report['reasons']
+
+
+@pytest.mark.parametrize('calibrator, minimum', [(None, 2), (FITTED, 0)], ids=['no-calibrator', 'no-preregistered-minimum'])
+def test_v7_per_class_check_needs_a_declared_calibrator_and_a_preregistered_minimum(calibrator, minimum):
+    reasons = _v7_report(per_class={SEVERE: 0}, calibrator_sha256=calibrator, min_calibration_roots_per_class=minimum)['reasons']
+    assert not any(r.endswith(':calibration_roots_below_minimum') for r in reasons)
+
+
+def test_v7_keeps_v6_decisions_diagnostics_and_authority_unchanged():
+    rows = _v6_rows([row('a', NONE, NONE), row('b', SEVERE, NONE), row('c', None, None)])
+    v6_policy = {k: v for k, v in _v7_policy(calibrator_sha256=FITTED).items() if k not in triage.CLASS_CALIBRATION_FIELDS}
+    v6 = triage.evaluate(v6_policy, rows, report_version=6)
+    v7 = triage.evaluate(_v7_policy(calibrator_sha256=FITTED), rows, report_version=7)
+    assert v7['profile'] == 'diagnostic-triage-evaluation-v7'
+    ignored = ('profile', 'schema_version', 'policy_sha256', 'calibration_class_roots')
+    assert {k: v for k, v in v7.items() if k not in ignored} == {k: v for k, v in v6.items() if k not in ignored}
+    assert v7['certification'] == 'not_issued' and v7['status'] == 'rejected'
+    assert not v7['automatic_promotion'] and not v7['publication_allowed'] and not public_export_allowed([v7])
+    assert v7['root_independence'] == 'unverified' and v7['label_authority'] == 'unverified'
+
+
+def test_class_calibration_fields_belong_to_v7_only():
+    rows = _v6_rows([row('a', NONE, NONE)])
+    with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+        triage.evaluate(_v6_policy(), rows, report_version=7)
+    for version in (2, 3, 4, 5, 6):
+        with pytest.raises(ValueError, match='invalid triage policy v2 schema'):
+            triage.evaluate(_v7_policy(), rows, report_version=version)
+
+
+def _malformed_class_calibration():
+    shared, other = sha('shared-root'), sha('other-root')
+    lists = lambda **over: {SEVERE: [sha('s')], NORMAL: [sha('n')], NONE: [sha('x')], **over}
+    return {
+        'missing-class': dict(calibration_class_roots_sha256={SEVERE: [sha('s')], NORMAL: [sha('n')]}),
+        'undeclared-class': dict(calibration_class_roots_sha256=lists(extra=[sha('e')])),
+        'not-a-mapping': dict(calibration_class_roots_sha256=[sha('s')]),
+        'not-a-list': dict(calibration_class_roots_sha256=lists(**{SEVERE: sha('s')})),
+        'malformed-hash': dict(calibration_class_roots_sha256=lists(**{SEVERE: ['not-a-hash']})),
+        'duplicate-in-class': dict(calibration_class_roots_sha256=lists(**{SEVERE: [sha('s'), sha('s')]})),
+        'root-in-two-classes': dict(calibration_class_roots_sha256=lists(**{SEVERE: [shared], NORMAL: [shared]}),
+                                    calibration_roots_sha256=[shared, sha('x')]),
+        'outside-declared-calibration-roots': dict(calibration_class_roots_sha256=lists(**{SEVERE: [other]}),
+                                                   calibration_roots_sha256=[sha('n'), sha('x')]),
+        'negative-minimum': dict(min_calibration_roots_per_class=-1),
+        'boolean-minimum': dict(min_calibration_roots_per_class=True),
+        'fractional-minimum': dict(min_calibration_roots_per_class=1.5),
+        'null-minimum': dict(min_calibration_roots_per_class=None),
+    }
+
+
+@pytest.mark.parametrize('changes', _malformed_class_calibration().values(), ids=_malformed_class_calibration().keys())
+def test_v7_refuses_malformed_class_calibration_declarations(changes):
+    base = dict(calibration_class_roots_sha256={SEVERE: [sha('s')], NORMAL: [sha('n')], NONE: [sha('x')]},
+                calibration_roots_sha256=[sha('s'), sha('n'), sha('x')])
+    with pytest.raises(ValueError, match='class calibration'):
+        triage.evaluate(_v6_policy(**{'min_calibration_roots_per_class': 1, **base, **changes}), _v6_rows([row('a', NONE, NONE)]), report_version=7)
+
+
+def test_v7_validation_labels_never_change_the_class_calibration_declaration():
+    frozen = _v7_policy(calibrator_sha256=FITTED)
+    before = deepcopy(frozen)
+    agreeing = _v6_rows([row('a', NONE, NONE), row('b', SEVERE, SEVERE)])
+    relabeled = _v6_rows([row('a', SEVERE, NONE), row('b', NONE, SEVERE)])
+    first = triage.evaluate(frozen, agreeing, report_version=7)
+    second = triage.evaluate(frozen, relabeled, report_version=7)
+    assert frozen == before and first['classes'] != second['classes']
+    for key in ('policy_sha256', 'calibrator_sha256', 'calibration_class_roots', 'decisions', 'decision_threshold_source'):
+        assert first[key] == second[key]
+    # A root declared as class calibration data cannot be a validation root.
+    with pytest.raises(ValueError, match='calibration_roots_sha256'):
+        triage.evaluate(frozen, _v6_rows([row(f'{SEVERE}-c0', NONE, NONE)]), report_version=7)
