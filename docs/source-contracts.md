@@ -2838,9 +2838,36 @@ refresh an earlier replay. The real clock is never consulted; the query instant 
 Adding the field changes `inputs_sha256` for the same facets and `TemporalFacet.parse` expects the
 `stale_after` key; no facet is stored by the library yet.
 
+#### Declared scope
+
+A facet may declare `scopes`: up to 32 distinct SHA-256 fingerprints of the contexts
+(a version, a project, a deployment) its statement is declared to apply to. Scope names
+are never stored, so a report carries fingerprints only. `resolve(facets, at, scope=...)`
+and `resolve_store(..., scope=...)` take one scope fingerprint and decide
+applicability per record before any supersession takes effect:
+
+| Record declares | Query scope | Result |
+| --- | --- | --- |
+| the scope among its `scopes` | the scope | Resolved as usual |
+| other scopes only | the scope | Left out of `records` and counts, listed under `out_of_scope`; its supersession declarations, in either direction, do not apply |
+| no scopes | the scope | `unknown` with `scope_undeclared`; an undeclared scope is never read as "applies everywhere" |
+| scopes | none | `unknown` with `scope_not_requested`; a scoped statement is not read without saying which scope is asked about |
+| no scopes | none | Resolved as before |
+
+So a rule declared for versions A and B and superseded by a correction declared for B
+only is `in_force` for A (the correction is out of scope) and `superseded` for B. A
+predecessor whose declared successor has an undeclared scope is `unknown` with
+`successor_status_unknown`. A later revision of one record that leaves the requested scope
+makes the earlier revision `unknown` with `revision_scope_changed` rather than
+leaving it in force. Scope never overrides knowledge time: a scoped correction first
+recorded after the instant stays under `not_known_at_instant` in a historical replay.
+Results carry `scope_requested`, and the query scope is part of `inputs_sha256`. A
+declared scope is an author claim: it does not establish that the statement is true
+for that scope or that the scopes are the same project.
+
 Still open in #47: the [facet mapper](#knowledge-page-temporal-facets) reads declared
 fields from bundle pages, but the resolver does not yet use claim identity
-across sources, project-scope compatibility or review provenance, link edges are not yet
+across sources or review provenance, link edges are not yet
 bound to `RecordRef`s, and facets are not stored. Contradiction detection between
 statements, a CLI and the #43/#58/#11 integrations are also still open.
 
@@ -3031,6 +3058,7 @@ with no CLI exposure and reads no file. `ref(source_sha256, page)` is the exact
 | `valid_from`, `valid_until`, `stale_after` | Text, or a YAML timestamp as ISO text; a bare date or a time without an offset stays unknown in the resolver |
 | `open_ended` | `true` declares no end; absent is `false` |
 | `supersedes`, `superseded_by` | One bundle path or a list of up to 100. A path is relative to the page, or to the bundle root with a leading `/` |
+| `scope` | One text or a list of up to 32 (each 1 to 128 single-line characters). Mapped to `scope_ref(text)` fingerprints; duplicates collapse and the text is not kept. Absent declares none, so the resolver reads the page as scope-undeclared. The page's own `project` and `workspace` are not read as a scope |
 
 Knowledge time (`recorded_at`) is never read from a page, not even `generated.at`: the
 caller passes one instant for every page or a `{path: instant}` mapping, normally the

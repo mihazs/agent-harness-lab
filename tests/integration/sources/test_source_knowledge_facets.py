@@ -6,7 +6,7 @@ import pytest
 
 from agent_harness_lab.sources.execution import RecordRef
 from agent_harness_lab.sources.knowledge_bundle import Manifest, read
-from agent_harness_lab.sources.knowledge_facets import facets, ref, summary
+from agent_harness_lab.sources.knowledge_facets import facets, ref, scope_ref, summary
 from agent_harness_lab.sources.okf import OKFExport
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.temporal import resolve
@@ -108,6 +108,20 @@ def test_a_page_stale_after_date_is_reported_without_changing_its_validity(bundl
     seen = {r['record']['native_id_sha256']: (r['status'], r['freshness']) for r in result['records']}
     assert seen == {digest('fresh.md'): ('in_force', 'current'), digest('old.md'): ('in_force', 'stale'),
                     digest('silent.md'): ('in_force', 'unknown'), digest('vague.md'): ('in_force', 'unknown')}
+
+
+def test_a_decision_superseded_for_one_version_stays_in_force_for_the_other(bundle):
+    fields = dict(status='accepted', valid_from='2026-01-01T00:00:00Z', open_ended=True)
+    pages = bundle({'0001.md': adr(**fields, scope=['v1', 'v2'], superseded_by='0002.md'),
+                    '0002.md': adr(**fields, scope='v2', supersedes='0001.md'),
+                    '0003.md': adr(**fields)}).pages
+    mapped = facets(pages, SOURCE, KNOWN)
+    assert mapped.findings == ()
+    v1, v2 = (resolve(mapped.facets, '2026-02-01T00:00:00Z', scope=scope_ref(name)) for name in ('v1', 'v2'))
+    assert verdict(v1, '0001.md')[0] == 'in_force' and digest('0002.md') not in statuses(v1)
+    assert verdict(v2, '0001.md')[0] == 'superseded' and verdict(v2, '0002.md')[0] == 'in_force'
+    assert verdict(v1, '0003.md') == ('unknown', ['scope_undeclared']) == verdict(v2, '0003.md')
+    assert verdict(resolve(mapped.facets, '2026-02-01T00:00:00Z'), '0001.md') == ('unknown', ['scope_not_requested'])
 
 
 def test_body_text_and_unknown_keys_do_not_change_the_facets(bundle):

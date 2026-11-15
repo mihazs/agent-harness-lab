@@ -263,6 +263,95 @@ class TestStaleAfter:
         with pytest.raises(ValueError): TemporalFacet(rec('page'), stale_after=value)
 
 
+SCOPE_A, SCOPE_B = digest('scope-a'), digest('scope-b')
+
+
+class TestDeclaredScope:
+    AT = '2026-02-01T00:00:00Z'
+
+    def seen(self, result):
+        return {n: statuses(result)[rec(n).key[1:]] for n in ('rule', 'fix') if rec(n).key[1:] in statuses(result)}
+
+    def pair(self):
+        rule = facet('rule', scopes=(SCOPE_A, SCOPE_B))
+        fix = facet('fix', scopes=(SCOPE_B,), supersedes=(rec('rule'),))
+        return [rule, fix]
+
+    def test_a_rule_superseded_for_one_scope_stays_in_force_for_the_other(self):
+        for_a = resolve(self.pair(), self.AT, scope=SCOPE_A)
+        assert self.seen(for_a) == {'rule': ('in_force', ['open_ended_by_declaration'])}
+        assert for_a['out_of_scope'] == [rec('fix').to_dict()]
+        for_b = resolve(self.pair(), self.AT, scope=SCOPE_B)
+        assert self.seen(for_b) == {'rule': ('superseded', ['superseded_by_effective_successor']),
+                                    'fix': ('in_force', ['open_ended_by_declaration'])}
+        assert for_b['out_of_scope'] == []
+
+    def test_a_record_outside_the_requested_scope_is_listed_and_never_counted(self):
+        result = resolve([facet('rule', scopes=(SCOPE_A,))], self.AT, scope=SCOPE_B)
+        assert result['records'] == [] and result['counts'] == {} and result['freshness_counts'] == {}
+        assert result['out_of_scope'] == [rec('rule').to_dict()] and result['scope_requested'] is True
+
+    @pytest.mark.parametrize('query', [pytest.param(SCOPE_A, id='scope-requested'), pytest.param(None, id='no-scope-requested')])
+    def test_a_record_that_declares_no_scope_is_unknown_for_a_scoped_query_and_unchanged_otherwise(self, query):
+        result = resolve([facet('rule')], self.AT, scope=query)
+        expected = ('unknown', ['scope_undeclared']) if query else ('in_force', ['open_ended_by_declaration'])
+        assert self.seen(result) == {'rule': expected} and result['out_of_scope'] == []
+
+    def test_a_scoped_record_is_unknown_when_no_scope_is_requested(self):
+        result = resolve(self.pair(), self.AT)
+        assert self.seen(result) == {'rule': ('unknown', ['scope_not_requested']), 'fix': ('unknown', ['scope_not_requested'])}
+        assert result['scope_requested'] is False
+
+    def test_a_successor_with_an_undeclared_scope_leaves_the_predecessor_unknown(self):
+        rule = facet('rule', scopes=(SCOPE_A,)); fix = facet('fix', supersedes=(rec('rule'),))
+        assert self.seen(resolve([rule, fix], self.AT, scope=SCOPE_A)) == {
+            'rule': ('unknown', ['successor_status_unknown']), 'fix': ('unknown', ['scope_undeclared'])}
+
+    def test_an_edit_that_changes_the_scope_leaves_the_earlier_revision_unknown(self):
+        first = facet('page', 'r1', scopes=(SCOPE_A, SCOPE_B)); second = facet('page', 'r2', scopes=(SCOPE_A,))
+        edge = [SOURCE, digest('page'), rec('page', 'r1').revision_sha256, rec('page', 'r2').revision_sha256]
+        result = resolve([first, second], self.AT, revisions=[edge], scope=SCOPE_B)
+        assert status(result, 'page', 'r1') == ('unknown', ['revision_scope_changed'])
+        assert result['out_of_scope'] == [rec('page', 'r2').to_dict()]
+        kept = resolve([first, second], self.AT, revisions=[edge], scope=SCOPE_A)
+        assert (status(kept, 'page', 'r1')[0], status(kept, 'page', 'r2')[0]) == ('superseded', 'in_force')
+
+    def test_scope_does_not_let_a_later_correction_into_a_historical_replay(self):
+        rule = facet('rule', scopes=(SCOPE_B,))
+        fix = facet('fix', recorded_at='2026-03-01T00:00:00Z', scopes=(SCOPE_B,), supersedes=(rec('rule'),))
+        replay = resolve([rule, fix], self.AT, scope=SCOPE_B)
+        assert self.seen(replay) == {'rule': ('in_force', ['open_ended_by_declaration'])}
+        assert replay['not_known_at_instant'] == [rec('fix').to_dict()] and replay['out_of_scope'] == []
+
+    def test_a_dangling_reference_from_an_out_of_scope_record_is_not_reported(self):
+        result = resolve([facet('rule', scopes=(SCOPE_A,), supersedes=(rec('gone'),))], self.AT, scope=SCOPE_B)
+        assert result['dangling'] == [] and result['out_of_scope'] == [rec('rule').to_dict()]
+
+    def test_scope_changes_the_input_fingerprint_and_the_result_is_order_independent(self):
+        facets = self.pair()
+        assert resolve(facets, self.AT, scope=SCOPE_A)['inputs_sha256'] != resolve(facets, self.AT, scope=SCOPE_B)['inputs_sha256']
+        assert resolve(facets, self.AT, scope=SCOPE_B) == resolve(facets[::-1], self.AT, scope=SCOPE_B)
+
+    def test_facet_scopes_round_trip_and_change_the_input_fingerprint(self):
+        page = facet('page', scopes=(SCOPE_A, SCOPE_B))
+        assert TemporalFacet.parse(json.loads(json.dumps(page.to_dict()))) == page
+        assert resolve([page], self.AT, scope=SCOPE_A)['inputs_sha256'] != \
+            resolve([replace(page, scopes=(SCOPE_A,))], self.AT, scope=SCOPE_A)['inputs_sha256']
+
+    @pytest.mark.parametrize('value', [
+        pytest.param(['a'], id='text-not-a-fingerprint'), pytest.param([SCOPE_A, SCOPE_A], id='duplicate'),
+        pytest.param([digest(n) for n in range(33)], id='oversized'), pytest.param([''], id='empty-text'),
+        pytest.param(SCOPE_A, id='bare-text-not-a-tuple'), pytest.param([None], id='null-entry'),
+        pytest.param([SCOPE_A.upper()], id='upper-case-digest')])
+    def test_unreadable_scopes_are_rejected_at_construction(self, value):
+        with pytest.raises(ValueError): TemporalFacet(rec('page'), scopes=tuple(value) if isinstance(value, list) else value)
+
+    @pytest.mark.parametrize('query', [pytest.param('scope-a', id='name-not-a-fingerprint'), pytest.param(3, id='number'),
+                                       pytest.param('', id='empty'), pytest.param([SCOPE_A], id='list')])
+    def test_an_unreadable_scope_query_is_rejected_not_guessed(self, query):
+        with pytest.raises(ValueError): resolve([facet('rule')], self.AT, scope=query)
+
+
 class TestStoreBinding:
     @pytest.fixture(autouse=True)
     def _store(self, tmp_path):
@@ -292,3 +381,9 @@ class TestStoreBinding:
             with pytest.raises(ValueError):
                 resolve_store(self.store, [TemporalFacet(target, valid_from='2026-01-01T00:00:00Z')], '2026-02-01T00:00:00Z')
 
+    def test_the_requested_scope_reaches_the_store_bound_resolver(self):
+        scope = digest('scope-a')
+        first = TemporalFacet(self.refs[0], '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', open_ended=True, scopes=(scope,))
+        assert resolve_store(self.store, [first], '2026-02-01T00:00:00Z', scope=scope)['records'][0]['reasons'] == ['successor_without_temporal_facet']
+        assert resolve_store(self.store, [first], '2026-02-01T00:00:00Z')['records'][0]['reasons'] == ['scope_not_requested']
+        assert resolve_store(self.store, [first], '2026-02-01T00:00:00Z', scope=digest('scope-b'))['out_of_scope']
