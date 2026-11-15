@@ -315,11 +315,11 @@ that the declared units are independent and that reviewer labels are correct.
 Labels are unauthenticated, and capture outside the frame is unknown.
 
 This first slice of #75 covers the frame, plan, receipt and fixed-window
-estimates. Later sections cover fixed and stratified budgets, corpus review
+estimates. Later sections cover fixed, stratified and cluster budgets, corpus review
 linkage and observe-only monitoring, and the logged budget and adaptive
 decisions below, the versioned summary and the requirement gate, with its monitor-step
-entry point, at the end. The issue still tracks cluster designs beyond the declared unit
-and review-queue export.
+entry point, at the end. The issue still tracks linking the cluster design to corpus
+review, monitoring and the summary, and review-queue export.
 Prediction-powered e-values remain an experimental extension for later.
 
 ## Opt-in fixed-size hard-budget design
@@ -381,6 +381,64 @@ independence between strata is needed for that union bound. Hash exchangeability
 frame origin, quota timing, reviewer identities and labels remain unverified.
 The design does not support arbitrary overlapping-route probabilities or claim
 coverage of uncaptured interactions. Existing audit designs are unchanged.
+
+## Opt-in cluster hard-budget design
+
+Reviews of units that share a lineage are not independent, so the other designs'
+assumption that declared units are independent can be false. `agent_harness_lab.diagnostics.audit_cluster`
+draws whole clusters and bounds the estimate at the cluster level. The caller declares the
+clusters in an `audit-cluster-map-v1` bound to the frame by hash:
+
+```json
+{"schema_version":1,"profile":"audit-cluster-map-v1","frame_sha256":"<freeze hash>",
+ "clusters":[{"cluster_id":"L","unit_ids":["U1","U2"]}]}
+```
+
+The map must assign every captured eligible unit to exactly one cluster. A unit in two
+clusters, a unit repeated in one, a unit that is not in the captured eligible population
+(excluded, missing, unknown capture or absent from the frame), a repeated cluster
+identifier, an empty cluster and an eligible unit with no cluster are all refused. An
+unassigned unit is never treated as a cluster of its own, because unknown lineage is not
+evidence of independence. `layout(frame, cluster_map)` returns the cluster count, the
+largest cluster size and the map hash that the plan needs.
+
+An `audit-cluster-plan-v1` carries `frame_sha256`, `cluster_map_sha256`, `seed`,
+`cluster_sample_size`, `review_budget` (in units), `policy_sha256`, `model_sha256` and
+`decision_timestamp`. AHL supplies no default. `cluster_sample_size` must lie between 1 and
+the number of clusters, and the sum of the sizes of that many largest clusters must not
+exceed `review_budget`, so no seed can select more units than the cap and no cluster is
+ever truncated or redrawn. `draw(frame, cluster_map, plan)` selects exactly that many
+clusters by 256-bit hash rank, refuses rank collisions and records every unit of each
+drawn cluster. Each cluster, and so each unit, has the exact rational inclusion
+probability `sample_size / clusters`. The design has no targeted oversampling routes.
+`review_queue(receipt, frame, cluster_map, plan)` replays the complete draw against
+caller-supplied inputs and lists unit hashes only, without cluster or alert status.
+
+`estimate(receipt, frame, cluster_map, plan, labels)` needs a reviewed label for every unit
+of every drawn cluster. A pending or nonresponding unit makes the result `inconclusive`
+with no estimates: a partly reviewed cluster is never read as a clean one. Otherwise the
+point estimates are the unbiased cluster-total estimates `(N / n) * sum(y_c) / U` of
+incident prevalence and of the missed-incident rate (clipped to [0, 1]), where `y_c` counts
+the incident units of sampled cluster `c`, `N` and `n` are the cluster counts of the
+population and the sample and `U` is the number of eligible units. Triage recall is the
+sampled alerted share of incidents. The cluster total `y_c` can reach the size of the
+largest cluster `M`, so the bounded-outcome Hoeffding inequality for sampling without
+replacement gives each rate the half-width `(N * M / U) * sqrt(ln(4 / 0.05) / (2 * n))`.
+The union bound covers both endpoints of both rates, and the recall bounds follow from those
+simultaneous intervals. With clusters of equal size `m` this is `sqrt(m)` times the width an
+independent-unit interval would claim, which is the price of not assuming the units of a
+cluster are independent. A census of every cluster has zero sampling uncertainty.
+
+Under the stated assumptions (exchangeable hash ranks of clusters, independence between
+clusters, correct complete labels) the estimates are unbiased and the intervals keep their
+nominal coverage. The tests enumerate every cluster sample of a small unequal-size
+population to check unbiasedness exactly and enumerate the hypergeometric outcomes of a
+population with whole correlated clusters to check joint coverage of the two intervals. The
+map's origin, the lineage evidence behind it, independence between clusters, rank
+exchangeability, plan timing and reviewer labels are not authenticated and the receipt names
+them as limitations. The bound is conservative, so it is wide for few clusters. Outputs are
+private, forbid publication and authorize no policy update. This is a library API with no
+CLI, and the existing designs are unchanged.
 
 ## Pre-label decision log
 
