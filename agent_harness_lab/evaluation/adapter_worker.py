@@ -68,18 +68,18 @@ def check_presented(original, presented, authorization, spec, transform):
 
 def _run(backend, adapter_bytes, original, limits):
     """(code, presented, worker) for one sandboxed run; presented is None whenever code is not None."""
-    with tempfile.TemporaryDirectory(prefix='ahl-adapter-') as folder:
-        root = Path(folder).resolve()
-        harness, work = root / 'harness', root / 'work'
-        harness.mkdir(), work.mkdir()
-        (harness / 'adapter.py').write_bytes(adapter_bytes)
-        (work / 'envelope.json').write_bytes(_encode(original))
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix='ahl-adapter-') as folder:
+            root = Path(folder).resolve()
+            harness, work = root / 'harness', root / 'work'
+            harness.mkdir(), work.mkdir()
+            (harness / 'adapter.py').write_bytes(adapter_bytes)
+            (work / 'envelope.json').write_bytes(_encode(original))
             run = backend.run(['/usr/bin/python3', '-I', '-B', '-c', RUNNER], work, {'harness': harness}, 'executor', limits)
-        except TimeoutError:
-            return 'timeout', None, None
-        except (OSError, ValueError, subprocess.SubprocessError):  # includes KeyringUnavailable and a missing bubblewrap
-            return 'sandbox_unavailable', None, None
+    except TimeoutError:
+        return 'timeout', None, None
+    except (OSError, ValueError, subprocess.SubprocessError):  # a full or missing temp dir, KeyringUnavailable, no bubblewrap
+        return 'sandbox_unavailable', None, None
     if run['status'] == 'failed' and backend.capability()['status'] != 'available':
         return 'sandbox_unavailable', None, None  # a sandbox that cannot start exits non-zero too: not the adapter's failure
     attestation = run['attestation']
