@@ -24,7 +24,10 @@ Z95 = 1.959963984540054
 _RANGES = dict(baseline_success=(0, 1), candidate_effect=(-1, 1), root_spread=(0, 1),
                repeat_correlation=(0, 1), critical_regression_probability=(0, 1))
 # Optional and absent unless declared, so models and reports that never lose a grade keep their bytes.
-UNGRADED = ('baseline_ungraded_probability', 'candidate_ungraded_probability')
+# Loss by arm per trial, by arm for a whole root, and extra for a failed trial; the deadline counts arm trials run.
+UNGRADED = ('baseline_ungraded_probability', 'candidate_ungraded_probability',
+            'root_ungraded_probability', 'failure_ungraded_probability')
+DEADLINE = 'deadline_trials'
 _DEFAULTS = dict(family_effects={}, root_spread=0, repeat_correlation=0, critical_regression_probability=0)
 
 
@@ -38,7 +41,7 @@ def model(value, families):
     """Validate one declared outcome model against the plan's frozen families."""
     if not isinstance(value, dict) or value.get('schema') != MODEL_SCHEMA:
         raise ValueError(f'outcome model requires schema {MODEL_SCHEMA}')
-    unknown = set(value) - {'schema', *_RANGES, *UNGRADED, 'family_effects'}
+    unknown = set(value) - {'schema', *_RANGES, *UNGRADED, DEADLINE, 'family_effects'}
     if unknown: raise ValueError('unknown outcome model fields: ' + ', '.join(sorted(unknown)))
     if not {'baseline_success', 'candidate_effect'} <= set(value):
         raise ValueError('outcome model requires baseline_success and candidate_effect')
@@ -48,6 +51,10 @@ def model(value, families):
     if not isinstance(effects, dict) or set(effects) - set(families):
         raise ValueError('family_effects may only name frozen plan families')
     normalized.update({k: _number(k, value[k], 0, 1) for k in UNGRADED if k in value})
+    if DEADLINE in value:
+        if type(value[DEADLINE]) is not int or not 1 <= value[DEADLINE] <= MAX_PLANNED_TRIALS:
+            raise ValueError(f'outcome model {DEADLINE} must be an integer in [1, {MAX_PLANNED_TRIALS}]')
+        normalized[DEADLINE] = value[DEADLINE]
     normalized['family_effects'] = {f: _number('family effect ' + f, effects[f], -1, 1) for f in sorted(effects)}
     return normalized
 
@@ -90,21 +97,34 @@ def _draw(spec, plan, declared, rng):
 
 
 def _ungrade(records, plan, declared, rng):
-    """Lose grades per arm; draws nothing when none is declared, so legacy seeded streams are unchanged."""
+    """Lose grades by arm, by whole root and arm, and for failed trials; draws nothing when none is declared."""
     chance = {arm: declared.get(arm + '_ungraded_probability', 0) for arm in ('baseline', 'candidate')}
-    if not any(chance.values()): return records
+    whole, failed = declared.get('root_ungraded_probability', 0), declared.get('failure_ungraded_probability', 0)
+    if not (any(chance.values()) or whole or failed): return records
+    # A whole-root loss is drawn once per root and arm; every task of that root then loses that arm's grades.
+    gone = {key for key in sorted({(t['root'], t['version']) for t in plan}) if whole and rng.random() < whole}
     # An unknown trial carries no grader verdict, so it cannot carry a critical regression either.
-    return [replace(r, outcome=None, status='unknown', critical_regression=False) if rng.random() < chance[t['version']] else r
+    return [replace(r, outcome=None, status='unknown', critical_regression=False)
+            if (rng.random() < chance[t['version']] or (t['root'], t['version']) in gone
+                or (failed and r.outcome is False and rng.random() < failed)) else r
             for r, t in zip(records, plan)]
 
 
+def _cut(records, declared):
+    """The trials a declared deadline lets complete, in execution order; the rest are never run."""
+    return records[:declared.get(DEADLINE, len(records))]
+
+
 def _completion(declared, ungraded, planned):
-    """Report the declared grade loss and how often a simulation still had every grade."""
-    chances = {k: declared[k] for k in UNGRADED if k in declared}
+    """Report the declared loss and how often a simulation still had every grade."""
+    chances = {k: declared[k] for k in (*UNGRADED, DEADLINE) if k in declared}
     if not any(chances.values()): return {}
     whole = ungraded.count(0)
-    return dict(completion=dict(declared=chances, loss_model='independent_per_trial_by_arm', planned_trials=planned,
-        mean_ungraded_trials=sum(ungraded) / len(ungraded),
+    kinds = (('independent_per_trial_by_arm', any(declared.get(k) for k in UNGRADED[:2])),
+             ('whole_root_by_arm', declared.get(UNGRADED[2])), ('failure_dependent_per_trial', declared.get(UNGRADED[3])),
+             ('time_budget_in_arm_trials', declared.get(DEADLINE)))
+    return dict(completion=dict(declared=chances, loss_model='+'.join(name for name, on in kinds if on),
+        planned_trials=planned, mean_ungraded_trials=sum(ungraded) / len(ungraded),
         fully_graded=dict(count=whole, rate=whole / len(ungraded), wilson_95=wilson(whole, len(ungraded))),
         interpretation='unknown_grades_are_never_imputed_so_any_one_withholds_the_decision'))
 
@@ -136,8 +156,8 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     plan = schedule(spec)
     rng, counts, reasons, ungraded = random.Random(seed), dict.fromkeys(DISPOSITIONS, 0), {}, []
     for _ in range(simulations):
-        observed = _ungrade(_draw(spec, plan, declared, rng), plan, declared, rng)
-        ungraded.append(sum(r.status != 'graded' for r in observed))
+        observed = _cut(_ungrade(_draw(spec, plan, declared, rng), plan, declared, rng), declared)
+        ungraded.append(len(plan) - sum(r.status == 'graded' for r in observed))  # lost grades and trials the deadline cut
         result = analyze(spec, observed)
         counts[result['status']] += 1
         reasons[result['reason']] = reasons.get(result['reason'], 0) + 1
