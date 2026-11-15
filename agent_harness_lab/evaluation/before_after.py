@@ -15,6 +15,8 @@ import re
 
 from agent_harness_lab.sources.schema import digest
 
+from . import vacuity
+
 
 PROFILE = 'ahl-before-after-guard-v1'
 INVESTIGATION_PROFILE = 'ahl-regression-investigation-v1'
@@ -222,6 +224,10 @@ def attach(result, output, run, *, margin=DEFAULT_MARGIN):
         pairs = run_pairs(run['manifest'], run['trials'])
         arm = frozen_inputs(**run['frozen'])
         guard = dict(decide(pairs, baseline=arm, candidate=dict(arm), margin=margin), bindings=dict(run['bindings']))
+        labels = run.get('vacuity')
+        if labels:  # an evaluation that proves nothing reports no score, delta or verdict that favors either arm (#805)
+            guard.update(verdict='inconclusive', reasons=['evaluation_vacuous', *labels], adoption_blocked=False, scores=None, delta=None,
+                         vacuity=vacuity.receipt(labels))
         update = dict(before_after=guard)
         if guard['adoption_blocked'] and run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed':
             artifact = investigate(pairs, guard, grader_changed=False, inputs_unchanged=run['inputs_unchanged'])

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from agent_harness_lab.evaluation import before_after as guard
+from agent_harness_lab.evaluation import before_after as guard, vacuity
 from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS, public_export_allowed
 
 SHA = {name: format(index, 'x') * 64 for index, name in enumerate(guard.IDENTITY_FIELDS, 1) if name.endswith('_sha256')}
@@ -267,3 +267,48 @@ def test_the_bank_identity_ignores_the_run_budget_and_the_run_folder_but_sees_a_
     changed = dict(moved, tasks=[dict(id='b', fixture='a', grader=['python3', str(tmp_path / 'two' / 'grade.py')])])
     assert guard.bank_sha256(manifest, tmp_path / 'one') == guard.bank_sha256(moved, tmp_path / 'two')
     assert guard.bank_sha256(moved, tmp_path / 'two') != guard.bank_sha256(changed, tmp_path / 'two')
+
+
+def vacuous_run(*, labels, trials_status=('failed', 'passed'), count=12):
+    """A covered single run whose twelve roots all flipped to pass, so only a vacuity label can withhold `improved` (#805)."""
+    tasks = [dict(id=f'task-{index}', split='development') for index in range(count)]
+    trials = [dict(task=task['id'], version=version, split='development', status=status)
+              for task in tasks for version, status in zip(('baseline', 'candidate'), trials_status)]
+    frozen = dict(SHA, budget_share=dict(trials=count))
+    return dict(manifest=dict(tasks=tasks), trials=trials, inputs_unchanged=True, frozen=frozen, vacuity=labels,
+                bindings=dict(describes_final_attempt=True))
+
+
+def attached(tmp_path, **options):
+    result = {}
+    guard.attach(result, tmp_path, vacuous_run(**options))
+    return result['before_after']
+
+
+def test_a_graded_run_with_no_vacuity_label_is_still_improved(tmp_path):
+    assert attached(tmp_path, labels=[])['verdict'] == 'improved'
+
+
+@pytest.mark.parametrize('label', vacuity.LABELS)
+def test_a_vacuity_label_withholds_the_verdict_the_score_and_the_delta_of_a_run(tmp_path, label):
+    block = attached(tmp_path, labels=[label])
+    assert (block['verdict'], block['reasons'], block['adoption_blocked']) == ('inconclusive', ['evaluation_vacuous', label], False)
+    assert (block['scores'], block['delta'], block['vacuity']['labels'], block['vacuity']['improvement_allowed']) == (None, None, [label], False)
+
+
+def test_several_vacuity_labels_are_all_named_and_nothing_is_improved(tmp_path):
+    block = attached(tmp_path, labels=['all_outcomes_unknown', 'grader_not_executed'])
+    assert (block['verdict'], block['reasons']) == ('inconclusive', ['evaluation_vacuous', 'all_outcomes_unknown', 'grader_not_executed'])
+
+
+@pytest.mark.parametrize('labels', [pytest.param(['not_a_label'], id='out-of-set'), pytest.param(['zero_trials', 'zero_trials'], id='duplicate')])
+def test_a_malformed_vacuity_label_list_makes_the_block_unavailable_rather_than_improved(tmp_path, labels):
+    block = attached(tmp_path, labels=labels)
+    assert block['status'] == 'unavailable' and 'verdict' not in block and 'scores' not in block
+
+
+def test_a_vacuous_regression_is_not_reported_as_a_blocked_candidate(tmp_path):
+    result = dict(status='evaluation_failed')
+    guard.attach(result, tmp_path, vacuous_run(labels=['grader_not_executed'], trials_status=('passed', 'failed')))
+    assert result['status'] == 'evaluation_failed' and result['before_after']['adoption_blocked'] is False
+    assert not (tmp_path / 'investigation.json').exists()

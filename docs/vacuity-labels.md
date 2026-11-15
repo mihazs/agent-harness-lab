@@ -12,8 +12,9 @@ never becomes a label.
 ## The closed set
 
 The five names are one closed set in `agent_harness_lab.evaluation.vacuity`
-(`LABELS`, `LABEL_SET`). The improvement loop and every receipt reader import the set
-from there; a name outside it is rejected by `vacuity.validate`.
+(`LABELS`, `LABEL_SET`). The improvement loop (`loop.controller.classify`) and every
+receipt reader take the set from there and keep no copy of it; a name outside it is
+rejected by `vacuity.validate` and is not a vacuity label to the loop.
 
 | Label | Applies when | Derived from |
 | --- | --- | --- |
@@ -37,6 +38,8 @@ reads a recorded paired run.
 | `evidence_strength` block | `label: insufficient`, `adoption_support: false`, reasons `evaluation_vacuous` followed by the labels. |
 | `ahl experiment` analyses (fixed, preservation and sequential) | An analysis that would be `supported` for a plan whose baseline and candidate hashes are equal is returned as `status: blocked`, `reason: arms_identical` with the `vacuity` block, and its promotion decision is blocked. The plan still schedules and executes, and an A/A control that finds no effect keeps its analysis, so mechanics checks and noise-floor controls can run one harness against itself; only a reported positive difference is refused. |
 | `ahl compare` and the side-by-side report | An experiment whose arm hashes are equal marks every pair `not_comparable` with the reason `arms_identical`; no pair is `improved`. |
+| `before_after` block of the receipt | The block keeps its truthful `pairs` counts, but its `verdict` is `inconclusive` with the reasons `evaluation_vacuous` and the labels, `scores` and `delta` are `null`, `adoption_blocked` is `false` and the `vacuity` block is attached, so a run that proved nothing never reports `improved` or a score. A label list that is not a subset of the closed set makes the block `unavailable`. |
+| Improvement loop (`agent_harness_lab.loop`) | An evaluation carrying any label of the closed set is vacuous: a vacuous baseline stops `evidence_insufficient` and a vacuous candidate is `inconclusive`; neither is accepted. |
 | Trial coverage (`legacy_coverage`) | A manifest with no declared task is never covered, even by zero trials. |
 
 ## Audit of reported numbers
@@ -50,6 +53,7 @@ either derives from recorded trial rows (or declared manifest rows) or is absent
 | `evaluation_uninformative.trials`, `tasks`, `class_counts` | recorded trial rows and their execution facts | block absent |
 | `budget_exhaustion.observed` | recorded trial rows | the string `unknown`, not zero |
 | `decision.observed` (`tasks`, `trials`, `pairs`, `by_split`) | manifest and recorded trial rows | the decision is not produced without exact coverage |
+| `before_after.scores`, `before_after.delta`, `before_after.verdict` | the paired outcomes of recorded trials with an explicit pass or fail, over roots | `null` scores and delta and the verdict `inconclusive`, with `evaluation_vacuous` among the reasons whenever a label applies |
 | `evidence_strength.criteria` counts | recorded baseline development rows | a count over zero rows reads zero and the label is `insufficient` with `no_covered_evaluation` |
 | `spend_label` seconds | the stage clock, not a trial | not a result |
 | `results.json` trial records | one row per executed trial; no aggregate score | empty list, never a summary |

@@ -14,6 +14,7 @@ import re
 from typing import Protocol, Sequence
 
 from agent_harness_lab.budget_stages import Stages
+from agent_harness_lab.evaluation import vacuity
 
 from .errors import LoopError
 from .ledger import MACHINE_EVENTS, LoopLedger
@@ -21,7 +22,7 @@ from .machine import Inputs, Run, decide, step
 from .spec import RELATIVE, LoopSpec
 
 PROFILE = 'ahl-loop-result-v1'
-VACUITY = ('no_eligible_cases', 'all_outcomes_unknown', 'arms_identical', 'grader_not_executed', 'zero_trials')
+VACUITY = vacuity.LABELS  # the shared closed set, not a copy; classify reads vacuity.LABEL_SET
 RESERVE_UNAVAILABLE = 'reserve_for_evaluation_unavailable'
 FINAL = dict(accepted='accepted', improved='improved', regressed='rejected', inconclusive='inconclusive')  # outcome -> mechanism disposition
 _DIGEST = re.compile('[0-9a-f]{64}')
@@ -31,7 +32,7 @@ _DIGEST = re.compile('[0-9a-f]{64}')
 class Evaluation:
     """One evaluation of one snapshot on the frozen inputs: an interval score and the evidence around it.
 
-    evidence: scored | provisional | no_evidence | blocked. vacuity: a label of VACUITY, or None for none. areas: per-area
+    evidence: scored | provisional | no_evidence | blocked. vacuity: a label of the closed set in evaluation.vacuity, or None for none. areas: per-area
     interval lower bounds. critical: a critical regression was observed. cause: who a regression is blamed on, candidate or
     other; None is unknown. inputs: the frozen-inputs digest the evaluation ran on; None is unknown. trials and seconds are
     what it spent; None is unknown.
@@ -94,7 +95,7 @@ def _sound(e):
 
 def classify(evaluation):
     """valid only for a scored evaluation with a sound interval and no vacuity label; a vacuity label is vacuous, any other doubt is incomplete."""
-    if evaluation.vacuity in VACUITY: return 'vacuous'
+    if evaluation.vacuity in vacuity.LABEL_SET: return 'vacuous'
     return 'valid' if evaluation.evidence == 'scored' and evaluation.vacuity is None and _sound(evaluation) else 'incomplete'
 
 

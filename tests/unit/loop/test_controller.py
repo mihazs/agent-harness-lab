@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_harness_lab.evaluation import vacuity
 from agent_harness_lab.loop import controller, ledger as ledger_module
 from agent_harness_lab.loop.controller import Candidate, Evaluation
 from agent_harness_lab.loop.errors import LoopError
@@ -224,6 +225,20 @@ def test_an_unsound_score_is_incomplete_is_still_recorded_and_never_accepts_or_i
 ])
 def test_classify_is_valid_only_for_a_scored_sound_evaluation_without_a_vacuity_label(evaluation, verdict):
     assert controller.classify(evaluation) == verdict
+
+
+@pytest.mark.parametrize('label', vacuity.LABELS)
+def test_every_label_of_the_shared_closed_set_is_vacuous_for_the_loop(label):
+    assert controller.classify(score(0.9, vacuity=label)) == 'vacuous'
+
+
+@pytest.mark.parametrize('change, label, verdict', [
+    pytest.param(lambda labels: labels | {'a_future_label'}, 'a_future_label', 'vacuous', id='label-added-to-the-set'),
+    pytest.param(lambda labels: labels - {'zero_trials'}, 'zero_trials', 'incomplete', id='label-removed-from-the-set'),
+])
+def test_the_loop_follows_the_closed_set_of_the_vacuity_module_and_keeps_no_copy_of_it(monkeypatch, change, label, verdict):
+    monkeypatch.setattr(vacuity, 'LABEL_SET', frozenset(change(vacuity.LABEL_SET)))
+    assert controller.classify(score(0.9, vacuity=label)) == verdict
 
 
 MARGINS = build('margins', [0.5], declaration=dict(regression_margin=0.25, noise_margin=0.25)).spec  # 0.25 is exact in binary
