@@ -450,3 +450,46 @@ def test_the_controller_and_ledger_import_no_workflow_clock_randomness_process_o
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
     assert not any(name.split('.')[0] in ('subprocess', 'socket', 'time', 'datetime', 'random', 'urllib', 'http', 'requests') or 'workflow' in name for name in imported)
+
+
+@pytest.mark.parametrize('reserve, asked, spent', [
+    pytest.param(None, 2, 15, id='undeclared-reserve-is-the-baselines-one-arm-spend-and-the-limit-is-passed'),
+    pytest.param(6, 1, 9, id='a-declared-paired-reserve-stops-before-a-round-that-cannot-be-paid'),
+    pytest.param(3, 2, 15, id='a-declared-reserve-equal-to-the-spend-changes-nothing')])
+def test_a_baseline_that_declares_what_a_re_evaluation_costs_reserves_that_and_not_what_it_spent(tmp_path, reserve, asked, spent):
+    # The baseline spent 3 trials in one arm; every later evaluation is a paired run of 6. Limit 12.
+    script = build('declared_reserve', [score(0.5, trials=3, reserve_trials=reserve), score(0.6, trials=6), score(0.7, trials=6)], trials=12)
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked), result['usage']['trials']) == ('budget_exhausted', asked, spent)
+
+
+@pytest.mark.parametrize('reserve, asked', [pytest.param(None, 4, id='undeclared-reserves-the-baselines-five-seconds'),
+                                           pytest.param(40.0, 3, id='declared-reserves-forty-seconds')])
+def test_a_declared_time_reserve_replaces_the_baselines_seconds(tmp_path, reserve, asked):
+    # the baseline took 5 seconds and each later evaluation takes 25 of 100: a reserve of 40 leaves 45 after two rounds, so a third starts and a fourth does not
+    script = build('declared_seconds', [score(0.3, seconds=5.0, reserve_seconds=reserve), *[score(0.4 + 0.1*r, seconds=25.0) for r in range(4)]],
+                   seconds=100, declaration=dict(max_rounds=5, plateau_rounds=5))
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked)) == ('budget_exhausted', asked)
+
+
+@pytest.mark.parametrize('bad', [pytest.param(-1, id='negative'), pytest.param(True, id='boolean'), pytest.param('6', id='text'),
+                                 pytest.param(float('nan'), id='nan'), pytest.param(2.5, id='fraction')])
+def test_a_reserve_that_is_not_a_count_is_ignored_and_the_baselines_spend_is_reserved(tmp_path, bad):
+    script = build('bad_reserve', [score(0.5, trials=3, reserve_trials=bad), score(0.6, trials=6), score(0.7, trials=6)], trials=12)
+    result, _, ports = go(script, tmp_path)
+    assert (result['stop'], len(ports.asked), result['usage']['trials']) == ('budget_exhausted', 2, 15)
+
+
+@pytest.mark.parametrize('inputs, recorded', [pytest.param('not-a-digest', None, id='not-a-digest'), pytest.param('f'*64, 'f'*64, id='another-digest')])
+def test_the_ledger_records_the_frozen_inputs_digest_an_evaluation_ran_on_only_when_it_is_one(tmp_path, inputs, recorded):
+    script = build('recorded_inputs', [score(0.5, inputs=inputs)])
+    _, ledger, _ = go(script, tmp_path)
+    assert [payload['evaluation']['inputs'] for kind, payload in ledger.events() if kind == 'baseline_evaluated'] == [recorded]
+
+
+def test_every_evaluation_of_a_run_records_the_one_frozen_inputs_digest_it_ran_on(tmp_path):
+    script = loop_sim.converges_in_k_rounds(2)
+    result, ledger, _ = go(script, tmp_path)
+    assert [payload['evaluation']['inputs'] for kind, payload in ledger.events() if kind.endswith('_evaluated')] == [script.frozen_inputs]*3
+    assert result['frozen_inputs_sha256'] == script.frozen_inputs
