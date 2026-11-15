@@ -521,6 +521,9 @@ candidate in these cases:
   (`required_text_removed`). A newly required text must also become active
   (`required_text_not_active`).
 - The staged baseline no longer matches the project (`stale_baseline`).
+- A staged baseline or candidate tree holds a symlink (`symlink_in_staged_tree`). It is a
+  blocked validation, never an exception, and a symlink that appears in the evaluated
+  candidate later invalidates the validation as `candidate_changed`.
 - The plan is missing or invalid, its runtime is not the trial runtime, its task
   directory does not exist, or either closure fails to resolve.
 
