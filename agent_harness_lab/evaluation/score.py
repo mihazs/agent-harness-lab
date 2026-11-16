@@ -120,7 +120,8 @@ def report(registry, bank, issues, spec, records, areas=()):
     unqualified = {name for issue in issues for name in ([issue['task']] if 'task' in issue else issue.get('tasks') or [])}
     bankwide = any('task' not in issue and 'tasks' not in issue for issue in issues)
     def one(chosen):
-        return _row(spec, chosen, plan, usable, candidate, bankwide or any(task in unqualified for task, _, _ in chosen), design)
+        # a task the bank never declared has no review, so it can never be read as independent
+        return _row(spec, chosen, plan, usable, candidate, bankwide or any(task in unqualified or task not in known for task, _, _ in chosen), design)
     rows = []
     for area in declared:
         chosen = [task for task in spec.tasks if area in tagged[task[0]]]
@@ -128,12 +129,14 @@ def report(registry, bank, issues, spec, records, areas=()):
                          **one(chosen)))
     withheld = ('area_selection' if areas else 'no_declared_area' if not rows
                 else 'not_every_area_scored' if any(row['state'] != 'scored' for row in rows) else None)
+    overall = one(list(spec.tasks)) if withheld is None else None
+    if overall and overall['state'] != 'scored': overall, withheld = None, 'overall_not_scored'  # the pooled row has its own state
     return dict(profile=PROFILE, experiment=dict(id=spec.experiment_id, profile=spec.profile, partition=spec.partition,
                                                  alpha=spec.alpha, min_roots=spec.min_roots, repeats=spec.repeats),
                 arms=list(ARMS if candidate else ARMS[:1]), trials=dict(planned=len(plan), recorded=len(usable)),
                 untagged_tasks=sum(not tags for tags in tagged.values()),
                 areas=[row for row in rows if not areas or row['id'] in areas],
-                overall=one(list(spec.tasks)) if withheld is None else None, overall_withheld=withheld)
+                overall=overall, overall_withheld=withheld)
 
 
 def _number(value):
@@ -170,7 +173,8 @@ def markdown(result):
         lines.append('No capability area is declared in ahl.json.')
     overall = result['overall']
     lines += ['', 'Overall: ' + (f"{_cells(overall)[4]} baseline, paired delta {_cells(overall)[6]} (pooled over every experiment task)."
-                                 if overall else f"withheld ({result['overall_withheld']}); it is shown only when every declared area is scored."),
+                                 if overall else f"withheld ({result['overall_withheld']}); it is shown only when every declared area is scored "
+                                         'and the pooled row over every experiment task is scored too.'),
               '', 'A task in several areas counts in each. No area is averaged into another, and intervals are not corrected across areas.']
     return '\n'.join(lines) + '\n'
 

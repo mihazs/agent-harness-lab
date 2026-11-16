@@ -47,8 +47,8 @@ analyzed in each.
 | `trials` | `planned` trials of the plan and `recorded` usable ones. |
 | `untagged_tasks` | Experiment tasks that carry no area (or are not in the bank); they count in no area. |
 | `areas[]` | One row per declared (or selected) area, below. |
-| `overall` | The same row shape over every experiment task, or `null`. |
-| `overall_withheld` | `null` when `overall` is shown, else `not_every_area_scored`, `area_selection` or `no_declared_area`. |
+| `overall` | The same row shape over every experiment task, shown only when its own `state` is `scored`; otherwise `null`. |
+| `overall_withheld` | `null` when `overall` is shown, else `not_every_area_scored`, `area_selection`, `no_declared_area` or `overall_not_scored` (every area is scored but the pooled row is not, for example because an untagged experiment task is ungraded, unreviewed or not declared in the bank). |
 
 An area row has `id`, `label`, `bank_tasks` (tasks of the bank with the tag), `tasks` and
 `independent_roots` (tasks and distinct roots of the experiment with the tag), `state`,

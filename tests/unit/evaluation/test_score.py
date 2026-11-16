@@ -187,6 +187,32 @@ def test_the_overall_figure_is_withheld_with_its_reason_otherwise(tmp_path, opti
     assert (result['overall'], result['overall_withheld']) == (None, why)
 
 
+def test_an_experiment_task_the_bank_never_declared_withholds_the_overall_figure(tmp_path):
+    # Unknown lineage is not independence: the undeclared task has no review, so the pooled row cannot be scored.
+    root = fixture.project(tmp_path)
+    spec = fixture.experiment(root)
+    result = score.report(REGISTRY, [t for t in fixture.bank_tasks(root) if t['task_id'] != 'resumption'], [], spec, fixture.records(spec))
+    assert (states(result), result['overall'], result['overall_withheld']) == (
+        {'coding': ('scored', None), 'ux-ui': ('scored', None)}, None, 'overall_not_scored')
+
+
+@pytest.mark.parametrize('options', [
+    pytest.param(dict(ungraded=('resumption',)), id='untagged-task-ungraded'),
+    pytest.param(dict(reviewed=[task for task in TAGS]), id='untagged-task-unreviewed'),
+    pytest.param(dict(issues=[dict(task='resumption', status='task_quarantined')]), id='untagged-task-quarantined'),
+])
+def test_the_overall_figure_is_withheld_when_its_own_row_is_not_scored_though_every_area_is(tmp_path, options):
+    result = run(tmp_path, **options)
+    assert (states(result), result['overall'], result['overall_withheld']) == (
+        {'coding': ('scored', None), 'ux-ui': ('scored', None)}, None, 'overall_not_scored')
+
+
+def test_the_markdown_report_prints_no_overall_number_when_the_overall_row_is_not_scored(tmp_path):
+    line = next(line for line in score.markdown(run(tmp_path, ungraded=('resumption',))).splitlines() if line.startswith('Overall'))
+    assert line == ('Overall: withheld (overall_not_scored); it is shown only when every declared area is scored '
+                    'and the pooled row over every experiment task is scored too.')
+
+
 @pytest.mark.parametrize('areas, shown', [
     pytest.param(('ux-ui',), ['ux-ui'], id='one-area'),
     pytest.param(('ux-ui', 'coding'), ['coding', 'ux-ui'], id='declared-order-not-argument-order'),

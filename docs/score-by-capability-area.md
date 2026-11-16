@@ -52,5 +52,7 @@ position, such as `--area[1]`, and never the value.
 | `blocked` | The bank or a grader is not qualified (`bank_not_qualified`), or the experiment cannot be scored per area. No number is printed. | Fix the reason shown; the [reference](score-reference.md#reasons) lists each one. |
 
 A task tagged with two areas counts in both and is never split or averaged between them.
-An overall figure appears only when you ask for every declared area and every one is
-`scored`; otherwise the report says why it is withheld.
+An overall figure appears only when you ask for every declared area, every one is
+`scored` and the pooled row over every experiment task is `scored` too; an experiment
+task that carries no area, or that the bank never declared, can keep it withheld. The
+report says why it is withheld.
