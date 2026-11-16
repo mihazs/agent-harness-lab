@@ -24,7 +24,7 @@ def monitor(deployment,task_versions,events,policy,now):
         signature=json.dumps(event,sort_keys=True)
         if event['event_id'] in seen:
             if seen[event['event_id']]!=signature:
-                return dict(state='conflict',reason='conflicting_duplicate_event',automatic_rollback=False)
+                return dict(state='conflict',reason='conflicting_duplicate_event',stability_claim=False,automatic_rollback=False)
             continue
         seen[event['event_id']]=signature
         version=task_versions.get(event.get('task_id'))
@@ -38,7 +38,7 @@ def monitor(deployment,task_versions,events,policy,now):
             unknown+=1; continue
         if event['task_id'] in tasks:
             if tasks[event['task_id']] != event['outcome']:
-                return dict(state='conflict',reason='contradictory_task_outcomes',automatic_rollback=False)
+                return dict(state='conflict',reason='contradictory_task_outcomes',stability_claim=False,automatic_rollback=False)
             unknown+=1; continue
         tasks[event['task_id']]=event['outcome']
         outcomes.append(event['outcome'])

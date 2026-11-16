@@ -49,6 +49,16 @@ class TestWindowStates:
         assert result['automatic_rollback'] is False
         assert result['causal_attribution'] == 'unestablished'
 
+    @pytest.mark.parametrize('events, reason', [
+        pytest.param([verified(0), verified(0, outcome=False)], 'conflicting_duplicate_event', id='duplicate-event-id-with-different-content'),
+        pytest.param([verified(0), verified(1, task_id='t0', outcome=False)], 'contradictory_task_outcomes', id='same-task-with-opposite-outcomes'),
+    ])
+    def test_a_conflict_result_also_claims_no_stability_or_rollback(self, events, reason):
+        result = run(events, 10)
+        assert (result['state'], result['reason']) == ('conflict', reason)
+        assert result['stability_claim'] is False
+        assert result['automatic_rollback'] is False
+
     def test_a_late_outcome_moves_a_closed_window_from_insufficient_to_no_alert(self):
         events = [verified(0)]
         assert run(events, 12)['state'] == 'insufficient_evidence'
