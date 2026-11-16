@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Add `agent_harness_lab.diagnostics.backend_envelope.evaluate`, the versioned prediction envelope for comparing diagnostic backends on frozen held-out roots (part of #14). Each backend answer records its backend identity, taxonomy revision, score meaning, fit roles, model-input fields, evidence window and truncation, a predicted, abstained or failed outcome, and a cold or warm resource receipt, with unmeasured values kept unknown rather than zero. The check rejects held-out fit roles, demonstrations drawn from evaluated roots, label or reward fields among the model inputs, a score claimed as a calibrated probability without support (only `tfidf`, `embeddings` and `local_encoder` backends may claim one, and only with a `calibration_ref`) and a backend whose identity changed midway, and keeps missing roots, zero coverage and unknown truncation visible. It computes no quality, selects no backend and grants no authority. Not yet done: the frozen benchmark runner, the backend comparison report and shadow integration.
