@@ -110,6 +110,16 @@ class TestDiagnosis:
         rows = [event('a', 1, **sig), dict(case_id='a', event_id='2', activity='metadata'), event('a', 3, **sig)]
         assert d.analyze(rows, observation_max_age=1)['findings'] == []
 
+    def test_interleaved_cases_each_keep_their_own_order_state(self):
+        rows = [event('a', 1, capture_order=0), event('b', 1, capture_order=1), event('a', 2, capture_order=1),
+                event('b', 2, capture_order=0), event('a', 3, capture_order=2)]
+        inputs = d.analyze(rows)['method_inputs']
+        assert (inputs['capture_order_cases'], inputs['unordered_sequence_cases'], inputs['unordered_observation_cases']) == (1, 1, 1)
+
+    def test_a_case_without_any_order_evidence_is_unordered_not_ordered_by_default(self):
+        inputs = d.analyze([event('a', 1), event('a', 2), event('b', 1)])['method_inputs']
+        assert (inputs['capture_order_cases'], inputs['timestamp_order_cases'], inputs['unordered_sequence_cases']) == (0, 0, 1)
+
 
 def random_value(rng, depth=0):
     if depth > 3 or rng.random() < 0.25:
