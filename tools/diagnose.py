@@ -179,10 +179,13 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
         if not isinstance(event, dict):
             raise ValueError(f'invalid event at position {number}')
-        for key in ('case_id', 'event_id', 'activity'):
-            if not isinstance(event.get(key), str) or not event[key]:
-                raise ValueError(f'invalid {key} at event {number}')
-        case, ident, activity = (event[k] for k in ('case_id', 'event_id', 'activity'))
+        case, ident, activity = event.get('case_id'), event.get('event_id'), event.get('activity')
+        if not isinstance(case, str) or not case:
+            raise ValueError(f'invalid case_id at event {number}')
+        if not isinstance(ident, str) or not ident:
+            raise ValueError(f'invalid event_id at event {number}')
+        if not isinstance(activity, str) or not activity:
+            raise ValueError(f'invalid activity at event {number}')
         root = event.get('root_case_id', case)
         if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
