@@ -228,7 +228,7 @@ def main(argv=None):
         'benchmark':'Compare local incident classifiers on supplied labels; optional ML packages and existing local models only',
         'skills':'Install bundled skill links for Codex or Claude (writes to the selected skill directory)',
         'bank':'Validate a task-bank manifest or export selected task fixtures for evaluation',
-        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks',
+        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks, or convert a text-expectations case list into a native bank',
         'bank-review':'Manage private final-bank intake, native controls and separately signed conditional review',
         'experiment':'Plan or analyze a predeclared fixed or sequential baseline/candidate experiment',
         'experiment-history':'Inspect private controller history and explicitly reserve or execute selected runs',
