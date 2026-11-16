@@ -212,8 +212,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if profile is not None:
             declared_events += 1
             if supported: declared_profiles.add(profile)
-        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder'))
-        if not supported or not all(type(value) is int and value >= 0 for value in source[1:]):
+        # Only a declared producer profile reads the segment and suborder, so other rows skip two reads and a tuple.
+        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder')) if supported else None
+        if source is None or not all(type(value) is int and value >= 0 for value in source[1:]):
             order['source'] = False
         else:
             last = order['last_source']
