@@ -82,7 +82,7 @@ def install(source, destination, backup_root):
 def main(argv=None, source=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Creates the harness-self-improvement link and removes a stale harness-evaluation link it owns; replaces existing directories only after backup.\n'
-        'Foreign symlinks and non-directories are refused with one message and no change; links into an installer release are replaced; already-current links are unchanged.\n'
+        'Foreign symlinks and non-directories are refused with one message and no change; links into an installer release are replaced; already-current links are unchanged; a foreign entry under the retired name is left alone and named.\n'
         'Prints a text receipt or backup location; does not run agents or install dependencies.\n'
         'Run this project\'s harness-self-improvement once with: ahl skills invoke [PROJECT]; PROJECT defaults to the\n'
         'current directory and installation alone does not start a run.\n'
@@ -98,7 +98,16 @@ def main(argv=None, source=None):
         backup = install(source or Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)
     except ValueError as exc:  # a refusal is an answer, not a crash: nothing was changed
         raise SystemExit(f'{parser.prog}: {exc}; nothing was changed. Inspect that entry, then remove it or move it aside.')
-    print(f'Linked skills. Previous directories: {backup}' if backup else 'Skill links already current.')
+    changed = backup is not None
+    if changed and not any(backup.iterdir()):  # nothing was replaced, so there is nothing to point at
+        require_writable(args.backup_root)
+        backup.rmdir()
+        backup = None
+    print(f'Linked skills. Previous directories: {backup}' if backup else 'Linked skills.' if changed else 'Skill links already current.')
+    for name in RETIRED:
+        entry = destination / name
+        if entry.is_symlink() or entry.exists():  # an entry this tool owns was removed above, so what is left is not ours
+            print(f'Left untouched, not installed by this tool: {entry}')
 
 
 if __name__ == '__main__':
