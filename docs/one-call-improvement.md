@@ -789,6 +789,22 @@ This restores the frontmatter delimiter required by the
 It makes no behavioral reliability, native activation or general YAML-validity claim.
 It does not rename skills, delete instructions, install hooks or call a model.
 
+The repair is bound to the harness it staged, and `ahl improve` and `ahl skills invoke` stop
+at the same checks with the target untouched when the project no longer matches it. Before the
+journal exists they are a staged harness file that differs from the project (`target changed
+before application`), a harness file added (`frozen plan inventory changed`) and a
+candidate or configuration that differs from the staged one (`configuration or candidate changed
+before application`). Each ends as `invalid_input`, exit code 2. Once the journal is prepared the
+inventory is compared again (`target inventory changed during planned application`, also exit
+code 2), and a last time with the journal's temporary file staged, just before the replace. A
+foreign edit caught by that last check is reported by the journal transaction as
+`requires_intervention` (exit code 1, `restoration` `conflict`): nothing was replaced and the edit
+is kept. In every case the user's edit and each unrelated file survive, no deployment is
+committed, and a fresh run plans from the bytes now on disk, applies once and rolls back to them.
+This holds for writers that honor the project lock, not for one that ignores it. Over a saved
+plan, `ahl apply` reports the same drift as `stale` (exit code 3).
+`tests/integration/workflow/test_skill_invocation_stale_plan.py` pins each case on both routes.
+
 A project configuration with `recommendation_only: true` produces a staged plan
 and preserves target files. Without that restriction, requesting this explicit
 repair authorizes the supported reversible transformation. The existing private
