@@ -50,6 +50,7 @@ reader purpose.
 - [Live evaluation gate](live-evaluation-gate.md): the manual dispatch inputs and bounds, the refusal reasons and the static workflow trust policy; the gate runs no model.
 - [Comparability engine](comparability-engine.md): the gates, verdicts and strata that decide whether two evaluations may be compared.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
+- [Second-wave memory compatibility matrix](memory-compatibility-matrix.md): what the pinned source of Graphiti and Zep, Supermemory, Letta, LangMem with the LangGraph store, and Basic Memory shows about reading them read-only, with a closed status vocabulary.
 - [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
 
 ## Understand the context

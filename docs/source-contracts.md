@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [Knowledge facets](#knowledge-page-temporal-facets) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports) · [Second-wave memory matrix](memory-compatibility-matrix.md)
 
 ## Execution identity and declared coverage
 
