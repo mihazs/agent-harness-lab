@@ -61,10 +61,12 @@ def write_config(pinned):
     (pinned.project/'ahl.json').write_text(json.dumps(pinned.value))
 
 
-def invoke(pinned, *arguments, entry=('improve',)):
+def invoke(pinned, *arguments, entry=('improve',), loop=False):
+    """Run the command. The loop is the default of a pinned bank (#817), so the single-pass assertions of this module run with --single-pass;
+    loop=True keeps the default for the preflights that stop before either path starts."""
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        code = main([*entry, str(pinned.project), *arguments])
+        code = main([*entry, str(pinned.project), *(() if loop else ('--single-pass',)), *arguments])
     return code, json.loads(stdout.getvalue())
 
 
@@ -142,7 +144,7 @@ def test_invalid_bank_stops_with_actionable_reason_before_dispatch(pinned, chang
     elif change == 'malformed': pinned.bank.write_text('{')
     else: pinned.bank.write_text(pinned.bank.read_text()+'\n')
     with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
-        code, result = invoke(pinned)
+        code, result = invoke(pinned, loop=True)
     assert (code, result['status'], result['reason']) == (3, 'blocked', expected)
     assert result['remediation']
 
@@ -228,7 +230,7 @@ def test_changed_bank_after_preparation_stops_before_controls_or_trials(pinned):
 def test_missing_runtime_and_override_mismatch_stop_before_preparation(pinned, arguments, reason):
     if not arguments: pinned.fixture.agent.unlink()
     with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
-        code, result = invoke(pinned, *arguments)
+        code, result = invoke(pinned, *arguments, loop=True)
     assert code == 3
     assert result['reason'] == reason
 
@@ -306,7 +308,7 @@ def tag_bank(pinned, tags, registry):
 def test_bank_area_tags_the_project_does_not_declare_stop_with_a_typed_reason_before_dispatch(pinned, capsys, tags, registry, reason, field):
     tag_bank(pinned, tags, registry)
     with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')), pytest.raises(SystemExit) as exited:
-        invoke(pinned)
+        invoke(pinned, loop=True)
     error = capsys.readouterr().err
     assert exited.value.code == 2
     assert f'ahl: {reason}: stage=bank_validation file=bank.json field={field} origin=project_declaration_defect.' in error

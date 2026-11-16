@@ -187,6 +187,7 @@ def test_unmet_precision_blocks_before_probe_key_and_model(admission):
     with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')),patch.object(responses,'read_credential',side_effect=AssertionError('no key')):
         code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
     assert (code,result['reason']) == (3,'precision_target_infeasible');assert admission.calls == [];assert admission.key_reads == 0
+    assert (result['loop']['status'],result['loop']['reason']) == ('not_used','loop_requires_frozen_bank')  # a fixed-bank request keeps its comparison and says the loop was not used
 
 
 def test_fully_labeled_cooperative_backend_cannot_seal_a_comparison(admission):

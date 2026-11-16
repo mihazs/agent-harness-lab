@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness_lab.loop import controller, ledger, machine
+from agent_harness_lab.loop import controller, entry, ledger, machine
 from agent_harness_lab.loop.errors import REASONS
 from agent_harness_lab.loop.spec import AUTHORITY, DECLARED, DEFAULTS, MAX_ROUNDS_CAP
 from tests.support import loop_sim
@@ -78,3 +78,19 @@ def test_the_documented_event_cap_exceeds_what_a_run_with_the_most_events_writes
     script = loop_sim.regresses_on_round_n(3, on_regression='rollback_continue')
     result, _, _ = loop_sim.drive(script, tmp_path)
     assert result['ledger']['events'] <= ledger.event_cap(script.spec)
+
+
+@pytest.mark.parametrize('page', ['improve-until-score.md', 'loop-rationale.md'])
+def test_documentation_index_links_the_loop_how_to_and_explanation(page):
+    assert f'({page})' in (ROOT/'docs/README.md').read_text()
+
+
+@pytest.mark.parametrize('reason', sorted(entry.NOT_USED))
+def test_every_not_used_reason_is_named_in_the_default_and_single_pass_table(reason):
+    assert f'`reason: {reason}`' in section('Running the loop from `ahl improve`')
+
+
+def test_the_reference_says_the_loop_is_the_default_and_names_the_deprecated_escape_hatch():
+    text = ' '.join(REFERENCE.split())
+    assert 'run the loop by default' in text and '`--single-pass`' in text and 'removed one release after the loop default' in text
+    assert 'The loop is opt-in in this release' not in text and 'ahl improve` does not default to the loop' not in text

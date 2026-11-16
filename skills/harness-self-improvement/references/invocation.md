@@ -120,6 +120,27 @@ apply only before any attempt, when the CLI is unavailable. Report each layer's 
 from the receipt, relay its `rollback` command, and never call a blocked, exhausted or
 failed layer a success.
 
+## Loop routing
+
+`ahl skills invoke` runs the evaluate > improve > evaluate loop by default whenever `ahl.json` pins a task bank, with the
+same receipt as `ahl improve`. The user's words choose the loop flags and nothing widens them: a bar comes only from a
+number the user gave, and the scope is still written out as in the table above.
+
+| The request | Route |
+| --- | --- |
+| "improve until the score is 0.8", "keep improving until it reaches 80%" | `ahl skills invoke . --scope project --accept-score 0.8` (the user's number as a fraction; add `--max-rounds N` only when the user gave a round cap) |
+| "improve my harness", "fix my agent instructions" (no score) | `ahl skills invoke . --scope project`; the receipt labels the bar `acceptance_source: default` |
+| "evaluate my harness only", "don't change anything" | No `ahl skills invoke`: the loop improves when the baseline misses the bar. Offer `ahl analyze .` for read-only evidence and say a baseline score alone has no command |
+| "how good is the harness for UX/UI", "score my coding area" | `ahl score --area X` when `ahl --help` lists `score`; otherwise say per-area scoring is not available and never estimate an area by hand. A per-area bar is a `loop.accept_score` map of declared area ids |
+| "fix the failing checkout test", "improve the page load time", "rename this variable" | Not a harness request: do not invoke |
+
+After dispatch, quote `loop.stop_criterion`, `loop.acceptance_source`, `loop.remediation` and the exit code as printed. Say
+`accepted` only as "meets the declared bar on the frozen development and regression evidence": the receipt carries
+`certification: unverified` and `automatic_promotion: false`, and nothing was applied. A `blocked` result with
+`loop_requires_frozen_bank` needs a pinned bank in `ahl.json`; relay its `remediation` and do not retry with `--single-pass`
+(deprecated: the previous improve-first pass, removed after one release, whose receipt says `loop.status: not_used`).
+A receipt whose `loop.status` is `not_used` made a single pass: report that, with its `loop.reason`.
+
 ## Report integrity
 
 The receipt holds the facts a final report may state. Hazards it closes, and the rule for each:
@@ -198,7 +219,7 @@ bytes are already installed) and any unfinished deployment to finish with `ahl p
 ## Assisted fallback before dispatch
 
 If the CLI or adapter is unavailable before any attempt, report this and follow
-the entrypoint's manual loop within the authorized scope and remaining budget.
+the manual loop below within the authorized scope and remaining budget.
 Label this an assisted path with its own verification limits; it does not inherit
 an authenticated CLI application result. Use executable evidence for applied
 changes and name unavailable runtime/evidence prerequisites. Do not bootstrap a
@@ -210,3 +231,37 @@ named global location, with that exact scope and its snapshot, evaluation and
 rollback boundaries. Project invocation does not authorize global discovery links,
 global instructions or another project's changes. Once any command attempt exists,
 the fallback is closed and the scope mapping above applies.
+
+### The manual loop
+
+1. Snapshot affected files with modes and hashes before changing them. Preserve
+   baseline separately from candidate; capture applicable ambient configuration.
+   Before touching a surface other than root instructions or skills, check its
+   writability in the [surface matrix](surfaces.md).
+2. Create a small task set from the failure and acceptance criteria. Include an
+   adjacent regression and a fresh transfer case. Freeze graders before scoring.
+   Use real task execution when the claim concerns execution; hypothetical answers
+   are only decision probes. Keep held-out cases out of candidate feedback.
+3. Select the next high-impact uncovered mechanism. Prefer a localized correction
+   or simplification; change one causal component at a time unless callers must
+   change together. Retain unique useful behavior. Test interaction regressions
+   before adopting a combination of independently eligible edits.
+4. Run baseline and candidate with comparable resources using the [evaluation methodology](evaluation.md).
+   Inspect failures, traces and artifacts. Repair the evaluator if it is wrong,
+   version it, and rerun both sides; never relax a criterion to make a patch pass.
+5. Refine a failed candidate from the observed failure. Reject regressions, apply
+   independently successful edits, and test the final candidate on fresh held-out
+   cases. A held-out case used for refinement becomes development data.
+6. Validate skill metadata, references, scripts, activation and negative routing.
+   Apply eligible changes without another approval question, then smoke-test the
+   installed version. Record exactly what changed and the supporting outcomes.
+
+Default shared ceiling: 24 agent trials and 45 minutes including nested evaluations.
+Use at most three candidate variants and one refinement per mechanism, within
+that shared ceiling; these are search limits, not a limit of three fixes. Allocate
+trials across material mechanisms before repeating easy successes, and reserve
+about a quarter for final composition, safety and transfer checks. Stop when the
+coverage table is resolved or the shared budget is exhausted; report untested
+families as deferred, never as disproved. A smaller user budget takes precedence.
+Do not recursively launch unbounded improvement sessions to evaluate this skill:
+use controlled fixtures and count all child trials in the same budget.

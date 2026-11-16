@@ -664,9 +664,12 @@ def _improve(args):
     print(f'Private run artifacts: {output}', file=sys.stderr)
     if getattr(args,'_loop',None) is not None:
         from .one_call import pinned_bank as frozen_bank
-        if frozen_bank(args) is None or controlled:  # a loop declaration is never run as a silent single pass
-            from .loop import improve as loop_improve
-            return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
+        if frozen_bank(args) is None or controlled:
+            if not getattr(args,'_loop_default',False):  # a loop the run asked for is never run as a silent single pass
+                from .loop import improve as loop_improve
+                return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
+            from .loop import entry as loop_entry  # the default loop needs one frozen bank: without it the single pass runs, and its receipt says so
+            args._loop, args._loop_label = None, loop_entry.not_used('loop_requires_frozen_bank')
     repeated=None
     if getattr(args,'experiment_request',None) is not None:
         from .evaluation.repeated_workflow import Request
@@ -1525,6 +1528,11 @@ def construction_receipt(result, args):
     """Content-free construction facts on every terminal result: repairs, authored digests dropped (count only) and elapsed seconds (0 when the stage never ran)."""
     if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
     result['authored_digest_ignored'] = getattr(args, '_authored_digest_ignored', 0)
+    if 'loop' not in result:  # a run that made the single pass, or that a gate stopped before the loop began, says so and why
+        if getattr(args, '_loop_label', None): result['loop'] = dict(args._loop_label)
+        elif getattr(args, '_loop', None) is not None and result.get('status') == 'blocked':
+            from .loop import entry as loop_entry
+            result['loop'] = loop_entry.not_started(result.get('reason') or 'blocked')
     result['evaluation_construction_seconds'] = round(getattr(args, '_construction_seconds', 0.0), 1)
     if getattr(args, '_evaluation_reuse', None): result['evaluation_reuse'] = args._evaluation_reuse
     if getattr(args, '_reuse', None): result['reuse'] = args._reuse

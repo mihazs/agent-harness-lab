@@ -491,7 +491,7 @@ provider-reported usage per request) are not covered.
 | `loop_declaration_invalid` | Write the loop declaration as one JSON object that uses only the documented loop fields. |
 | `loop_evidence_insufficient` | The evidence could not support a result, so none is claimed; read loop.before and loop.rounds for the evidence state and any vacuity label, fix the named cause, then rerun. |
 | `loop_field_unknown` | Remove the unknown field; the loop declares accept_score, accept_basis, regression_margin, noise_margin, max_rounds, plateau_rounds, on_regression and alpha. |
-| `loop_interrupted` | The loop was interrupted before it reached a criterion; this release cannot resume it, so rerun the command and read loop.rounds for what finished. |
+| `loop_interrupted` | The loop was interrupted before it reached a criterion; resume it from its round ledger with the controller, or rerun the command, which starts from the harness on disk and carries over the mechanism dispositions recorded here; read loop.rounds for what finished. |
 | `loop_ledger_full` | The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run. |
 | `loop_ledger_invalid` | Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again. |
 | `loop_limits_invalid` | Pass the project limits as seconds above 0 and a whole number of trials above 0. |
@@ -584,7 +584,10 @@ provider-reported usage per request) are not covered.
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
 | `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
+| `resume_busy` | Another run or resume holds this loop; wait for it to finish, then resume again. Nothing ran. |
+| `resume_inputs_changed` | Resume with the frozen inputs, baseline, mechanism queue and carried dispositions the run was frozen with, or start a new run; nothing ran. |
 | `resume_requires_intervention` | The run left no completed no-change proposal to finalize, so it cannot be resumed; rerun ahl improve PROJECT. |
+| `resume_spec_changed` | Resume with the declaration the run was frozen with, or start a new run: a declaration is immutable once a run starts, and nothing ran. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |

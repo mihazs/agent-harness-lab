@@ -14,7 +14,7 @@ import time
 from agent_harness_lab import provider_reported, surfaces
 from agent_harness_lab.evaluation import integrity
 
-from . import controller, entry, receipt
+from . import carryover, controller, entry, receipt
 from .adapters import ExecutorRunner, FrozenBankEvaluator
 from .ledger import LoopLedger
 
@@ -153,7 +153,7 @@ def blocked(args, output, reason, **extra):
     from agent_harness_lab import workflow
     from agent_harness_lab.exit_guidance import REMEDIATION
     result = dict(status='blocked', reason=reason, output=str(output), changed_files=[], remediation=REMEDIATION[reason], automatic_promotion=False,
-                  loop=dict(profile=receipt.PROFILE, status='not_started', reason=reason, recommendation_only=True, automatic_promotion=False, certification='unverified'), **extra)
+                  loop=entry.not_started(reason), **extra)
     workflow.construction_receipt(result, args)
     workflow.write_json(output/'workflow.json', result)
     return result
@@ -184,8 +184,10 @@ def run(args, context):
     proposer = PreparationProposer(state, lambda: evaluator)
     from agent_harness_lab.workflow import state_root
     ledger = LoopLedger(state_root()/'loops'/output.name, args.project)
-    result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started))
+    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs)  # what an earlier run hands over: dispositions, never a score or a trial
+    result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started), dispositions=carried and carried['dispositions'])
     block = receipt.build(spec, result, ledger.events(), [item['guard'] for item in evaluator.runs], budget=stages.receipt(), deferrals=proposer.deferrals)
+    if carried is not None: block['carry_over'] = carryover.finish(carried['block'], block)
     receipt.validate_receipt(block)
     stop = block['stop_criterion']
     found = dict(status=receipt.status_of(stop), reason=f'loop_{stop}', output=str(output), changed_files=[], agent=context['agent'], analysis=context['data']['execution'],

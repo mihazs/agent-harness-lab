@@ -999,6 +999,12 @@ covered by `tests/integration/workflow/test_evaluation_interruption.py`.
 
 ## Remaining implementation
 
+`ahl improve` runs the evaluate, improve, evaluate loop by default on a pinned bank
+([how-to](improve-until-score.md)), keeps `--single-pass` for one release, and labels every
+run that made the single pass (`loop.status: not_used`). The loop's own limits (a first-use
+bank, an experiment-request bank and per-area decisions) are listed in the
+[loop reference](loop-reference.md#not-in-this-release).
+
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. `ahl apply` reviews every saved plan but applies only the
 independently reproduced skill-header repair; interruption tests cover the planning,

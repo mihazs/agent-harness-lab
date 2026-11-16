@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness_lab import entry_parity, typed_exit
+from agent_harness_lab import entry_parity, incremental, typed_exit, workflow
 from agent_harness_lab.loop import improve as loop_improve, receipt
 from agent_harness_lab.monitoring.state import exit_code
 from tests.support import loop_improve as li
@@ -193,11 +193,12 @@ def test_a_loop_declaration_without_a_pinned_bank_is_blocked_with_one_step_and_n
     assert (project.project/'AGENTS.md').read_text().startswith(li.NOTHING)
 
 
-def test_without_a_loop_flag_or_declaration_the_single_pass_is_unchanged(stack, monkeypatch):
+def test_with_single_pass_the_previous_single_pass_is_unchanged_and_says_the_loop_was_not_used(stack, monkeypatch):
     baseline = 'solves=responses'  # the single pass recommends only when the baseline holds its calibration control and fails a development task
     project = li.LoopProject(stack, monkeypatch, baseline=baseline, script={0: dict(harness=li.EVERYTHING)})
-    code, found, _ = project.invoke()
-    assert 'loop' not in found and (code, found['status']) == (3, 'inconclusive') and found['recommendation'] == 'candidate_requires_independent_certification'
+    code, found, _ = project.invoke('--single-pass')
+    assert found['loop']['status'] == 'not_used' and 'stop_criterion' not in found['loop'] and (code, found['status']) == (3, 'inconclusive')
+    assert found['recommendation'] == 'candidate_requires_independent_certification'
     assert (project.project/'AGENTS.md').read_text() == baseline + '\n' and 'loop_' not in json.dumps(found.get('reason'))
 
 
@@ -216,6 +217,7 @@ def test_the_receipt_is_the_same_through_both_entries_apart_from_the_run_directo
     runs = []
     for entry in (('improve',), ('skills', 'invoke')):
         (project.project/'AGENTS.md').write_bytes(initial)
+        (workflow.state_root()/'runs'/workflow.identity(project.project)/incremental.POINTER).unlink(missing_ok=True)  # a later run would carry the first one's mechanism dispositions; parity compares two first runs
         _, found, _ = project.invoke(*flags, entry=entry)
         runs.append((found, Path(found['output'])))
     (cli, cli_run), (skill, skill_run) = runs
