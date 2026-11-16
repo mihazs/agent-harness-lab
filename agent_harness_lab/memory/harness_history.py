@@ -252,7 +252,8 @@ def resolve(policy, events, *, before=None):
     """The baseline snapshots a policy selects from the recorded events (status unknown when none is selectable).
 
     A dynamic policy takes the latest valid completed evaluations of its subject strictly before `before`: an
-    evaluation invalidated at any time is skipped, and one whose snapshot is unknown is counted, never guessed."""
+    evaluation invalidated at any time is skipped, and one whose snapshot is unknown is counted, never guessed.
+    A rolling window with fewer known evaluations than its size is `insufficient` and selects nothing."""
     policy = check_policy(policy, events)
     if policy['policy'] == POLICIES[0]:
         return dict(status='selected', snapshots=[policy['baseline']], evaluations=[], skipped_unknown_snapshot=0,
@@ -264,8 +265,11 @@ def resolve(policy, events, *, before=None):
     valid = sorted((e for e in recorded if e['kind'] == 'evaluation_completed' and e['subject'] == policy['subject']
                     and e['at'] < cutoff and e['fields']['evaluation'] not in invalid), key=lambda e: (e['at'], e['event_id']))
     known = [e for e in valid if e['fields']['snapshot'] is not None]
-    chosen = known[len(known) - (policy['window'] or 1):] if known else []
-    return dict(status='selected' if chosen else 'unknown', snapshots=[e['fields']['snapshot'] for e in chosen],
+    need = policy['window'] or 1
+    chosen = known[-need:]
+    status = 'unknown' if not chosen else 'selected' if len(chosen) == need else 'insufficient'
+    chosen = chosen if status == 'selected' else []  # a window that cannot be filled selects no partial baseline
+    return dict(status=status, snapshots=[e['fields']['snapshot'] for e in chosen],
                 evaluations=[e['fields']['evaluation'] for e in chosen], skipped_unknown_snapshot=len(valid) - len(known),
                 claim_basis='descriptive')
 

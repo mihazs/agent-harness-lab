@@ -73,7 +73,11 @@ reselection cannot upgrade a claim. A new inferential reference needs a fresh
 declaration, which is refused once outcomes exist. `resolve` turns a policy and the
 events into baseline snapshot ids; an evaluation invalidated at any time is skipped, an
 evaluation with an unknown snapshot is counted in `skipped_unknown_snapshot`, and no
-valid evaluation gives `status: unknown`, never an empty success.
+valid evaluation gives `status: unknown`, never an empty success. A `rolling_window` of N
+selects only when N valid evaluations with a known snapshot exist; with fewer, `resolve`
+returns `status: insufficient` and empty `snapshots` and `evaluations`, because a shorter
+set is not the baseline that was declared. An invalidated evaluation or one with an
+unknown snapshot never fills a slot.
 
 ## Reference: events and change sets
 

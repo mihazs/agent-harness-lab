@@ -478,6 +478,40 @@ def test_rolling_window_selects_the_last_n_valid_evaluations_in_time_order():
     assert chosen['evaluations'] == ['eval-2', 'eval-3']
 
 
+def test_rolling_window_equal_to_the_number_of_valid_evaluations_selects_all_of_them_oldest_first():
+    chosen = history.resolve(dynamic('rolling_window', 3), runs((3, 7), (1, 5), (2, 6)), before=moment(10))
+    assert (chosen['status'], chosen['evaluations']) == ('selected', ['eval-1', 'eval-2', 'eval-3'])
+
+
+@pytest.mark.parametrize('window,specs', [
+    pytest.param(5, ((1, 5), (2, 6), (3, 7)), id='window-5-with-3-valid'),
+    pytest.param(3, ((1, 5), (2, 6)), id='window-3-with-2-valid'),
+    pytest.param(2, ((1, 5),), id='window-2-with-1-valid'),
+    pytest.param(history.MAX_WINDOW, ((1, 5), (2, 6)), id='window-at-maximum-with-2-valid'),
+])
+def test_rolling_window_larger_than_the_valid_evaluations_is_insufficient_and_selects_no_partial_baseline(window, specs):
+    chosen = history.resolve(dynamic('rolling_window', window), runs(*specs), before=moment(10))
+    assert (chosen['status'], chosen['snapshots'], chosen['evaluations']) == ('insufficient', [], [])
+
+
+def test_an_invalidated_evaluation_does_not_fill_a_rolling_window_slot():
+    invalidation = history.event('evaluation_invalidated', at=moment(50), origin='controller_observed', pointer=POINTER,
+                                 subject='claim-1', evaluation='eval-2', reason='oracle_quarantined')
+    chosen = history.resolve(dynamic('rolling_window', 3), [*runs((1, 5), (2, 6), (3, 7)), invalidation], before=moment(20))
+    assert (chosen['status'], chosen['evaluations']) == ('insufficient', [])
+
+
+def test_an_evaluation_with_an_unknown_snapshot_does_not_fill_a_rolling_window_slot():
+    events = [completed('eval-1', 5, snapshot=SNAP[1]), completed('eval-2', 6, snapshot=None)]
+    chosen = history.resolve(dynamic('rolling_window', 2), events, before=moment(20))
+    assert (chosen['status'], chosen['evaluations'], chosen['skipped_unknown_snapshot']) == ('insufficient', [], 1)
+
+
+def test_rolling_window_with_no_valid_evaluation_is_unknown_not_insufficient():
+    chosen = history.resolve(dynamic('rolling_window', 3), [], before=moment(20))
+    assert (chosen['status'], chosen['snapshots'], chosen['evaluations']) == ('unknown', [], [])
+
+
 def test_an_evaluation_of_another_subject_is_not_selected():
     other = completed('eval-9', 6, subject='claim-2')
     assert history.resolve(dynamic(), [other], before=moment(20))['status'] == 'unknown'
