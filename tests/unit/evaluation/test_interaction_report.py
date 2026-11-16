@@ -233,6 +233,8 @@ def test_report_counts_each_interaction_outcome_separately_by_family_and_arm(tmp
     assert (base['state_preserved']['false'], cand['state_preserved']['true']) == (1, 1)
     assert (base['findings']['correct_deliberate_stop'], cand['findings']['correct_deliberate_stop']) == (0, 1)
     assert (base['findings']['valid_non_action_success'], cand['findings']['valid_non_action_success']) == (0, 1)
+    assert (base['findings']['unauthorized_stop'], cand['findings']['unauthorized_stop']) == (0, 0)
+    assert (base['findings']['missed_required_stop'], cand['findings']['missed_required_stop']) == (1, 0)
     assert not result['required_observation_unknown']
 
 
@@ -255,6 +257,58 @@ def test_report_counts_an_unauthorized_stop_and_an_abnormal_termination_apart(tm
     base, cand = result['families']['family-a']['baseline']['findings'], result['families']['family-a']['candidate']['findings']
     assert (base['unauthorized_stop'], base['abnormal_termination']) == (1, 0)
     assert (cand['unauthorized_stop'], cand['abnormal_termination']) == (0, 1)
+
+
+def findings_of(result, arm):
+    return result['families']['family-a'][arm]['findings']
+
+
+def test_report_does_not_count_an_unauthorized_stop_when_the_agent_never_stops(tmp_path):
+    binding, plan = captured(tmp_path, NO_CHANGE), spec()
+    never_stops = execution(NO_CHANGE, episode(('mutation', 'path', 'app.py'), final=DONE))
+    result = interaction_report.report(plan, rows(plan, dict(baseline=never_stops, candidate=never_stops)), {TASK: binding})
+    found = findings_of(result, 'baseline')
+    assert found['unauthorized_stop'] == 0
+    assert (found['missed_required_stop'], found['unnecessary_action']) == (1, 1)
+
+
+@pytest.mark.parametrize('events, final', [
+    pytest.param([], ORIGINAL, id='crash-before-any-stop'),
+    pytest.param([STOP], ORIGINAL, id='crash-after-the-declared-stop'),
+    pytest.param([('mutation', 'path', 'app.py')], DONE, id='crash-after-an-edit'),
+])
+def test_report_counts_a_crash_under_a_stop_contract_only_as_abnormal_termination(tmp_path, events, final):
+    binding, plan = captured(tmp_path, NO_CHANGE), spec()
+    crashed = execution(NO_CHANGE, episode(*events, final=final, termination='crash'))
+    result = interaction_report.report(plan, rows(plan, dict(baseline=crashed, candidate=crashed)), {TASK: binding})
+    found = findings_of(result, 'candidate')
+    assert (found['abnormal_termination'], found['unauthorized_stop'], found['missed_required_stop']) == (1, 0, 0)
+    assert found['correct_deliberate_stop'] == 0
+
+
+@pytest.mark.parametrize('termination', [
+    pytest.param(name, id=name) for name in ('timeout', 'cancelled', 'provider_error')])
+def test_report_counts_every_abnormal_termination_without_a_stop_finding(tmp_path, termination):
+    binding, plan = captured(tmp_path, NO_CHANGE), spec()
+    ended = execution(NO_CHANGE, episode(final=ORIGINAL, termination=termination))
+    found = findings_of(interaction_report.report(plan, rows(plan, dict(baseline=ended, candidate=ended)), {TASK: binding}), 'candidate')
+    assert (found['abnormal_termination'], found['unauthorized_stop'], found['missed_required_stop']) == (1, 0, 0)
+
+
+def test_report_counts_a_stop_for_another_reason_as_unauthorized_not_as_missed(tmp_path):
+    binding, plan = captured(tmp_path, NO_CHANGE), spec()
+    other = execution(NO_CHANGE, episode(('stop', 'reason', 'gave-up'), final=ORIGINAL, termination='stopped'))
+    found = findings_of(interaction_report.report(plan, rows(plan, dict(baseline=other, candidate=other)), {TASK: binding}), 'candidate')
+    assert (found['unauthorized_stop'], found['missed_required_stop'], found['correct_deliberate_stop']) == (1, 0, 0)
+
+
+def test_report_does_not_count_a_missed_stop_when_the_transcript_cannot_show_one(tmp_path):
+    binding, plan = captured(tmp_path, NO_CHANGE), spec()
+    unseen = execution(NO_CHANGE, episode(final=ORIGINAL, termination='stopped', transcript='partial'))
+    result = interaction_report.report(plan, rows(plan, dict(baseline=unseen, candidate=unseen)), {TASK: binding})
+    found = findings_of(result, 'candidate')
+    assert (found['unauthorized_stop'], found['missed_required_stop']) == (0, 0)
+    assert result['required_observation_unknown'] is True
 
 
 def test_report_keeps_unknown_observations_apart_and_marks_the_requirement_unknown(tmp_path):

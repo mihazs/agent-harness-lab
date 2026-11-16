@@ -10,6 +10,7 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.interaction_contract import contract_sha256
 from agent_harness_lab.private_journal import record
 from tests.integration.evaluation.test_oracle_history import OracleHistoryTests
+from tests.integration.evaluation.test_offline_evaluation import SOLVER
 from tests.unit.evaluation.test_interaction_contract import ASK, EDIT, REPLY, contract, episode
 
 TASK = 'localization'
@@ -33,6 +34,16 @@ def bound_history(cleanups, spec=SPEC):
     value.all_bundles[TASK]['digest'] = digest(folder)
     value.install_plan(value.all_tasks)
     return value
+
+
+def regress(value):
+    """Swap the arms so the baseline solves every bank task and the candidate fails them all, then refreeze the plan.
+
+    Seven tasks in one family and a permissive alpha give the Hoeffding bound enough roots to reject.
+    """
+    (value.root / 'baseline' / 'solve.py').write_text(SOLVER)
+    (value.root / 'candidate' / 'solve.py').write_text("from pathlib import Path; Path('result.json').write_text('{}')\n")
+    value.install_plan([dict(task, family='all') for task in value.every_task], alpha=.5)
 
 
 def declared(run, evidence_for):
@@ -85,6 +96,26 @@ def test_grader_that_declares_no_interaction_evidence_blocks_the_recommendation(
     arm = analysis['interaction']['families'][TASK]['candidate']
     assert arm['passed'] == dict(true=0, false=0, unknown=1)
     assert arm['unknowns'] == {'interaction_observation_invalid_or_missing': 1}
+
+
+def test_a_regressed_candidate_without_an_interaction_contract_is_a_statistical_rejection(cleanups):
+    value = OracleHistoryTests(cleanups.addCleanup)
+    regress(value)
+    result, _ = value.run_history()
+    analysis = value.store.analyze(result['run_id'])
+    assert (analysis['status'], analysis['reason']) == ('rejected', 'correctness_regression')
+
+
+def test_candidate_failure_stated_over_missing_interaction_evidence_blocks_instead_of_rejecting(cleanups):
+    value = bound_history(cleanups)
+    regress(value)
+    result, _ = value.run_history(declared(value.execute, lambda outcome: PASSING if outcome else None))
+    analysis = value.store.analyze(result['run_id'])
+    assert (analysis['status'], analysis['reason']) == ('blocked', 'interaction_observation_incomplete')
+    arms = analysis['interaction']['families']['all']
+    assert (arms['baseline']['passed'], arms['candidate']['passed']) == (
+        dict(true=1, false=0, unknown=0), dict(true=0, false=0, unknown=1))
+    assert analysis['interaction']['required_observation_unknown'] is True
 
 
 def test_grader_outcome_that_contradicts_its_declared_evidence_blocks_the_recommendation(cleanups):

@@ -603,14 +603,28 @@ pass, a failure or a deliberate stop.
 `analysis.interaction` reports, per family and arm: the three-valued `passed`,
 `interaction_requirement_satisfied`, `whole_task_completed` and `state_preserved`
 counts, `findings` (`unnecessary_action`, `missed_necessary_clarification`,
-`unnecessary_clarification`, `unauthorized_stop`, `abnormal_termination`,
-`correct_deliberate_stop`, `valid_non_action_success`), and `unknowns` by reason. A
-valid non-action episode (a passing episode with no mutation) is therefore counted as a
-success rather than as missing work. The existing per-trial outcome that feeds the
-paired analysis stays the grader's own, and it must equal the recomputed pass, so the
-adjudicated outcome and the action-specific counts cannot disagree. If any observation
-is incomplete the recommendation is `blocked` with reason
-`interaction_observation_incomplete` (a critical behavior-policy rejection still wins).
+`unnecessary_clarification`, `unauthorized_stop`, `missed_required_stop`,
+`abnormal_termination`, `correct_deliberate_stop`, `valid_non_action_success`), and
+`unknowns` by reason. A valid non-action episode (a passing episode with no mutation)
+is therefore counted as a success rather than as missing work.
+
+The stop findings come from observed `stop` events and stay apart from a crash or a
+timeout. `unauthorized_stop` counts a failing episode that holds a `stop` event the
+contract does not authorize: any stop when the contract declares no `stop_reason`, or a
+stop for another reason. `missed_required_stop` counts a failing episode whose contract
+declares a `stop_reason` and whose complete transcript holds no stop event at all, such
+as an agent that keeps editing. A crash, timeout, cancellation or provider error counts
+only as `abnormal_termination`, and an agent that never stops is not an unauthorized stop.
+
+The existing per-trial outcome that feeds the paired analysis stays the grader's own, and
+a stated pass must equal the recomputed pass, so the adjudicated outcome and the
+action-specific counts cannot disagree. A failure stated over missing, malformed or
+unknown evidence is an unknown observation too, although the paired analysis still
+counts it as a failure. If any observation is incomplete the recommendation is `blocked`
+with reason `interaction_observation_incomplete`, so such a failure cannot support a
+statistical `rejected` or `supported`. Only a critical behavior-policy rejection
+(`critical_regression`) still wins, and an analysis that is already `blocked` keeps its
+own reason.
 
 The evidence is a grader declaration, not an authenticated runtime capture, and no
 supported runtime is claimed to supply a transcript or side-effect receipts today, so a

@@ -584,7 +584,7 @@ class HistoryStore(PrivateJournal):
             elif effects['required_observation_unknown']:
                 value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
         if (interaction is not None and interaction['required_observation_unknown']
-                and value.get('status') not in ('rejected','blocked')):
+                and value.get('status')!='blocked' and value.get('reason')!='critical_regression'):
             value = dict(status='blocked',reason='interaction_observation_incomplete',**retained)
         result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)

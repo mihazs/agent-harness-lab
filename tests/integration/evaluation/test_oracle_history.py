@@ -25,16 +25,17 @@ class OracleHistoryTests(OfflineFixture):
         super().__init__(add_cleanup)
         self.store_root = self.root/'history'
         self.store = HistoryStore(self.store_root)
+        self.every_task = list(self.manifest['tasks'])
         self.all_tasks = [self.manifest['tasks'][0],self.manifest['tasks'][-1]]
         self.all_bundles = dict(self.manifest['grader_bundles'])
         self.install_plan(self.all_tasks)
 
-    def install_plan(self, tasks):
+    def install_plan(self, tasks, *, alpha=.05):
         self.manifest['tasks'] = tasks
         self.manifest['grader_bundles'] = {t['id']:self.all_bundles[t['id']] for t in tasks}
         families = sorted({t['family'] for t in tasks})
         spec = ExperimentSpec('synthetic-history',tuple((t['id'],t['root'],t['family']) for t in tasks),
-            1,13,2*len(tasks),2,.05,.1,.05,tuple((f,1/len(families)) for f in families),
+            1,13,2*len(tasks),2,.05,.1,alpha,tuple((f,1/len(families)) for f in families),
             self.runner.digest(self.root/'baseline'),self.runner.digest(self.root/'candidate'),
             identity(self.root/'export',tasks,self.manifest['grader_bundles']),self.image_hash)
         self.manifest['experiment'] = asdict(spec)
