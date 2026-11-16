@@ -1,16 +1,19 @@
 """Synthetic multi-root corpora: compact analysis state gives the frozen implementation's exact output."""
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
+import gc
 import io
 import json
 import os
 import random
 import tracemalloc
+import weakref
 from unittest.mock import patch
 
 import pytest
 
 from agent_harness_lab.cli import main
+import agent_harness_lab.diagnostics.process_mining as process_mining
 import tools.diagnose as diagnose
 from tests.support import diagnose_reference as reference
 
@@ -201,7 +204,7 @@ def test_analyze_command_writes_identical_bytes(tmp_path):
 
 
 def test_peak_and_retained_bytes_per_event_fall():
-    rows = corpus(5, roots=40, cases=4, steps=100)
+    lines = [json.dumps(row) for row in corpus(5, roots=40, cases=4, steps=100)]  # parsed per event, as the command reads them
 
     def measure(module):
         retained = []
@@ -214,16 +217,102 @@ def test_peak_and_retained_bytes_per_event_fall():
         try:
             base = tracemalloc.get_traced_memory()[0]
             with patch.object(module, 'recurring_sequences', mining):
-                result = module.analyze(iter(rows), select_methods=True, sequence_length=8)
+                result = module.analyze((json.loads(line) for line in lines), select_methods=True, sequence_length=8)
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
-        return json.dumps(result), (peak - base) / len(rows), (retained[0] - base) / len(rows)
+        return json.dumps(result), (peak - base) / len(lines), (retained[0] - base) / len(lines)
     expected, old_peak, old_retained = measure(reference)
     actual, new_peak, new_retained = measure(diagnose)
     assert actual == expected
-    assert len(rows) > 10000
+    assert len(lines) > 10000
     message = f'per event: peak {old_peak:.0f} -> {new_peak:.0f} B, retained {old_retained:.0f} -> {new_retained:.0f} B'
-    assert new_peak < 0.5 * old_peak, message
-    assert new_retained < 0.5 * old_retained, message
+    assert new_peak < 0.2 * old_peak, message
+    assert new_retained < 0.2 * old_retained, message
 
+
+def mining_inputs(rows, **options):
+    """What analyze hands to sequence mining, with rows parsed one at a time as the command reads them."""
+    lines = [json.dumps(row) for row in rows]  # a parser yields fresh dicts and fresh strings for every event
+    taken = {}
+
+    def spy(cases, roots, maximum=None):
+        taken['entries'] = {case: list(entries) for case, entries in cases.items()}
+        first = (rows[0]['case_id'], rows[0]['event_id'])
+        taken['duplicate_id_set_alive'] = any(type(held) is set and first in held for held in gc.get_objects())
+        return []
+    with patch.object(diagnose, 'recurring_sequences', spy):
+        diagnose.analyze((json.loads(line) for line in lines), **options)
+    return taken
+
+
+def test_events_share_one_stored_copy_of_each_case_id_and_activity():
+    taken = mining_inputs(corpus(3, roots=6, cases=3, steps=40))
+    entries = [(case, entry) for case, held in taken['entries'].items() for entry in held]
+    assert len(entries) > 200
+    activities = {entry[0] for _, entry in entries}
+    assert len({id(entry[0]) for _, entry in entries}) == len(activities)
+    for case, (_, _, ref) in entries:
+        assert (ref[0] if type(ref) is tuple else ref['case_id']) is case
+
+
+def test_the_duplicate_id_set_is_released_before_sequence_mining():
+    assert mining_inputs(corpus(3, roots=6, cases=3, steps=40))['duplicate_id_set_alive'] is False
+
+
+def random_cases(rng, roots, cases, tokens, alphabet):
+    """Short random activity sequences over a few roots; a small alphabet makes substrings recur across roots."""
+    names, held, owner, number = [f'a{k}' for k in range(alphabet)], {}, {}, 0
+    for case_number in range(cases):
+        case = f'case-{case_number}'
+        owner[case], held[case] = f'root-{rng.randrange(roots)}', []
+        for _ in range(rng.randint(1, tokens)):
+            number += 1
+            held[case].append((rng.choice(names), number, {'case_id': case, 'event_id': str(number)}))
+    return held, owner
+
+
+def as_pairs(held):
+    """The same entries with each reference given as a (case_id, event_id) pair, which mining turns into a mapping."""
+    return {case: [(activity, number, (ref['case_id'], ref['event_id'])) for activity, number, ref in entries]
+            for case, entries in held.items()}
+
+
+@pytest.mark.parametrize('wide', [pytest.param(False, id='narrow-state-numbers'), pytest.param(True, id='wide-state-numbers')])
+def test_random_automata_match_the_frozen_implementation(wide, monkeypatch):
+    if wide:  # the eight-byte arrays used when state numbers would not fit the platform int
+        monkeypatch.setattr(diagnose, 'NARROW_STATES', 0)
+    rng, patterns = random.Random(7), 0
+    for _ in range(200):
+        held, owner = random_cases(rng, rng.randint(1, 8), rng.randint(1, 14), rng.randint(1, 25), rng.randint(1, 4))
+        maximum = rng.choice((None, 1, 2, 3, 6))
+        expected = json.dumps(reference.recurring_sequences(held, owner, maximum))
+        assert json.dumps(diagnose.recurring_sequences(held, owner, maximum)) == expected
+        assert json.dumps(diagnose.recurring_sequences(as_pairs(held), owner, maximum)) == expected
+        patterns += expected.count('reported_roots')
+    assert patterns > 400, patterns
+
+
+def instances_alive_at_mining(owner, name):
+    """How many objects `owner.name` built during one analyze call are still referenced when sequence mining starts."""
+    built, alive, real = [], {}, getattr(owner, name)
+
+    def build(*args, **kwargs):
+        built.append(weakref.ref(instance := real(*args, **kwargs)))
+        return instance
+
+    def spy(cases, roots, maximum=None):
+        alive['count'] = sum(ref() is not None for ref in built)
+        return []
+    with patch.object(owner, name, build), patch.object(diagnose, 'recurring_sequences', spy):
+        diagnose.analyze(iter(corpus(3, roots=6, cases=3, steps=40)))
+    assert built
+    return alive['count']
+
+
+def test_the_observation_matching_state_is_released_before_sequence_mining():
+    assert instances_alive_at_mining(diagnose, 'ObservationCache') == 0
+
+
+def test_the_process_graph_state_is_released_before_sequence_mining():
+    assert instances_alive_at_mining(process_mining, 'ProcessMiner') == 0
