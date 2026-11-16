@@ -13,7 +13,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority; a runtime decision record, an offline runtime probe and an identity-only bridge with a capability receipt, exercised through a fake runtime only; an isolated presentation worker (`evaluation.adapter_worker`) that runs the declared adapter bytes in the offline sandbox and verifies the result, and a controller-side relay (`evaluation.adapter_relay`) from hook events to that worker that answers a failed call with fixed controller text only, with no hook installed; journaled staging and conflict-safe rollback of a reviewed adapter version (`evaluation.adapter_deployment`), exposed only through the opt-in `ahl adapters` command under a controller-owned authorization manifest | A live run proving the bridge hook executes in the supported runtime, the hook-side client and channel to the relay, and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration; a [held-out probe leakage check](diagnostic-retrieval-leakage.md) that rejects an index holding a probe's own root or text copy; a versioned [backend prediction envelope](diagnostic-backend-envelope.md) check that keeps incomplete backend results, leakage and unsupported probability claims visible | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
-| #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
+| #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation, honest window states (`no_alert` and `insufficient_evidence` never claim stability) and a versioned drift-signal intake that cannot authorize a rollback | Crash/power-loss hardening across every boundary, monitor-to-watch integration, a durable detector-history ledger across plan resets, authenticated outcome lineage, the `suspected_regression`, `rollback_eligible` and `rolled_back` states and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
 | #17 bandit research | Seeded Beta-Bernoulli baseline, approved read-only arms, delayed-reward attribution, idempotent updates, missing rewards, bounded simulation, five strategy comparisons, drift/sparse/delayed/harmful scenarios, identifiability refusal | Preregistered independently graded coding-task study, final uncertainty analysis, explicit pilot budget and training/privacy/license/access review |
 
@@ -563,8 +563,19 @@ mapping. Late A outcomes cannot trigger rollback of B. Duplicate, missing and
 ambiguous observations are not fabricated successes. A verified critical event
 pauses for manual review; statistical drift attribution and automatic reversion
 are not implemented. [Frozen drift plans](drift-monitoring.md) separate capture
-alerts from task-mix and verified-performance exposure without a statistical test. A `stable` window means its explicit exposure conditions
-were reached without an observed critical event, not that rare-harm risk is zero.
+alerts from task-mix and verified-performance exposure without a statistical test,
+and `promotion.monitor.signal` turns a sealed receipt into a request to investigate
+or reproduce, never a rollback state or authority.
+
+`monitor` reports one of `observing` (the window is still open), `insufficient_evidence`
+(the window closed with fewer verified outcomes than the minimum exposure; a late outcome
+can still move it), `no_alert` (the window closed with the minimum exposure and no verified
+critical event) or `paused`, plus `conflict` for contradictory events. `no_alert` is not
+evidence of stability and every result says `stability_claim: false`: it does not rule out
+rare harm or a change that the window could not see. Earlier releases reported the same
+`no_alert` condition as `stable`, and reported a closed window below the minimum exposure as
+`observing`. The monitor result is never written to the promotion journal, so no recorded
+deployment, snapshot or rollback record changes meaning.
 
 ## CLI and reports
 

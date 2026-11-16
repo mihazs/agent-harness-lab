@@ -1,6 +1,6 @@
 """Synthetic Claude-Mem worker list reads over a fake HTTPS wire: scoped, read-only, never a task outcome."""
 from contextlib import redirect_stderr, redirect_stdout
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime
 import io
 import json
@@ -26,8 +26,10 @@ AT = '2031-04-05T06:07:08+00:00'
 EPOCH = int(datetime.fromisoformat(AT).timestamp()*1000)
 JSON = {'Content-Type': 'application/json; charset=utf-8'}
 LISTS = ('/api/observations', '/api/summaries', '/api/prompts')
-# Every request the reader may ever send: GET reads of the version and the three pinned list routes.
+# Every request the reader may send by default: GET reads of the version and the three pinned list routes.
 READS = {('GET', route) for route in ('/api/version', *LISTS)}
+# With the tool-use index selected, one more GET route; the POST /api/tool-uses/batch body route is never requested.
+TOOL_READS = READS | {('GET', '/api/tool-uses')}
 
 
 def observation(identity, **fields):
@@ -48,8 +50,20 @@ def prompt(identity, **fields):
         prompt_number=1, prompt_text='invented request SYNTHETIC_PRIVATE', created_at=AT, created_at_epoch=EPOCH), **fields)
 
 
+def tool_use(identity, **fields):
+    """One row of GET /api/tool-uses at the pin: identity and sizes, never tool_input or tool_response."""
+    return dict(dict(id=identity, tool_use_id=f'toolu_{identity}', tool_name='Bash', project=PROJECT, content_session_id='content-s1',
+        memory_session_id='mem-s1', platform_source='claude', agent_id=None, agent_type=None, observation_id=None,
+        or_generation_id=None, or_session_id=None, prompt_number=1, created_at=AT, created_at_epoch=EPOCH,
+        tool_input_bytes=120, tool_response_bytes=2048), **fields)
+
+
 def page(items, offset=0, limit=100, more=False):
     return dict(items=items, hasMore=more, offset=offset, limit=limit)
+
+
+def tools(items, **fields):
+    return dict(dict(count=len(items), toolUses=items), **fields)
 
 
 def target(route, offset=0, limit=100, platform=None):
@@ -80,8 +94,10 @@ class Wire:
 
     def targets(self): return [call[:2] for call in self.calls]
 
+    reads = READS
+
     def assert_read_only(self):
-        for method, path, *_ in self.calls: assert (method, path.split('?')[0]) in READS, path
+        for method, path, *_ in self.calls: assert (method, path.split('?')[0]) in self.reads, path
 
 
 class Fixture(Wire):
@@ -399,6 +415,256 @@ class TestClaudeMemWorkerVersion(Fixture):
         assert client.summary['version_attestation'] == 'caller_declared' and 'worker_version_unrecognized' in client.summary['warnings']
 
 
+class ToolUseFixture(Fixture):
+    """A worker whose selection also asks for the tool-use index (an opt-in that changes the declared scope)."""
+    reads = TOOL_READS
+
+    @pytest.fixture(autouse=True)
+    def _tool_use_index(self, _worker):
+        self.selection = replace(self.selection, tool_uses=True)
+        self.source = self.spec(self.selection, auth_mode='configured')
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11), tool_use(12, tool_name='Edit', prompt_number=2)])
+
+
+class TestClaudeMemWorkerToolUses(ToolUseFixture):
+    def test_the_index_becomes_tool_use_claims_with_no_bodies_ids_or_secrets(self):
+        client, snapshot = self.read()
+        summary = client.summary
+        assert summary['claims'] == dict(observation=2, generated_summary=1, user_prompt=1, tool_use=2)
+        assert {r.record_type for r in snapshot.records} == {'claude_mem_observation', 'claude_mem_generated_summary',
+            'claude_mem_user_prompt', 'claude_mem_tool_use', 'claude_mem_capture'}
+        assert snapshot.checkpoint_ready and summary['read_methods'] == ['GET'] and summary['bodies_stored'] is False
+        assert 'tool_events_unverified' in summary['warnings']
+        assert self.targets() == [('GET', '/api/version'), target('/api/observations'), target('/api/summaries'),
+                                  target('/api/prompts'), target('/api/tool-uses')]
+        assert all(method == 'GET' for method, *_ in self.calls)
+
+    def test_a_tool_use_is_a_claim_in_the_same_namespace_and_session_as_the_observation_it_came_with(self):
+        client, snapshot = self.read()
+        by_type = {c.claim_type: c for c in client.claims}
+        used = next(c for c in client.claims if c.native_id_sha256 == digest(['claude-mem', INSTANCE, 'tool_use', 11, 0]))
+        assert used.native_id_sha256 in {r.native_id_sha256 for r in snapshot.records}
+        assert (used.content_session_sha256, used.memory_session_sha256) == (
+            by_type['observation'].content_session_sha256, by_type['observation'].memory_session_sha256)
+        assert used.derivation == 'captured_tool_event' and used.prompt_number == 1 and used.detail is None
+        assert used.synthesizes_multiple_origins is False
+        assert not any(c.independent_case or c.evidence_of_use or c.task_outcome_verified or c.native_session_verified for c in client.claims)
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' and not r.outcome for r in snapshot.records)
+
+    def test_a_tool_use_has_no_memory_session_until_the_worker_links_one(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, memory_session_id=None)])
+        client, snapshot = self.read()
+        used, = (c for c in client.claims if c.claim_type == 'tool_use')
+        assert used.memory_session_sha256 is None and used.content_session_sha256 is not None
+        assert client.summary['rows_rejected']['tool_uses'] == 0 and snapshot.checkpoint_ready
+
+    def test_a_replayed_tool_use_that_gained_a_response_or_an_observation_link_is_a_new_revision_of_the_same_claim(self):
+        _, first = self.read()
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, tool_response_bytes=9000, observation_id=5), tool_use(12, tool_name='Edit', prompt_number=2)])
+        _, second = self.read()
+        old, new = ({r.native_id_sha256: r.revision_sha256 for r in snap.records} for snap in (first, second))
+        changed = digest(['claude-mem', INSTANCE, 'tool_use', 11, 0])
+        capture = next(r.native_id_sha256 for r in first.records if r.record_type == 'claude_mem_capture')
+        assert old.keys() == new.keys() and {k for k in old if old[k] != new[k]} == {changed, capture}
+
+    def test_a_tool_name_or_agent_is_fingerprinted_with_the_row_and_never_printed(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, tool_name='SYNTHETIC_PRIVATE_TOOL', agent_id='SYNTHETIC_PRIVATE_AGENT')])
+        client, snapshot = self.read()
+        assert 'SYNTHETIC_PRIVATE' not in json.dumps([asdict(c) for c in client.claims]) + json.dumps([asdict(r) for r in snapshot.records], default=str)
+
+    def test_a_body_field_the_index_should_never_carry_is_counted_as_unknown_and_not_stored(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, tool_input='SYNTHETIC_PRIVATE input', tool_response='SYNTHETIC_PRIVATE output')])
+        client, snapshot = self.read()
+        assert client.summary['rows_with_unknown_fields']['tool_uses'] == 1 and 'unknown_row_fields' in client.summary['warnings']
+        assert client.summary['claims']['tool_use'] == 1 and snapshot.checkpoint_ready
+
+    def test_an_empty_index_is_a_complete_capture_of_nothing(self):
+        self.routes[target('/api/tool-uses')] = tools([])
+        client, snapshot = self.read()
+        assert client.summary['claims']['tool_use'] == 0 and snapshot.checkpoint_ready
+
+    def test_import_is_idempotent_and_a_changed_tool_use_is_a_new_revision(self, tmp_path):
+        registry = Registry()
+        registry.register(Capability('api', PROVIDER, 'v1', ('contextual_assertion',)), ClaudeMemWorkerAPI(BASE, self.selection, authorization=KEY))
+        scope = dict(project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
+        store = SourceStore(tmp_path/'journal.json', **scope)
+        assert registry.ingest(self.source, store, **scope).imported > 0
+        assert registry.ingest(self.source, store, **scope).imported == 0
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, observation_id=5), tool_use(12, tool_name='Edit', prompt_number=2)])
+        assert registry.ingest(self.source, store, **scope).imported > 0
+
+
+class TestClaudeMemWorkerToolUseScope(ToolUseFixture):
+    def test_a_row_for_another_project_is_excluded_counted_and_never_a_claim(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11), tool_use(12, project='other-project'), tool_use(13, project=PROJECT.upper())])
+        client, snapshot = self.read()
+        assert client.summary['claims']['tool_use'] == 2
+        assert client.summary['excluded']['rows_outside_selection']['tool_uses'] == 1 and 'row_outside_selection' in client.summary['warnings']
+        assert digest(['claude-mem', INSTANCE, 'tool_use', 12, 0]) not in {r.native_id_sha256 for r in snapshot.records}
+
+    def test_a_merged_project_name_does_not_widen_a_tool_use_scope(self):
+        # The index filters on project alone, so a row of another project that merely names this one as merged_into_project is not in scope.
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, project='someone-elses', merged_into_project=PROJECT)])
+        client, _ = self.read()
+        assert client.summary['claims']['tool_use'] == 0 and client.summary['excluded']['rows_outside_selection']['tool_uses'] == 1
+
+    @pytest.mark.parametrize('row', [pytest.param(dict(project=None), id='no-project'), pytest.param(dict(project='  '), id='blank-project')])
+    def test_a_row_without_a_project_cannot_be_confirmed_in_scope_and_is_excluded(self, row):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, **row)])
+        client, _ = self.read()
+        assert client.summary['claims']['tool_use'] == 0 and client.summary['excluded']['rows_outside_selection']['tool_uses'] == 1
+
+    def test_a_platform_selection_is_sent_and_a_row_of_another_platform_is_excluded(self):
+        selection = replace(self.selection, platform_source='codex')
+        for route in LISTS: self.routes[target(route, platform='codex')] = page([])
+        self.routes[target('/api/tool-uses', platform='codex')] = tools([tool_use(11, platform_source='codex'), tool_use(12)])
+        client, _ = self.read(selection)
+        assert client.summary['claims']['tool_use'] == 1 and client.summary['excluded']['rows_outside_selection']['tool_uses'] == 1
+        assert all('platformSource=codex' in path for _, path, *_ in self.calls if path.startswith(('/api/tool-uses', *LISTS)))
+
+    @pytest.mark.parametrize('row', [
+        pytest.param(dict(id=0), id='zero-id'),
+        pytest.param(dict(id=True), id='bool-id'),
+        pytest.param(dict(id='1'), id='string-id'),
+        pytest.param(dict(content_session_id=None), id='no-content-session'),
+        pytest.param(dict(content_session_id='  '), id='blank-content-session'),
+        pytest.param(dict(tool_use_id=None), id='no-tool-use-id'),
+        pytest.param(dict(tool_use_id=' '), id='blank-tool-use-id'),
+        pytest.param(dict(tool_use_id=7), id='numeric-tool-use-id')])
+    def test_a_row_without_a_native_tool_identity_is_rejected_and_counted(self, row):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, **row)])
+        client, snapshot = self.read()
+        assert client.summary['rows_rejected']['tool_uses'] == 1 and client.summary['claims']['tool_use'] == 0
+        assert 'row_without_native_identity' in client.summary['warnings'] and snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('fields, status', [
+        pytest.param(dict(created_at=None, created_at_epoch=None), 'missing', id='missing'),
+        pytest.param(dict(created_at='2031-04-05T06:07:08', created_at_epoch=None), 'invalid', id='naive'),
+        pytest.param(dict(created_at=AT, created_at_epoch=EPOCH+60000), 'conflicting', id='disagreeing')])
+    def test_an_unknown_timestamp_is_never_guessed(self, fields, status):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11, **fields)])
+        client, _ = self.read()
+        used, = (c for c in client.claims if c.claim_type == 'tool_use')
+        assert (used.original_at, used.timestamp_status) == (None, status) and client.summary['timestamps'][status] == 1
+
+
+class TestClaudeMemWorkerToolUsePaging(ToolUseFixture):
+    def test_a_full_page_is_followed_by_another_request_and_a_short_page_ends_the_index(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100)] = tools([tool_use(i) for i in range(101, 131)])
+        client, snapshot = self.read()
+        assert client.summary['claims']['tool_use'] == 130 and snapshot.checkpoint_ready
+        assert [t for t in self.targets() if t[1].startswith('/api/tool-uses')] == [target('/api/tool-uses'), target('/api/tool-uses', offset=100)]
+
+    def test_a_full_last_page_is_ended_only_by_an_empty_one(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100)] = tools([])
+        client, snapshot = self.read()
+        assert client.summary['claims']['tool_use'] == 100 and snapshot.checkpoint_ready
+
+    def test_an_index_cut_by_max_rows_is_partial_because_a_full_page_never_proves_the_end(self):
+        selection = replace(self.selection, max_rows=150)
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100, limit=50)] = tools([tool_use(i) for i in range(101, 151)])
+        client, snapshot = self.read(selection)
+        assert client.summary['claims']['tool_use'] == 150
+        assert ('tool_uses', 'pagination_incomplete', 'max_rows_reached') in [(c['resource'], c['state'], c['basis']) for c in client.summary['coverage']]
+        assert not snapshot.checkpoint_ready and 'listing_truncated' in client.summary['warnings']
+
+    def test_a_short_page_at_the_max_rows_bound_is_still_a_complete_end(self):
+        selection = replace(self.selection, max_rows=150)
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100, limit=50)] = tools([tool_use(i) for i in range(101, 121)])
+        _, snapshot = self.read(selection)
+        assert snapshot.checkpoint_ready
+
+    def test_a_row_listed_twice_because_the_worker_moved_under_the_reader_fails_the_capture(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100)] = tools([tool_use(100)])
+        with pytest.raises(TransportError): self.read()
+
+    @pytest.mark.parametrize('bad', [
+        pytest.param(dict(extra=1), id='unknown-envelope-field'),
+        pytest.param(dict(hasMore=False), id='a-cursor-field-the-route-does-not-have'),
+        pytest.param(dict(toolUses={}), id='rows-not-a-list'),
+        pytest.param(dict(toolUses=['x']), id='row-not-an-object'),
+        pytest.param(dict(count=2), id='count-disagrees-with-the-rows'),
+        pytest.param(dict(count=True), id='count-bool'),
+        pytest.param(dict(count='1'), id='count-string'),
+        pytest.param(dict(toolUses=[tool_use(i) for i in range(1, 102)], count=101), id='page-over-the-requested-size'),
+        pytest.param(dict(toolUses=[tool_use(1, **{f'f{i}': 1 for i in range(200)})]), id='row-with-too-many-fields')])
+    def test_a_malformed_page_fails_the_capture_and_commits_nothing(self, bad):
+        self.routes[target('/api/tool-uses')] = {**tools([tool_use(1)]), **bad}
+        with pytest.raises(TransportError): self.read()
+
+    @pytest.mark.parametrize('raw', [
+        pytest.param([], id='bare-list'),
+        pytest.param(dict(items=[], hasMore=False, offset=0, limit=100), id='another-routes-envelope'),
+        pytest.param(b'{"count":0,"toolUses":[],"toolUses":[]}', id='duplicate-key'),
+        pytest.param(b'{"count":1,"toolUses":[{"id":NaN}]}', id='nan-in-a-row'),
+        pytest.param(b'not json', id='not-json')])
+    def test_a_response_that_is_not_the_pinned_envelope_fails_the_capture(self, raw):
+        self.routes[target('/api/tool-uses')] = Response(raw, headers=JSON) if isinstance(raw, bytes) else raw
+        with pytest.raises(TransportError): self.read()
+
+
+class TestClaudeMemWorkerToolUseCoverage(ToolUseFixture):
+    @pytest.mark.parametrize('status, state', [(401, 'unauthorized'), (403, 'forbidden'), (429, 'rate_limited'), (404, 'not_found')])
+    def test_a_denied_or_missing_index_is_blocked_coverage_and_keeps_the_other_lists(self, status, state):
+        self.routes[target('/api/tool-uses')] = Response(b'SYNTHETIC_WORKER_SECRET', status)
+        client, snapshot = self.read()
+        assert [(c['resource'], c['state']) for c in client.summary['coverage']][-1] == ('tool_uses', state)
+        assert client.summary['claims'] == dict(observation=2, generated_summary=1, user_prompt=1, tool_use=0)
+        assert not snapshot.checkpoint_ready and 'capture_blocked_or_incomplete' in client.summary['warnings']
+
+    def test_a_denied_second_page_is_truncation_not_an_empty_end(self):
+        self.routes[target('/api/tool-uses')] = tools([tool_use(i) for i in range(1, 101)])
+        self.routes[target('/api/tool-uses', offset=100)] = Response(b'SYNTHETIC_WORKER_SECRET', 403)
+        client, snapshot = self.read()
+        assert ('tool_uses', 'pagination_incomplete', 'forbidden') in [(c['resource'], c['state'], c['basis']) for c in client.summary['coverage']]
+        assert not snapshot.checkpoint_ready and client.summary['claims']['tool_use'] == 100
+
+    def test_a_denial_of_an_earlier_list_means_the_index_is_never_requested(self):
+        self.routes[target('/api/summaries')] = Response(b'SYNTHETIC_WORKER_SECRET', 403)
+        client, snapshot = self.read()
+        assert target('/api/tool-uses') not in self.targets() and client.summary['claims']['tool_use'] == 0
+        assert not snapshot.checkpoint_ready
+
+    def test_a_spent_request_budget_before_the_index_is_partial_coverage(self):
+        client, snapshot = self.read(max_pages=4)
+        assert client.summary['claims']['tool_use'] == 0 and not snapshot.checkpoint_ready
+        assert [c['state'] for c in client.summary['coverage']][-1] == 'budget_exhausted'
+
+
+class TestClaudeMemWorkerToolUseOptIn(Fixture):
+    def test_the_index_is_not_requested_unless_the_selection_asks_for_it(self):
+        client, _ = self.read()
+        assert not any(path.startswith('/api/tool-uses') for _, path, *_ in self.calls)
+        assert 'tool_use' not in client.summary['claims'] and 'tool_uses' not in client.summary['rows_rejected']
+        assert 'tool_events_unverified' not in client.summary['warnings']
+
+    def test_a_selection_without_the_option_keeps_the_scope_digest_it_had_before_the_option_existed(self):
+        selection = ClaudeMemSelection(BASE, INSTANCE, '15.9.0', PROJECT)
+        released = dict(base_url=BASE, instance=INSTANCE, release='15.9.0', project=PROJECT, platform_source=None, max_rows=1000, schema_version=1)
+        assert selection.to_dict() == released and selection.sha256 == digest(released)
+        assert ClaudeMemSelection.parse(released) == selection
+
+    def test_asking_for_the_index_changes_the_scope_digest_but_not_the_project_it_reads(self):
+        base = ClaudeMemSelection(BASE, INSTANCE, '15.9.0', PROJECT)
+        opted = replace(base, tool_uses=True)
+        assert opted.sha256 != base.sha256 and opted.project_sha256 == base.project_sha256
+        assert opted.to_dict()['tool_uses'] is True and ClaudeMemSelection.parse(json.loads(json.dumps(opted.to_dict()))) == opted
+
+    @pytest.mark.parametrize('value', [pytest.param('yes', id='string'), pytest.param(1, id='int'), pytest.param(None, id='none')])
+    def test_the_option_must_be_a_real_boolean(self, value):
+        with pytest.raises(ValueError): ClaudeMemSelection(BASE, INSTANCE, '15.9.0', PROJECT, tool_uses=value)
+
+    def test_a_selection_that_names_the_option_as_false_is_the_released_selection(self):
+        explicit = ClaudeMemSelection.parse(dict(base_url=BASE, instance=INSTANCE, release='15.9.0', project=PROJECT, platform_source=None,
+            max_rows=1000, tool_uses=False, schema_version=1))
+        assert explicit.sha256 == ClaudeMemSelection(BASE, INSTANCE, '15.9.0', PROJECT).sha256
+
+
 class TestClaudeMemSelectionValidation:
     VALID = dict(base_url=BASE, instance=INSTANCE, release='15.9.0', project=PROJECT)
 
@@ -514,3 +780,16 @@ class TestClaudeMemWorkerCli(Fixture):
         self.write(**change)
         assert self.invoke('probe')[0] == 2
         self.wire.assert_not_called()
+
+    def test_the_index_is_read_only_when_the_declared_scope_names_it_and_a_widened_manifest_is_rejected(self, _credentials):
+        opted = replace(self.selection, tool_uses=True)
+        self.routes[target('/api/tool-uses')] = tools([tool_use(11)])
+        # The option rides in the selection, so the old scope digest no longer authorizes the manifest.
+        self.manifest.write_text(json.dumps({**json.loads(self.manifest.read_text()), 'selection': opted.to_dict()}))
+        assert self.invoke('probe')[0] == 2
+        self.wire.assert_not_called()
+        self.write(opted)
+        code, result = self.invoke('preview', *self.ENV)
+        assert code == 0 and result['claude_mem_summary']['claims'] == dict(observation=2, generated_summary=1, user_prompt=1, tool_use=1)
+        assert ('GET', '/api/tool-uses') in {(m, p.split('?')[0]) for m, p, *_ in self.calls}
+        assert all(m == 'GET' for m, *_ in self.calls)

@@ -42,12 +42,12 @@ EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude'
 OPTIONS = {
     'improve': (*COMMON, '--history-from', '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--memory-store', '--incremental', '--explain-reuse', '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
                 '--resume', '--construction-fraction', '--regression-margin', '--repair-contracts', '--scope', '--remember-runtime',
-                '--accept-score', '--max-rounds', '--plateau-rounds', '--on-regression'),
+                '--accept-score', '--max-rounds', '--plateau-rounds', '--on-regression', '--single-pass'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',
                'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'campaign',
-               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'apply', 'annotation-plan', 'instruction-adherence', 'instruction-repair', 'compare', 'adapters', 'benchmark-report', 'doctor', 'audit', 'init',
+               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'apply', 'annotation-plan', 'instruction-adherence', 'instruction-repair', 'compare', 'score', 'adapters', 'benchmark-report', 'doctor', 'audit', 'init',
                'sources', 'memory', 'config', 'analyze', 'analysis', 'improve', 'watch')
 # Wording that would imply behavioral auto-adoption or continuous self-modification.
 FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automatic improvement', 'automatically apply',

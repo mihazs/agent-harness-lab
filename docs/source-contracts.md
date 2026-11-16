@@ -4207,8 +4207,49 @@ billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
 numbers, deep nesting, duplicate case names, TAP directives, plans, bail outs,
 subtests and line bounds, commit-identity validation and CLI journals that hold
-hashes only. Still open in #53: artifact download or zip handling; coverage and
-lint reports; and expired-artifact coverage warnings from a live read.
+hashes only. Still open in #53: artifact download; coverage and lint reports; and
+expired-artifact coverage warnings from a live read.
+
+### Reports inside a CI artifact ZIP
+
+A GitHub Actions artifact is downloaded as a ZIP. Both `test-results` and
+`quality-reports` can read one report from inside such an archive that the caller
+already has on disk: add `"member"` to the declaration, naming one entry of the
+archive at `path`.
+
+```json
+{"path": "artifacts/ci.zip", "format": "junit-xml", "member": "reports/junit.xml"}
+```
+
+The archive is parsed in memory and never extracted, so no file is written, no URL
+is fetched, and nothing in it is run. `member` follows the same relative-path rules
+as `path` (no absolute path, `..`, backslash or empty segment). Several members of
+one archive are several reports; `(path, member)` must be unique. Only the named
+member is read, and it is decoded by the ordinary format parser and its bounds,
+including `max_report_bytes` for the member's uncompressed size. A member is never
+opened as a nested archive, so a ZIP inside a ZIP is just an unparsable report.
+
+The archive is quarantined whole as `HostileReport`, before any member is read, when
+it is not a plain classic ZIP (a ZIP64 directory, an encrypted entry, a compression
+method other than stored or deflate, a symbolic link or special file, a ZIP64 extra
+field, a duplicate name or a directory that disagrees with its entries), when any
+entry name, not only the declared one, is absolute or contains `..`, a backslash, a
+drive colon, an empty or `.` segment or a control character, or when the declared
+member's size, checksum or compressed stream disagrees with its headers or exceeds
+the byte bound. A file that is not a ZIP is refused the same way. A declared member
+the archive lacks is a plain `ValueError`: the report is missing, never empty. These
+checks are the validators `hindsight_zip` already uses.
+
+A report taken from an archive is identified by its path and member
+(`report_path_sha256` is the fingerprint of the pair, so it never collides with the
+same path read as a plain file), and `report_sha256` is the hash of the member's own
+bytes. A selection that uses any member adds `archive_origin_unverified`: the
+archive's origin is the caller's declaration, so it does not show that the CI run,
+job or commit named for it produced it. To link a member's failed cases or findings
+to a captured job, the caller names the member in the origin declaration for the
+join too: `origins=[{"path": "artifacts/ci.zip", "member": "reports/junit.xml",
+"job_id": ..., "step": ...}]`. An origin without the `member` of a member report, or
+with one that was not selected, names an unselected report and raises.
 
 ### Joining test results to Actions jobs
 
@@ -4381,6 +4422,9 @@ checked before records are made. `limits` may only lower these ceilings:
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 2,500,000 |
+
+SARIF logs may also be read from a member of a
+[CI artifact ZIP](#reports-inside-a-ci-artifact-zip).
 
 Not covered here: SARIF taxonomies, rule metadata and result fingerprints, and any
 live read of code-scanning alerts. Joining findings to Actions jobs is described
@@ -4570,9 +4614,10 @@ No real export has been read; the tests use invented fixtures only.
 | `export-memories.ts` JSON file, selected explicitly | supported, read-only |
 | Observations, summaries, prompts, sessions in that file | separate claim types |
 | Search `query` and per-row `rank`/`score` | separate `search_hit` claims |
-| `tool_uses` rows, advisor calls, pending queue | not in the export; not read (the `get_tool_uses` MCP tool is only checked for presence and shape) |
+| `tool_uses` rows, advisor calls, pending queue | not in the export. The [worker source](#explicit-claude-mem-worker-reads) reads the `tool_uses` index (identity and sizes, never a body) when its selection sets `tool_uses`; advisor calls and the queue are not read, and the `get_tool_uses` MCP tool is only checked for presence and shape |
 | Worker HTTP API: `/api/version`, `/api/observations`, `/api/summaries`, `/api/prompts` | not contacted by the export reader; read by the separate [worker source](#explicit-claude-mem-worker-reads) |
-| Worker HTTP API: `/api/search`, `/api/timeline`, `/api/observations/batch`, `/api/tool-uses`, `/api/sdk-sessions/batch` | not contacted by either source |
+| Worker HTTP API: `GET /api/tool-uses` | read by the worker source only when its selection sets `tool_uses`; not contacted by the export reader |
+| Worker HTTP API: `/api/search`, `/api/timeline`, `/api/observations/batch`, `POST /api/tool-uses/batch`, `/api/sdk-sessions/batch` | not contacted by either source |
 | MCP `search`, `timeline`, `get_observations`, `get_tool_uses` | not called; a saved `tools/list` result can be [checked offline](#saved-mcp-tool-listing-check-claude-mem) |
 | SQLite `~/.claude-mem/claude-mem.db` (WAL) | not opened |
 | Chroma vector projection | not read; never authoritative |
@@ -4687,10 +4732,10 @@ targets, unknown and mismatched versions, duplicate IDs, unknown fields, missing
 and conflicting timestamps, malformed JSON, bounds, path containment, capture
 changes, repeat import, edits and CLI output with no body, ID or path. Still open
 in #48: the worker's `search`/`timeline` and batched `get_observations` (the
-[worker source](#explicit-claude-mem-worker-reads) reads the paged list routes
-only), an authorized read-only SQLite snapshot mode with a verified schema,
-`tool_uses` rows, verifying the shape against a real export or a real worker,
-and further releases.
+[worker source](#explicit-claude-mem-worker-reads) reads the list routes and the
+`tool_uses` index only), an authorized read-only SQLite snapshot mode with a
+verified schema, verifying the shape against a real export or a real worker, and
+further releases.
 
 ### Native session correlation (Claude-Mem)
 
@@ -4815,7 +4860,8 @@ worker compares it without regard to ASCII case, so `A` and `a` are one scope) a
 `platform_source`; `scope_sha256` is `selection.sha256`. `endpoint` must equal
 `base_url`, a canonical HTTPS origin without a trailing slash or `/api` suffix.
 `project` is required: the unfiltered list would also return every other
-project's memory, so there is no all-projects mode. `platform_source`, when set,
+project's memory, so there is no all-projects mode. `tool_uses` (optional boolean,
+default `false` and then omitted) adds the [tool-use index](#tool-use-index-opt-in). `platform_source`, when set,
 is one of the pinned labels (`claude`, `codex`, `cursor`, `kimi`, `pi`,
 `antigravity-cli`) and is sent as `platformSource`. `max_rows` (1 to 10,000,
 default 1,000) bounds each list. A worker behind an authenticating proxy takes its
@@ -4830,14 +4876,59 @@ header.
 | `GET /api/observations?project=P&limit=N&offset=K` | [`DataRoutes.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) and [`PaginationHelper.getObservations`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/PaginationHelper.ts) | `observation` claims |
 | `GET /api/summaries?...` | `PaginationHelper.getSummaries` | `generated_summary` claims |
 | `GET /api/prompts?...` | `PaginationHelper.getPrompts` | `user_prompt` claims |
+| `GET /api/tool-uses?project=P&limit=N&offset=K` (only with `"tool_uses": true`) | [`handleListToolUses`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) and [`queryToolUses`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/sqlite/tool-uses.ts) | `tool_use` claims |
 
 Nothing else is requested. The reader never sends a save, import, delete, project
 merge, corpus or Chroma request, and never calls `/api/search`, `/api/timeline`,
-`/api/observations/batch` or `/api/tool-uses`. Those routes and the MCP tools wrap
+`/api/observations/batch`, `/api/sdk-sessions/batch` or the POST `/api/tool-uses/batch`
+route that returns tool bodies. Those routes and the MCP tools wrap
 their results in text meant for a model (`mcp-text-format.ts`), so reading them
 needs a parser verified against real output, which is still missing. The list
 routes answer structured JSON: `{items, hasMore, offset, limit}` with at most 100
 rows, ordered by creation time, newest first.
+
+#### Tool-use index (opt-in)
+
+A selection with `"tool_uses": true` also reads `GET /api/tool-uses`, the worker's
+index of the tool calls it recorded. It is off by default and absent from a
+selection declared before the option existed, which keeps the scope digest it had.
+Declaring it changes `selection.sha256`, so a manifest whose `scope_sha256` was
+computed without it is refused (`API configuration exceeds its authorized
+identity/scope`); `project_sha256` does not change. The route answers
+`{count, toolUses}` and, at the pin, projects only identity and sizes
+(`id`, `tool_use_id`, `tool_name`, `project`, `content_session_id`,
+`memory_session_id`, `platform_source`, `agent_id`, `agent_type`, `observation_id`,
+`or_generation_id`, `or_session_id`, `prompt_number`, `created_at`,
+`created_at_epoch`, `tool_input_bytes`, `tool_response_bytes`): the tool input and
+response bodies are not in it and are never requested. A row that carries any other
+field, a body among them, is counted in `rows_with_unknown_fields`, hashed with the
+row and not stored.
+
+The index has no cursor, so its end is read differently from the other lists. A
+page must hold only `count` and `toolUses`, with `count` equal to the rows and at
+most the requested `limit`. A page shorter than the `limit` ends the index
+(`captured`); a full page is followed by another request, and an empty page ends
+it. A full page that reaches `max_rows` cannot prove the end, so it is
+`pagination_incomplete: max_rows_reached`. It is read after the three lists, so a
+denial earlier ends the capture before it is requested; a 404 is its own gap.
+
+A `tool_use` claim (`claude_mem_tool_use`, derivation `captured_tool_event`,
+provenance `native_field`) keeps the same namespace as the others
+(`digest(['claude-mem', instance, 'tool_use', id, 0])`) and the same
+`content_session_sha256` and `memory_session_sha256` as the observations of its
+session. The row's `memory_session_id` is empty until the worker links it, which
+leaves `memory_session_sha256` empty without rejecting the row. A row needs a
+positive integer `id` and a non-empty string `content_session_id` and
+`tool_use_id`, or it is counted in `rows_rejected`
+(`row_without_native_identity`). The scope is checked on `project` alone, because
+the index does not filter on `merged_into_project`. `body_sha256` fingerprints the identity and size fields
+(tool name, agent, observation link, generation IDs and the two sizes), so a replay
+that gains a response or an observation link is a new revision of the same claim.
+The tool name and the opaque `tool_use_id` are never printed or stored.
+
+A tool use is Claude-Mem's capture of an event, not a verified native tool event:
+the summary warns `tool_events_unverified`, and the claim is never an independent
+case, evidence of use, a task outcome or a verified native session.
 
 Pages are requested 100 rows at a time (fewer for the last part of a bounded
 list). A page must echo the exact `offset` and `limit` that were requested, carry
@@ -4874,12 +4965,12 @@ the two paths deduplicate by ID, but the sources stay separate and the claims di
   `media`), so the same observation can have another `body_sha256`
   (`worker_list_projection`).
 - A row the filter would not return is not kept. A row whose `project` and
-  `merged_into_project` both differ from the selected project, whose project is
+  `merged_into_project` both differ from the selected project (a tool use: whose `project` differs), whose project is
   missing, or whose `platform_source` differs from a selected platform is excluded and counted in
   `excluded.rows_outside_selection` (`row_outside_selection`).
 
 A row without a positive integer `id` or its session field (`memory_session_id`
-for observations, `session_id` for summaries, `content_session_id` for prompts)
+for observations, `session_id` for summaries, `content_session_id` for prompts and tool uses)
 is counted in `rows_rejected` (`row_without_native_identity`). A field outside the
 pinned list shape is counted in `rows_with_unknown_fields`; names are not printed.
 Missing, naive, unparseable or disagreeing timestamps are `missing`, `invalid` or
