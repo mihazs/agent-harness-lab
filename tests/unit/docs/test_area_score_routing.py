@@ -105,7 +105,7 @@ def test_the_documented_command_prints_the_states_the_routing_tells_the_agent_to
 
 
 def test_the_section_names_every_state_the_exit_code_and_the_limits():
-    text = SECTION.lower()
+    text = ' '.join(SECTION.split()).lower()
     for state in STATES:
         assert f'`{state}`' in text, state
     for phrase in ('exit 2', 'typed reason', 'never turn', 'never average', 'overall', 'aesthetics', 'wide intervals', 'never run a trial'):

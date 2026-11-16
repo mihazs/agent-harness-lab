@@ -131,7 +131,7 @@ number the user gave, and the scope is still written out as in the table above.
 | "improve until the score is 0.8", "keep improving until it reaches 80%" | `ahl skills invoke . --scope project --accept-score 0.8` (the user's number as a fraction; add `--max-rounds N` only when the user gave a round cap) |
 | "improve my harness", "fix my agent instructions" (no score) | `ahl skills invoke . --scope project`; the receipt labels the bar `acceptance_source: default` |
 | "evaluate my harness only", "don't change anything" | No `ahl skills invoke`: the loop improves when the baseline misses the bar. Offer `ahl analyze .` for read-only evidence and say a baseline score alone has no command |
-| "how good is the harness for UX/UI", "score my coding area" | `ahl score --area X` when `ahl --help` lists `score`; otherwise say per-area scoring is not available and never estimate an area by hand. A per-area bar is a `loop.accept_score` map of declared area ids |
+| "how good is the harness for UX/UI", "score my coding area" | `ahl score --area X` over the recorded experiment, as in "Per-area questions" below; never estimate an area by hand. A per-area bar is a `loop.accept_score` map of declared area ids |
 | "fix the failing checkout test", "improve the page load time", "rename this variable" | Not a harness request: do not invoke |
 
 After dispatch, quote `loop.stop_criterion`, `loop.acceptance_source`, `loop.remediation` and the exit code as printed. Say
@@ -140,6 +140,29 @@ After dispatch, quote `loop.stop_criterion`, `loop.acceptance_source`, `loop.rem
 `loop_requires_frozen_bank` needs a pinned bank in `ahl.json`; relay its `remediation` and do not retry with `--single-pass`
 (deprecated: the previous improve-first pass, removed after one release, whose receipt says `loop.status: not_used`).
 A receipt whose `loop.status` is `not_used` made a single pass: report that, with its `loop.reason`.
+
+### Per-area questions
+
+`ahl score` answers "how good is this harness for UX/UI?" and "what is its coding score?" from a recorded paired
+experiment. It calls no model, opens no network connection and writes no file, so run it without asking, and never run a
+trial to produce its inputs.
+
+```sh
+ahl score . --spec EXPERIMENT.json --records TRIALS.json --area ux-ui --format md
+```
+
+- It reads the project's `ahl.json` (declared `areas` and the bank) and the two files `ahl experiment` takes. When the user
+  names no experiment or none was recorded, say per-area scoring has nothing to read and stop; never invent the files. When
+  `ahl score --help` fails, the install predates the command: tell the user to run `ahl update`.
+- Pass one `--area` per area the user named, an id the project declares; with none, every declared area is reported. Exit 2
+  is invalid input: relay its typed reason and its `Next:` step.
+- Quote each area's `state` (`scored`, `provisional`, `no_evidence` or `blocked`) before its number. Only `scored` is a
+  score, and even it is not a verdict: give the paired `status` beside it. Never turn a missing or unknown outcome into a
+  pass, a fail or a zero, never average areas, and say the overall figure is withheld when the report withholds it.
+- When asked "how good", say what the number cannot show: aesthetics are not measured, and few independent roots give wide
+  intervals (three roots leave a success rate known to about 1.6 either way).
+- To aim an improvement at an area instead, only when the user asks to improve it, add `--area X` to the `ahl skills invoke`
+  line (a pinned bank is needed); the receipt's `area_gate` lists the areas it measured.
 
 ## Report integrity
 

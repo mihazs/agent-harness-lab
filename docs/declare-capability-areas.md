@@ -43,4 +43,8 @@ tag is well formed. It cannot know your registry, so an undeclared id is caught 
 project is known: `ahl improve` stops before dispatching anything, and a configured
 evaluation stops before any trial, with a reason such as `task_area_undeclared` and the
 field to fix (for example `tasks[2].areas[1]`). The reasons and limits are listed in the
-[evaluation manifest contract](evaluation-manifest-contract.md#capability-area-declarations).
+[evaluation manifest contract](evaluation-manifest-contract.md#capability-area-declarations)
+and, with the evidence states and receipt keys, in the [capability area reference](area-reference.md).
+
+Next, [write objective graders](author-area-graders.md) for the tasks of each area, so the
+area has outcomes to count.

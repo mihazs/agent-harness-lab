@@ -2,7 +2,9 @@
 
 `ahl score` is the read-only per-area report described in
 [score a harness per capability area](score-by-capability-area.md). It reads files and
-prints to stdout; it calls no model, opens no network connection and writes nothing.
+prints to stdout; it calls no model, opens no network connection and writes nothing. The
+registry, the evidence states and the receipt keys of every area surface are summarized in the
+[capability area reference](area-reference.md).
 
 ## Command
 

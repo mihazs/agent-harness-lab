@@ -116,8 +116,9 @@ criterion. Map the words with the [routing table](references/invocation.md), wri
 - A score or percentage to reach ("improve until 80%"): `--accept-score X [--max-rounds N]`, `X` between 0 and 1.
 - No score word ("improve my harness"): no loop flag; the receipt labels the default bar `acceptance_source: default`.
 - Evaluate only, change nothing: do not run `ahl skills invoke`, which improves when the baseline misses the bar.
-- A per-area question ("how good for UX/UI?"): `ahl score --area X` when `ahl --help` lists `score`, else say it is
-  not available; never estimate an area by hand.
+- A per-area question ("how good for UX/UI?", "coding score?"): `ahl score --area X` over the project's recorded
+  experiment, as in [per-area questions](references/invocation.md). Quote each area's `state` before its number;
+  never estimate an area by hand.
 - Ordinary coding or tests are not harness requests: do not invoke. If `ahl improve --help` lists no `--accept-score`,
   tell the user to run `ahl update`.
 
