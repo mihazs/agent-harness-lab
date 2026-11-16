@@ -207,15 +207,15 @@ def _membership(git_source, git_store, remote_source, remote_store, key, commit_
 def join_merge_request_commit(git_source, git_store, gitlab_source, gitlab_store, *, selection, project_id, iid, commit_sha):
     """Relate one exact local commit to a GitLab MR's server-reported commit membership.
 
-    Needs a schema-9 selection that captured MR commits. Membership is the server's claim,
+    Needs a schema-9 or schema-10 selection that captured MR commits. Membership is the server's claim,
     never ancestry, merge result or outcome. The project is identified by the numeric ID
     the server returned (it is part of the record identities) and the shared source scope.
     """
     _check(git_source, gitlab_source, 'gitlab', commit_sha)
     if any(type(n) is not int or n < 1 for n in (project_id, iid)): raise ValueError('invalid GitLab project or merge request identity')
-    if (not isinstance(selection, GitLabSelection) or selection.schema_version != 9 or 'commits' not in selection.capture
+    if (not isinstance(selection, GitLabSelection) or selection.schema_version not in (9, 10) or 'commits' not in selection.capture
             or iid not in selection.merge_requests):
-        raise ValueError('GitLab selection must be schema 9 and capture commits of the merge request')
+        raise ValueError('GitLab selection must be schema 9 or 10 and capture commits of the merge request')
     if (gitlab_source.project_sha256, gitlab_source.scope_sha256) != (selection.project_sha256, selection.sha256):
         raise ValueError('GitLab source does not match the selection')
     scope = selection.project_identity(project_id)
