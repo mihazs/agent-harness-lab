@@ -19,7 +19,7 @@ from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
 from .regressions import fields, references, sha256, text
 from .statistics import TrialRecord, analyze
-from . import behavior,cohort_history
+from . import behavior,cohort_history,interaction_report
 
 MAX_CASES = 256
 MAX_BYTES = 64*1024*1024
@@ -559,6 +559,7 @@ class HistoryStore(PrivateJournal):
             membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
         effects = behavior.report(spec,result['trials'],inputs['behavior_policies'],
             sampling=record(case/'sequential/binding.json',1024*1024)[0] if spec.sequential is not None else None) if result is not None and inputs.get('behavior_policies') else None
+        interaction = self._interaction(case,inputs,spec,result) if validity == 'current' else None
         records = similarity = similarity_path = None
         if validity != 'current':
             value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
@@ -582,6 +583,9 @@ class HistoryStore(PrivateJournal):
                 value = dict(value,status='rejected',reason='critical_regression') if spec.sequential is not None else dict(status='rejected',reason='critical_regression',**retained)
             elif effects['required_observation_unknown']:
                 value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
+        if (interaction is not None and interaction['required_observation_unknown']
+                and value.get('status')!='blocked' and value.get('reason')!='critical_regression'):
+            value = dict(status='blocked',reason='interaction_observation_incomplete',**retained)
         result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
         if 'protected_access_sha256' in inputs:
@@ -590,10 +594,21 @@ class HistoryStore(PrivateJournal):
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
         if inputs['schema_version'] in (7,8): result.update(resource_decision='not_computed',resource_gate='not_evaluated')
         if effects is not None: result['behavior']=effects
+        if interaction is not None: result['interaction']=interaction
         if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
         return attach(spec,records,result,root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
+
+    def _interaction(self, case, inputs, spec, result):
+        """Outcomes of tasks whose frozen grader bundle holds an interaction contract, or None."""
+        if result is None or not inputs.get('dependencies'): return None
+        source = record(case/'manifest.json',1024*1024)[0]
+        contracts = interaction_report.capture({bundle:contained(case,'oracles/'+bundle) for bundle in inputs['dependencies']},
+            {name:dict(bundle_sha256=value['digest']) for name,value in source['grader_bundles'].items()})
+        if not contracts: return None
+        return interaction_report.report(spec,result['trials'],contracts,
+            sampling=record(case/'sequential/binding.json',1024*1024)[0] if spec.sequential is not None else None)
 
     def sealed_trials(self, run_id):
         """The frozen plan and graded trial records of a current sealed fixed comparison, or None; explanation input, never authority."""
