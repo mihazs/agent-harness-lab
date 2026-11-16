@@ -179,10 +179,13 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
         if not isinstance(event, dict):
             raise ValueError(f'invalid event at position {number}')
-        for key in ('case_id', 'event_id', 'activity'):
-            if not isinstance(event.get(key), str) or not event[key]:
-                raise ValueError(f'invalid {key} at event {number}')
-        case, ident, activity = (event[k] for k in ('case_id', 'event_id', 'activity'))
+        case, ident, activity = event.get('case_id'), event.get('event_id'), event.get('activity')
+        if not isinstance(case, str) or not case:
+            raise ValueError(f'invalid case_id at event {number}')
+        if not isinstance(ident, str) or not ident:
+            raise ValueError(f'invalid event_id at event {number}')
+        if not isinstance(activity, str) or not activity:
+            raise ValueError(f'invalid activity at event {number}')
         root = event.get('root_case_id', case)
         if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
@@ -193,10 +196,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if identity in seen:
             raise ValueError('duplicate event id')
         seen.add(identity)
-        if reused_process_mining is None:
-            process.observe(event)
-        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
-                                               source=True, last_source=None, tied=False, crossed=False))
+        stamp = process.observe(event) if reused_process_mining is None else None
+        order = ordering.get(case)
+        if order is None:  # setdefault would build this nine-field dict for every event and discard it
+            order = ordering[case] = dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
+                                          source=True, last_source=None, tied=False, crossed=False)
         ordinal = event.get('capture_order')
         order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
         order['tied'] |= type(ordinal) is int and ordinal == order['last_order']
@@ -207,8 +211,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if profile is not None:
             declared_events += 1
             if supported: declared_profiles.add(profile)
-        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder'))
-        if not supported or not all(type(value) is int and value >= 0 for value in source[1:]):
+        # Only a declared producer profile reads the segment and suborder, so other rows skip two reads and a tuple.
+        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder')) if supported else None
+        if source is None or not all(type(value) is int and value >= 0 for value in source[1:]):
             order['source'] = False
         else:
             last = order['last_source']
@@ -219,10 +224,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             elif last is not None and source[2:] <= last[2:]:
                 order['source'] = False
             order['last_source'] = source
-        try:
-            stamp = process.instant(event.get('timestamp'))
-        except (ValueError, TypeError, AttributeError, OverflowError):
-            stamp = None
+        if reused_process_mining is not None:  # the miner is not run, so nothing has parsed this timestamp yet
+            try:
+                stamp = process.instant(event.get('timestamp'))
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                stamp = None
         order['timestamp'] &= stamp is not None and (order['last_time'] is None or stamp > order['last_time'])
         order['last_time'] = stamp
         order['events'] += 1
@@ -230,7 +236,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             event.get('contract_violation') is True and bool(event.get('contract_ref')))
         if activity == 'tool_result':
             observation_cases.add(case)
-            if all(isinstance(event.get(key), str) and event[key] for key in
+            # Once a case is a candidate a later result cannot change that, so its fields are not read again.
+            if case not in observation_candidates and all(isinstance(event.get(key), str) and event[key] for key in
                    ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')):
                 observation_candidates.add(case)
         counts[activity] += 1
