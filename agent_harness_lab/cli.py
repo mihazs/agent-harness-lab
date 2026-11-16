@@ -62,6 +62,9 @@ def _improve_summary(result, elapsed, budget=None):
     if isinstance(result.get('preparation'), dict):
         from . import preparation
         print(preparation.line(result['preparation']), file=sys.stderr, flush=True)
+    from . import provider_reported
+    if spend := provider_reported.line(result.get('model_calls')):  # the runtime's own figure, labelled unverified; cost= below stays AHL's own
+        print(spend, file=sys.stderr, flush=True)
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
