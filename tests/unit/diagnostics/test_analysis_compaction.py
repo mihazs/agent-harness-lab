@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_harness_lab.cli import main
+import agent_harness_lab.diagnostics.process_mining as process_mining
 import tools.diagnose as diagnose
 from tests.support import diagnose_reference as reference
 
@@ -311,3 +312,7 @@ def instances_alive_at_mining(owner, name):
 
 def test_the_observation_matching_state_is_released_before_sequence_mining():
     assert instances_alive_at_mining(diagnose, 'ObservationCache') == 0
+
+
+def test_the_process_graph_state_is_released_before_sequence_mining():
+    assert instances_alive_at_mining(process_mining, 'ProcessMiner') == 0

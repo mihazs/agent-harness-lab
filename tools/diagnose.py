@@ -276,6 +276,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     n = sum(counts.values())
     del seen, names  # ingestion-only; sequence mining below needs the room
+    process_mining = (reused_process_mining if reused_process_mining is not None
+                      else dict(process.result(), profile='ahl-analysis-process-graph-v1'))
+    del process  # its per-case state is dead; sequence mining below needs the room
     ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp'] or state['source']}
     sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
     selected_sequences = sequence_cases & ordered
@@ -343,7 +346,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 observation_coverage=dict(coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
-                process_mining=reused_process_mining if reused_process_mining is not None else dict(process.result(), profile='ahl-analysis-process-graph-v1'),
+                process_mining=process_mining,
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
