@@ -1,8 +1,9 @@
 # Declare capability areas and tag bank tasks
 
 Use this when you want a harness result per capability area, such as coding or UX/UI,
-instead of one pooled number. This step only declares areas and tags tasks; it does not
-score anything yet, so no model is called and nothing is executed.
+instead of one pooled number. This step only declares areas and tags tasks; it calls no
+model and executes nothing. To read a result per area from a recorded experiment, continue
+with [score a harness per capability area](score-by-capability-area.md).
 
 An area is separate from a task's `family`. The family stays the statistical grouping of
 related tasks; an area says which capability the task exercises.
