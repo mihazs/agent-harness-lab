@@ -107,39 +107,24 @@ passed or another candidate tied the baseline. Merge families only when the same
 cause and repair explain their evidence. Prefer several independently justified
 small corrections over a quota of edits or a wholesale rewrite.
 
-## Execute the loop
+## Route the request to the loop
 
-1. Snapshot affected files with modes and hashes before changing them. Preserve
-   baseline separately from candidate; capture applicable ambient configuration.
-   Before touching a surface other than root instructions or skills, check its
-   writability in the [surface matrix](references/surfaces.md).
-2. Create a small task set from the failure and acceptance criteria. Include an
-   adjacent regression and a fresh transfer case. Freeze graders before scoring.
-   Use real task execution when the claim concerns execution; hypothetical answers
-   are only decision probes. Keep held-out cases out of candidate feedback.
-3. Select the next high-impact uncovered mechanism. Prefer a localized correction
-   or simplification; change one causal component at a time unless callers must
-   change together. Retain unique useful behavior. Test interaction regressions
-   before adopting a combination of independently eligible edits.
-4. Run baseline and candidate with comparable resources using the [evaluation methodology](references/evaluation.md).
-   Inspect failures, traces and artifacts. Repair the evaluator if it is wrong,
-   version it, and rerun both sides; never relax a criterion to make a patch pass.
-5. Refine a failed candidate from the observed failure. Reject regressions, apply
-   independently successful edits, and test the final candidate on fresh held-out
-   cases. A held-out case used for refinement becomes development data.
-6. Validate skill metadata, references, scripts, activation and negative routing.
-   Apply eligible changes without another approval question, then smoke-test the
-   installed version. Record exactly what changed and the supporting outcomes.
+`ahl skills invoke` runs the evaluate > improve > evaluate loop by default on a pinned bank, so the command is
+the loop: baseline first, one mechanism per round, re-evaluation on identical frozen inputs, one typed stop
+criterion. Map the words with the [routing table](references/invocation.md), writing the scope out as above:
 
-Default shared ceiling: 24 agent trials and 45 minutes including nested evaluations.
-Use at most three candidate variants and one refinement per mechanism, within
-that shared ceiling; these are search limits, not a limit of three fixes. Allocate
-trials across material mechanisms before repeating easy successes, and reserve
-about a quarter for final composition, safety and transfer checks. Stop when the
-coverage table is resolved or the shared budget is exhausted; report untested
-families as deferred, never as disproved. A smaller user budget takes precedence.
-Do not recursively launch unbounded improvement sessions to evaluate this skill:
-use controlled fixtures and count all child trials in the same budget.
+- A score or percentage to reach ("improve until 80%"): `--accept-score X [--max-rounds N]`, `X` between 0 and 1.
+- No score word ("improve my harness"): no loop flag; the receipt labels the default bar `acceptance_source: default`.
+- Evaluate only, change nothing: do not run `ahl skills invoke`, which improves when the baseline misses the bar.
+- A per-area question ("how good for UX/UI?"): `ahl score --area X` when `ahl --help` lists `score`, else say it is
+  not available; never estimate an area by hand.
+- Ordinary coding or tests are not harness requests: do not invoke. If `ahl improve --help` lists no `--accept-score`,
+  tell the user to run `ahl update`.
+
+Never start a manual loop, add `--single-pass` or repeat an invocation to bypass a blocked, failed, exhausted or
+ambiguous result. Report `loop.stop_criterion` and `loop.remediation` verbatim; `accepted` means the declared bar is
+met on development and regression evidence, never certification. The [manual loop](references/invocation.md) is
+only the assisted fallback when the CLI is unavailable before any attempt.
 
 ## Evaluation recovery and adoption
 

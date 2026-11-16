@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Objective UI grader: DOM assertions, accessibility rules and a screenshot diff against a golden image.
+
+Standard library only, no model call and no network. argv[1] is the artifact directory, argv[2] the expected.json that
+declares the checks. A missing or broken artifact of the agent is a false outcome (exit 1); a reference the grader cannot
+read, an unknown rule or an undecodable golden image is not an outcome at all (valid false, exit 2).
+"""
+import json
+from html.parser import HTMLParser
+from pathlib import Path
+import struct
+import sys
+import zlib
+
+ID, VERSION = 'ui-objective', 'v1'
+VOID = {'img', 'input', 'br', 'hr', 'meta', 'link'}
+
+
+class Page(HTMLParser):
+    """Every start tag with its attributes and the text inside it."""
+    def __init__(self):
+        super().__init__()
+        self.elements, self.open = [], []
+
+    def handle_starttag(self, tag, attrs):
+        self.elements.append(dict(tag=tag, attrs={k: v or '' for k, v in attrs}, text=''))
+        if tag not in VOID: self.open.append(self.elements[-1])
+
+    def handle_endtag(self, tag):
+        if tag in [e['tag'] for e in self.open]:
+            while self.open.pop()['tag'] != tag: pass
+
+    def handle_data(self, data):
+        for element in self.open: element['text'] += data
+
+
+def dom(page, wanted):
+    """Each wanted element exists with the given attributes and the exact text, if one is given."""
+    return all(any(e['tag'] == w['tag'] and all(e['attrs'].get(k) == v for k, v in w.get('attrs', {}).items())
+                   and ('text' not in w or ' '.join(e['text'].split()) == w['text']) for e in page.elements) for w in wanted)
+
+
+def labelled(page, control):
+    labels = {e['attrs'].get('for') for e in page.elements if e['tag'] == 'label'}
+    return bool(control['attrs'].get('aria-label') or control['attrs'].get('id') in labels)
+
+
+RULES = {  # each rule is a pure function of the parsed page
+    'html_lang': lambda p: any(e['tag'] == 'html' and e['attrs'].get('lang') for e in p.elements),
+    'img_alt': lambda p: all(e['attrs'].get('alt', '').strip() or e['attrs'].get('role') == 'presentation' for e in p.elements if e['tag'] == 'img'),
+    'control_label': lambda p: all(labelled(p, e) for e in p.elements if e['tag'] in ('input', 'select', 'textarea')
+                                   and e['attrs'].get('type') not in ('hidden', 'submit', 'button')),
+}
+
+
+def paeth(a, b, c):
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else b if pb <= pc else c
+
+
+def pixels(path):
+    """(width, height, RGB triples) of a non-interlaced 8-bit RGB or RGBA PNG; anything else raises ValueError.
+
+    shortcut: pure Python, sized for fixture screenshots; pin an image library in the grader of a real project."""
+    data, position, idat, header = Path(path).read_bytes(), 8, b'', None
+    if data[:8] != b'\x89PNG\r\n\x1a\n': raise ValueError('not a PNG')
+    while position < len(data):
+        length, kind = struct.unpack('>I4s', data[position:position + 8])
+        body, position = data[position + 8:position + 8 + length], position + 12 + length
+        if kind == b'IHDR': header = struct.unpack('>IIBBBBB', body)
+        elif kind == b'IDAT': idat += body
+    if header is None or header[2] != 8 or header[3] not in (2, 6) or header[6] != 0: raise ValueError('unsupported PNG')
+    width, height, step = header[0], header[1], 3 if header[3] == 2 else 4
+    stride, raw = width * step, zlib.decompress(idat)
+    if len(raw) != height * (stride + 1): raise ValueError('truncated PNG')
+    rows, previous = [], bytes(stride)
+    for y in range(height):
+        kind, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+        if kind > 4: raise ValueError('bad filter')
+        for i in range(stride):
+            a, c = (line[i - step], previous[i - step]) if i >= step else (0, 0)
+            line[i] = (line[i] + (0, a, previous[i], (a + previous[i]) // 2, paeth(a, previous[i], c))[kind]) & 255
+        previous = bytes(line)
+        rows.append(previous)
+    return width, height, [row[x * step:x * step + 3] for row in rows for x in range(width)]
+
+
+def same_picture(actual, golden, tolerance, fraction):
+    """The golden is read first: an unusable golden raises, while an unusable image of the agent is simply not the same picture."""
+    wanted = pixels(golden)
+    try: shot = pixels(actual)
+    except (OSError, ValueError, zlib.error, struct.error): return False
+    if shot[:2] != wanted[:2]: return False
+    return sum(any(abs(p - q) > tolerance for p, q in zip(a, b)) for a, b in zip(shot[2], wanted[2])) <= fraction * len(wanted[2])
+
+
+def grade(workspace, reference):
+    """The outcome of every declared check, or ValueError when the reference or the golden image is unusable."""
+    try:
+        wanted = json.loads(Path(reference).read_text())
+        groups = [key for key in ('dom', 'accessibility', 'screenshot') if key in wanted]
+        if wanted['schema_version'] != 1 or not groups or any(not wanted[key] for key in groups) or not set(wanted.get('accessibility', ())) <= set(RULES):
+            raise ValueError('reference_invalid')
+        results = []
+        if 'screenshot' in wanted:
+            shot = wanted['screenshot']
+            results.append(same_picture(workspace / shot['actual'], Path(reference).parent / shot['golden'], shot['channel_tolerance'], shot['max_changed_fraction']))
+        if 'dom' in wanted or 'accessibility' in wanted:
+            page = Page()
+            try: page.feed((workspace / wanted['page']).read_text())
+            except (OSError, UnicodeError): return False  # the agent delivered no readable page
+            results += [dom(page, wanted['dom'])] if 'dom' in wanted else []
+            results += [RULES[rule](page) for rule in wanted.get('accessibility', ())]
+    except (OSError, ValueError, KeyError, TypeError, zlib.error, struct.error) as error:
+        raise ValueError('reference_invalid') from error
+    return all(results)
+
+
+def main(argv):
+    try: outcome = grade(Path(argv[1]), argv[2])
+    except ValueError as error:
+        print(json.dumps(dict(schema_version=1, valid=False, grader_id=ID, grader_version=VERSION, outcome=None, error=str(error))))
+        return 2
+    print(json.dumps(dict(schema_version=1, valid=True, grader_id=ID, grader_version=VERSION, outcome=outcome)))
+    return 0 if outcome else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main(sys.argv))

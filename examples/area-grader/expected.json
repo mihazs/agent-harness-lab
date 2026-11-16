@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "page": "index.html",
+  "dom": [
+    {"tag": "label", "attrs": {"for": "email"}, "text": "Email"},
+    {"tag": "button", "attrs": {"type": "submit"}, "text": "Save"}
+  ],
+  "accessibility": ["html_lang", "img_alt", "control_label"],
+  "screenshot": {"actual": "shot.png", "golden": "golden.png", "channel_tolerance": 8, "max_changed_fraction": 0.02}
+}

@@ -11,7 +11,7 @@ from pathlib import Path
 from agent_harness_lab import config
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.statistics import TrialRecord
-from tests.support.area_bank import REGISTRY, two_area_bank
+from tests.support.area_bank import REGISTRY, TAGS, two_area_bank
 
 HASHES = dict(baseline_hash='b' * 64, candidate_hash='c' * 64, grader_hash='g' * 64, runtime_hash='r' * 64)
 ALL = 'all'
@@ -62,3 +62,17 @@ def write(root, spec, rows):
     (root / 'experiment.json').write_text(json.dumps(spec.to_dict()))
     (root / 'trials.json').write_text(json.dumps([asdict(row) for row in rows]))
     return root / 'experiment.json', root / 'trials.json'
+
+
+DOCS = dict(id='docs', label='Docs', description='Write and correct documentation.')
+REVIEW = dict(id='review', label='Review', description='Find defects in a change.')
+
+
+def four_states(root):
+    """The synthetic project that shows every evidence state at once; returns (root, spec path, records path).
+
+    coding is scored, ux-ui has one ungraded task (provisional), docs has no task (no_evidence) and the one review task is
+    not reviewed as independent (blocked)."""
+    project(root, registry=[*REGISTRY, DOCS, REVIEW], tags={**TAGS, 'resumption': ['review']}, reviewed=list(TAGS))
+    spec = experiment(root)
+    return (root, *write(root, spec, records(spec, ungraded=('skill-routing',))))
