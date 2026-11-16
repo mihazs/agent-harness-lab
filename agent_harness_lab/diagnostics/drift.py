@@ -400,8 +400,8 @@ def _canonical_stratum(key, fields):
             and json.dumps(values) == key)
 
 
-def describe_task_mix(plan, reference, receipt):
-    """Compare declared stratum proportions descriptively; this is not a drift test."""
+def check_receipt(plan, reference, receipt):
+    """Return the plan digest when ``receipt`` is a ``drift-receipt-v1`` sealed over this plan and reference."""
     plan_sha = check_plan(plan)
     _check_reference(reference, plan_sha)
     if (not isinstance(receipt, dict) or receipt.get('profile') != RECEIPT_PROFILE
@@ -409,6 +409,12 @@ def describe_task_mix(plan, reference, receipt):
             or receipt.get('plan_sha256') != plan_sha or receipt.get('reference_sha256') != reference['sha256']
             or receipt.get('sha256') != _digest({k: v for k, v in receipt.items() if k != 'sha256'})):
         raise ValueError('bound drift receipt required')
+    return plan_sha
+
+
+def describe_task_mix(plan, reference, receipt):
+    """Compare declared stratum proportions descriptively; this is not a drift test."""
+    plan_sha = check_receipt(plan, reference, receipt)
     try:
         capture, mix = receipt['channels']['capture'], receipt['channels']['task_mix']
         ref_counts, current_counts = reference['strata'], mix['current']
