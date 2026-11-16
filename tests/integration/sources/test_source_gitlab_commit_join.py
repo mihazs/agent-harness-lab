@@ -73,6 +73,13 @@ class TestMergeRequestCommitJoin(MergeRequestJoinFixture):
         provenance = dict(source_kind='synthetic', approved_publication=True, source_ref='fixture', derived_from_private=False)
         assert not public_export_allowed([{**result, 'provenance': provenance}])
 
+    def test_schema_10_selection_that_also_captured_pipelines_joins_like_schema_9(self):
+        self.selection = GitLabSelection(BASE, PATH, ('commits', 'merge_requests', 'pipelines'), merge_requests=(IID,), schema_version=10)
+        self.lab = replace(self.lab, scope_sha256=self.selection.sha256)
+        self.capture(self.git, git_commit(self.git, SHA))
+        self.capture(self.lab, *self.lab_records())
+        self.expect(self.join(), 'matched', 'exact_merge_request_commit_membership')
+
     @pytest.mark.parametrize('change', ['project', 'sha'])
     def test_other_project_or_commit_is_not_joined(self, change):
         self.capture(self.git, git_commit(self.git, SHA))

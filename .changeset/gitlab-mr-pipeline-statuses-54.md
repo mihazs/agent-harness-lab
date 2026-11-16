@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Read the pipelines GitLab reports for a selected merge request. An opt-in GitLab selection schema 10 adds `pipelines` to schema 9's capabilities (including its commit graph): each pipeline becomes a `gitlab_mr_pipeline` record with its global ID and project-scoped IID kept apart, its project identity (a fork's pipeline is `other_project` and is never followed), source, a documented status label and fingerprints of the ref, name and commit. A status GitLab does not document, or omits, is recorded as `unknown` and never as success or failure. `matches_mr_head` compares the pipeline commit with the merge request's reported head by equality only, so it never creates ancestry. A failed or successful pipeline is a server claim, not a task outcome; a retried pipeline reports only its current status; an empty listing does not show that CI did not run; a denied, rate-limited or incomplete listing blocks the checkpoint. Jobs, retry attempts, test reports and artifact metadata are not read yet. `join_merge_request_commit` now accepts a schema 10 selection that captured `commits`. Part of #54.

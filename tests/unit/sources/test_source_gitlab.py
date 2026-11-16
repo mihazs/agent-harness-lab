@@ -128,6 +128,162 @@ class GitLabFixture:
 
 
 class TestGitLabSource(GitLabFixture):
+    def v10_pipeline_selection(self):
+        return replace(self.selection, schema_version=10, capture=('merge_requests', 'pipelines'), issues=())
+
+    def pipeline_rows(self, **changes):
+        return [dict(id=501, iid=11, project_id=42, status='failed', source='merge_request_event', sha='b'*40,
+            ref='feature/private-branch', name='SYNTHETIC_PRIVATE_NAME', created_at=self.stamp, updated_at=self.stamp,
+            web_url='https://gitlab.example.test/synthetic-group/SYNTHETIC_SECRET/-/pipelines/501') | changes]
+
+    def pipeline_route(self, rows): self.routes[self.mr_path+'/pipelines?page=1&per_page=100'] = rows
+
+    def test_v10_failed_pipeline_is_a_private_server_claim_not_a_task_outcome(self):
+        self.pipeline_route(self.pipeline_rows())
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        node, = self.nodes(client, 'gitlab_mr_pipeline')
+        assert (node['status'], node['source'], node['project_state'], node['matches_mr_head']) == ('failed', 'merge_request_event', 'same_project', True)
+        assert node['id_sha256'] != node['iid_sha256'] and node['ref_sha256'] == digest('feature/private-branch')
+        assert any(r[0] == 'reported_pipeline_on_mr' for r in client.summary['relations'])
+        assert ('pipelines', 'captured', None) in self.states(client)
+        assert {'pipeline_status_server_reported_not_task_outcome', 'pipeline_attempt_history_not_observed'} <= set(client.summary['warnings'])
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+        assert 'b'*40 not in repr(client.summary) and 'SYNTHETIC_PRIVATE_NAME' not in repr(client.summary)
+
+    @pytest.mark.parametrize('reported, expected', [
+        pytest.param('success', 'success', id='success'), pytest.param('failed', 'failed', id='failed'),
+        pytest.param('canceling', 'canceling', id='canceling'), pytest.param('manual', 'manual', id='manual'),
+        pytest.param('SUCCESS', 'unknown', id='wrong-case'), pytest.param('passed', 'unknown', id='unrecognized'),
+        pytest.param('', 'unknown', id='empty'), pytest.param(None, 'unknown', id='null'),
+        pytest.param(True, 'unknown', id='boolean'), pytest.param(['success'], 'unknown', id='list')])
+    def test_v10_unrecognized_pipeline_status_is_unknown_never_success_or_failure(self, reported, expected):
+        self.pipeline_route(self.pipeline_rows(status=reported))
+        client, _ = self.read(self.v10_pipeline_selection())
+        assert self.nodes(client, 'gitlab_mr_pipeline')[0]['status'] == expected
+
+    @pytest.mark.parametrize('sha, mr_sha, expected', [
+        pytest.param('b'*40, 'b'*40, True, id='same-head'), pytest.param('d'*40, 'b'*40, False, id='other-commit'),
+        pytest.param(None, 'b'*40, 'unknown', id='pipeline-sha-missing'),
+        pytest.param('b'*40, None, 'unknown', id='mr-head-missing')])
+    def test_v10_pipeline_commit_is_compared_to_the_reported_head_never_as_ancestry(self, sha, mr_sha, expected):
+        self.mr['sha'] = mr_sha
+        self.pipeline_route(self.pipeline_rows(sha=sha))
+        client, _ = self.read(self.v10_pipeline_selection())
+        node, = self.nodes(client, 'gitlab_mr_pipeline')
+        assert node['matches_mr_head'] == expected and all('ancestor' not in r[0] for r in client.summary['relations'])
+
+    @pytest.mark.parametrize('project_id, expected', [pytest.param(42, 'same_project', id='same'),
+        pytest.param(77, 'other_project', id='fork-or-other'), pytest.param(None, 'unknown', id='missing')])
+    def test_v10_pipeline_project_keeps_its_own_identity(self, project_id, expected):
+        self.pipeline_route(self.pipeline_rows(project_id=project_id))
+        client, _ = self.read(self.v10_pipeline_selection())
+        node, = self.nodes(client, 'gitlab_mr_pipeline')
+        assert node['project_state'] == expected
+        assert (node['project_sha256'] is None) == (project_id is None)
+        assert (node['project_sha256'] == client.summary['project_sha256']) == (project_id == 42)
+
+    @pytest.mark.parametrize('case', ['missing_id', 'boolean_id', 'zero_id', 'string_id', 'short_sha', 'boolean_project',
+        'boolean_iid', 'duplicate'])
+    def test_v10_malformed_or_duplicate_pipeline_fails_closed(self, case):
+        rows = self.pipeline_rows()
+        if case == 'missing_id': del rows[0]['id']
+        if case == 'boolean_id': rows[0]['id'] = True
+        if case == 'zero_id': rows[0]['id'] = 0
+        if case == 'string_id': rows[0]['id'] = '501'
+        if case == 'short_sha': rows[0]['sha'] = 'b'*12
+        if case == 'boolean_project': rows[0]['project_id'] = True
+        if case == 'boolean_iid': rows[0]['iid'] = True
+        if case == 'duplicate': rows.append(dict(rows[0]))
+        self.pipeline_route(rows)
+        with pytest.raises(TransportError): self.read(self.v10_pipeline_selection())
+
+    def test_v10_empty_pipeline_list_is_not_evidence_that_ci_did_not_run(self):
+        self.pipeline_route(lambda: self.page([]))
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        assert not self.nodes(client, 'gitlab_mr_pipeline') and ('pipelines', 'captured', None) in self.states(client)
+        assert 'pipeline_status_server_reported_not_task_outcome' in client.summary['warnings'] and not client.summary['task_outcomes_verified']
+
+    def test_v10_pipeline_pagination_and_late_denial_remain_visible(self):
+        target = self.mr_path+'/pipelines'
+        first = [dict(id=1000+i, status='success', sha='b'*40) for i in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = lambda: self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = lambda: self.page([dict(id=2000, status='failed', sha='b'*40)],
+            **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        assert len(self.nodes(client, 'gitlab_mr_pipeline')) == 101 and snapshot.checkpoint_ready
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        assert ('pipelines', 'pagination_incomplete', 'forbidden') in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v10_duplicate_pipeline_across_pages_fails_closed(self):
+        target = self.mr_path+'/pipelines'
+        first = [dict(id=1000+i, status='success') for i in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = self.page([first[0]], **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        with pytest.raises(TransportError): self.read(self.v10_pipeline_selection())
+
+    def test_v10_same_pipeline_and_mr_numbers_in_other_projects_remain_distinct(self):
+        selection = self.v10_pipeline_selection()
+        self.pipeline_route(self.pipeline_rows())
+        first, _ = self.read(selection)
+        path = 'synthetic-group/other-project'
+        self.build(43, path)
+        self.routes['/api/v4/projects/43/merge_requests/7/pipelines?page=1&per_page=100'] = self.pipeline_rows(project_id=43)
+        second, _ = self.read(replace(selection, project=path))
+        assert self.nodes(first, 'gitlab_mr_pipeline')[0]['native_id_sha256'] != self.nodes(second, 'gitlab_mr_pipeline')[0]['native_id_sha256']
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'pipelines'])
+    def test_v10_unavailable_pipelines_are_visible(self, blocked):
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'pipelines': self.mr_path+'/pipelines?page=1&per_page=100'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        expected = ('pipelines', 'forbidden', None) if blocked == 'pipelines' else ('pipelines', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client) and not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('status, state', [(401, 'unauthorized'), (404, 'not_found'), (429, 'rate_limited')])
+    def test_v10_denied_pipeline_listing_never_reads_as_no_ci(self, status, state):
+        self.routes[self.mr_path+'/pipelines?page=1&per_page=100'] = Response(b'SYNTHETIC_SECRET', status)
+        client, snapshot = self.read(self.v10_pipeline_selection())
+        assert ('pipelines', state, None) in self.states(client) and not snapshot.checkpoint_ready
+        assert not self.nodes(client, 'gitlab_mr_pipeline')
+
+    def test_v10_pipelines_require_scope_and_bound(self):
+        with pytest.raises(ValueError): replace(self.selection, schema_version=9, capture=('merge_requests', 'pipelines'), issues=())
+        with pytest.raises(ValueError): replace(self.selection, schema_version=10, capture=('issues', 'pipelines'), merge_requests=())
+        self.pipeline_route(self.pipeline_rows()+self.pipeline_rows(id=502))
+        with patch.object(gitlab, 'MAX_MR_PIPELINES', 1):
+            with pytest.raises(TransportError): self.read(self.v10_pipeline_selection())
+
+    def test_v10_keeps_every_earlier_capability_and_the_commit_graph(self):
+        selection = replace(self.selection, schema_version=10, capture=('commits', 'diffs', 'merge_requests', 'reviewers'), issues=())
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = self.diff_rows()
+        self.routes[self.mr_path+'/reviewers'] = [dict(user=self.actor, state='reviewed')]
+        client, snapshot = self.read(selection)
+        assert {'gitlab_mr_commit', 'gitlab_mr_diff_file', 'gitlab_mr_reviewer'} <= {n['kind'] for n in client.summary['nodes']}
+        assert len(snapshot.graph.joins) == 1 and 'pipeline_status_server_reported_not_task_outcome' not in client.summary['warnings']
+
+    def test_v10_maps_a_threaded_system_noted_linked_failed_pipeline_merge_request_deterministically(self):
+        selection = replace(self.selection, schema_version=10, capture=('closing_issues', 'commits', 'discussions', 'issues',
+            'merge_requests', 'notes', 'pipelines'))
+        self.routes[self.issue_path+'/discussions?page=1&per_page=100'] = self.issue_discussion_rows()
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = self.discussion_rows()
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        self.routes[self.mr_path+'/closes_issues?page=1&per_page=100'] = self.closing_rows()
+        self.pipeline_route(self.pipeline_rows())
+        first, snapshot = self.read(selection)
+        second, again = self.read(selection)
+        assert first.summary == second.summary and snapshot.sha256 == again.sha256
+        assert {r.native_id_sha256: r.revision_sha256 for r in snapshot.records} == {r.native_id_sha256: r.revision_sha256 for r in again.records}
+        counts = {kind: len(self.nodes(first, kind)) for kind in ('gitlab_discussion', 'gitlab_system_note', 'gitlab_mr_commit',
+            'gitlab_mr_closing_issue', 'gitlab_mr_pipeline')}
+        assert counts['gitlab_discussion'] == 3 and counts['gitlab_system_note'] >= 1
+        assert (counts['gitlab_mr_commit'], counts['gitlab_mr_closing_issue'], counts['gitlab_mr_pipeline']) == (1, 1, 1)
+        assert self.nodes(first, 'gitlab_mr_pipeline')[0]['status'] == 'failed' and snapshot.checkpoint_ready
+        assert not first.summary['task_outcomes_verified'] and len(snapshot.graph.joins) == 1
+
     def v8_diff_selection(self):
         return replace(self.selection, schema_version=8, capture=('diffs', 'merge_requests'), issues=())
 
@@ -1145,7 +1301,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=10),
+        dict(capture=('deployments', 'issues', 'merge_requests')), dict(schema_version=11),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
@@ -1253,6 +1409,22 @@ class TestGitLabConfiguration(GitLabFixture):
             assert self.invoke('import', *env)[0] == 0
             assert self.invoke('import', *env)[1]['imported'] == 0
             assert 'SYNTHETIC_PRIVATE_BODY' not in self.journal.read_text()
+
+    def test_v10_configured_pipeline_preview_and_import(self):
+        self.selection = replace(self.selection, schema_version=10, capture=('merge_requests', 'pipelines'), issues=())
+        self.source = self.spec(self.selection, auth_mode='configured')
+        self.write()
+        self.routes[self.mr_path+'/pipelines?page=1&per_page=100'] = [dict(id=501, status='failed', sha='b'*40,
+            ref='feature/private-branch', name='SYNTHETIC_PRIVATE_NAME')]
+        env = ('--authorization-env', 'SYNTHETIC_GITLAB_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITLAB_AUTHORIZATION='Bearer SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready']
+            assert any(c['resource'] == 'pipelines' and c['state'] == 'captured' for c in result['gitlab_summary']['coverage'])
+            assert self.invoke('import', *env)[0] == 0
+            assert self.invoke('import', *env)[1]['imported'] == 0
+            text = self.journal.read_text()
+            assert 'b'*40 not in text and 'SYNTHETIC_PRIVATE_NAME' not in text and 'feature/private-branch' not in text
 
     def test_v4_configured_commit_preview_and_import(self):
         self.selection = replace(self.selection, schema_version=4, capture=('commits', 'merge_requests'), issues=())
