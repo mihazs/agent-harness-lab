@@ -263,6 +263,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     n = sum(counts.values())
+    del seen, names  # ingestion-only; sequence mining below needs the room
     ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp'] or state['source']}
     sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
     selected_sequences = sequence_cases & ordered

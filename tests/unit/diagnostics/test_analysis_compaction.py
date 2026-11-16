@@ -1,6 +1,7 @@
 """Synthetic multi-root corpora: compact analysis state gives the frozen implementation's exact output."""
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
+import gc
 import io
 import json
 import os
@@ -235,6 +236,8 @@ def mining_inputs(rows, **options):
 
     def spy(cases, roots, maximum=None):
         taken['entries'] = {case: list(entries) for case, entries in cases.items()}
+        first = (rows[0]['case_id'], rows[0]['event_id'])
+        taken['duplicate_id_set_alive'] = any(type(held) is set and first in held for held in gc.get_objects())
         return []
     with patch.object(diagnose, 'recurring_sequences', spy):
         diagnose.analyze((json.loads(line) for line in lines), **options)
@@ -249,3 +252,7 @@ def test_events_share_one_stored_copy_of_each_case_id_and_activity():
     assert len({id(entry[0]) for _, entry in entries}) == len(activities)
     for case, (_, _, ref) in entries:
         assert (ref[0] if type(ref) is tuple else ref['case_id']) is case
+
+
+def test_the_duplicate_id_set_is_released_before_sequence_mining():
+    assert mining_inputs(corpus(3, roots=6, cases=3, steps=40))['duplicate_id_set_alive'] is False
