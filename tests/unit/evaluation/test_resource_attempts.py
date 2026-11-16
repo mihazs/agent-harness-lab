@@ -99,6 +99,19 @@ def test_rows_without_attempts_behave_as_before():
     assert decide(contract(), rows, 'supported')['endpoints'][0]['mean_difference'] == pytest.approx(-50)
 
 
+@pytest.mark.parametrize('measurements', [
+    pytest.param(None, id='none'),
+    pytest.param('elapsed', id='string'),
+    pytest.param([10], id='list'),
+])
+def test_a_row_without_attempts_whose_measurements_are_not_a_mapping_is_unknown_not_a_crash(measurements):
+    # Regression: origin/main raised AttributeError here (`trial.get('measurements', {}).get(...)`).
+    rows = with_candidate(dict(status='completed', measurements=measurements))
+    result = decide(contract(), rows, 'supported')
+    assert result['decision'] == 'blocked'
+    assert result['endpoints'][0]['unknown_reasons'] == {'missing_measurement': 100}
+
+
 @pytest.mark.parametrize('call', [
     pytest.param(lambda rows: decide(contract(), rows, 'supported'), id='decide'),
     pytest.param(lambda rows: success_cost(rows, 'elapsed'), id='success-cost'),
