@@ -150,3 +150,28 @@ def test_cli_reports_a_foreign_symlink_in_one_line_and_changes_nothing(trees):
     assert 'foreign symlink' in str(refusal.value) and 'nothing was changed' in str(refusal.value)
     assert (trees.dest / name).readlink() == trees.root / 'elsewhere'
     assert not trees.backups.exists()
+
+
+def run_cli(trees, capsys):
+    links.main(['--destination', str(trees.dest), '--backup-root', str(trees.backups)], source=trees.source)
+    return capsys.readouterr().out
+
+
+def test_first_install_on_an_empty_destination_names_no_backup_and_leaves_no_empty_folder(trees, capsys):
+    """Regression: the receipt pointed at a newly created but empty backup folder when nothing was replaced."""
+    for name in links.NAMES:
+        (trees.dest / name / 'SKILL.md').unlink()
+        (trees.dest / name).rmdir()
+    assert run_cli(trees, capsys) == 'Linked skills.\n'
+    assert list(trees.backups.iterdir()) == []
+    assert run_cli(trees, capsys) == 'Skill links already current.\n'
+
+
+def test_a_foreign_entry_under_the_retired_name_is_left_alone_and_named_on_every_run(trees, capsys):
+    """Regression: such an entry was left alone silently, so the receipt gave no sign it still shadows the old skill."""
+    (trees.dest / RETIRED).mkdir()
+    (trees.dest / RETIRED / 'SKILL.md').write_text('mine')
+    named = f'Left untouched, not installed by this tool: {trees.dest / RETIRED}\n'
+    assert run_cli(trees, capsys).endswith(named)
+    assert run_cli(trees, capsys) == 'Skill links already current.\n' + named
+    assert (trees.dest / RETIRED / 'SKILL.md').read_text() == 'mine'
