@@ -73,8 +73,8 @@ def workflow_findings(directory):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('command', choices=('gate', 'policy'))
-    parser.add_argument('--workflows', default=str(Path(__file__).resolve().parents[1]/'.github/workflows'))
+    parser.add_argument('command', choices=('gate', 'policy'), help='gate checks dispatch inputs from the environment; policy scans the workflow files')
+    parser.add_argument('--workflows', default=str(Path(__file__).resolve().parents[1]/'.github/workflows'), help='directory of workflow files for the policy command')
     args = parser.parse_args(argv)
     found = refusals(os.environ) if args.command == 'gate' else workflow_findings(args.workflows)
     for line in found:
