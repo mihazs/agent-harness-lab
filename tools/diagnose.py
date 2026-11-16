@@ -36,61 +36,67 @@ def recurring_sequences(cases, roots, maximum=None):
     """
     if len(set(roots.values())) < 3:
         return []
-    # Parallel state arrays. A single outgoing transition is an (activity, target)
-    # pair; only branching states hold a dict. ends/owners are set for case events only.
+    # Parallel state arrays. A state's single outgoing transition is a (symbol, target) pair in two arrays and only
+    # branching states hold a dict; symbol -1 is no transition and -2 is a dict. A symbol is the number of an
+    # activity in order of first appearance. ends/owners are set for case events only.
     length, link, position = array('q', (0,)), array('q', (-1,)), array('q', (-1,))
-    moves, ends, owners = [None], [None], [None]
+    sole, target_of, branches, symbols = array('q', (-1,)), array('q', (0,)), {}, {}
+    ends, owners = [None], [None]
     tokens = []; last = 0
     for case, entries in cases.items():
         for entry in itertools.chain(entries, (((case, None), None, None),)):
             activity = entry[0]
             tokens.append(activity); index = len(tokens)-1
             current = len(length)
-            length.append(length[last]+1); link.append(0); position.append(index); moves.append(None)
+            length.append(length[last]+1); link.append(0); position.append(index); sole.append(-1); target_of.append(0)
             if entry[2] is not None:
                 ends.append(entry); owners.append(roots[case])
+                symbol = symbols.get(activity)
+                if symbol is None:
+                    symbol = symbols[activity] = len(symbols)
             else:
                 ends.append(None); owners.append(None)
             # No later token equals a case separator, so a transition on it is never read; skipping it keeps
             # the suffix chain's states from each growing a dict.
             parent = last if entry[2] is not None else -1
             while parent >= 0:
-                move = moves[parent]
-                if move is None:
-                    moves[parent] = (activity, current)
-                elif type(move) is tuple:
-                    if move[0] == activity:
+                only = sole[parent]
+                if only == -1:
+                    sole[parent], target_of[parent] = symbol, current
+                elif only >= 0:
+                    if only == symbol:
                         break
-                    moves[parent] = {move[0]: move[1], activity: current}
-                elif activity in move:
+                    branches[parent] = {only: target_of[parent], symbol: current}; sole[parent] = -2
+                elif symbol in branches[parent]:
                     break
                 else:
-                    move[activity] = current
+                    branches[parent][symbol] = current
                 parent = link[parent]
             if parent >= 0:
-                move = moves[parent]
-                target = move[1] if type(move) is tuple else move[activity]
+                target = target_of[parent] if sole[parent] >= 0 else branches[parent][symbol]
                 if length[parent]+1 == length[target]:
                     link[current] = target
                 else:
                     clone = len(length)
-                    move = moves[target]
                     length.append(length[parent]+1); link.append(link[target]); position.append(position[target])
-                    moves.append(dict(move) if type(move) is dict else move); ends.append(None); owners.append(None)
+                    sole.append(sole[target]); target_of.append(target_of[target])
+                    if sole[target] == -2:
+                        branches[clone] = dict(branches[target])
+                    ends.append(None); owners.append(None)
                     while parent >= 0:
-                        move = moves[parent]
-                        if type(move) is tuple:
-                            if move[1] != target or move[0] != activity:
+                        only = sole[parent]
+                        if only >= 0:
+                            if target_of[parent] != target or only != symbol:
                                 break
-                            moves[parent] = (activity, clone)
-                        elif move is None or move.get(activity) != target:
+                            target_of[parent] = clone
+                        elif only == -1 or branches[parent].get(symbol) != target:
                             break
                         else:
-                            move[activity] = clone
+                            branches[parent][symbol] = clone
                         parent = link[parent]
                     link[target] = link[current] = clone
             last = current
-    del moves
+    del sole, target_of, branches, symbols
     count = len(length)
     # Decreasing length, ascending index among equal lengths: the stable reverse sort order.
     start = array('q', bytes(8*(max(length)+1)))
