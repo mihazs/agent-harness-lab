@@ -19,6 +19,7 @@ from pathlib import Path
 import sys
 
 from . import integrity
+from .areas import multiplicity
 from .manifest_contract import ContractError
 from .plan import ExperimentSpec, schedule
 from .statistics import TrialRecord, analyze
@@ -133,7 +134,8 @@ def report(registry, bank, issues, spec, records, areas=()):
                 arms=list(ARMS if candidate else ARMS[:1]), trials=dict(planned=len(plan), recorded=len(usable)),
                 untagged_tasks=sum(not tags for tags in tagged.values()),
                 areas=[row for row in rows if not areas or row['id'] in areas],
-                overall=one(list(spec.tasks)) if withheld is None else None, overall_withheld=withheld)
+                overall=one(list(spec.tasks)) if withheld is None else None, overall_withheld=withheld,
+                multiplicity=multiplicity(len(rows)) if areas and len(areas) < len(rows) else None)  # one area read out of several examined (#798)
 
 
 def _number(value):
@@ -172,6 +174,7 @@ def markdown(result):
     lines += ['', 'Overall: ' + (f"{_cells(overall)[4]} baseline, paired delta {_cells(overall)[6]} (pooled over every experiment task)."
                                  if overall else f"withheld ({result['overall_withheld']}); it is shown only when every declared area is scored."),
               '', 'A task in several areas counts in each. No area is averaged into another, and intervals are not corrected across areas.']
+    if result['multiplicity']: lines += ['', 'Multiplicity: ' + result['multiplicity']['note']]
     return '\n'.join(lines) + '\n'
 
 

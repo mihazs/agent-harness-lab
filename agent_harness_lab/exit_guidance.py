@@ -30,7 +30,9 @@ REMEDIATION = {
     'configured_bank_cannot_combine_with_managed_experiment': 'Run without --experiment-request/--evaluation-store, or use the starter bank.',
     'configured_managed_bank_requires_controlled_workflow': 'Managed banks run only through the controlled workflow; use a non-managed bank.',
     'configured_bank_requires_development_regression_and_heldout': 'Add development, calibration and held-out (certification or transfer) partitions to the bank.',
-    'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count).',
+    'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count, or the count of tasks the --area selection keeps).',
+    'area_selection_requires_pinned_bank': 'Pin a task bank in ahl.json (bank.path and bank.sha256) whose tasks carry areas, or drop --area to run the whole bank.',
+    'area_selection_requires_development_regression_and_heldout': 'Tag development, calibration and held-out (certification or transfer) tasks with the selected areas, or select areas that already have them.',
     'configured_shared_trial_budget_infeasible': 'Increase the shared trial limit for the requested comparison.',
     'fixed_comparison_inference_budget_infeasible': 'Increase the declared inference budget for the comparison.',
     'precision_target_infeasible': 'Review the requested precision target and available budget.',
@@ -128,7 +130,7 @@ def guidance(result):
         reason = result.get('reason')
         category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
-                    'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
+                    'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'area_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected',
                     'accepted': 'Bar met on development and regression evidence (unverified)', 'not_accepted': 'Not accepted',
                     'requires_intervention': 'Requires intervention' if str(reason).startswith('loop_') else 'Inconclusive'}.get(status, 'Inconclusive')

@@ -220,3 +220,15 @@ def test_the_markdown_report_shows_no_number_for_an_area_without_evidence(tmp_pa
     lines = score.markdown(run(tmp_path, **FOUR)).splitlines()
     docs = next(line for line in lines if line.startswith('| Docs'))
     assert docs.split(' | ')[1:3] == ['no_evidence', 'no_experiment_task'] and docs.count('n/a') == 5 and '0.000' not in docs
+
+
+def test_a_report_narrowed_to_one_area_notes_that_it_was_read_out_of_several_examined(tmp_path):
+    result = run(tmp_path, areas=('ux-ui',), **FOUR)
+    assert (result['multiplicity']['areas_examined'], result['multiplicity']['correction']) == (4, 'none')
+    assert 'Multiplicity: 4 areas were examined' in score.markdown(result)
+
+
+def test_a_report_over_every_declared_area_carries_no_multiplicity_note(tmp_path):
+    result = run(tmp_path, **FOUR)
+    assert result['multiplicity'] is None and 'Multiplicity' not in score.markdown(result)
+

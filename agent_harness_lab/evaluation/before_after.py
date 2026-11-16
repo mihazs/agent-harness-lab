@@ -229,15 +229,19 @@ def run_pairs(manifest, trials):
             for task in manifest['tasks']]
 
 
-def _record(result, output, pairs, guard, *, inputs_unchanged, relabel):
-    """Put the block on the receipt; a blocked candidate becomes ``blocked`` / ``candidate_regressed`` with its investigation beside it."""
+def _record(result, output, pairs, guard, *, inputs_unchanged, relabel, area=None):
+    """Put the block on the receipt; a blocked candidate becomes ``blocked`` / ``candidate_regressed`` with its investigation beside it.
+
+    A candidate the pooled guard does not block, but whose per-area gate did, becomes ``blocked`` / ``area_regressed`` the same way (#798)."""
     from agent_harness_lab.monitoring.state import atomic_json
     update = dict(before_after=guard)
-    if guard['adoption_blocked'] and relabel:
+    if area is not None: update['area_gate'] = area
+    reason = 'candidate_regressed' if guard['adoption_blocked'] else 'area_regressed' if area is not None and area['status'] == 'blocked' else None
+    if reason and relabel:
         artifact = investigate(pairs, guard, grader_changed=False, inputs_unchanged=inputs_unchanged)
         path = Path(output) / 'investigation.json'
         atomic_json(path, artifact)
-        update.update(status='blocked', reason='candidate_regressed', investigation=dict(
+        update.update(status='blocked', reason=reason, investigation=dict(
             path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(), cause=artifact['cause']['class']))
         result.pop('recommendation', None)
     result.update(update)
@@ -247,18 +251,27 @@ def attach(result, output, run, *, margin=None):
     """Add the guard block to the receipt of a covered single-run evaluation.
 
     A candidate that regressed on the final attempt and ended as the bare ``evaluation_failed`` becomes ``blocked`` with reason
-    ``candidate_regressed`` and an ``investigation.json`` beside the receipt. Any failure leaves the run result unchanged.
+    ``candidate_regressed`` and an ``investigation.json`` beside the receipt. When ``run`` names ``areas`` (the declared ids and
+    the ``--area`` selection), the per-area gate is added as ``area_gate``, and a candidate that regressed a scored area ends
+    ``blocked`` with reason ``area_regressed`` even when the pooled delta is not below the margin. Any failure leaves the run
+    result unchanged.
     """
     try:
         pairs = run_pairs(run['manifest'], run['trials'])
         arm = frozen_inputs(**run['frozen'])
         guard = dict(decide(pairs, baseline=arm, candidate=dict(arm), margin=DEFAULT_MARGIN if margin is None else margin), bindings=dict(run['bindings']))
         labels = run.get('vacuity')
+        areas = run.get('areas')
+        area = None
+        if areas:
+            from .area_gate import gate  # lazy: only a project that declares areas pays for it
+            area = dict(status='not_measured', reason='evaluation_vacuous', adoption_authority=False) if labels else gate(
+                pairs, areas['declared'], selected=areas.get('selected', ()), margin=guard['margin'], alpha=guard['alpha'])
         if labels:  # an evaluation that proves nothing reports no score, delta or verdict that favors either arm (#805)
             guard.update(verdict='inconclusive', reasons=['evaluation_vacuous', *labels], adoption_blocked=False, scores=None, delta=None,
                          vacuity=vacuity.receipt(labels))
         _record(result, output, pairs, guard, inputs_unchanged=run['inputs_unchanged'],
-                relabel=run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed')
+                relabel=run['bindings']['describes_final_attempt'] and result.get('status') == 'evaluation_failed', area=area)
     except Exception as exc:  # An advisory guard never changes the run result.
         result['before_after'] = dict(status='unavailable', reason=type(exc).__name__, adoption_authority=False)
 
