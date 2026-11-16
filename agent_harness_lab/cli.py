@@ -62,6 +62,9 @@ def _improve_summary(result, elapsed, budget=None):
     if isinstance(result.get('preparation'), dict):
         from . import preparation
         print(preparation.line(result['preparation']), file=sys.stderr, flush=True)
+    from . import provider_reported
+    if spend := provider_reported.line(result.get('model_calls')):  # the runtime's own figure, labelled unverified; cost= below stays AHL's own
+        print(spend, file=sys.stderr, flush=True)
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
@@ -169,6 +172,9 @@ def main(argv=None):
     if argv and argv[0] == 'compare':
         from agent_harness_lab.evaluation.compare import main as compare_main
         return compare_main(argv[1:])
+    if argv and argv[0] == 'score':
+        from agent_harness_lab.evaluation.score import main as score_main
+        return score_main(argv[1:])
     if argv and argv[0] == 'adapters':
         from agent_harness_lab.evaluation.adapter_cli import main as adapters_main
         return adapters_main(argv[1:])
@@ -222,7 +228,7 @@ def main(argv=None):
         'benchmark':'Compare local incident classifiers on supplied labels; optional ML packages and existing local models only',
         'skills':'Install bundled skill links for Codex or Claude (writes to the selected skill directory)',
         'bank':'Validate a task-bank manifest or export selected task fixtures for evaluation',
-        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks',
+        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks, or convert a text-expectations case list into a native bank',
         'bank-review':'Manage private final-bank intake, native controls and separately signed conditional review',
         'experiment':'Plan or analyze a predeclared fixed or sequential baseline/candidate experiment',
         'experiment-history':'Inspect private controller history and explicitly reserve or execute selected runs',
@@ -239,6 +245,7 @@ def main(argv=None):
         'instruction-adherence':'Report where captured sessions ignored harness rules or user-prompt instructions; offline, read-only, redacted by default',
         'instruction-repair':'Name candidate mechanisms and repair classes for ignored instructions and screen one repair against recorded arms; offline, recommendation only',
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
+        'score':'Report one recorded paired experiment per declared capability area with an evidence state per area; offline, read-only',
         'adapters':'Stage one reviewed presentation adapter version under a controller-owned manifest, or roll it back; offline, no hook or runtime',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
@@ -271,7 +278,8 @@ def main(argv=None):
             epilog=(boundary[name]+'Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
-                +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
+                +(('An explicit nonstarter ahl.json bank is frozen for the loop (with --single-pass, for one cooperative comparison); its entire paired task set and preparation must fit the configured budget.\n' if name=='improve' else
+                    'An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n') if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
                 +(EXIT_TEXT if name=='improve' else '')+
                 ('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else

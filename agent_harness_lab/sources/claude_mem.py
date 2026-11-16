@@ -16,12 +16,14 @@ PINNED = {'15.9.0': 'd0968e5d136abc34dcfe1b78acf3726fa84978d8'}
 LIMITS = dict(max_export_bytes=32*1024*1024, max_rows=100000, max_fields=128, max_json_depth=16,
               max_json_containers=1000000, max_json_values=4000000)
 CLAIMS = ('observation', 'generated_summary', 'user_prompt', 'memory_session', 'search_hit')
+# The worker's tool-use index adds one claim type that no export carries, so an export's claim counts keep their shape.
+CLAIM_TYPES = (*CLAIMS, 'tool_use')
 # Export array -> claim type. A search hit is recorded separately for every query-selected row.
 KINDS = dict(observations='observation', summaries='generated_summary', prompts='user_prompt', sessions='memory_session')
 DERIVATION = dict(observation='observer_generated', generated_summary='session_synthesis', user_prompt='captured_prompt',
-                  memory_session='parent_session_lookup', search_hit='query_projection')
+                  memory_session='parent_session_lookup', search_hit='query_projection', tool_use='captured_tool_event')
 RECORD_PROVENANCE = dict(observation='model_hypothesis', generated_summary='model_hypothesis', user_prompt='native_field',
-                         memory_session='native_field', search_hit='native_field')
+                         memory_session='native_field', search_hit='native_field', tool_use='native_field')
 TIMESTAMPS = ('native', 'missing', 'invalid', 'conflicting', 'not_applicable')
 OBSERVATION_TYPES = ('decision', 'bugfix', 'feature', 'refactor', 'discovery', 'change')
 PLATFORMS = ('claude', 'codex', 'cursor', 'kimi', 'pi', 'antigravity-cli')
@@ -47,7 +49,10 @@ FIELDS = dict(
 BODIES = dict(
     observations=('text', 'title', 'subtitle', 'facts', 'narrative', 'concepts', 'files_read', 'files_modified'),
     summaries=('request', 'investigated', 'learned', 'completed', 'next_steps', 'files_read', 'files_edited', 'notes'),
-    prompts=('prompt_text',), sessions=('user_prompt', 'custom_title'))
+    prompts=('prompt_text',), sessions=('user_prompt', 'custom_title'),
+    # The tool-use index carries no text bodies; this is the row's identity and size fields, so a replayed row is a new revision.
+    tool_uses=('tool_use_id', 'tool_name', 'agent_type', 'agent_id', 'observation_id', 'or_generation_id', 'or_session_id',
+               'tool_input_bytes', 'tool_response_bytes'))
 # Session-identity fields each kind must carry as a non-empty string (the upstream import validators).
 SESSION_FIELD = dict(observations='memory_session_id', summaries='memory_session_id', prompts='content_session_id',
                      sessions='content_session_id')
@@ -85,7 +90,7 @@ class MemoryClaim(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        self.validate(('native_id_sha256',), {'claim_type': CLAIMS, 'timestamp_status': TIMESTAMPS})
+        self.validate(('native_id_sha256',), {'claim_type': CLAIM_TYPES, 'timestamp_status': TIMESTAMPS})
         if self.derivation != DERIVATION[self.claim_type]: raise ValueError('claim derivation does not match its type')
         for name in ('body_sha256', 'project_sha256', 'memory_session_sha256', 'content_session_sha256', 'target_native_id_sha256'):
             if getattr(self, name) is not None: fingerprint(getattr(self, name))

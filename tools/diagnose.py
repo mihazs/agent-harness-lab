@@ -21,6 +21,8 @@ except ModuleNotFoundError:  # Direct python tools/diagnose.py entrypoint.
 OBSERVED = ('case_id', 'event_id', 'activity', 'state_revision', 'mutation', 'tool_effect',
             'call_id', 'tool_name', 'input_fingerprint', 'result_fingerprint')
 _position = itemgetter(1)
+# Sequence mining keeps its per-state numbers in machine ints of this width while every state number fits in it.
+NARROW_STATES = 1 << (8*array('i').itemsize-1)
 
 
 def normalize(rows, source_format='normalized', project=None, source_version=None):
@@ -36,74 +38,84 @@ def recurring_sequences(cases, roots, maximum=None):
     """
     if len(set(roots.values())) < 3:
         return []
-    # Parallel state arrays. A single outgoing transition is an (activity, target)
-    # pair; only branching states hold a dict. ends/owners are set for case events only.
-    length, link, position = array('q', (0,)), array('q', (-1,)), array('q', (-1,))
-    moves, ends, owners = [None], [None], [None]
+    # Parallel state arrays. A state's single outgoing transition is a (symbol, target) pair in two arrays and only
+    # branching states hold a dict; symbol -1 is no transition and -2 is a dict. A symbol is the number of an
+    # activity in order of first appearance. ends/owners are set for case events only.
+    code = 'i' if 2*(len(cases)+sum(map(len, cases.values()))) < NARROW_STATES else 'q'  # states <= 2 x tokens
+    length, link, position = array(code, (0,)), array(code, (-1,)), array(code, (-1,))
+    sole, target_of, branches, symbols = array(code, (-1,)), array(code, (0,)), {}, {}
+    ends, owners = [None], [None]
     tokens = []; last = 0
     for case, entries in cases.items():
         for entry in itertools.chain(entries, (((case, None), None, None),)):
             activity = entry[0]
             tokens.append(activity); index = len(tokens)-1
             current = len(length)
-            length.append(length[last]+1); link.append(0); position.append(index); moves.append(None)
+            length.append(length[last]+1); link.append(0); position.append(index); sole.append(-1); target_of.append(0)
             if entry[2] is not None:
                 ends.append(entry); owners.append(roots[case])
+                symbol = symbols.get(activity)
+                if symbol is None:
+                    symbol = symbols[activity] = len(symbols)
             else:
                 ends.append(None); owners.append(None)
-            parent = last
+            # No later token equals a case separator, so a transition on it is never read; skipping it keeps
+            # the suffix chain's states from each growing a dict.
+            parent = last if entry[2] is not None else -1
             while parent >= 0:
-                move = moves[parent]
-                if move is None:
-                    moves[parent] = (activity, current)
-                elif type(move) is tuple:
-                    if move[0] == activity:
+                only = sole[parent]
+                if only == -1:
+                    sole[parent], target_of[parent] = symbol, current
+                elif only >= 0:
+                    if only == symbol:
                         break
-                    moves[parent] = {move[0]: move[1], activity: current}
-                elif activity in move:
+                    branches[parent] = {only: target_of[parent], symbol: current}; sole[parent] = -2
+                elif symbol in branches[parent]:
                     break
                 else:
-                    move[activity] = current
+                    branches[parent][symbol] = current
                 parent = link[parent]
             if parent >= 0:
-                move = moves[parent]
-                target = move[1] if type(move) is tuple else move[activity]
+                target = target_of[parent] if sole[parent] >= 0 else branches[parent][symbol]
                 if length[parent]+1 == length[target]:
                     link[current] = target
                 else:
                     clone = len(length)
-                    move = moves[target]
                     length.append(length[parent]+1); link.append(link[target]); position.append(position[target])
-                    moves.append(dict(move) if type(move) is dict else move); ends.append(None); owners.append(None)
+                    sole.append(sole[target]); target_of.append(target_of[target])
+                    if sole[target] == -2:
+                        branches[clone] = dict(branches[target])
+                    ends.append(None); owners.append(None)
                     while parent >= 0:
-                        move = moves[parent]
-                        if type(move) is tuple:
-                            if move[1] != target or move[0] != activity:
+                        only = sole[parent]
+                        if only >= 0:
+                            if target_of[parent] != target or only != symbol:
                                 break
-                            moves[parent] = (activity, clone)
-                        elif move is None or move.get(activity) != target:
+                            target_of[parent] = clone
+                        elif only == -1 or branches[parent].get(symbol) != target:
                             break
                         else:
-                            move[activity] = clone
+                            branches[parent][symbol] = clone
                         parent = link[parent]
                     link[target] = link[current] = clone
             last = current
-    del moves
+    del sole, target_of, branches, symbols
     count = len(length)
     # Decreasing length, ascending index among equal lengths: the stable reverse sort order.
-    start = array('q', bytes(8*(max(length)+1)))
+    step = array(code).itemsize
+    start = array(code, bytes(step*(max(length)+1)))
     for index in range(1, count):
         start[length[index]] += 1
     offset = 0
     for size in range(len(start)-1, -1, -1):
         offset, start[size] = offset+start[size], offset
-    order = array('q', bytes(8*(count-1)))
+    order = array(code, bytes(step*(count-1)))
     for index in range(1, count):
         size = length[index]; order[start[size]] = index; start[size] += 1
     del start
     # Children are prepended in that order; the root set of a state is final when it is
     # reached, so only its size is kept. State 0 is never reported, so it gets no union.
-    first, sibling, supported = array('q', (-1,))*count, array('q', (-1,))*count, array('q', (0,))*count
+    first, sibling, supported = array(code, (-1,))*count, array(code, (-1,))*count, array(code, (0,))*count
     pending_roots = {}
     for index in order:
         found = pending_roots.pop(index, None)
@@ -174,18 +186,23 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
     fields = Counter()
     ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), defaultdict(list)
     declared_events, declared_profiles = 0, set()
+    names = {}  # one stored copy of each distinct case id and activity; parsed rows bring a new string per event
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
         if not isinstance(event, dict):
             raise ValueError(f'invalid event at position {number}')
-        for key in ('case_id', 'event_id', 'activity'):
-            if not isinstance(event.get(key), str) or not event[key]:
-                raise ValueError(f'invalid {key} at event {number}')
-        case, ident, activity = (event[k] for k in ('case_id', 'event_id', 'activity'))
+        case, ident, activity = event.get('case_id'), event.get('event_id'), event.get('activity')
+        if not isinstance(case, str) or not case:
+            raise ValueError(f'invalid case_id at event {number}')
+        if not isinstance(ident, str) or not ident:
+            raise ValueError(f'invalid event_id at event {number}')
+        if not isinstance(activity, str) or not activity:
+            raise ValueError(f'invalid activity at event {number}')
         root = event.get('root_case_id', case)
         if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
+        case, activity = names.setdefault(case, case), names.setdefault(activity, activity)
         if case in roots and roots[case] != root:
             raise ValueError('inconsistent lineage')
         roots[case] = root
@@ -193,10 +210,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if identity in seen:
             raise ValueError('duplicate event id')
         seen.add(identity)
-        if reused_process_mining is None:
-            process.observe(event)
-        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
-                                               source=True, last_source=None, tied=False, crossed=False))
+        stamp = process.observe(event) if reused_process_mining is None else None
+        order = ordering.get(case)
+        if order is None:  # setdefault would build this nine-field dict for every event and discard it
+            order = ordering[case] = dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
+                                          source=True, last_source=None, tied=False, crossed=False)
         ordinal = event.get('capture_order')
         order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
         order['tied'] |= type(ordinal) is int and ordinal == order['last_order']
@@ -207,8 +225,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if profile is not None:
             declared_events += 1
             if supported: declared_profiles.add(profile)
-        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder'))
-        if not supported or not all(type(value) is int and value >= 0 for value in source[1:]):
+        # Only a declared producer profile reads the segment and suborder, so other rows skip two reads and a tuple.
+        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder')) if supported else None
+        if source is None or not all(type(value) is int and value >= 0 for value in source[1:]):
             order['source'] = False
         else:
             last = order['last_source']
@@ -219,10 +238,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             elif last is not None and source[2:] <= last[2:]:
                 order['source'] = False
             order['last_source'] = source
-        try:
-            stamp = process.instant(event.get('timestamp'))
-        except (ValueError, TypeError, AttributeError, OverflowError):
-            stamp = None
+        if reused_process_mining is not None:  # the miner is not run, so nothing has parsed this timestamp yet
+            try:
+                stamp = process.instant(event.get('timestamp'))
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                stamp = None
         order['timestamp'] &= stamp is not None and (order['last_time'] is None or stamp > order['last_time'])
         order['last_time'] = stamp
         order['events'] += 1
@@ -230,7 +250,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             event.get('contract_violation') is True and bool(event.get('contract_ref')))
         if activity == 'tool_result':
             observation_cases.add(case)
-            if all(isinstance(event.get(key), str) and event[key] for key in
+            # Once a case is a candidate a later result cannot change that, so its fields are not read again.
+            if case not in observation_candidates and all(isinstance(event.get(key), str) and event[key] for key in
                    ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')):
                 observation_candidates.add(case)
         counts[activity] += 1
@@ -246,7 +267,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 findings.append(finding)
         elif order['capture'] or order['timestamp'] or order['source']:
             cases[case].append((activity,number,ref))
-            observation_events[case].append((number, *(event.get(name) for name in OBSERVED)))
+            observation_events[case].append((number, case, ident, activity, *(event.get(name) for name in OBSERVED[3:])))
         else:  # Order flags never recover, so the case can no longer be selected.
             cases.pop(case, None); observation_events.pop(case, None)
         if violation:
@@ -254,6 +275,10 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     n = sum(counts.values())
+    del seen, names  # ingestion-only; sequence mining below needs the room
+    process_mining = (reused_process_mining if reused_process_mining is not None
+                      else dict(process.result(), profile='ahl-analysis-process-graph-v1'))
+    del process  # its per-case state is dead; sequence mining below needs the room
     ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp'] or state['source']}
     sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
     selected_sequences = sequence_cases & ordered
@@ -268,6 +293,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             if finding:
                 findings.append(finding)
         del replay; observation_events.clear()
+    coverage = observations.coverage
+    del observations  # the matching state is dead once the last event is replayed; mining needs the room
+    if select_methods:
         repeated = recurring_sequences(sequence_inputs, roots, sequence_length) if sequence_roots >= 3 else []
     else:
         repeated = recurring_sequences(cases, roots, sequence_length)
@@ -314,11 +342,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     structured_checks='completed' if fields['structured_events'] else 'not_run'),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
-                activities=dict(counts), eligible_observations=observations.coverage['eligible'],
-                observation_coverage=dict(observations.coverage),
+                activities=dict(counts), eligible_observations=coverage['eligible'],
+                observation_coverage=dict(coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
-                process_mining=reused_process_mining if reused_process_mining is not None else dict(process.result(), profile='ahl-analysis-process-graph-v1'),
+                process_mining=process_mining,
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',

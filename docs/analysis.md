@@ -433,6 +433,18 @@ vocabulary, which is discarded, never echoed. The fields are the proposer's decl
 terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evidence=... baseline_checks_passed=N` line before the
 `ahl: outcome=` line. A run that stopped before any model call carries no block.
 
+Each owned preparation call, and each evaluation-construction call of a single-pass run, also appears in `model_calls` (`stage` is `preparation`, `construction` or `construction_retry` for a second construction pass, with its `attempt`). When the runtime's closing transcript
+record carries figures, the entry holds a `provider_reported` block (profile `ahl-provider-reported-v1`,
+`source: provider_reported_unverified`, `controller_verified: false`): `duration_ms`, `num_turns`, `reported_cost` with
+`reported_cost_unit: usd`, and `usage`, the integer token counters. Claude reports all four in its `result` record; Codex's
+`turn.completed` record carries token usage only. Values are copied as reported and never converted or summed. A figure the
+record lacks or reports malformed is absent, never zero, and a transcript without exactly one closing record gives the call no block.
+Nothing reads the block for a decision, an evidence label or a claim, and `ahl: outcome=` still prints `cost=unknown`: AHL
+measures no money. When a call reported a cost, the terminal prints one `ahl: provider-reported cost: preparation-0=0.0123 usd (unverified)`
+line before the outcome line, naming each call (`unreported` where it gave none) and showing no total. Evaluation trials (their records keep the
+closing record's token `usage` only) and the controlled and configured-inference stage (its `inference` block already lists
+provider-reported usage per request) are not covered.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
@@ -581,6 +593,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
+| `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |

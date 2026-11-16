@@ -2,8 +2,9 @@
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative, unique_object
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, unique_object
 from . import hardened
+from .artifact_zip import check_reports, report_bytes, report_identity
 from .hardened import HostileReport, load_json
 from .schema import Contract, EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
@@ -121,11 +122,7 @@ class QualityReportsExport(LocalExport):
         reports = selection['reports']
         if not isinstance(reports, list) or not reports or len(reports) > bounds['max_reports']:
             raise ValueError('invalid or unbounded quality report selection')
-        for report in reports:
-            if not isinstance(report, dict) or set(report) != {'path', 'format'} or report['format'] not in FORMATS:
-                raise ValueError('invalid quality report declaration')
-            relative(report['path'])
-        if len({r['path'] for r in reports}) != len(reports): raise ValueError('duplicate quality report path')
+        check_reports(reports, FORMATS, 'quality report')
         now = datetime.now(timezone.utc).isoformat()
         commit_sha256 = digest(sha)
         records, findings, warnings = [], [], set()
@@ -133,7 +130,9 @@ class QualityReportsExport(LocalExport):
             return EvidenceRecord(source.source_key, native, revision, revision, 'development_artifact', kind, now,
                 provenance='native_field', capture_completeness='partial')
         def consume(position, raw, report_sha256):
-            path_sha256 = digest(reports[position]['path'])
+            report = reports[position]
+            path_sha256 = report_identity(report['path'], report.get('member'))
+            raw, report_sha256 = report_bytes(raw, report_sha256, report, bounds['max_report_bytes'], warnings)
             seen = Counter()
             for tool, rule, location, level, kind, suppression in parse_sarif(raw, bounds, warnings):
                 if len(findings) >= bounds['max_findings']: raise HostileReport('quality finding bound exceeded')

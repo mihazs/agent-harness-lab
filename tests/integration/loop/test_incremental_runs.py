@@ -139,9 +139,9 @@ def test_changed_frozen_inputs_make_the_earlier_scores_not_comparable_omit_the_d
 
 
 def test_a_previous_run_that_was_not_a_loop_run_is_stated_and_carries_nothing(stack, monkeypatch):
-    project = li.LoopProject(stack, monkeypatch, baseline='solves=responses', script={0: dict(harness=li.EVERYTHING)})  # no loop declaration: a single pass
-    _, first, _ = project.invoke()
-    assert 'loop' not in first
+    project = li.LoopProject(stack, monkeypatch, baseline='solves=responses', script={0: dict(harness=li.EVERYTHING)})
+    _, first, _ = project.invoke('--single-pass')  # the loop is the default, so a single pass needs its flag
+    assert first['loop']['status'] == 'not_used' and 'stop_criterion' not in first['loop']
     declare(project, loop=HIGH)
     _, second, _ = project.invoke('--accept-score', '0.1')
     carry = second['loop']['carry_over']

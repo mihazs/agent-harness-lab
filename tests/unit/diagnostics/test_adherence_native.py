@@ -1,5 +1,6 @@
 """Native Claude Code and Codex captures read as instruction-adherence sessions; synthetic files only."""
 from types import SimpleNamespace
+import os
 
 import pytest
 
@@ -331,3 +332,62 @@ def test_call_after_the_attachment_is_observed_even_when_an_earlier_call_is_unkn
     result = adherence_of(project, [('user', 'push it'), PUSH, ('memory', str(project / 'AGENTS.md'), RULES[0]['text']), PUSH])
     assert result['counts'] == dict(observed_violation=1) and result['findings'][0]['span'] == dict(first_turn=2, last_turn=2)
 
+
+
+def subagent_files(project, tmp_path, count):
+    """Subagent transcripts sorted ahead of every main session, as on a project that runs many subagents."""
+    return [('claude', write(tmp_path / f'a{n}.jsonl', claude(project, [('user', 'sub')], session=f'sub{n}', sidechain=True))) for n in range(count)]
+
+
+def test_subagent_and_foreign_files_do_not_use_up_the_file_bound_before_a_main_session(project, tmp_path, monkeypatch):
+    """Regression: 200 subagent transcripts ahead of the main sessions made every real run `no_readable_native_session`."""
+    monkeypatch.setattr(native, 'MAX_FILES', 2)
+    foreign = write(tmp_path / 'b-foreign.jsonl', claude(tmp_path / 'elsewhere', [('user', 'x')], session='foreign'))
+    main = [('claude', write(tmp_path / f'c{n}.jsonl', claude(project, [('user', str(n))], session=f'm{n}'))) for n in range(3)]
+    sessions, skipped = native.read_sessions([*subagent_files(project, tmp_path, 3), ('claude', foreign), *main], project)
+    assert len(sessions) == 2 and skipped == dict(subagent_transcript=3, foreign_project=1, over_file_limit=1)
+
+
+def test_subagent_files_do_not_use_up_the_byte_budget_before_a_main_session(project, tmp_path, monkeypatch):
+    monkeypatch.setattr(native, 'MAX_TOTAL_BYTES', 1)
+    main = [('claude', write(tmp_path / f'c{n}.jsonl', claude(project, [('user', str(n))], session=f'm{n}'))) for n in range(2)]
+    sessions, skipped = native.read_sessions([*subagent_files(project, tmp_path, 3), *main], project)
+    assert len(sessions) == 1 and skipped == dict(subagent_transcript=3, over_byte_budget=1)
+
+
+def test_analysis_with_many_subagent_transcripts_still_reads_the_main_sessions_newest_first(project, tmp_path, monkeypatch):
+    monkeypatch.setattr(native, 'MAX_FILES', 1)
+    old = write(tmp_path / 'c-old.jsonl', claude(project, [('user', 'old')], session='old'))
+    new = write(tmp_path / 'd-new.jsonl', claude(project, [('user', 'new')], session='new'))
+    os.utime(old, (1_000_000_000, 1_000_000_000))
+    listed = [dict(format=runtime, path=str(path)) for runtime, path in [*subagent_files(project, tmp_path, 3), ('claude', old), ('claude', new)]]
+    tried, real = [], native.read_session
+    monkeypatch.setattr(native, 'read_session', lambda path, *args: tried.append(os.path.basename(path)) or real(path, *args))
+    section, _ = native.for_analysis(analysis(project), dict(sources=listed))
+    assert section['status'] == 'completed' and section['sessions']['read'] == 1
+    assert section['sessions']['skipped'] == dict(over_file_limit=1, subagent_transcript=3)
+    assert 'd-new.jsonl' in tried and 'c-old.jsonl' not in tried
+
+
+def test_analysis_of_a_worktree_with_history_from_reads_the_sessions_recorded_under_that_checkout(project, tmp_path):
+    """Regression: every session of the other checkout was judged foreign, so a worktree analysis never completed."""
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    path = write(tmp_path / 's.jsonl', claude(checkout, [('user', 'hi')]))
+    data = dict(sources=[dict(format='claude', path=str(path))])
+    section, _ = native.for_analysis(analysis(project, history_from=checkout), data)
+    assert section['status'] == 'completed' and section['sessions']['read'] == 1
+    section, _ = native.for_analysis(analysis(project), data)
+    assert (section['status'], section['skipped']) == ('not_run', dict(foreign_project=1))
+
+
+def test_analysis_stopped_by_a_bound_before_any_session_says_so_instead_of_unreadable(project, tmp_path, monkeypatch):
+    monkeypatch.setattr(native, 'MAX_FILES', 1)
+    broken = tmp_path / 'a.jsonl'
+    broken.write_text('not json\n')
+    good = write(tmp_path / 'b.jsonl', claude(project, [('user', 'hi')], session='good'))
+    listed = [dict(format='claude', path=str(path)) for path in (broken, good)]
+    os.utime(broken, (2_000_000_000, 2_000_000_000))
+    section, report = native.for_analysis(analysis(project), dict(sources=listed))
+    assert (section['status'], section['reason'], report) == ('not_run', 'read_bound_reached', None)
+    assert section['skipped'] == dict(malformed=1, over_file_limit=1)
