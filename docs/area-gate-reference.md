@@ -32,9 +32,11 @@ Typed reasons, all project declaration defects that name a position and never a 
 
 ## The gate block
 
-Schema `ahl-area-gate-v1`, written as `area_gate` in the receipt of a single-pass run
+Schema `ahl-area-gate-v1`, written as `area_gate` in the receipt of a `--single-pass` run
 (`workflow.json`) for a project that declares areas, and as `area_gates` entries (with an
-`evaluation_id`) in the receipt of a loop run.
+`evaluation_id`) in the receipt of a loop run, the default of `ahl improve`. `status: blocked`
+with `reason: area_regressed` is the gate's own verdict on both routes; the typed outcome of the run
+is `area_regressed` only in a single pass and `loop_regression` in the loop.
 
 | Field | Meaning |
 | --- | --- |
@@ -78,9 +80,14 @@ failure or independence.
 
 | Surface | Effect |
 | --- | --- |
-| `ahl improve` single pass | `area_gate` in the receipt. A run that ended `evaluation_failed` on its final attempt becomes `blocked` / `area_regressed` with an `investigation.json` and no recommendation. A pooled `candidate_regressed` keeps its own reason. |
-| `ahl improve` loop | Each paired evaluation sets `regressed_areas`; a non-empty list is the `area` regression, which stops the loop with the criterion `regression` whatever the policy. |
+| `ahl improve` (the default loop, on a pinned bank) | Each paired evaluation adds an `area_gates` entry and sets `regressed_areas` on its round; a non-empty list is the `area` regression, which stops the loop with the criterion `regression` whatever the policy or the pooled score. The run ends status `not_accepted`, reason `loop_regression`, exit 3, and `loop.remediation` (also `exit_receipt.next_step`) names the `regressed_areas` and `area_gates` evidence. |
+| `ahl improve --single-pass` | `area_gate` in the receipt. A run that ended `evaluation_failed` on its final attempt becomes `blocked` / `area_regressed` (exit 3) with an `investigation.json` and no recommendation. A pooled `candidate_regressed` keeps its own reason. |
 | `ahl score --area` | The report adds `multiplicity` (the number of declared areas examined) and prints it in Markdown, when it is narrowed to fewer areas than are declared. |
+
+`area_regressed` and the `area_gate` block belong to the single pass only, and `loop_regression`
+with `area_gates` to the loop only; neither route writes the other's reason or block. The
+`--area` selection and its typed reasons above are checked before either route starts, so
+they are the same on both.
 
 The gate reads `areas` tags from the exported manifest, which carries them for a tagged bank;
 an untagged bank, or a project without `areas`, keeps the receipt it had. The receipt is

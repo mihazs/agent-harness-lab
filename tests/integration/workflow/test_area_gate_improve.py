@@ -52,10 +52,14 @@ def retag(project, tags, registry):
     write_config(project)
 
 
-def refused(tagged, *options):
-    """Run `ahl improve` and return the exit code of the typed input error it ends with (argparse exits through SystemExit)."""
+ROUTES = [pytest.param(('--single-pass',), id='single_pass'), pytest.param((), id='default_loop')]  # the loop is the default route (#974)
+LOOPS = [pytest.param(False, id='single_pass'), pytest.param(True, id='default_loop')]  # the same two routes for `invoke`
+
+
+def refused(tagged, route, *options):
+    """Run `ahl improve` on a route and return the exit code of the typed input error it ends with (argparse exits through SystemExit)."""
     with pytest.raises(SystemExit) as stopped:
-        main(['improve', str(tagged.project), *options])
+        main(['improve', str(tagged.project), *route, *options])
     return stopped.value.code
 
 
@@ -66,10 +70,10 @@ def tagged(request):
     retag(project, TAGS, REGISTRY)
     project.fixture.agent.write_text(AGENT)
 
-    def go(baseline, candidate, *options):
+    def go(baseline, candidate, *options, loop=False):
         (project.project / 'AGENTS.md').write_text(baseline)
         (project.project / 'candidate-harness').write_text(candidate)
-        code, result = invoke(project, *options)
+        code, result = invoke(project, *options, loop=loop)
         return code, result, Path(result['output']) if 'output' in result else None
     project.go = go
     return project
@@ -125,41 +129,46 @@ def test_a_selection_leaves_the_tasks_of_other_areas_unrun_and_ungated(tagged):
         'instruction-conflict', 'skill-routing', 'resumption', 'tool-recovery', 'adversarial-input'}
 
 
+@pytest.mark.parametrize('route', ROUTES)
 @pytest.mark.parametrize('options, field', [
     pytest.param(['--area', 'docs'], '--area[0]', id='undeclared'),
     pytest.param(['--area', 'coding', '--area', 'docs'], '--area[1]', id='undeclared_second'),
 ])
-def test_an_undeclared_area_stops_before_any_model_call_and_names_the_position(tagged, options, field, capsys, monkeypatch):
+def test_an_undeclared_area_stops_before_any_model_call_and_names_the_position(tagged, route, options, field, capsys, monkeypatch):
     with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
-        code = refused(tagged, *options)
+        code = refused(tagged, route, *options)
     captured = capsys.readouterr()
     assert code == 2 and 'area_selection_undeclared' in captured.err + captured.out and field in captured.err + captured.out
     assert 'docs' not in captured.err.replace('area_selection_undeclared', '')
 
 
-def test_a_repeated_area_is_a_typed_error_naming_the_position(tagged, capsys):
-    code = refused(tagged, '--area', 'coding', '--area', 'coding')
+@pytest.mark.parametrize('route', ROUTES)
+def test_a_repeated_area_is_a_typed_error_naming_the_position(tagged, route, capsys):
+    code = refused(tagged, route, '--area', 'coding', '--area', 'coding')
     captured = capsys.readouterr()
     assert code == 2 and 'area_duplicate' in captured.err + captured.out and '--area[1]' in captured.err + captured.out
 
 
-def test_a_selection_that_names_no_task_stops_with_a_typed_reason(tagged, capsys):
+@pytest.mark.parametrize('route', ROUTES)
+def test_a_selection_that_names_no_task_stops_with_a_typed_reason(tagged, route, capsys):
     retag(tagged, {name: ['coding'] for name in TAGS}, REGISTRY)
-    code = refused(tagged, '--area', 'ux-ui')
+    code = refused(tagged, route, '--area', 'ux-ui')
     captured = capsys.readouterr()
     assert code == 2 and 'area_selection_empty' in captured.err + captured.out and '--area' in captured.err + captured.out
 
 
-def test_a_selection_without_a_calibration_and_held_out_task_stops_before_dispatch(tagged):
+@pytest.mark.parametrize('loop', LOOPS)
+def test_a_selection_without_a_calibration_and_held_out_task_stops_before_dispatch(tagged, loop):
     retag(tagged, {name: ['coding'] if name in ('tool-recovery', 'adversarial-input') else ['ux-ui'] for name in TAGS}, REGISTRY)
-    code, result, _ = tagged.go('none', 'coding ux', '--area', 'ux-ui')
+    code, result, _ = tagged.go('none', 'coding ux', '--area', 'ux-ui', loop=loop)
     assert (code, result['status'], result['reason']) == (3, 'blocked', 'area_selection_requires_development_regression_and_heldout')
     assert result['remediation'] and (tagged.project / 'AGENTS.md').read_text() == 'none'
 
 
-def test_a_selection_without_a_pinned_bank_stops_before_dispatch(tagged):
+@pytest.mark.parametrize('loop', LOOPS)
+def test_a_selection_without_a_pinned_bank_stops_before_dispatch(tagged, loop):
     tagged.value['bank'] = config.defaults()['bank']
     write_config(tagged)
-    code, result, _ = tagged.go('none', 'coding ux', '--area', 'coding')
+    code, result, _ = tagged.go('none', 'coding ux', '--area', 'coding', loop=loop)
     assert (code, result['status'], result['reason']) == (3, 'blocked', 'area_selection_requires_pinned_bank')
     assert 'ux-ui' not in result['remediation'] and result['remediation']

@@ -3,9 +3,11 @@ from dataclasses import replace
 
 import pytest
 
-from agent_harness_lab.loop import controller
+from agent_harness_lab import exit_guidance, typed_exit
+from agent_harness_lab.loop import controller, receipt
 from agent_harness_lab.loop.spec import resolve
 from tests.support import loop_sim
+from tests.support.loop_claims import claims
 from tests.support.loop_sim import build, score
 
 pytestmark = pytest.mark.usefixtures('sealed')
@@ -42,7 +44,6 @@ def test_the_same_candidate_with_no_regressed_area_meets_the_bar(tmp_path):
 
 
 def test_the_regressed_areas_are_kept_in_the_ledger_summary_and_the_receipt_round(tmp_path):
-    from agent_harness_lab.loop import receipt
     script = pooled_win(regressed_areas=('ux-ui',))
     result, ledger, _ = drive(script, tmp_path)
     block = receipt.build(script.spec, result, ledger.events(), [None, None])
@@ -50,7 +51,6 @@ def test_the_regressed_areas_are_kept_in_the_ledger_summary_and_the_receipt_roun
 
 
 def test_an_evaluation_without_regressed_areas_adds_no_key_to_the_receipt(tmp_path):
-    from agent_harness_lab.loop import receipt
     script = pooled_win()
     result, ledger, _ = drive(script, tmp_path)
     assert all('regressed_areas' not in round_ for round_ in receipt.build(script.spec, result, ledger.events(), [None, None])['rounds'])
@@ -63,3 +63,38 @@ def test_an_evaluation_without_regressed_areas_adds_no_key_to_the_receipt(tmp_pa
 ])
 def test_the_regression_kind_names_the_critical_flag_before_a_regressed_area(found, kind):
     assert controller.regression(found, score(0.6), spec()) == kind
+
+
+def stopped(script, tmp_path):
+    """The receipt block of a loop that ran `script` to its stop criterion."""
+    result, ledger, _ = drive(script, tmp_path)
+    return receipt.build(script.spec, result, ledger.events(), [None, None])
+
+
+def test_the_remediation_of_a_regression_stop_names_the_area_evidence_when_a_regressed_area_stopped_the_loop(tmp_path):
+    block = stopped(pooled_win(regressed_areas=('ux-ui',)), tmp_path)
+    step = block['remediation']
+    assert block['stop_criterion'] == 'regression' and step != receipt.STEPS['regression']
+    assert 'regressed_areas' in step and 'area_gates' in step and step.endswith('.') and not claims(step)
+
+
+def test_a_pooled_regression_without_a_regressed_area_keeps_the_generic_remediation(tmp_path):
+    block = stopped(build('pooled_loss', [score(0.6), score(0.3)], declaration=dict(regression_margin=0.05)), tmp_path)
+    assert (block['stop_criterion'], block['remediation']) == ('regression', receipt.STEPS['regression'])
+
+
+def test_the_summary_and_the_exit_receipt_of_a_loop_stop_read_the_remediation_the_loop_recorded():
+    step = 'The one step this loop block recorded for its own stop.'
+    result = dict(status='not_accepted', reason='loop_regression', loop=dict(remediation=step))
+    assert exit_guidance.guidance(result)[2] == step
+    assert typed_exit.seal(dict(result))['exit_receipt']['next_step'] == step
+
+
+@pytest.mark.parametrize('loop', [
+    pytest.param(None, id='no_loop_block'), pytest.param({}, id='no_remediation'), pytest.param(dict(remediation=''), id='empty_remediation'),
+    pytest.param(dict(remediation=7), id='remediation_not_text'), pytest.param('text', id='loop_block_not_a_mapping'),
+])
+def test_a_loop_stop_whose_block_records_no_usable_remediation_keeps_the_generic_step(loop):
+    result = dict(status='not_accepted', reason='loop_regression', loop=loop)
+    assert exit_guidance.guidance(result)[2] == receipt.STEPS['regression']
+    assert typed_exit.seal(dict(result))['exit_receipt']['next_step'] == receipt.STEPS['regression']

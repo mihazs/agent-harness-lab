@@ -481,7 +481,7 @@ disposition `inconclusive`, never becomes the best and can never be accepted.
 
 ### Regression and the investigation artifact
 
-When the project declares areas, each paired run is also gated per area (`evaluation.area_gate`): a non-empty `regressed_areas` is the `area` regression, which stops the loop with `regression` whatever the policy or the pooled score, and the gate block is kept in `evaluator.runs[i]['area_gate']`.
+When the project declares areas, each paired run is also gated per area (`evaluation.area_gate`): a non-empty `regressed_areas` is the `area` regression, which stops the loop with `regression` whatever the policy or the pooled score, and the gate block is kept in `evaluator.runs[i]['area_gate']` and reported as an `area_gates` entry of the run. The stop keeps the reason `loop_regression`, never `area_regressed` (which is the `--single-pass` outcome), and its receipt `remediation` names `regressed_areas` and `area_gates` instead of the generic regression step.
 
 Each paired run also goes through `evaluation.before_after.decide`, with the loop's
 regression and noise margins, against the frozen identity. Its block is kept in

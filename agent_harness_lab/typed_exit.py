@@ -99,8 +99,8 @@ def seal(result, args=None):
     if reason in REASONS:
         step = REASONS[reason][2]
     else:
-        from .exit_guidance import REMEDIATION, STATUS_ACTION
-        step = (violation or {}).get('next_step') or REMEDIATION.get(reason) or STATUS_ACTION.get(status, LOCAL)
+        from .exit_guidance import REMEDIATION, STATUS_ACTION, loop_step
+        step = (violation or {}).get('next_step') or loop_step(result) or REMEDIATION.get(reason) or STATUS_ACTION.get(status, LOCAL)
     if 'budget_stages' not in result and (found := budget(args)) is not None:
         result['budget_stages'] = found
     return _fill(result, reason, stage, step)

@@ -118,6 +118,13 @@ STATUS_ACTION = {
 }
 
 
+def loop_step(result):
+    """The one step the loop block recorded for its stop (the receipt picks it from the cause), or None when there is no usable one."""
+    loop = result.get('loop')
+    step = loop.get('remediation') if isinstance(loop, dict) else None
+    return step if isinstance(step, str) and step and str(result.get('reason')).startswith('loop_') else None
+
+
 def guidance(result):
     status = result.get('status')
     analysis = result.get('analysis') or {}
@@ -138,7 +145,7 @@ def guidance(result):
         category = 'Inconclusive'
         action = 'Review the private receipt before retrying.'
     else:
-        action = REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+        action = loop_step(result) or REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
     if status != 'analyzed' and reason != 'history_not_found_for_worktree' and any(r.get('reason') == 'history_not_found_for_worktree' for r in result.get('capture_reasons') or ()):
         action += ' ' + REMEDIATION['history_not_found_for_worktree']
     steps = result.get('next_steps')
