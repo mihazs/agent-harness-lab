@@ -58,6 +58,20 @@ def test_a_malformed_figure_is_dropped_and_never_becomes_a_number(field, value):
     assert found['usage']['input_tokens'] == 11  # the other figures the record reported survive
 
 
+@pytest.mark.parametrize('field, name', [('total_cost_usd', 'reported_cost'), ('duration_ms', 'duration_ms')])
+@pytest.mark.parametrize('digits', [309, 400], ids=['first_overflowing_width', 'oversized'])
+def test_an_integer_too_large_for_a_float_never_aborts_the_block_and_leaves_the_other_figures_intact(field, name, digits):
+    big = '9' * digits  # a raw JSON integer: json.loads accepts it, float(big) overflows from 309 digits up (max float is 1.8e308)
+    raw = json.dumps(dict(CLAUDE_RESULT, **{field: '@'})).replace('"@"', big)
+    found = reported.block(transcript(raw), 'claude')
+    assert found[name] == int(big) and found['num_turns'] == 3 and found['usage']['input_tokens'] == 11
+
+
+def test_an_integer_beyond_the_json_digit_limit_is_not_a_record_and_gives_no_block():
+    raw = '{"type":"result","total_cost_usd":1' + '0' * 5000 + '}'
+    assert reported.block(transcript(raw), 'claude') is None
+
+
 @pytest.mark.parametrize('usage', [None, [], 'tokens', {}, dict(input_tokens='11', output_tokens=-1, cache_read_input_tokens=1.5),
                                    dict(input_tokens=True), dict(service_tier='standard')],
                          ids=['null', 'list', 'string', 'empty', 'bad_counts', 'bool_count', 'no_counters'])

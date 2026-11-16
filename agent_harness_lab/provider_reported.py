@@ -18,7 +18,7 @@ def _count(value):
 
 
 def _amount(value):
-    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+    return _count(value) or (type(value) is float and math.isfinite(value) and value >= 0)  # isfinite only on floats: it overflows on a huge int
 
 
 def block(stdout, agent):
