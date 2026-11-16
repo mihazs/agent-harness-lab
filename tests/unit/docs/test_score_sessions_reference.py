@@ -31,5 +31,6 @@ def test_the_file_changing_tools_and_the_thresholds_are_stated():
 
 
 def test_the_input_limits_are_stated():
-    assert f'at most {areas.MAX_SESSIONS:,} objects' in REFERENCE and f'at most {areas.MAX_KINDS} names' in REFERENCE
-    assert f'from 1 to {areas.MAX_COUNT:,}' in REFERENCE
+    flat = ' '.join(REFERENCE.split())  # the prose wraps lines
+    assert f'at most {areas.MAX_SESSIONS:,} objects' in flat and f'at most {areas.MAX_KINDS} names' in flat
+    assert f'from 1 to {areas.MAX_COUNT:,}' in flat
