@@ -16,7 +16,7 @@ reader purpose.
 - [Annotate pull requests with the static audit](audit-pull-requests.md), [find where agents ignored instructions](detect-ignored-instructions.md), or [repair a harness whose instructions are ignored](repair-ignored-instructions.md).
 - [Stage a presentation adapter under a controller-owned manifest and roll it back](stage-an-adapter.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
-- [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), or [declare capability areas and tag bank tasks](declare-capability-areas.md).
+- [Check task lineage with blind adjudication](blind-lineage-adjudication.md), [review a conditional final bank](conditional-bank-review.md), [run fixed repeated-bank improvement](repeated-improvement.md), [declare capability areas and tag bank tasks](declare-capability-areas.md), or [score a harness per capability area](score-by-capability-area.md).
 - [Preflight experiment precision](experiment-precision.md), [add a Bayesian decision score to a plan and read it](bayesian-decision-how-to.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
 - [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), [try AHL on a real project without changing it](isolated-project-check.md), or [validate AHL on a real project](real-project-acceptance.md) with a first-use run, a before/after evaluation and incremental runs.
@@ -25,6 +25,7 @@ reader purpose.
 
 - [Global instruction region markers and typed reasons](global-instructions-reference.md), [command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md), including its [capability area declarations](evaluation-manifest-contract.md#capability-area-declarations).
 - [Campaign specification and planned records](campaign-specification.md).
+- [`ahl score` reference](score-reference.md): the per-area report, its inputs, output fields, evidence states and reasons.
 - [Loop declaration, state machine and controller](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants, the controller's ports, rounds, budget reserve and round ledger, the default of `ahl improve` and `--single-pass`, the receipt and exit codes, and the simulation test-bed.
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
@@ -33,7 +34,7 @@ reader purpose.
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), [judge controls](diagnostic-judge.md), [retrieval leakage check](diagnostic-retrieval-leakage.md), and [audit sampling](audit-sampling.md).
 - [Instruction adherence](instruction-adherence.md): the sessions file, checkable sentence shapes, three-valued judging, the report and its calibration.
 - [Instruction repair](instruction-repair.md): candidate mechanisms, repair classes, the repair plan and the recorded-pair screen.
-- [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
+- [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), [resource decisions](resource-decisions.md), and the [harness degradation report](harness-degradation-report.md) with its claim ladder and metric contracts.
 - [Report integrity fields](report-integrity.md): seeded-run provenance, evidence-strength labels, frozen-grader enforcement, receipt-sourced numbers and the pre-edit check.
 - [Vacuity labels](vacuity-labels.md): the closed set of five labels for an evaluation that proves nothing, where each surface applies them, and the audit of reported numbers.
 - [Typed exit receipts](typed-exit-receipts.md): the closed vocabulary of statuses, reasons and stages every non-zero `ahl improve` exit carries.
@@ -45,7 +46,9 @@ reader purpose.
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
 - [Private memory store](memory-store.md): create, verify, rebuild and clean the opt-in evidence store.
 - [Stage reuse planner](stage-reuse-planner.md): node keys, the stage graph, reuse rules and the `ahl-stage-reuse-v1` receipt.
+- [Comparability engine](comparability-engine.md): the gates, verdicts and strata that decide whether two evaluations may be compared.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
+- [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
 
 ## Understand the context
 

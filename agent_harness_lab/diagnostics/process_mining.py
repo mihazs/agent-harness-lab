@@ -54,6 +54,7 @@ class ProcessMiner:
                 self.projected[edge] += 1
                 self.projected_support[edge].add(root)
             self.projected_previous[case] = activity
+        return instant  # lets a caller that also needs the timestamp skip a second parse
 
     def result(self):
         def rows(table, support):

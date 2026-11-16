@@ -35,14 +35,15 @@
     "research-simulate": 9.0,
     "rollback": 13.0,
     "sandbox-check": 9.0,
+    "score": 9.0,
     "skills": 9.0,
     "sources": 20.0,
     "update": 11.0,
     "watch": 9.0
   },
   "diagnose": {
-    "20000": {"seconds_max": 1.5, "peak_rss_mb_max": 60},
-    "80000": {"seconds_max": 5.0, "peak_rss_mb_max": 160},
-    "240000": {"seconds_max": 15.0, "peak_rss_mb_max": 370}
+    "20000": {"seconds_max": 1.5, "peak_rss_mb_max": 50},
+    "80000": {"seconds_max": 5.0, "peak_rss_mb_max": 108},
+    "240000": {"seconds_max": 15.0, "peak_rss_mb_max": 265}
   }
 }

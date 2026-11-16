@@ -581,6 +581,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
+| `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |

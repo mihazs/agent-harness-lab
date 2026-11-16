@@ -130,11 +130,16 @@ private credential only during actual execution; doctor checks metadata only.
 
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
-supplies execution authorization. Offline/unsupported profiles, unintegrated
-project banks, invalid or unavailable banks, stale bank digests, ambiguous runtimes and insufficient trial
-budgets stop before inference, each with its own `reason` and a matching one-step
-`remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
-by improve. Configured trials share one ceiling across preparation and both attempts.
+supplies execution authorization. Offline/unsupported profiles, invalid or unavailable banks, stale bank
+digests, ambiguous runtimes and insufficient trial budgets stop before inference, each with its own `reason`
+and a matching one-step `remediation` in `workflow.json` (the generic text is only a fallback). A pinned
+project bank (any `bank.path` other than `starter`) is evaluated through the cooperative native path; a
+pinned bank the run cannot use stops with `configured_bank_requires_cooperative_runtime` (a Responses
+runtime), `configured_bank_cannot_combine_with_managed_experiment`,
+`configured_managed_bank_requires_controlled_workflow` (a managed bank),
+`configured_bank_requires_development_regression_and_heldout` (a missing partition) or
+`configured_bank_shared_trial_budget_exhausted` (fewer trials than one preparation plus a pair for each task).
+A configuration file is optional and is not created by improve. Configured trials share one ceiling across preparation and both attempts.
 Once preflight passes and before any model dispatch, the CLI writes one `ahl: preview` line to
 stderr with the runtime, harness scope, the time and trial ceilings, the authorization statement and
 `model_cost="unknown..."`: model usage is billed by the runtime provider, AHL does not measure tokens or
@@ -789,6 +794,22 @@ This restores the frontmatter delimiter required by the
 It makes no behavioral reliability, native activation or general YAML-validity claim.
 It does not rename skills, delete instructions, install hooks or call a model.
 
+The repair is bound to the harness it staged, and `ahl improve` and `ahl skills invoke` stop
+at the same checks with the target untouched when the project no longer matches it. Before the
+journal exists they are a staged harness file that differs from the project (`target changed
+before application`), a harness file added (`frozen plan inventory changed`) and a
+candidate or configuration that differs from the staged one (`configuration or candidate changed
+before application`). Each ends as `invalid_input`, exit code 2. Once the journal is prepared the
+inventory is compared again (`target inventory changed during planned application`, also exit
+code 2), and a last time with the journal's temporary file staged, just before the replace. A
+foreign edit caught by that last check is reported by the journal transaction as
+`requires_intervention` (exit code 1, `restoration` `conflict`): nothing was replaced and the edit
+is kept. In every case the user's edit and each unrelated file survive, no deployment is
+committed, and a fresh run plans from the bytes now on disk, applies once and rolls back to them.
+This holds for writers that honor the project lock, not for one that ignores it. Over a saved
+plan, `ahl apply` reports the same drift as `stale` (exit code 3).
+`tests/integration/workflow/test_skill_invocation_stale_plan.py` pins each case on both routes.
+
 A project configuration with `recommendation_only: true` produces a staged plan
 and preserves target files. Without that restriction, requesting this explicit
 repair authorizes the supported reversible transformation. The existing private
@@ -991,8 +1012,7 @@ journaling, review and application stages of that repair, and an interrupted beh
 leave the target unchanged with nothing to apply or replay (Codex hook application and real-runtime evidence remain). Effective instruction hierarchy (#79, whose scoped rewrite
 validation, operation-level review and capture join are described above; a native capture
 of the trials and the composed-change interaction evaluation remain), skill lifecycle and
-routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
-and full executable CLI/skill parity (#143) remain incomplete; the
+routing utility (#78), native hooks (#80) and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)
 covers the cooperative receipt only. The behavioral gate
 has not been relaxed. No favorable smoke result or approval becomes certification.
