@@ -42,6 +42,13 @@ def test_inspection_reports_the_same_area_counts(tagged):
     assert inspect(tagged)['areas'] == {'coding': 4, 'ux-ui': 3}
 
 
+def test_inspection_with_a_registry_rejects_a_tag_it_does_not_declare(tmp_path):
+    path = two_area_bank(tmp_path, tags={**TAGS, 'regression': ['coding', 'design']})
+    with pytest.raises(ContractError) as caught:
+        inspect(path, registry=REGISTRY)
+    assert (caught.value.reason, caught.value.field) == ('task_area_undeclared', 'tasks[1].areas[1]')
+
+
 def test_registry_is_optional_and_tags_are_then_checked_for_shape_only(tagged):
     assert validate(tagged, verify_contents=False)['areas'] == {'coding': 4, 'ux-ui': 3}
 
