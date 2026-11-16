@@ -22,9 +22,16 @@ def stamp(epoch):
     return datetime.fromtimestamp(epoch, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def limiter_with(**buckets):
+class WaitClock:
+    """A clock a limiter wait advances, so a waited-out block really lapses without sleeping."""
+    def __init__(self): self.now, self.slept = NOW, []
+    def __call__(self): return self.now
+    def sleep(self, seconds): self.slept.append(seconds); self.now += seconds
+
+
+def limiter_with(max_wait=0, **buckets):
     """A limiter that has already seen ``bucket=(remaining, reset)`` observations, 5,000 requests per window."""
-    limiter = Limiter(clock=lambda: NOW)
+    limiter = Limiter(clock=lambda: NOW, max_wait=max_wait)
     for name, (remaining, reset) in buckets.items():
         limiter.observe(HOST, WHO, name, 200, dict(limit=5000, remaining=remaining, reset=reset), charged=False)
     return limiter
@@ -66,6 +73,44 @@ class TestRoutingPolicy:
         receipt = limiter.receipt()
         assert (receipt['halt_reason'], receipt['reset_epoch']) == ('reserve_floor', NOW+300)
         assert receipt['routes'][-1]['reason'] == 'all_buckets_blocked'
+
+    @pytest.mark.parametrize(('buckets', 'supports', 'transport', 'reason'), [
+        pytest.param({'graphql': (10, NOW+30)}, ('graphql',), 'graphql', 'only_graphql', id='graphql-only-reserve-block-within-max-wait'),
+        pytest.param({'graphql': (0, NOW+30)}, ('graphql',), 'graphql', 'only_graphql', id='graphql-only-exhausted-block-within-max-wait'),
+        pytest.param({'graphql': (10, NOW+60)}, ('graphql',), 'graphql', 'only_graphql', id='graphql-only-block-exactly-max-wait'),
+        pytest.param({'core': (10, NOW+30)}, ('rest',), 'rest', 'only_rest', id='rest-only-reserve-block-within-max-wait'),
+        pytest.param({'core': (10, NOW+30), 'graphql': (10, NOW+20)}, ('rest', 'graphql'), 'graphql', 'all_buckets_wait',
+            id='both-short-blocks-wait-for-the-earlier-reset'),
+        pytest.param({'core': (10, NOW+600), 'graphql': (10, NOW+30)}, ('rest', 'graphql'), 'graphql', 'all_buckets_wait',
+            id='only-the-short-block-is-waited-for'),
+    ])
+    def test_a_block_within_max_wait_is_left_to_the_limiter_wait_instead_of_halting(self, buckets, supports, transport, reason):
+        limiter = limiter_with(max_wait=60, **buckets)
+
+        decision = route(limiter, supports)
+
+        assert (decision['transport'], decision['reason']) == (transport, reason)
+        receipt = limiter.receipt()
+        assert receipt['halt_reason'] is None
+        assert receipt['routes'] == [dict(read='synthetic_read', transport=transport,
+            bucket={'rest': 'core', 'graphql': 'graphql'}[transport], reason=reason)]
+
+    @pytest.mark.parametrize(('buckets', 'supports', 'options', 'resource', 'reset'), [
+        pytest.param({'graphql': (10, NOW+61)}, ('graphql',), {}, 'graphql', NOW+61, id='graphql-only-block-one-second-beyond-max-wait'),
+        pytest.param({'graphql': (10, NOW+30)}, ('graphql',), dict(patience=10), 'graphql', NOW+30, id='graphql-only-block-beyond-patience'),
+        pytest.param({'core': (10, NOW+600), 'graphql': (10, NOW+300)}, ('rest', 'graphql'), {}, 'graphql', NOW+300,
+            id='both-blocks-beyond-max-wait'),
+        pytest.param({'core': (10, NOW+30), 'graphql': (10, NOW+20)}, ('rest', 'graphql'), dict(patience=5), 'graphql', NOW+20,
+            id='both-blocks-beyond-patience'),
+    ])
+    def test_a_block_beyond_max_wait_or_patience_still_halts_as_blocked_access(self, buckets, supports, options, resource, reset):
+        limiter = limiter_with(max_wait=60, **buckets)
+
+        with pytest.raises(RateLimited) as halt:
+            route(limiter, supports, **options)
+
+        assert (halt.value.resource, halt.value.reset) == (resource, reset)
+        assert limiter.receipt()['routes'][-1]['transport'] == 'none'
 
     @pytest.mark.parametrize(('supports', 'blocked'), [
         pytest.param(('graphql',), 'graphql', id='graphql-only-read-with-graphql-at-reserve'),
@@ -287,6 +332,20 @@ class TestRoutedComments(GitHubCase):
 
         assert halt.value.reset == NOW+300 and self.targets == []
         assert client.transport.limiter.receipt()['halt_reason'] == 'reserve_floor'
+
+    def test_both_buckets_briefly_blocked_wait_for_the_earlier_reset_and_read_through_graphql(self):
+        self.limiter_state(core=(10, NOW+30), graphql=(10, NOW+20))
+        clock, state = WaitClock(), self.state_for()
+        client = GitHubAPI(self.base, self.selection, authorization=TOKEN, routing='auto', path=self.state,
+            clock=clock, sleep=clock.sleep, max_wait=60)
+
+        client._route_comments([7, 8], state)
+
+        assert clock.slept == [20] and sorted(state['graphql_comments']) == [7, 8]
+        assert self.comment_requests() == []
+        receipt = client.transport.limiter.receipt()
+        assert (receipt['halt_reason'], receipt['waits']['count']) == (None, 1)
+        assert receipt['routes'] == [dict(read='issue_comments', transport='graphql', bucket='graphql', reason='all_buckets_wait')]
 
     def test_a_capture_with_both_buckets_at_reserve_is_blocked_access_not_a_checkpoint(self):
         self.limiter_state(core=(10, NOW+600), graphql=(10, NOW+300))

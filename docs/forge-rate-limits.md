@@ -80,7 +80,8 @@ The choice is deterministic and recorded per read in the receipt `routes`:
 | `cheaper_graphql` | GraphQL | A first or aggregate fetch whose GraphQL points are fewer than the REST requests it replaces. |
 | `rest_default` | REST | Anything else, including a tie. |
 | `rest_reserve_floor`, `graphql_primary_limit`, ... | the other one | The preferred bucket is at its reserve floor (or its cooldown); the name says which bucket and why. |
-| `all_buckets_blocked` | none | Every supported bucket is blocked: the read halts as blocked access with the earliest reset. |
+| `all_buckets_wait` | the earlier reset | Every supported bucket is blocked but at least one block ends within `max_wait` and the collection deadline: the read goes to the earliest such reset and the limiter waits it out. A single-API read keeps its `only_*` reason and waits the same way. |
+| `all_buckets_blocked` | none | Every supported bucket is blocked beyond `max_wait` or the collection deadline (the default `max_wait` of `0` waits for nothing): the read halts as blocked access with the earliest reset. |
 
 A GraphQL response's own `rateLimit { cost remaining resetAt limit }` is charged to the
 `graphql` bucket (`points` in the receipt) and its remaining count is shared with other

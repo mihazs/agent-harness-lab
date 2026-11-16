@@ -272,6 +272,11 @@ class GitHubAPI:
         routed = state.get('graphql_comments', {}).get(number)
         return routed if routed is not None else self._list(f'/issues/{number}/comments', state)
 
+    @staticmethod
+    def _patience(state):
+        """Seconds left before the collection deadline (None without one): the longest wait routing may leave to the limiter."""
+        return None if state['deadline'] is None else state['deadline']-time.monotonic()
+
     def _route_comments(self, numbers, state):
         """Choose REST or one GraphQL batch for the comments of every selected number; REST stays the default routing."""
         state['graphql_comments'] = {}
@@ -280,7 +285,7 @@ class GitHubAPI:
         route = choose(limiter, self.transport.origin[0], identity_digest(self.authorization), 'issue_comments',
             ('rest', 'graphql') if self.authorization is not None else ('rest',),
             cached=self.conditional and bool(self._validators), rest_requests=len(numbers),
-            graphql_cost=math.ceil(len(numbers)/MAX_ALIASES))
+            graphql_cost=math.ceil(len(numbers)/MAX_ALIASES), patience=self._patience(state))
         if route['transport'] != 'graphql': return
         state['graphql_comments'] = self._graphql_comments(numbers, state)
         if len(state['graphql_comments']) != len(numbers):
@@ -376,7 +381,8 @@ class GitHubAPI:
 
     def _threads(self, repository, pull, comments, state):
         # Review threads (resolved state) exist only in GraphQL: the read is never routed to REST.
-        choose(self.transport.limiter, self.transport.origin[0], identity_digest(self.authorization), 'review_threads', ('graphql',))
+        choose(self.transport.limiter, self.transport.origin[0], identity_digest(self.authorization), 'review_threads', ('graphql',),
+            patience=self._patience(state))
         def bind(value, kind, native):
             value = opaque_id(value)
             identities = state.setdefault('graphql_ids', {})

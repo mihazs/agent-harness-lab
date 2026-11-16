@@ -6,6 +6,7 @@ import json
 import pytest
 
 from tests.unit.sources.test_source_github import GitHubCase, Response
+from tests.unit.sources.test_source_routing import NOW, WaitClock
 
 from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection, THREADS_QUERY, THREAD_COMMENTS_QUERY
 from agent_harness_lab.sources.ratelimit import Limiter, identity_digest
@@ -125,6 +126,20 @@ class TestGitHubThread(GitHubCase):
         receipt = client.transport.limiter.receipt()
         assert (receipt['halt_reason'], receipt['halt_resource'], receipt['reset_epoch']) == ('reserve_floor', 'graphql', now+600)
         assert self.graph_calls == [] and receipt['routes'][-1]['transport'] == 'none'
+
+    def test_review_threads_wait_out_a_graphql_block_within_max_wait_and_then_read(self, tmp_path):
+        state, clock = str(tmp_path/'limits.json'), WaitClock()
+        Limiter(path=state, clock=clock).observe('api.github.com', identity_digest('Bearer SYNTHETIC_SECRET'), 'graphql', 200,
+            dict(limit=5000, remaining=10, reset=NOW+30), charged=False)
+        client = GitHubAPI(self.base, self.selection, authorization='Bearer SYNTHETIC_SECRET', path=state,
+            clock=clock, sleep=clock.sleep, max_wait=60)
+
+        client.read(self.source)
+
+        receipt = client.transport.limiter.receipt()
+        assert (clock.slept, receipt['halt_reason']) == ([30], None)
+        assert len(self.graph_calls) == 2 and receipt['routes'][0] == dict(
+            read='review_threads', transport='graphql', bucket='graphql', reason='only_graphql')
 
     def test_v3_roundtrip(self):
         assert GitHubSelection.parse(json.loads(json.dumps(self.selection.to_dict()))) == self.selection
