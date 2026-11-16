@@ -441,9 +441,9 @@ record carries figures, the entry holds a `provider_reported` block (profile `ah
 record lacks or reports malformed is absent, never zero, and a transcript without exactly one closing record gives the call no block.
 Nothing reads the block for a decision, an evidence label or a claim, and `ahl: outcome=` still prints `cost=unknown`: AHL
 measures no money. When a call reported a cost, the terminal prints one `ahl: provider-reported cost: preparation-0=0.0123 usd (unverified)`
-line before the outcome line, naming each call (`unreported` where it gave none) and showing no total. Evaluation trials,
-the controlled and configured-inference stage (its `inference` block already lists provider-reported usage per request) and the
-instruction-validation check are not covered.
+line before the outcome line, naming each call (`unreported` where it gave none) and showing no total. Evaluation trials (their records keep the
+closing record's token `usage` only) and the controlled and configured-inference stage (its `inference` block already lists
+provider-reported usage per request) are not covered.
 
 | Reason | Remediation |
 | --- | --- |
