@@ -256,3 +256,33 @@ def test_events_share_one_stored_copy_of_each_case_id_and_activity():
 
 def test_the_duplicate_id_set_is_released_before_sequence_mining():
     assert mining_inputs(corpus(3, roots=6, cases=3, steps=40))['duplicate_id_set_alive'] is False
+
+
+def random_cases(rng, roots, cases, tokens, alphabet):
+    """Short random activity sequences over a few roots; a small alphabet makes substrings recur across roots."""
+    names, held, owner, number = [f'a{k}' for k in range(alphabet)], {}, {}, 0
+    for case_number in range(cases):
+        case = f'case-{case_number}'
+        owner[case], held[case] = f'root-{rng.randrange(roots)}', []
+        for _ in range(rng.randint(1, tokens)):
+            number += 1
+            held[case].append((rng.choice(names), number, {'case_id': case, 'event_id': str(number)}))
+    return held, owner
+
+
+def as_pairs(held):
+    """The same entries with each reference given as a (case_id, event_id) pair, which mining turns into a mapping."""
+    return {case: [(activity, number, (ref['case_id'], ref['event_id'])) for activity, number, ref in entries]
+            for case, entries in held.items()}
+
+
+def test_random_automata_match_the_frozen_implementation():
+    rng, patterns = random.Random(7), 0
+    for _ in range(200):
+        held, owner = random_cases(rng, rng.randint(1, 8), rng.randint(1, 14), rng.randint(1, 25), rng.randint(1, 4))
+        maximum = rng.choice((None, 1, 2, 3, 6))
+        expected = json.dumps(reference.recurring_sequences(held, owner, maximum))
+        assert json.dumps(diagnose.recurring_sequences(held, owner, maximum)) == expected
+        assert json.dumps(diagnose.recurring_sequences(as_pairs(held), owner, maximum)) == expected
+        patterns += expected.count('reported_roots')
+    assert patterns > 400, patterns

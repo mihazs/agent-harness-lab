@@ -51,7 +51,9 @@ def recurring_sequences(cases, roots, maximum=None):
                 ends.append(entry); owners.append(roots[case])
             else:
                 ends.append(None); owners.append(None)
-            parent = last
+            # No later token equals a case separator, so a transition on it is never read; skipping it keeps
+            # the suffix chain's states from each growing a dict.
+            parent = last if entry[2] is not None else -1
             while parent >= 0:
                 move = moves[parent]
                 if move is None:
