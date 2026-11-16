@@ -174,6 +174,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
     fields = Counter()
     ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), defaultdict(list)
     declared_events, declared_profiles = 0, set()
+    names = {}  # one stored copy of each distinct case id and activity; parsed rows bring a new string per event
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
@@ -189,6 +190,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         root = event.get('root_case_id', case)
         if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
+        case, activity = names.setdefault(case, case), names.setdefault(activity, activity)
         if case in roots and roots[case] != root:
             raise ValueError('inconsistent lineage')
         roots[case] = root
@@ -253,7 +255,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 findings.append(finding)
         elif order['capture'] or order['timestamp'] or order['source']:
             cases[case].append((activity,number,ref))
-            observation_events[case].append((number, *(event.get(name) for name in OBSERVED)))
+            observation_events[case].append((number, case, ident, activity, *(event.get(name) for name in OBSERVED[3:])))
         else:  # Order flags never recover, so the case can no longer be selected.
             cases.pop(case, None); observation_events.pop(case, None)
         if violation:

@@ -227,3 +227,25 @@ def test_peak_and_retained_bytes_per_event_fall():
     assert new_peak < 0.5 * old_peak, message
     assert new_retained < 0.5 * old_retained, message
 
+
+def mining_inputs(rows, **options):
+    """What analyze hands to sequence mining, with rows parsed one at a time as the command reads them."""
+    lines = [json.dumps(row) for row in rows]  # a parser yields fresh dicts and fresh strings for every event
+    taken = {}
+
+    def spy(cases, roots, maximum=None):
+        taken['entries'] = {case: list(entries) for case, entries in cases.items()}
+        return []
+    with patch.object(diagnose, 'recurring_sequences', spy):
+        diagnose.analyze((json.loads(line) for line in lines), **options)
+    return taken
+
+
+def test_events_share_one_stored_copy_of_each_case_id_and_activity():
+    taken = mining_inputs(corpus(3, roots=6, cases=3, steps=40))
+    entries = [(case, entry) for case, held in taken['entries'].items() for entry in held]
+    assert len(entries) > 200
+    activities = {entry[0] for _, entry in entries}
+    assert len({id(entry[0]) for _, entry in entries}) == len(activities)
+    for case, (_, _, ref) in entries:
+        assert (ref[0] if type(ref) is tuple else ref['case_id']) is case
