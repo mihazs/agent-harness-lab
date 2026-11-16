@@ -9,6 +9,9 @@ statistic. Every row carries one evidence state, and an unknown outcome is never
 - provisional: an interval is shown but no verdict, because an outcome is unknown or the roots are below the minimum;
 - no_evidence: no experiment task carries the area, or none of its outcomes is graded; a number would be a zero;
 - blocked: the bank or a grader is not qualified, or the experiment design cannot be scored per area; no number is shown.
+
+Recorded sessions (#799) are optional, separate context: `session_areas` places each session by content-free signals in an
+`advisory_sessions` section. It is advisory and observed-only, never a state above, and it leaves every row and the overall figure as is.
 """
 import argparse
 from collections import Counter
@@ -18,7 +21,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import integrity
+from . import integrity, session_areas
 from .manifest_contract import ContractError
 from .plan import ExperimentSpec, schedule
 from .statistics import TrialRecord, analyze
@@ -99,9 +102,10 @@ def _row(spec, chosen, plan, usable, candidate, flagged, design):
                 paired=verdict, critical_regressions=None if paired is None else critical)
 
 
-def report(registry, bank, issues, spec, records, areas=()):
+def report(registry, bank, issues, spec, records, areas=(), sessions=None):
     """The per-area report of one experiment: `registry` the ahl.json areas, `bank` its task declarations, `issues` the
-    bank inspection issues, `spec` the ExperimentSpec, `records` the TrialRecord rows and `areas` the ids to narrow to."""
+    bank inspection issues, `spec` the ExperimentSpec, `records` the TrialRecord rows, `areas` the ids to narrow to and
+    `sessions` optional parsed session signal summaries, placed as advisory context apart from the scored rows."""
     spec.validate()
     declared = {entry['id']: entry for entry in registry}
     for index, area in enumerate(areas):
@@ -128,12 +132,14 @@ def report(registry, bank, issues, spec, records, areas=()):
                          **one(chosen)))
     withheld = ('area_selection' if areas else 'no_declared_area' if not rows
                 else 'not_every_area_scored' if any(row['state'] != 'scored' for row in rows) else None)
-    return dict(profile=PROFILE, experiment=dict(id=spec.experiment_id, profile=spec.profile, partition=spec.partition,
-                                                 alpha=spec.alpha, min_roots=spec.min_roots, repeats=spec.repeats),
-                arms=list(ARMS if candidate else ARMS[:1]), trials=dict(planned=len(plan), recorded=len(usable)),
-                untagged_tasks=sum(not tags for tags in tagged.values()),
-                areas=[row for row in rows if not areas or row['id'] in areas],
-                overall=one(list(spec.tasks)) if withheld is None else None, overall_withheld=withheld)
+    result = dict(profile=PROFILE, experiment=dict(id=spec.experiment_id, profile=spec.profile, partition=spec.partition,
+                                                   alpha=spec.alpha, min_roots=spec.min_roots, repeats=spec.repeats),
+                  arms=list(ARMS if candidate else ARMS[:1]), trials=dict(planned=len(plan), recorded=len(usable)),
+                  untagged_tasks=sum(not tags for tags in tagged.values()),
+                  areas=[row for row in rows if not areas or row['id'] in areas],
+                  overall=one(list(spec.tasks)) if withheld is None else None, overall_withheld=withheld)
+    if sessions is not None: result['advisory_sessions'] = session_areas.advisory(registry, sessions, areas)
+    return result
 
 
 def _number(value):
@@ -172,18 +178,20 @@ def markdown(result):
     lines += ['', 'Overall: ' + (f"{_cells(overall)[4]} baseline, paired delta {_cells(overall)[6]} (pooled over every experiment task)."
                                  if overall else f"withheld ({result['overall_withheld']}); it is shown only when every declared area is scored."),
               '', 'A task in several areas counts in each. No area is averaged into another, and intervals are not corrected across areas.']
-    return '\n'.join(lines) + '\n'
+    return '\n'.join(lines) + '\n' + (session_areas.markdown(result['advisory_sessions']) if 'advisory_sessions' in result else '')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl score', description='Report the result of one recorded paired experiment per declared capability area, '
         'each with an evidence state (scored, provisional, no_evidence, blocked). Read-only: no model call, no network, no file written.',
         epilog='Reads PROJECT/ahl.json (areas and bank) and the experiment files that `ahl experiment` takes. Output is JSON (default) or Markdown on stdout. '
-               'Exit: 0 report printed; 2 invalid input or an undeclared --area. Example: ahl score . --spec experiment.json --records trials.json --area coding')
+               'Exit: 0 report printed; 2 invalid input, an invalid --sessions file or an undeclared --area. Example: ahl score . --spec experiment.json --records trials.json --area coding')
     parser.add_argument('project', nargs='?', type=Path, default=Path.cwd(), help='Project directory whose ahl.json declares the areas and the bank (default: current directory)')
     parser.add_argument('--spec', type=Path, required=True, help='Existing JSON ExperimentSpec of the recorded paired experiment; a sequential or cohort plan is reported as blocked')
     parser.add_argument('--records', type=Path, required=True, help='Existing JSON array of the TrialRecord rows recorded for that spec; a missing or repeated trial is unknown')
     parser.add_argument('--area', action='append', default=[], help='Declared area id to report; repeat for several (default: every declared area); an undeclared id is an error')
+    parser.add_argument('--sessions', type=Path, help='Existing JSON array of content-free session signal summaries (session id, tool, extension and command-family counts); '
+                        'adds an advisory, observed-only placement of each session beside the rows, never a scored state')
     parser.add_argument('--format', choices=('json', 'md'), default='json', help='Output format on stdout (default: %(default)s)')
     args = parser.parse_args(argv)
     try:
@@ -198,7 +206,8 @@ def main(argv=None):
         spec = ExperimentSpec.parse(json.loads(integrity.read_regular(args.spec, MAX_INPUT_BYTES)))
         rows = json.loads(integrity.read_regular(args.records, MAX_INPUT_BYTES))
         if not isinstance(rows, list): raise ValueError('records must be a JSON array')
-        result = report(registry, json.loads(raw)['tasks'], reviewed['issues'], spec, [TrialRecord(**row) for row in rows], tuple(args.area))
+        result = report(registry, json.loads(raw)['tasks'], reviewed['issues'], spec, [TrialRecord(**row) for row in rows], tuple(args.area),
+                        None if args.sessions is None else session_areas.parse(json.loads(integrity.read_regular(args.sessions, MAX_INPUT_BYTES))))
         sys.stdout.write(markdown(result) if args.format == 'md' else json.dumps(result, indent=2, allow_nan=False) + '\n')
     except (ValueError, OSError, TypeError, KeyError) as error:
         print(f'ahl score: {error}', file=sys.stderr)
