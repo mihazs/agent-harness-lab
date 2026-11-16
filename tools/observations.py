@@ -1,6 +1,8 @@
 """State-aware observation matching; repetition is not a judgment of necessity."""
 from collections import Counter, OrderedDict
 
+DIMENSIONS = ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')
+
 
 class ObservationCache:
     def __init__(self, per_case=None, total=None, max_age=None):
@@ -61,13 +63,13 @@ class ObservationCache:
         if call and linked is None:
             uncertain = True
             self.coverage['unmatched_result'] += 1
-        dimensions = ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')
-        signature = tuple(event.get(k) for k in dimensions)
-        if uncertain or not all(isinstance(v, str) and v for v in signature):
+        tool, inputs, result, revision = (event.get('tool_name'), event.get('input_fingerprint'),
+                                          event.get('result_fingerprint'), event.get('state_revision'))
+        if uncertain or not (isinstance(tool, str) and tool and isinstance(inputs, str) and inputs
+                             and isinstance(result, str) and result and isinstance(revision, str) and revision):
             self.clear(case, 'uncertain_or_missing_dimensions')
             return None
         self.coverage['eligible'] += 1
-        tool, inputs, result, revision = signature
         key = (case, tool, inputs, revision)
         previous = self.entries.pop(key, None)
         state['keys'].pop(key, None)
@@ -80,7 +82,7 @@ class ObservationCache:
             ref = dict(case_id=case, event_id=ref)
             finding = dict(kind='duplicate_observation', status='observed_pattern',
                 evidence=[prior, ref],
-                matched_dimensions=list(dimensions),
+                matched_dimensions=list(DIMENSIONS),
                 explanation='Same observation at the same recorded state; necessity is unverified.')
         self.entries[key] = (result, ref, position)
         state['keys'][key] = None
