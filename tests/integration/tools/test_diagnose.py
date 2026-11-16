@@ -48,6 +48,21 @@ class TestDiagnosis:
             with pytest.raises(ValueError): d.analyze(rows)
         with pytest.raises(ValueError): d.analyze([event('a', 1), event('a', 2)], 1)
 
+    @pytest.mark.parametrize('row, message', [
+        pytest.param({}, 'invalid case_id at event 2', id='empty-row'),
+        pytest.param(dict(case_id='', event_id='1', activity='x'), 'invalid case_id at event 2', id='empty-case-id'),
+        pytest.param(dict(case_id=1, event_id='1', activity='x'), 'invalid case_id at event 2', id='non-string-case-id'),
+        pytest.param(dict(case_id='a', activity='x'), 'invalid event_id at event 2', id='missing-event-id'),
+        pytest.param(dict(case_id='a', event_id='', activity='x'), 'invalid event_id at event 2', id='empty-event-id'),
+        pytest.param(dict(case_id='a', event_id='1'), 'invalid activity at event 2', id='missing-activity'),
+        pytest.param(dict(case_id='a', event_id='1', activity=3), 'invalid activity at event 2', id='non-string-activity'),
+        pytest.param(dict(case_id='a', event_id=None, activity=None), 'invalid event_id at event 2', id='first-bad-field-is-reported'),
+    ])
+    def test_a_row_without_a_usable_identity_is_refused_naming_the_field_and_position(self, row, message):
+        with pytest.raises(ValueError) as refusal:
+            d.analyze([event('a', 0), row])
+        assert str(refusal.value) == message
+
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
         assert 'SECRET' not in str(rows)
