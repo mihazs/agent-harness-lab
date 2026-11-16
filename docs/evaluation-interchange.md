@@ -100,7 +100,8 @@ import evidence reference when authoring the new proposal; do not modify its fro
 snapshot. Use the existing [review/admission lifecycle](regression-admission.md)
 for reproduction, draft, review, immutable development-bank admission and export.
 Imported references/assertions enter a frozen grader bundle only through that
-separate authored/reviewed contract. No executable grader or TaskSpec is generated.
+separate authored/reviewed contract. `import` generates no executable grader or TaskSpec; the
+only exception is the reviewed [case-list conversion](#case-list-conversion).
 
 Native controls exercise both case formats through this existing lifecycle with
 separately supplied synthetic snapshots and actual executor/grader subprocesses.

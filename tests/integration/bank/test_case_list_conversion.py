@@ -184,7 +184,7 @@ def exclusion(cases, record, **mapping):
 ])
 def test_unsupported_case_is_excluded_with_its_typed_reason_and_never_graded(cases, extra, reason):
     marker = extra.pop('_marker', MARKER)
-    record = dict(id='candidate', task='A synthetic task.', **extra)
+    record = {'id': 'candidate', 'task': 'A synthetic task.', **extra}
     report = exclusion(cases, record, flag_marker=marker)
     assert [(row['case_id'], row['reason']) for row in report['excluded']] == [('candidate', reason)]
     assert report['converted'] == ['refund-policy'] and not (cases.output / 'graders' / 'candidate').exists()
