@@ -195,8 +195,10 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         seen.add(identity)
         if reused_process_mining is None:
             process.observe(event)
-        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
-                                               source=True, last_source=None, tied=False, crossed=False))
+        order = ordering.get(case)
+        if order is None:  # setdefault would build this nine-field dict for every event and discard it
+            order = ordering[case] = dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
+                                          source=True, last_source=None, tied=False, crossed=False)
         ordinal = event.get('capture_order')
         order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
         order['tied'] |= type(ordinal) is int and ordinal == order['last_order']
