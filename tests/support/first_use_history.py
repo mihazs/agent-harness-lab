@@ -27,7 +27,8 @@ if pathlib.Path('context.json').exists():
         if script['edit']: pathlib.Path(context['candidate'], 'AGENTS.md').open('a').write('synthetic edit\\n')
     if proposal is not None or text is not None:
         pathlib.Path(context['evaluation'], 'proposal.json').write_text(text if text is not None else json.dumps(proposal))
-print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
+scripted_transcript = pathlib.Path(%r)  # a scripted closing record replaces the default one
+print(scripted_transcript.read_text() if scripted_transcript.exists() else json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
 '''
 
 
@@ -39,8 +40,9 @@ class Home:
         self.project.mkdir()
         (self.project/'AGENTS.md').write_text('synthetic instructions\n')
         self.calls, self.proposal, self.script = root/'model-calls', root/'proposal-status', root/'proposal-script.json'
+        self.transcript = root/'transcript'
         self.runtime = root/'agent'
-        self.runtime.write_text(RUNTIME % (str(self.calls), str(self.proposal), str(self.proposal), str(self.script)))
+        self.runtime.write_text(RUNTIME % (str(self.calls), str(self.proposal), str(self.proposal), str(self.script), str(self.transcript)))
         self.runtime.chmod(0o755)
         for name, folder in (('CODEX_HOME', 'codex'), ('CLAUDE_CONFIG_DIR', 'claude'), ('AHL_STATE_HOME', 'state')):
             monkeypatch.setenv(name, str(root/folder))
@@ -58,6 +60,10 @@ class Home:
 
         ``edit`` also changes the candidate's instructions, so the candidate differs from the baseline."""
         self.script.write_text(json.dumps(dict(proposal=proposal, raw=raw, edit=edit, omit=omit)))
+
+    def closes_with(self, **record):
+        """The fake agent ends its transcript with this Claude ``result`` record, so run it with ``improve(home, agent='claude')``."""
+        self.transcript.write_text(json.dumps(dict(type='result', subtype='success', is_error=False, **record)))
 
     @property
     def model_calls(self):
@@ -102,11 +108,11 @@ class Home:
         path.write_text(json.dumps(dict(inputs_unchanged=True, trials=[trial])))
 
 
-def improve(home, *extra):
+def improve(home, *extra, agent='codex'):
     """Run ``ahl improve --history`` on the synthetic project; returns the exit code, the stdout receipt and stderr."""
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        code = cli.main(['improve', str(home.project), '--history', '--agent', 'codex', '--codex', str(home.runtime),
+        code = cli.main(['improve', str(home.project), '--history', '--agent', agent, f'--{agent}', str(home.runtime),
                          '--timeout', '30', *extra])
     return code, json.loads(out.getvalue()), err.getvalue()
 
