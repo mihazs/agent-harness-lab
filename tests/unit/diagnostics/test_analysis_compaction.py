@@ -204,7 +204,7 @@ def test_analyze_command_writes_identical_bytes(tmp_path):
 
 
 def test_peak_and_retained_bytes_per_event_fall():
-    rows = corpus(5, roots=40, cases=4, steps=100)
+    lines = [json.dumps(row) for row in corpus(5, roots=40, cases=4, steps=100)]  # parsed per event, as the command reads them
 
     def measure(module):
         retained = []
@@ -217,18 +217,18 @@ def test_peak_and_retained_bytes_per_event_fall():
         try:
             base = tracemalloc.get_traced_memory()[0]
             with patch.object(module, 'recurring_sequences', mining):
-                result = module.analyze(iter(rows), select_methods=True, sequence_length=8)
+                result = module.analyze((json.loads(line) for line in lines), select_methods=True, sequence_length=8)
             peak = tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
-        return json.dumps(result), (peak - base) / len(rows), (retained[0] - base) / len(rows)
+        return json.dumps(result), (peak - base) / len(lines), (retained[0] - base) / len(lines)
     expected, old_peak, old_retained = measure(reference)
     actual, new_peak, new_retained = measure(diagnose)
     assert actual == expected
-    assert len(rows) > 10000
+    assert len(lines) > 10000
     message = f'per event: peak {old_peak:.0f} -> {new_peak:.0f} B, retained {old_retained:.0f} -> {new_retained:.0f} B'
-    assert new_peak < 0.5 * old_peak, message
-    assert new_retained < 0.5 * old_retained, message
+    assert new_peak < 0.2 * old_peak, message
+    assert new_retained < 0.2 * old_retained, message
 
 
 def mining_inputs(rows, **options):
