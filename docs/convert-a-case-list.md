@@ -86,8 +86,11 @@ comparison:
 
 ```sh
 ahl bank --manifest NEW_PRIVATE_BANK/bank.json --audit --cooperative-controls
-ahl bank --manifest NEW_PRIVATE_BANK/bank.json --export NEW_PRIVATE_EXPORT
+ahl bank --manifest NEW_PRIVATE_BANK/bank.json --export NEW_PRIVATE_EXPORT --max-trials 100
 ```
+
+`--max-trials N` must be at least 2 x the converted cases x the planned repeats; the
+default 24 rejects a bank of more than 12 cases, and the maximum is 10000.
 
 Run the exported manifest with `ahl evaluate` ([command reference](command-reference.md)).
 Each task asks the agent to write `result.json` with a `response` text field. Every

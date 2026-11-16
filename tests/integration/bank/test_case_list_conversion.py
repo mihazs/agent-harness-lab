@@ -6,6 +6,8 @@ from contextlib import redirect_stdout
 import hashlib
 import io
 import json
+from pathlib import Path
+import shlex
 import subprocess
 from unittest.mock import patch
 
@@ -298,6 +300,26 @@ def test_cli_prints_the_exclusions_and_exits_two_when_nothing_converts(cases):
     cases.cases = [dict(id='only', task='A synthetic task.', expect={'contains': ['x'], 'repo_search': ['q']})]; cases.write()
     code, out = cases.cli()
     assert code == 2 and json.loads(out)['excluded'][0]['reason'] == 'needs_repository_context' and not cases.output.exists()
+
+
+def documented_export_argv(bank, export):
+    """The how-to's step 5 export command, with its placeholder folders replaced by real ones."""
+    page = Path(__file__).resolve().parents[3] / 'docs' / 'convert-a-case-list.md'
+    line = next(l for l in page.read_text().splitlines() if l.startswith('ahl bank ') and '--export' in l)
+    swap = {'NEW_PRIVATE_BANK/bank.json': str(bank / 'bank.json'), 'NEW_PRIVATE_EXPORT': str(export)}
+    return [swap.get(word, word) for word in shlex.split(line)[1:]]
+
+
+@pytest.mark.parametrize('count', [13, 16], ids=['just-above-the-default-ceiling', 'sixteen-cases'])
+def test_documented_export_command_exports_a_converted_bank_above_twelve_cases(cases, tmp_path, count):
+    cases.cases = [dict(id=f'case-{n:02d}', task=f'Describe synthetic item {n}.', expect={'contains': [f'item{n}']})
+                   for n in range(count)]
+    cases.write(); cases.convert()
+    stdout = io.StringIO()
+    with redirect_stdout(stdout):
+        code = main(documented_export_argv(cases.output, tmp_path / 'export'))
+    # 3 is the descriptive, never-certified outcome of every export; the ceiling rejection exits 2 instead.
+    assert code == 3 and len(json.loads((tmp_path / 'export' / 'manifest.json').read_bytes())['tasks']) == count
 
 
 def arm_pairs(manifest, root, baseline, candidate):
