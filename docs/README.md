@@ -47,6 +47,7 @@ reader purpose.
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
 - [Private memory store](memory-store.md): create, verify, rebuild and clean the opt-in evidence store.
 - [Stage reuse planner](stage-reuse-planner.md): node keys, the stage graph, reuse rules and the `ahl-stage-reuse-v1` receipt.
+- [Live evaluation gate](live-evaluation-gate.md): the manual dispatch inputs and bounds, the refusal reasons and the static workflow trust policy; the gate runs no model.
 - [Comparability engine](comparability-engine.md): the gates, verdicts and strata that decide whether two evaluations may be compared.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
 - [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
