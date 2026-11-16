@@ -77,6 +77,32 @@ class TestDiagnosis:
         declared = d.analyze(rows)['method_inputs']['source_order']
         assert (declared['declared_events'], declared['source_profiles'], declared['declared_order_cases']) == (3, [], 0)
 
+    def test_each_timestamp_is_parsed_once_per_event(self, monkeypatch):
+        from agent_harness_lab.diagnostics.process_mining import ProcessMiner
+        parsed, real = [], ProcessMiner.instant
+        monkeypatch.setattr(ProcessMiner, 'instant', staticmethod(lambda value: parsed.append(value) or real(value)))
+        rows = [event('a', number, timestamp=f'2026-01-01T00:00:0{number}Z') for number in range(3)]
+        d.analyze(rows)
+        assert parsed == [row['timestamp'] for row in rows]
+
+    @pytest.mark.parametrize('stamps, ordered, missing, invalid, reversals', [
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:02Z'], 1, 0, 0, 0, id='increasing'),
+        pytest.param(['2026-01-01T00:00:02Z', '2026-01-01T00:00:01Z'], 0, 0, 0, 1, id='reversed'),
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z'], 0, 0, 0, 0, id='equal'),
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:02'], 0, 1, 1, 0, id='second-without-a-timezone'),
+        pytest.param(['not-a-time', '2026-01-01T00:00:02Z'], 0, 1, 1, 0, id='first-unparseable'),
+        pytest.param([None, None], 0, 2, 0, 0, id='absent'),
+        pytest.param([5, '2026-01-01T00:00:02Z'], 0, 1, 1, 0, id='first-not-a-string'),
+    ])
+    @pytest.mark.parametrize('reuse', [pytest.param(False, id='mined'), pytest.param(True, id='reused-process-mining')])
+    def test_timestamp_order_and_defects_do_not_depend_on_who_parses_the_timestamp(self, stamps, ordered, missing, invalid, reversals, reuse):
+        rows = [event('a', number, **({} if stamp is None else dict(timestamp=stamp))) for number, stamp in enumerate(stamps)]
+        mined = d.analyze(rows)
+        result = d.analyze(rows, reused_process_mining=mined['process_mining']) if reuse else mined
+        assert result['method_inputs']['timestamp_order_cases'] == ordered
+        counts = result['process_mining']
+        assert (counts['missing_timestamps'], counts['invalid_timestamps'], counts['timestamp_reversals']) == (missing, invalid, reversals)
+
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
         assert 'SECRET' not in str(rows)
