@@ -5,6 +5,7 @@ import json
 import pytest
 
 from agent_harness_lab.memory import comparability as cmp
+from agent_harness_lab.memory import degradation
 
 
 def digest(char):
@@ -279,3 +280,33 @@ def test_group_strata_separates_changed_gates_and_lists_unknown_evaluations_unas
                                 'c': facts(grader_identity=digest('x')), 'd': facts(runtime=None), 'e': facts(bank_eligibility=False)})
     assert sorted(sorted(ids) for ids in grouped['strata'].values()) == [['a', 'b', 'e'], ['c']]
     assert grouped['unassigned'] == ['d']
+
+
+def worsening_success():
+    """A worsening paired success rate (0.9 -> 0.6) whose interval crosses the frozen margin, for the degradation report."""
+    def arm(identity, value):
+        return {'identity': identity, 'value': value, 'denominator': 40}
+    return {'baseline': arm('base-1', 0.9), 'candidate': arm('cand-1', 0.6), 'independent_roots': 8, 'min_roots': 6, 'missing': 0,
+            'statistic': {'method': 'weighted_root_Hoeffding', 'low': -0.5, 'high': -0.1, 'alpha': 0.05, 'margin': 0.05},
+            'families': ['family-a'], 'surfaces': ['instructions']}
+
+
+def claim_for(verdict):
+    return degradation.report({'paired_task_success': worsening_success()}, verdict)['metrics'][0]['claim']
+
+
+def test_a_comparable_verdict_lets_the_degradation_report_support_a_regression():
+    assert claim_for(assess()) == 'supported_regression_under_test'
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param({'grader_identity': digest('x')}, id='grader_changed'),
+    pytest.param({'task_selection': {'bank': digest('x'), 'revision': digest('d'), 'fixtures': {'t1': digest('1')}}}, id='bank_changed'),
+    pytest.param({'runtime': digest('x')}, id='runtime_changed'),
+    pytest.param({'runtime': None}, id='uncontrolled_environment'),
+    pytest.param({'model_settings': digest('x')}, id='model_changed'),
+    pytest.param({'oracle_authority': False}, id='oracle_quarantined'),
+])
+def test_a_changed_or_unknown_instrument_never_yields_a_supported_regression_in_the_degradation_report(change):
+    claim = claim_for(assess(right=facts(**change)))
+    assert claim in degradation.OUTCOMES

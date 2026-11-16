@@ -24,7 +24,9 @@ engine only decides. Facts are therefore reported as `caller_supplied_unverified
 `regression_claim_eligible`, `facts_authority` and `publication_allowed: false`. Evidence degradation
 is reported apart from `failures`, so a quarantined oracle or a coverage gap is never read as a
 change in the agent's behavior. `regression_claim_eligible` is true only for `comparable`; the claim
-ladder and the statistics belong to the later degradation report.
+ladder and the statistics belong to the [degradation report](harness-degradation-report.md), which
+accepts this result as its comparability verdict: its `failures` and `evidence_degradation` gate names
+are read there, and a `not_comparable` or `insufficient_evidence` verdict caps every claim.
 
 ## Gates
 
@@ -81,5 +83,5 @@ groups named evaluations by that digest and lists those with an unknown stratum 
 gate does not change a stratum.
 
 Not yet implemented: deriving the facts from a sealed history, a harness snapshot and a metric
-contract (each gate is to be mapped to its recorded source, and a gate with none stays unknown), a
-command that runs the engine, and the degradation report that consumes the verdict.
+contract (each gate is to be mapped to its recorded source, and a gate with none stays unknown) and a
+command that runs the engine.
