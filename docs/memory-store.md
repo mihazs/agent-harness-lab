@@ -10,7 +10,7 @@ with stage records the [reuse planner](stage-reuse-planner.md) reads back, throu
 library module `agent_harness_lab.memory.commit` that also stores diagnostic events and reuse
 receipts (see [committing to the store](stage-reuse-planner.md#committing-to-the-store)).
 The store never modifies a `HistoryStore`: a row here is never proof that an original store
-was updated. The separate `history` command only reads selected stores.
+was updated. The separate `history` command only reads selected stores. [Harness snapshots, change associations and baseline policies](harness-snapshots.md) can be stored in it as `capture` and `manifest` artifacts.
 
 ## Create and check a store
 
