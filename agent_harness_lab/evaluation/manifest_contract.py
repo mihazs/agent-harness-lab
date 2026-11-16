@@ -40,6 +40,8 @@ DECLARATION_REASONS = {
     'task_areas_invalid': (PROJECT, False, 'Write the task areas field as a list of one to three lowercase kebab-case area ids, then rerun.'),
     'task_area_undeclared': (PROJECT, False, 'Declare the area in the ahl.json areas with an id, a label and a description, or correct the tag on the task, then rerun.'),
     'score_area_undeclared': (PROJECT, False, 'Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun.'),
+    'area_selection_undeclared': (PROJECT, False, 'Pass --area to ahl improve with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun.'),
+    'area_selection_empty': (PROJECT, False, 'Tag at least one executable, non-quarantined bank task with each selected area, or select an area that has one, then rerun.'),
 }
 ALL_REASONS = {**REASONS, **DECLARATION_REASONS}
 

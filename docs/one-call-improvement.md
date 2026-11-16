@@ -138,7 +138,7 @@ pinned bank the run cannot use stops with `configured_bank_requires_cooperative_
 runtime), `configured_bank_cannot_combine_with_managed_experiment`,
 `configured_managed_bank_requires_controlled_workflow` (a managed bank),
 `configured_bank_requires_development_regression_and_heldout` (a missing partition) or
-`configured_bank_shared_trial_budget_exhausted` (fewer trials than one preparation plus a pair for each task).
+`configured_bank_shared_trial_budget_exhausted` (fewer trials than one preparation plus a pair for each task). With `--area`, only the tasks of the selected areas run and count, and the run can also stop with `area_selection_requires_pinned_bank`, `area_selection_requires_development_regression_and_heldout`, `area_selection_undeclared`, `area_duplicate` or `area_selection_empty` ([gate adoption per area](gate-adoption-per-area.md)).
 A configuration file is optional and is not created by improve. Configured trials share one ceiling across preparation and both attempts.
 Once preflight passes and before any model dispatch, the CLI writes one `ahl: preview` line to
 stderr with the runtime, harness scope, the time and trial ceilings, the authorization statement and

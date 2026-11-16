@@ -207,7 +207,7 @@ false` and `certification: unverified`.
 
 An `Evaluation` holds `point`, `lower` and `upper`, an `evidence` state (`scored`,
 `provisional`, `no_evidence` or `blocked`), a `vacuity` label or `None`, per-area
-lower bounds in `areas`, a `critical` flag, a regression `cause` (used only when the evaluator has no `investigate`), the `trials` and
+lower bounds in `areas`, the `regressed_areas` the per-area gate found (a scored area that lost paired outcomes beyond the regression margin; see the [area gate reference](area-gate-reference.md)), a `critical` flag, a regression `cause` (used only when the evaluator has no `investigate`), the `trials` and
 `seconds` it spent, the `inputs` digest it ran on, and, on the baseline only, a `reserve_trials` and `reserve_seconds`: what
 re-evaluating a candidate will cost when that is more than the baseline spent (a paired run costs two arms). The budget
 reserve is the baseline's declared reserve when it is a valid count or finite number of seconds, else what it spent. An evaluation is `valid`
@@ -427,6 +427,8 @@ proposed. A vacuous candidate is `inconclusive`: it is recorded with the mechani
 disposition `inconclusive`, never becomes the best and can never be accepted.
 
 ### Regression and the investigation artifact
+
+When the project declares areas, each paired run is also gated per area (`evaluation.area_gate`): a non-empty `regressed_areas` is the `area` regression, which stops the loop with `regression` whatever the policy or the pooled score, and the gate block is kept in `evaluator.runs[i]['area_gate']`.
 
 Each paired run also goes through `evaluation.before_after.decide`, with the loop's
 regression and noise margins, against the frozen identity. Its block is kept in

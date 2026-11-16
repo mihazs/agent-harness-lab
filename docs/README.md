@@ -13,6 +13,7 @@ reader purpose.
 - [Install and update](installation.md), including [keeping your global instructions in step](installation.md#keep-your-global-instructions-in-step), and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [improve from past sessions](improve-from-past-sessions.md); [verify a new Claude Code release](verify-claude-release.md); [analyze an explicit memory session](analyze-memory-session.md); [reuse analysis work on unchanged input](incremental-analysis.md); [inspect CLI help](cli-help.md).
 - [Audit a long-lived checkout whose inventory is blocked](audit-long-lived-checkout.md), [repair a supported skill header](repair-skill-header.md), [choose the project or user-level scope](improve-scope.md), or [inspect a private source journal](inspect-source-context.md).
+- [Aim an improvement at chosen areas and gate adoption per area](gate-adoption-per-area.md).
 - [Annotate pull requests with the static audit](audit-pull-requests.md), [find where agents ignored instructions](detect-ignored-instructions.md), or [repair a harness whose instructions are ignored](repair-ignored-instructions.md).
 - [Stage a presentation adapter under a controller-owned manifest and roll it back](stage-an-adapter.md).
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
@@ -26,6 +27,7 @@ reader purpose.
 - [Global instruction region markers and typed reasons](global-instructions-reference.md), [command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), [evaluation contracts and prerequisites](evaluation-foundation.md), and the [evaluation manifest contract](evaluation-manifest-contract.md), including its [capability area declarations](evaluation-manifest-contract.md#capability-area-declarations).
 - [Campaign specification and planned records](campaign-specification.md).
 - [`ahl score` reference](score-reference.md): the per-area report, its inputs, output fields, evidence states and reasons.
+- [Area gate reference](area-gate-reference.md): `ahl improve --area`, the per-area adoption gate block, its states and typed reasons.
 - [Loop declaration, state machine and controller](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants, the controller's ports, rounds, budget reserve and round ledger, and the simulation test-bed.
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).

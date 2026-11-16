@@ -17,7 +17,7 @@ import math
 from pathlib import Path
 import shutil
 
-from agent_harness_lab.evaluation import before_after, integrity, statistics, vacuity
+from agent_harness_lab.evaluation import area_gate, before_after, integrity, statistics, vacuity
 from agent_harness_lab.evidence_label import grader_fingerprint
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.sources.schema import digest
@@ -112,15 +112,18 @@ class FrozenBankEvaluator:
     manifest is the bank's manifest, runner an ExecutorRunner or anything with runtime_sha256() and run(arms, snapshots,
     manifest, out) returning the results.json shape, snapshots maps a snapshot digest to its directory, work an owner-only
     directory outside the bank and the snapshots, spec the resolved LoopSpec: its per-look alpha, regression margin and noise
-    margin bound every interval and paired comparison. min_roots is the plan minimum of independent roots.
+    margin bound every interval and paired comparison. min_roots is the plan minimum of independent roots. areas, when the project
+    declares any, is {declared: area ids, selected: the --area ids}: each paired run is then also gated per area
+    (evaluation.area_gate) and an area that lost paired outcomes beyond the regression margin is recorded as a regressed area.
 
     The bank, grader, seed schedule, per-arm budget share and runtime are hashed once into frozen_inputs and observed again
     around every run; an evaluation reports the digest it observed, so a difference is comparison_invalid in the controller.
     bases maps a candidate snapshot to the best snapshot it was staged from, which is the other arm of its paired run (the
     first evaluated snapshot when unrecorded). runs keeps what each evaluation saw.
     """
-    def __init__(self, manifest, runner, snapshots, work, *, spec, min_roots=2):
+    def __init__(self, manifest, runner, snapshots, work, *, spec, min_roots=2, areas=None):
         self.runner, self.snapshots, self.work, self.spec, self.min_roots = runner, snapshots, Path(work), spec, min_roots
+        self.areas = areas or None
         self.scoring, self.excluded = scoring_manifest(manifest)
         self.tasks = [(task['id'], task.get('root') if isinstance(task.get('root'), str) else task['id']) for task in json.loads(self.scoring.read_text())['tasks']]
         self.identity = self._observe()
@@ -181,13 +184,19 @@ class FrozenBankEvaluator:
         seconds = result.get('elapsed_seconds')
         seconds = seconds if type(seconds) in (int, float) and math.isfinite(seconds) and seconds >= 0 else None
         reserve = {} if paired else dict(reserve_trials=2*len(self.tasks), reserve_seconds=None if seconds is None else 2*seconds)
+        pairs = before_after.run_pairs(json.loads(self.scoring.read_text()), recorded) if paired or observed != self.identity else None
+        gate = None
+        if self.areas and paired and ran:  # a per-area loss is a regression the pooled score can hide
+            gate = area_gate.gate(pairs, self.areas['declared'], selected=self.areas.get('selected', ()), margin=self.spec.regression_margin,
+                                  alpha=self.spec.per_look_alpha, min_roots=self.min_roots)
         found = Evaluation(score['point'], score['lower'], score['upper'], evidence=score['evidence'] if ran else 'blocked', vacuity=labels[0] if labels else None,
                            trials=len(trials) if isinstance(trials, list) else None, seconds=seconds,
-                           inputs=observed['identity_sha256'] if self._known(observed) else None, **reserve)
+                           inputs=observed['identity_sha256'] if self._known(observed) else None,
+                           regressed_areas=tuple(gate['regressed']) if gate else (), **reserve)
         run = dict(index=index, snapshot=snapshot, arms=arms, against=against if paired else None, labels=labels, score=score,
-                   identity=observed, evaluation=found, guard=None, pairs=None, investigation=None)
-        if paired or observed != self.identity:
-            run['pairs'] = before_after.run_pairs(json.loads(self.scoring.read_text()), recorded)
+                   identity=observed, evaluation=found, guard=None, pairs=None, investigation=None, area_gate=gate)
+        if pairs is not None:
+            run['pairs'] = pairs
             run['guard'] = before_after.decide(run['pairs'], baseline=self.identity, candidate=observed, margin=self.spec.regression_margin,
                                                gain_margin=self.spec.noise_margin, alpha=self.spec.per_look_alpha)
             if run['guard']['frozen_inputs']['comparison']['status'] != 'identical': self._investigate(run)  # the AHL defect gets its artifact

@@ -105,6 +105,7 @@ def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
         materialize_sources(target)
         prompt=json.loads((target/'task.json').read_text())['prompt']
         tasks.append(dict(id=ident,root=task['root_id'],family=task['family'],split={'calibration':'regression','certification':'heldout','transfer':'heldout'}.get(task['partition'],'development'),
+                          **({'areas':list(task['areas'])} if task.get('areas') else {}),  # a tagged task keeps its tags so the per-area gate can read them
                           fixture=str(target.relative_to(output)),prompt=prompt,artifacts=list(task['artifacts']),
                           grader=[sys.executable,str(grader.resolve()/'grade.py.txt'),'{workspace}',str(grader.resolve()/'expected.json')]))
         if admission is None:

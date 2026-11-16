@@ -3,6 +3,7 @@
 A tag that no registry entry declares is a typed manifest-contract error, never a silent new area, and a task
 without tags is untagged: no report may read that as coverage. Errors name fields and positions, never the value.
 """
+from collections import Counter
 import re
 
 from .manifest_contract import ContractError
@@ -57,3 +58,32 @@ def check_declared(tags, declared, *, field='areas', file='bank.json'):
     """Reject the first tag the registry does not declare."""
     for index, area in enumerate(tags):
         if area not in declared: raise ContractError('task_area_undeclared', 'bank_validation', f'{field}[{index}]', file)
+
+
+def multiplicity(examined):
+    """The note that comes with a claim for one area among several: how many areas were examined and that nothing corrects for it.
+
+    None when one area or none was examined, because a single pre-chosen area has no selection to correct for."""
+    if examined < 2: return None
+    return dict(areas_examined=examined, correction='none',
+                note=f'{examined} areas were examined and no interval is corrected across them, so a result for one area among {examined} '
+                     'is weaker evidence than the same result for one area chosen before the run.')
+
+
+def check_selection(selected, declared, *, stage):
+    """Reject a repeated or undeclared `--area` id by position, never by value; return the ids as a tuple."""
+    for index, area in enumerate(selected):
+        if area in selected[:index]: raise ContractError('area_duplicate', stage, f'--area[{index}]', 'ahl.json')
+        if area not in declared: raise ContractError('area_selection_undeclared' if stage != 'score_selection' else 'score_area_undeclared',
+                                                     stage, f'--area[{index}]', 'ahl.json')
+    return tuple(selected)
+
+
+def select_tasks(tasks, declared, selected):
+    """The ids of the executable bank tasks that carry any selected area, in bank order, and a count of them per partition.
+
+    A quarantined task is never selected. A selection that names no executable task is a typed error, never an empty or
+    whole-bank run."""
+    chosen = [task for task in tasks if set(task.get('areas', ())) & set(selected) and task.get('review_status') != 'quarantined']
+    if not chosen: raise ContractError('area_selection_empty', 'improve_selection', '--area', 'bank.json')
+    return [task['task_id'] for task in chosen], dict(Counter(task['partition'] for task in chosen))

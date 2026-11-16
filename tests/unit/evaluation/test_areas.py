@@ -125,3 +125,54 @@ def test_declaration_reason_is_typed_unrepairable_and_listed_in_the_contract_ref
     assert (origin, repairable, remediation.endswith('.')) == (PROJECT, False, True)
     assert f'| `{reason}` | project declaration defect | no |' in guide
     assert reason not in REASONS  # the agent-output table, with its repair pass, stays untouched
+
+
+def tasks(*rows):
+    """Bank task declarations from (id, partition, areas[, review_status]) rows."""
+    return [dict(task_id=row[0], partition=row[1], areas=list(row[2]), review_status=row[3] if len(row) > 3 else 'accepted') for row in rows]
+
+
+BANK = tasks(('a', 'development', ['coding']), ('b', 'calibration', ['coding', 'ux-ui']), ('c', 'certification', ['ux-ui']),
+             ('d', 'development', []), ('e', 'development', ['ux-ui'], 'quarantined'))
+
+
+def test_a_selection_keeps_the_tasks_that_carry_any_selected_area_in_bank_order_with_their_partitions():
+    assert areas.select_tasks(BANK, ('coding', 'ux-ui'), ('ux-ui',)) == (['b', 'c'], {'calibration': 1, 'certification': 1})
+    assert areas.select_tasks(BANK, ('coding', 'ux-ui'), ('ux-ui', 'coding')) == (['a', 'b', 'c'], {'development': 1, 'calibration': 1, 'certification': 1})
+
+
+def test_a_quarantined_or_untagged_task_is_never_selected():
+    ids, _ = areas.select_tasks(BANK, ('coding', 'ux-ui'), ('coding', 'ux-ui'))
+    assert 'd' not in ids and 'e' not in ids
+
+
+@pytest.mark.parametrize('bank', [
+    pytest.param(tasks(('a', 'development', ['coding'])), id='no_task_carries_the_area'),
+    pytest.param(tasks(('a', 'development', ['ux-ui'], 'quarantined')), id='its_only_task_is_quarantined'),
+    pytest.param([], id='an_empty_bank'),
+])
+def test_a_selection_that_names_no_executable_task_is_a_typed_error_not_an_empty_or_whole_bank_run(bank):
+    error = rejected(areas.select_tasks, bank, ('coding', 'ux-ui'), ('ux-ui',))
+    assert (error.reason, error.stage, error.field, error.origin) == ('area_selection_empty', 'improve_selection', '--area', PROJECT)
+
+
+@pytest.mark.parametrize('selected, reason, field', [
+    pytest.param(('docs',), 'area_selection_undeclared', '--area[0]', id='undeclared'),
+    pytest.param(('coding', 'docs'), 'area_selection_undeclared', '--area[1]', id='undeclared_second'),
+    pytest.param(('coding', 'coding'), 'area_duplicate', '--area[1]', id='repeated'),
+])
+def test_an_undeclared_or_repeated_selection_names_the_position_and_never_the_value(selected, reason, field):
+    error = rejected(areas.check_selection, selected, ('coding', 'ux-ui'), stage='improve_selection')
+    assert (error.reason, error.stage, error.field, error.origin) == (reason, 'improve_selection', field, PROJECT)
+    assert 'docs' not in str(error)
+
+
+def test_the_score_selection_keeps_its_own_reason():
+    assert rejected(areas.check_selection, ('docs',), ('coding',), stage='score_selection').reason == 'score_area_undeclared'
+
+
+@pytest.mark.parametrize('examined, noted', [(0, False), (1, False), (2, True), (5, True)])
+def test_the_multiplicity_note_exists_only_when_several_areas_were_examined_and_names_how_many(examined, noted):
+    found = areas.multiplicity(examined)
+    assert (found is not None) is noted
+    if noted: assert (found['areas_examined'], found['correction']) == (examined, 'none') and f'{examined} areas were examined' in found['note']

@@ -30,6 +30,7 @@ REASONS = {
     'proposal_invalid': ('invalid_proposal', 'preparation', 'Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal.'),
     'evaluation_run_failed': ('evaluation_failed', 'trials', 'Read the failed evaluation records in the private receipt, fix the cause they name, then rerun.'),
     'candidate_regressed': ('blocked', 'trials', 'Read investigation.json in the private run output: its cause says whether the candidate or the pipeline made the paired score worse; revise or discard the candidate, or fix a pipeline cause and add its regression test, then rerun.'),
+    'area_regressed': ('blocked', 'trials', 'Read area_gate in the receipt and investigation.json in the private run output: the named areas lost paired outcomes although the pooled result did not fall below the margin; revise or discard the candidate so none of them regresses, then rerun.'),
     'candidate_already_regressed': ('blocked', 'preparation', 'Read the incremental block and the earlier run named in the private receipt: this exact candidate on this baseline already measured worse; change the focus or the harness so preparation proposes a different candidate, then rerun.'),
     'run_incomplete': ('incomplete', 'run', 'Read which evidence is missing in the private receipt of the run, restore it, then rerun.'),
     'intervention_required': ('requires_intervention', 'run', 'Read the intervention the private receipt records, perform it, then rerun.'),

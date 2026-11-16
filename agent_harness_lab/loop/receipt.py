@@ -59,7 +59,8 @@ def _score(summary):
 def _evaluation(index, verdict, summary, **extra):
     summary = summary if isinstance(summary, dict) else {}
     return dict(evaluation_id=f'evaluation-{index}', validity=verdict, evidence=summary.get('evidence'), vacuity=summary.get('vacuity'),
-                trials=summary.get('trials'), score=_score(summary), **extra)
+                trials=summary.get('trials'), score=_score(summary), **extra,
+                **({'regressed_areas': summary['regressed_areas']} if summary.get('regressed_areas') else {}))
 
 
 def _paired(guard):

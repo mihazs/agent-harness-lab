@@ -454,7 +454,9 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `configured_bank_invalid_or_unavailable` | Select an accessible valid project bank or use the starter bank; review its configuration before retrying. |
 | `configured_bank_requires_cooperative_runtime` | Pinned project banks run only on the codex or claude runtime; set runtime in ahl.json to {name: codex or claude, executable: <absolute path>}. |
 | `configured_bank_requires_development_regression_and_heldout` | Add development, calibration and held-out (certification or transfer) partitions to the bank. |
-| `configured_bank_shared_trial_budget_exhausted` | Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count). |
+| `configured_bank_shared_trial_budget_exhausted` | Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count, or the count of tasks the --area selection keeps). |
+| `area_selection_requires_pinned_bank` | Pin a task bank in ahl.json (bank.path and bank.sha256) whose tasks carry areas, or drop --area to run the whole bank. |
+| `area_selection_requires_development_regression_and_heldout` | Tag development, calibration and held-out (certification or transfer) tasks with the selected areas, or select areas that already have them. |
 | `configured_executable_differs_from_requested_executable` | Align the executable with the project configuration. |
 | `configured_executable_unavailable` | Provide the configured executable at its trusted path. |
 | `configured_isolated_runtime_unsupported` | Select a supported runtime profile. |
@@ -520,6 +522,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `proposal_invalid` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
 | `evaluation_run_failed` | Read the failed evaluation records in the private receipt, fix the cause they name, then rerun. |
 | `candidate_regressed` | Read investigation.json in the private run output: its cause says whether the candidate or the pipeline made the paired score worse; revise or discard the candidate, or fix a pipeline cause and add its regression test, then rerun. |
+| `area_regressed` | Read area_gate in the receipt and investigation.json in the private run output: the named areas lost paired outcomes although the pooled result did not fall below the margin; revise or discard the candidate so none of them regresses, then rerun. |
 | `candidate_already_regressed` | Read the incremental block and the earlier run named in the private receipt: this exact candidate on this baseline already measured worse; change the focus or the harness so preparation proposes a different candidate, then rerun. |
 | `run_incomplete` | Read which evidence is missing in the private receipt of the run, restore it, then rerun. |
 | `intervention_required` | Read the intervention the private receipt records, perform it, then rerun. |
@@ -579,6 +582,8 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
 | `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
+| `area_selection_undeclared` | Pass --area to ahl improve with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
+| `area_selection_empty` | Tag at least one executable, non-quarantined bank task with each selected area, or select an area that has one, then rerun. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
