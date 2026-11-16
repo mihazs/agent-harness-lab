@@ -7,6 +7,7 @@ import json
 import os
 import random
 import tracemalloc
+import weakref
 from unittest.mock import patch
 
 import pytest
@@ -289,3 +290,24 @@ def test_random_automata_match_the_frozen_implementation(wide, monkeypatch):
         assert json.dumps(diagnose.recurring_sequences(as_pairs(held), owner, maximum)) == expected
         patterns += expected.count('reported_roots')
     assert patterns > 400, patterns
+
+
+def instances_alive_at_mining(owner, name):
+    """How many objects `owner.name` built during one analyze call are still referenced when sequence mining starts."""
+    built, alive, real = [], {}, getattr(owner, name)
+
+    def build(*args, **kwargs):
+        built.append(weakref.ref(instance := real(*args, **kwargs)))
+        return instance
+
+    def spy(cases, roots, maximum=None):
+        alive['count'] = sum(ref() is not None for ref in built)
+        return []
+    with patch.object(owner, name, build), patch.object(diagnose, 'recurring_sequences', spy):
+        diagnose.analyze(iter(corpus(3, roots=6, cases=3, steps=40)))
+    assert built
+    return alive['count']
+
+
+def test_the_observation_matching_state_is_released_before_sequence_mining():
+    assert instances_alive_at_mining(diagnose, 'ObservationCache') == 0

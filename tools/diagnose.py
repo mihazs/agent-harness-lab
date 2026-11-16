@@ -290,6 +290,9 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             if finding:
                 findings.append(finding)
         del replay; observation_events.clear()
+    coverage = observations.coverage
+    del observations  # the matching state is dead once the last event is replayed; mining needs the room
+    if select_methods:
         repeated = recurring_sequences(sequence_inputs, roots, sequence_length) if sequence_roots >= 3 else []
     else:
         repeated = recurring_sequences(cases, roots, sequence_length)
@@ -336,8 +339,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     structured_checks='completed' if fields['structured_events'] else 'not_run'),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
-                activities=dict(counts), eligible_observations=observations.coverage['eligible'],
-                observation_coverage=dict(observations.coverage),
+                activities=dict(counts), eligible_observations=coverage['eligible'],
+                observation_coverage=dict(coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
                 process_mining=reused_process_mining if reused_process_mining is not None else dict(process.result(), profile='ahl-analysis-process-graph-v1'),
