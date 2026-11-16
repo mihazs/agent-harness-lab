@@ -54,3 +54,27 @@ position, such as `--area[1]`, and never the value.
 A task tagged with two areas counts in both and is never split or averaged between them.
 An overall figure appears only when you ask for every declared area and every one is
 `scored`; otherwise the report says why it is withheld.
+
+## See where recorded sessions look like they happen
+
+Controlled scores say how well the harness does in an area; they do not say where your
+real work happens. Add `--sessions` to place recorded sessions beside the scores:
+
+```sh
+ahl score . --spec experiment.json --records trials.json --sessions sessions.json
+```
+
+`sessions.json` is a list of content-free summaries, one per session: an opaque id and counts
+of tool names, file extensions and command families, never paths or text. The
+[reference](score-reference.md#session-summaries) lists the exact shape.
+
+The report then adds an advisory section. Read it as context only:
+
+- It is never `scored`. A session is not a controlled task, so the section cannot raise an
+  area's state, and an area can hold many sessions while its row above is `no_evidence`.
+  That gap is the useful signal: real work happens in an area that the bank does not measure.
+- A session that has no recognized signal, too few, a mixed signal (`ambiguous`) or looks like
+  an area `ahl.json` does not declare stays `unclassified` with the reason; it is not moved to
+  the nearest area. See the [rules and reasons](score-reference.md#rules).
+- `--area` narrows the rows shown, not the placement; `not_selected` counts the sessions it hides.
+
