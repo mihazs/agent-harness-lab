@@ -196,8 +196,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if identity in seen:
             raise ValueError('duplicate event id')
         seen.add(identity)
-        if reused_process_mining is None:
-            process.observe(event)
+        stamp = process.observe(event) if reused_process_mining is None else None
         order = ordering.get(case)
         if order is None:  # setdefault would build this nine-field dict for every event and discard it
             order = ordering[case] = dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
@@ -225,10 +224,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             elif last is not None and source[2:] <= last[2:]:
                 order['source'] = False
             order['last_source'] = source
-        try:
-            stamp = process.instant(event.get('timestamp'))
-        except (ValueError, TypeError, AttributeError, OverflowError):
-            stamp = None
+        if reused_process_mining is not None:  # the miner is not run, so nothing has parsed this timestamp yet
+            try:
+                stamp = process.instant(event.get('timestamp'))
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                stamp = None
         order['timestamp'] &= stamp is not None and (order['last_time'] is None or stamp > order['last_time'])
         order['last_time'] = stamp
         order['events'] += 1
