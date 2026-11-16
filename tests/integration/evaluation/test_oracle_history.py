@@ -215,7 +215,6 @@ def test_read_only_analysis_rejects_advanced_profiles_before_transitive_validati
     path = history.store.case(run['run_id'])/'inputs.json'
     original = json.loads(path.read_text())
     variants = [dict(original, schema_version=version) for version in (3, 4, 5, 6, 7, 8)]
-    variants += [dict(original, **{key: 'a'*64}) for key in ('protected_access_sha256', 'derivation_binding_sha256')]
     for variant in variants:
         path.write_text(json.dumps(variant))
         before = tree(history)
@@ -224,6 +223,20 @@ def test_read_only_analysis_rejects_advanced_profiles_before_transitive_validati
                 pytest.raises(ValueError, match='supports only fixed history'):
             history.store.analyze(run['run_id'], read_only=True)
         assert tree(history) == before
+
+
+@pytest.mark.parametrize('key', [
+    pytest.param('protected_access_sha256', id='protected-access'),
+    pytest.param('derivation_binding_sha256', id='derivation'),
+])
+def test_read_only_analysis_rejects_a_forged_dependency_binding_without_writing(history, key):
+    run, _ = history.run_history()
+    path = history.store.case(run['run_id'])/'inputs.json'
+    path.write_text(json.dumps(dict(json.loads(path.read_text()), **{key: 'a'*64})))
+    before = tree(history)
+    with pytest.raises((ValueError, OSError)):
+        history.store.analyze(run['run_id'], read_only=True)
+    assert tree(history) == before
 
 
 def test_complete_controller_run_and_analysis_are_current(history):

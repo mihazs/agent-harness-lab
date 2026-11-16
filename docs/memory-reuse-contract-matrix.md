@@ -70,7 +70,8 @@ Bounds are the limits visible in code. "Unbounded" means no fixed ceiling, not u
    analysis counts, it passes two optional historical items verbatim to both roles in
    `analysis-summary.json`. `paired_history_analysis` is one explicitly selected result,
    which `HistoryStore.analyze(read_only=True)` limits to fixed schema-1 or bank-bound schema-2
-   history without protected access or derivation. `incident_retrieval` is the operator-supplied reviewed-incident
+   history, with or without its managed protected-access receipt and derivation binding,
+   checked against the existing ledger without creating its lock. `incident_retrieval` is the operator-supplied reviewed-incident
    search result from `agent_harness_lab/diagnostics/retrieval.py` `contextual_search`; it
    carries incident ids, summaries, evidence references and scores. Its approval is a caller
    declaration (`caller_declared_reviewed_approval_unverified`), each row is marked

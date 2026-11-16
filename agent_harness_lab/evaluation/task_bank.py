@@ -257,9 +257,9 @@ class CertificationLedger:
         from .certification_access import consumed
         return consumed(self.path, reservation_id, binding, run_id)
 
-    def validate_managed_history(self, receipt):
+    def validate_managed_history(self, receipt, *, read_only=False):
         from .certification_access import historical
-        historical(self.path, receipt)
+        historical(self.path, receipt, read_only=read_only)
 
     def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None,deadline=None):
         from .certification_access import admit

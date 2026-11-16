@@ -283,10 +283,12 @@ def _assets(values):
 
 
 @contextmanager
-def _locked(path):
+def _locked(path, *, read_only=False):
+    """Hold the ledger lock; read_only never creates it, so an input store stays byte-identical."""
     path = _path(path); _private(path.parent, directory=True)
     lock = path.with_suffix('.lock')
-    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try: fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW | (0 if read_only else os.O_CREAT), 0o600)
+    except FileNotFoundError: raise ValueError('read-only analysis needs the existing protected-access dependency lock') from None
     try:
         _private(lock); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield path, _state(path)
@@ -510,11 +512,11 @@ def known_derivations(path,assets):
     return dict(schema_version=1,profile='controlled-development-derivation-v1',links=links) if links else None
 
 
-def validate_derivations(path,value):
+def validate_derivations(path,value,*,read_only=False):
     fields(value,'schema_version profile links')
     if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!='controlled-development-derivation-v1' or not isinstance(value['links'],dict):
         raise ValueError('invalid frozen derivation binding')
-    with _locked(path) as (_,state):
+    with _locked(path,read_only=read_only) as (_,state):
         for ident,link in value['links'].items():
             sha256(ident); fields(link,'record_sha256 assets'); sha256(link['record_sha256'])
             entry=state.get('derivations',{}).get(ident) or state.get('constructions',{}).get(ident)
@@ -539,13 +541,13 @@ def status(path, ident):
             worker_access='not_inferred_from_retirement',automatic_promotion=False,publication_allowed=False)
 
 
-def historical(path, receipt):
+def historical(path, receipt, *, read_only=False):
     fields(receipt, 'schema_version profile reservation_id binding run_id state qualification')
     if (type(receipt['schema_version']) is not int or receipt['schema_version'] != 1
             or receipt['profile'] != PROFILE or receipt['state'] != 'retired' or receipt['qualification'] != 'unverified'):
         raise ValueError('invalid frozen managed access receipt')
     sha256(receipt['reservation_id']); sha256(receipt['run_id']); _binding(receipt['binding'])
-    with _locked(path) as (_, state):
+    with _locked(path, read_only=read_only) as (_, state):
         entry = state['reservations'].get(receipt['reservation_id'])
         if entry != dict(binding=receipt['binding'], state='retired', run_id=receipt['run_id']):
             raise ValueError('frozen access receipt differs from actual ledger custody')
