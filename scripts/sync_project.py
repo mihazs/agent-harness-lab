@@ -8,7 +8,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agent_harness_lab.sources.ratelimit import Limiter, classify, identity_digest, signals, split_http, state_path  # noqa: E402
+from agent_harness_lab.sources.ratelimit import Limiter, classify, graphql_cost, identity_digest, signals, split_http, state_path  # noqa: E402
+from agent_harness_lab.sources.routing import choose  # noqa: E402
 from agent_harness_lab.sources.transport import RateLimited  # noqa: E402
 
 REPO = 'mihazs/agent-harness-lab'
@@ -37,6 +38,8 @@ def graphql(query, variables):
     """One GraphQL call that stops at the reserve floor and reports rate limits as such (never as permission)."""
     quota, who = limiter(), identity_digest('gh-cli')
     try:
+        # Project items exist only in GraphQL: the read is recorded as such and never borrows the REST bucket.
+        choose(quota, 'api.github.com', who, 'project_items', ('graphql',))
         quota.before('api.github.com', 'graphql', who)
     except RateLimited as halt:
         raise RuntimeError(f'GitHub GraphQL quota halted ({halt.reason}); resets at '
@@ -55,6 +58,8 @@ def graphql(query, variables):
     data = json.loads(body)
     if result.returncode or data.get('errors'):
         raise ValueError(data.get('errors', 'GitHub CLI request failed'))
+    spent = graphql_cost(data)
+    if spent is not None: quota.charge('api.github.com', who, 'graphql', spent)
     return data['data']
 
 
@@ -110,7 +115,7 @@ def main():
       repositories(first:100){nodes{nameWithOwner} pageInfo{hasNextPage}}
       fields(first:100){nodes{... on ProjectV2Field{id name}
       ... on ProjectV2SingleSelectField{id name options{id name}}} pageInfo{hasNextPage}}
-    }}}''', {})['user']['projectV2']
+    }} rateLimit{cost remaining resetAt limit}}''', {})['user']['projectV2']
     if project['repositories']['pageInfo']['hasNextPage'] or project['fields']['pageInfo']['hasNextPage']:
         raise ValueError('Project configuration is truncated')
     if REPO not in [r['nameWithOwner'] for r in project['repositories']['nodes']]:
@@ -130,7 +135,7 @@ def main():
           content{__typename ... on Issue{state stateReason repository{nameWithOwner} labels(first:100){nodes{name} pageInfo{hasNextPage}}}
           ... on PullRequest{repository{nameWithOwner} labels(first:100){nodes{name} pageInfo{hasNextPage}}
             state isDraft reviewDecision mergeStateStatus commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}
-        }}}}''', {'id': project['id'], 'cursor': cursor})['node']['items']
+        }}} rateLimit{cost remaining resetAt limit}}''', {'id': project['id'], 'cursor': cursor})['node']['items']
         for item in page['nodes']:
             content = item['content']
             if not content or content.get('repository', {}).get('nameWithOwner') != REPO:
