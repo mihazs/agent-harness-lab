@@ -235,7 +235,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             event.get('contract_violation') is True and bool(event.get('contract_ref')))
         if activity == 'tool_result':
             observation_cases.add(case)
-            if all(isinstance(event.get(key), str) and event[key] for key in
+            # Once a case is a candidate a later result cannot change that, so its fields are not read again.
+            if case not in observation_candidates and all(isinstance(event.get(key), str) and event[key] for key in
                    ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')):
                 observation_candidates.add(case)
         counts[activity] += 1

@@ -63,6 +63,13 @@ class TestDiagnosis:
             d.analyze([event('a', 0), row])
         assert str(refusal.value) == message
 
+    def test_a_case_is_an_observation_candidate_when_any_result_has_a_full_signature(self):
+        sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
+        rows = [event('late', 1), event('late', 2, **sig),                  # first result incomplete, second complete
+                event('early', 1, **sig), event('early', 2),                # first complete, second incomplete
+                event('never', 1), event('never', 2, tool_name='read', input_fingerprint='')]
+        assert d.analyze(rows)['method_inputs']['missing_observation_signature_cases'] == 1
+
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
         assert 'SECRET' not in str(rows)
