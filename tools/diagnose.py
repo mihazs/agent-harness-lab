@@ -21,6 +21,8 @@ except ModuleNotFoundError:  # Direct python tools/diagnose.py entrypoint.
 OBSERVED = ('case_id', 'event_id', 'activity', 'state_revision', 'mutation', 'tool_effect',
             'call_id', 'tool_name', 'input_fingerprint', 'result_fingerprint')
 _position = itemgetter(1)
+# Sequence mining keeps its per-state numbers in machine ints of this width while every state number fits in it.
+NARROW_STATES = 1 << (8*array('i').itemsize-1)
 
 
 def normalize(rows, source_format='normalized', project=None, source_version=None):
@@ -39,8 +41,9 @@ def recurring_sequences(cases, roots, maximum=None):
     # Parallel state arrays. A state's single outgoing transition is a (symbol, target) pair in two arrays and only
     # branching states hold a dict; symbol -1 is no transition and -2 is a dict. A symbol is the number of an
     # activity in order of first appearance. ends/owners are set for case events only.
-    length, link, position = array('q', (0,)), array('q', (-1,)), array('q', (-1,))
-    sole, target_of, branches, symbols = array('q', (-1,)), array('q', (0,)), {}, {}
+    code = 'i' if 2*(len(cases)+sum(map(len, cases.values()))) < NARROW_STATES else 'q'  # states <= 2 x tokens
+    length, link, position = array(code, (0,)), array(code, (-1,)), array(code, (-1,))
+    sole, target_of, branches, symbols = array(code, (-1,)), array(code, (0,)), {}, {}
     ends, owners = [None], [None]
     tokens = []; last = 0
     for case, entries in cases.items():
@@ -99,19 +102,20 @@ def recurring_sequences(cases, roots, maximum=None):
     del sole, target_of, branches, symbols
     count = len(length)
     # Decreasing length, ascending index among equal lengths: the stable reverse sort order.
-    start = array('q', bytes(8*(max(length)+1)))
+    step = array(code).itemsize
+    start = array(code, bytes(step*(max(length)+1)))
     for index in range(1, count):
         start[length[index]] += 1
     offset = 0
     for size in range(len(start)-1, -1, -1):
         offset, start[size] = offset+start[size], offset
-    order = array('q', bytes(8*(count-1)))
+    order = array(code, bytes(step*(count-1)))
     for index in range(1, count):
         size = length[index]; order[start[size]] = index; start[size] += 1
     del start
     # Children are prepended in that order; the root set of a state is final when it is
     # reached, so only its size is kept. State 0 is never reported, so it gets no union.
-    first, sibling, supported = array('q', (-1,))*count, array('q', (-1,))*count, array('q', (0,))*count
+    first, sibling, supported = array(code, (-1,))*count, array(code, (-1,))*count, array(code, (0,))*count
     pending_roots = {}
     for index in order:
         found = pending_roots.pop(index, None)

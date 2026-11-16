@@ -276,7 +276,10 @@ def as_pairs(held):
             for case, entries in held.items()}
 
 
-def test_random_automata_match_the_frozen_implementation():
+@pytest.mark.parametrize('wide', [pytest.param(False, id='narrow-state-numbers'), pytest.param(True, id='wide-state-numbers')])
+def test_random_automata_match_the_frozen_implementation(wide, monkeypatch):
+    if wide:  # the eight-byte arrays used when state numbers would not fit the platform int
+        monkeypatch.setattr(diagnose, 'NARROW_STATES', 0)
     rng, patterns = random.Random(7), 0
     for _ in range(200):
         held, owner = random_cases(rng, rng.randint(1, 8), rng.randint(1, 14), rng.randint(1, 25), rng.randint(1, 4))
