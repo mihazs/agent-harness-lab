@@ -367,3 +367,27 @@ def test_analysis_with_many_subagent_transcripts_still_reads_the_main_sessions_n
     assert section['status'] == 'completed' and section['sessions']['read'] == 1
     assert section['sessions']['skipped'] == dict(over_file_limit=1, subagent_transcript=3)
     assert 'd-new.jsonl' in tried and 'c-old.jsonl' not in tried
+
+
+def test_analysis_of_a_worktree_with_history_from_reads_the_sessions_recorded_under_that_checkout(project, tmp_path):
+    """Regression: every session of the other checkout was judged foreign, so a worktree analysis never completed."""
+    checkout = tmp_path / 'checkout'
+    checkout.mkdir()
+    path = write(tmp_path / 's.jsonl', claude(checkout, [('user', 'hi')]))
+    data = dict(sources=[dict(format='claude', path=str(path))])
+    section, _ = native.for_analysis(analysis(project, history_from=checkout), data)
+    assert section['status'] == 'completed' and section['sessions']['read'] == 1
+    section, _ = native.for_analysis(analysis(project), data)
+    assert (section['status'], section['skipped']) == ('not_run', dict(foreign_project=1))
+
+
+def test_analysis_stopped_by_a_bound_before_any_session_says_so_instead_of_unreadable(project, tmp_path, monkeypatch):
+    monkeypatch.setattr(native, 'MAX_FILES', 1)
+    broken = tmp_path / 'a.jsonl'
+    broken.write_text('not json\n')
+    good = write(tmp_path / 'b.jsonl', claude(project, [('user', 'hi')], session='good'))
+    listed = [dict(format='claude', path=str(path)) for path in (broken, good)]
+    os.utime(broken, (2_000_000_000, 2_000_000_000))
+    section, report = native.for_analysis(analysis(project), dict(sources=listed))
+    assert (section['status'], section['reason'], report) == ('not_run', 'read_bound_reached', None)
+    assert section['skipped'] == dict(malformed=1, over_file_limit=1)

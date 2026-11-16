@@ -38,7 +38,7 @@ directory) and is projected into one session in memory; nothing but the turns be
 | Rule | Behavior |
 | --- | --- |
 | Release | Claude Code: a release in the verified range of the telemetry adapter. Codex: the pinned `0.166.0` rollout. Anything else is skipped as `unsupported_version` |
-| Project | The first recorded directory must be the project or inside it, else `foreign_project`. A subagent transcript is `subagent_transcript`; two sessions in one file are `mixed_sessions`; no session record is `no_session` |
+| Project | The first recorded directory must be the project or inside it, else `foreign_project`; in `ahl analyze --history-from CHECKOUT` it is that checkout, where the sessions were recorded. A subagent transcript is `subagent_transcript`; two sessions in one file are `mixed_sessions`; no session record is `no_session` |
 | Files | A missing, linked, multi-linked or changed file is `unavailable`; over 128 MiB or a line over 8 MiB is `oversized`; invalid or duplicate-key JSON is `malformed`; at most 200 files, the rest `over_file_limit`, and about 512 MiB in all, the rest `over_byte_budget` (only captures really read count against both bounds; a subagent or foreign-project file is skipped at its first row and costs neither, and an analysis offers the newest captures first); a second file of one session is `duplicate_session` |
 | Turns | User prompts, agent replies and tool calls. Injected meta rows, compaction summaries and tool results are not turns. A prompt is clipped to its first 64 KiB, a reply to its last 64 KiB (where a question sits), and a command or path over 64 KiB is dropped so the call is undecidable |
 | Claude calls | `command` from the tool input, and `path` from `file_path`, `notebook_path` or `path` |
@@ -61,7 +61,7 @@ are the project-root `AGENTS.md` and `CLAUDE.md`, never a linked file; with `--s
 user-level rule files are not read and the section lists `rule_layers_not_read: ["global"]`.
 
 The brief's `instruction_adherence` section is counts only: `status` (`completed` or `not_run`), for
-`not_run` a `reason` (`no_native_capture_path`, `no_readable_native_session`, `adherence_input_rejected`)
+`not_run` a `reason` (`no_native_capture_path`, `no_readable_native_session`, `read_bound_reached` when the file or byte bound stopped the read before any session was read, `adherence_input_rejected`)
 with `skipped` reason counts, and for `completed` the sessions read, `findings` by status, `abstentions`,
 findings by `mechanisms`, the number of rule files read and the artifact name. `not_run` is never zero findings.
 

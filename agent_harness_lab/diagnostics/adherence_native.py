@@ -304,9 +304,13 @@ def for_analysis(args, data):
     if not files:
         return dict(base, status='not_run', reason='no_native_capture_path'), None
     harness = harness_files(project)
-    sessions, skipped = read_sessions(files, project, harness)
+    # --history-from names the checkout whose sessions were read for this (worktree) project: they are recorded under that path.
+    recorded_in = Path(args.history_from).resolve() if getattr(args, 'history_from', None) else project
+    sessions, skipped = read_sessions(files, recorded_in, harness)
     if not sessions:
-        return dict(base, status='not_run', reason='no_readable_native_session', skipped=skipped), None
+        # A bound that stopped the read is not "unreadable": the untried captures may be fine.
+        bounded = 'over_file_limit' in skipped or 'over_byte_budget' in skipped
+        return dict(base, status='not_run', reason='read_bound_reached' if bounded else 'no_readable_native_session', skipped=skipped), None
     try:
         report = adherence.build(adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)), harness)
     except ValueError:
