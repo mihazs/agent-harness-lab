@@ -70,6 +70,13 @@ class TestDiagnosis:
                 event('never', 1), event('never', 2, tool_name='read', input_fingerprint='')]
         assert d.analyze(rows)['method_inputs']['missing_observation_signature_cases'] == 1
 
+    @pytest.mark.parametrize('profile', [pytest.param('not-a-pinned-profile', id='unknown-profile'), pytest.param(7, id='non-string-profile')])
+    def test_an_undeclared_source_order_profile_is_counted_but_never_orders_a_case(self, profile):
+        rows = [event('a', number, source_order_profile=profile, source_order_segment=0, capture_order=number, source_suborder=0)
+                for number in range(3)]
+        declared = d.analyze(rows)['method_inputs']['source_order']
+        assert (declared['declared_events'], declared['source_profiles'], declared['declared_order_cases']) == (3, [], 0)
+
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
         assert 'SECRET' not in str(rows)
