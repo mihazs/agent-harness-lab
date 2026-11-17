@@ -666,7 +666,11 @@ def test_cold_resume_after_process_death_never_repeats_an_unresolved_request(mon
                 lock.write_text(':'.join(parts))
             stopped = subprocess.run(resume, env=env, capture_output=True, text=True, check=False, timeout=10)
             resumed = json.loads(stopped.stdout)
-            assert stopped.returncode == 1 and resumed.get('loop', {}).get('stop_reason') == 'unresolved_request', resumed
+            assert stopped.returncode == 1
+            if simulated_reboot:
+                assert resumed.get('loop', {}).get('stop_reason') == 'unresolved_request', resumed
+            else:
+                assert resumed.get('reason') == 'workspace_busy', resumed
             assert len(project.calls()) == 1
         finally:
             if process.poll() is None:

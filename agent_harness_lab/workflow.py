@@ -118,9 +118,9 @@ def project_lock(project):
         return
 
     from .evaluation.integrity import open_directory_nofollow
+    token = f'v2:{boot}:{owner}:{uuid.uuid4().hex}'.encode()
     directory = open_directory_nofollow(folder)
     guard = descriptor = None
-    token = f'v2:{boot}:{owner}:{uuid.uuid4().hex}'.encode()
     try:
         info = os.fstat(directory)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077: raise ValueError('unsafe workspace lock directory')

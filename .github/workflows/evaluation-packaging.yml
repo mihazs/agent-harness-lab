@@ -27,3 +27,6 @@ jobs:
           tests/unit/loop/test_ledger_replay.py
           tests/unit/loop/test_receipt.py
           tests/unit/loop/test_scoring_manifest.py
+          tests/integration/docs/test_improve_until_score_howto.py
+          tests/integration/workflow/test_workflow.py
+          tests/unit/workflow/test_entry_parity_durations.py

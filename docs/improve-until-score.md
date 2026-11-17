@@ -102,7 +102,7 @@ reconciliation ([resuming a loop](loop-reference.md#resuming-a-loop)).
 
 ```sh
 ahl improve . --resume RUN_ID
-# resumes a verified loop or returns its finished receipt
+# resumes: the finished run's receipt (exit 0)
 ```
 
 `RUN_ID` is the final directory name of the run's private output, printed on stderr as
