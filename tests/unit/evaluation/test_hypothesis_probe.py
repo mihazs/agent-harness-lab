@@ -133,3 +133,24 @@ def test_probe_pair_does_not_treat_heldout_or_missing_trials_as_evidence():
     assert _paired_result(dict(inputs_unchanged=True, trials=[trial]), inputs_unchanged=True)['verdict'] == 'inconclusive'
     candidate = dict(version='candidate', task='hypothesis-probe', split='development', status='passed', grader=dict(valid=True, outcome=True))
     assert _paired_result(dict(inputs_unchanged=True, trials=[trial, candidate]), inputs_unchanged=True)['verdict'] == 'inconclusive'
+
+
+def test_probe_cli_selects_one_mechanism_and_reports_only_the_result(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab.evaluation import hypothesis_probe, probe_cli
+    brief = tmp_path / 'brief.json'
+    brief.write_text(json.dumps({'mechanisms': [{'private': 'do not report'}, {'status': 'observed_pattern'}]}))
+    received = []
+    def fake_run(mechanism, **kwargs):
+        received.append((mechanism, kwargs))
+        return {'verdict': 'supported_hypothesis', 'source_session_outcome': 'unknown'}
+    monkeypatch.setattr(hypothesis_probe, 'run', fake_run)
+    arguments = ['--brief', str(brief), '--mechanism', '1', '--project', str(tmp_path),
+                 '--baseline', 'baseline', '--candidate', 'candidate', '--output', 'out',
+                 '--agent', 'codex', '--binary', 'codex', '--harness-path', 'AGENTS.md']
+    assert probe_cli.main(arguments) == 0
+    assert received[0][0] == {'status': 'observed_pattern'}
+    assert received[0][1]['harness_paths'] == ['AGENTS.md']
+    assert 'do not report' not in capsys.readouterr().out
+    arguments[3] = '-1'
+    assert probe_cli.main(arguments) == 2
+    assert len(received) == 1
