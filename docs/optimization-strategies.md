@@ -196,9 +196,48 @@ search run. A patched candidate is refused for that stage before anything runs.
   fixed in advance, both sides controller-verified development observations and not a
   treatment effect. `advantage_claim` stays `False`.
 
+## Requiring a frozen prediction per proposal
+
+```python
+gate = PredictionGate(PredictionLedger(), bank_version, grader_version,
+                      protected_task_ids=(), allowed_refs=None)
+run_strategy(..., predictions=gate)
+compare_strategies(..., predictions=gate)
+```
+
+With a `PredictionGate`, the proposer returns `(candidate, prediction)` instead of a
+candidate, where `prediction` is a [`PredictionRecord`](controlled-experiments.md).
+The prediction is frozen in the gate's `PredictionLedger` before the candidate is
+charged or scored, on both routes, so every receipt is preregistered. A proposal that
+cannot be frozen is a retained rejection that is never evaluated or dispatched, with
+one of these reasons:
+
+| Reason | Cause |
+|---|---|
+| `no_proposal` | The proposer returned `None`. |
+| `proposal_failed` | The proposer raised. |
+| `missing_prediction` | The proposer returned something other than a `(CandidateRecord, PredictionRecord)` pair. |
+| `invalid_or_unauthorized_proposal` | The candidate fails its own validation, for example a file outside the authorized set. |
+| `prediction_identity_mismatch` | The prediction's candidate hash, mechanism, baseline hash, bank version or grader version differs from the proposal, the baseline or the gate. |
+| `invalid_prediction` | The ledger refused it: missing effect, competing explanation, falsifier or criterion, no development task, a protected task identity, evidence outside `allowed_refs`, or an ID already frozen with a different claim. |
+
+A frozen prediction whose candidate is later rejected as a duplicate or never scored
+stays in the ledger and reconciles as `not_tested`; nothing is removed. `no-op` has no
+proposal, so it freezes nothing.
+
+The result gains `predictions`: `receipts` (index, candidate, prediction and receipt
+IDs, `preregistered`), `rejected` (index and reason) and `ledger_verified`. A repeat
+that resumes saved work does not call the proposer, so its `receipts` and `rejected`
+are `None` (unknown, not empty); keep the ledger from the original call. The gate does
+not reconcile outcomes or certify: that stays with `reconcile` and the evaluation
+owners. `compare_strategies` shares one ledger across strategies, so prediction IDs
+must differ between them; the proposal request names its `strategy` for that.
+Without a gate nothing changes.
+
 ## Not covered yet
 
 A supported model-backed reflective proposer and measured token or cost accounting
 remain separate work: the controller route charges stage units, not tokens or currency,
-and `measured_usage` stays `None`. Successive halving, recombination and optional DSPy
-adapters remain opt-in experiments.
+and `measured_usage` stays `None`. Persisting the prediction ledger across restarts
+and wiring it into the `ahl improve` receipt remain with #10. Successive halving,
+recombination and optional DSPy adapters remain opt-in experiments.

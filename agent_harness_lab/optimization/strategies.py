@@ -5,12 +5,14 @@ import json
 import math
 from pathlib import Path
 import time
+from agent_harness_lab.diagnostics.predictions import PredictionLedger, PredictionRecord
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.private_journal import record
 from .budget import Budget
 from .search import MAX_STATE_BYTES, CandidateRecord, _candidate, _private_state, _verified, search
 
 CONFIG_KEYS = {'seed', 'variants'}
+PREDICTION_GATE_PROFILE = 'strategy-prediction-gate-v1'
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,52 @@ REFLECTIVE = register(StrategySpec('reflective-gepa-inspired', 1, ('instruction'
     uses_model=True))
 
 
+@dataclass(frozen=True)
+class PredictionGate:
+    """Requires every proposal to arrive with a prediction frozen in `ledger` before the candidate is charged or scored.
+
+    `bank_version` and `grader_version` are the identities each prediction must name; `protected_task_ids` and
+    `allowed_refs` are the `PredictionLedger.register` checks. Reconciling outcomes stays with the caller.
+    """
+    ledger: PredictionLedger
+    bank_version: str
+    grader_version: str
+    protected_task_ids: tuple = ()
+    allowed_refs: tuple | None = None
+
+
+class _Unfrozen(Exception):
+    """A proposal that could not be frozen with a valid prediction; the message is the retained reason."""
+
+
+def _check_gate(gate):
+    if gate is not None and (type(gate) is not PredictionGate or type(gate.ledger) is not PredictionLedger):
+        raise ValueError('predictions must be a prediction gate over a prediction ledger')
+
+
+def _freeze(gate, baseline, allowed_files, proposed):
+    """Freeze the proposal's prediction and return (candidate, receipt); nothing here charges or scores."""
+    if proposed is None:
+        raise _Unfrozen('no_proposal')
+    if not (type(proposed) is tuple and len(proposed) == 2
+            and type(proposed[0]) is CandidateRecord and type(proposed[1]) is PredictionRecord):
+        raise _Unfrozen('missing_prediction')
+    candidate, prediction = proposed
+    try:
+        candidate.validate(allowed_files)
+    except (ValueError, TypeError, AttributeError):
+        raise _Unfrozen('invalid_or_unauthorized_proposal') from None
+    if ((prediction.candidate_hash, prediction.mechanism_id, prediction.baseline_hash, prediction.bank_version,
+         prediction.grader_version)
+            != (candidate.digest, candidate.mechanism, baseline.digest, gate.bank_version, gate.grader_version)):
+        raise _Unfrozen('prediction_identity_mismatch')
+    try:
+        return candidate, gate.ledger.register(prediction, protected_task_ids=gate.protected_task_ids,
+                                               allowed_refs=gate.allowed_refs)
+    except ValueError:
+        raise _Unfrozen('invalid_prediction') from None
+
+
 def _development_only(evidence):
     rows = evidence if isinstance(evidence, (list, tuple)) else None
     if rows is None or any(type(row) is not dict or row.get('scope') != 'development' for row in rows):
@@ -84,7 +132,7 @@ def _development_only(evidence):
 
 
 def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certify, budget, allowed_files, evidence,
-                 *, controller=None, parent_deadline=None, **options):
+                 *, controller=None, parent_deadline=None, predictions=None, **options):
     """Run one strategy through the shared guarded budget/selection contract.
 
     `proposer(request)` returns a CandidateRecord or None. The request carries only development evidence,
@@ -93,9 +141,14 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
     With a `HistorySearchContext` as `controller`, every candidate runs and is verified by the actual controller
     (`evaluate` and `certify` must be None: a raw callback result cannot rank or select there) and the result is
     controller-verified development evidence; `parent_deadline` bounds that route only.
+    With a `PredictionGate` as `predictions`, the proposer returns `(candidate, prediction)` and the prediction is frozen
+    in the gate's ledger before the candidate is charged or scored; a proposal without a valid one is a retained
+    rejection that never runs. The result's `predictions` lists this call's receipts and rejections, or `None` for
+    each when the run resumed saved work (the receipts of the original call are unknown, not empty).
     """
     spec = get(strategy_id, version)
     config = spec.config(**options)
+    _check_gate(predictions)
     if controller is None and parent_deadline is not None:
         raise ValueError('a parent deadline bounds the controller route only')
     if controller is not None and (evaluate is not None or certify is not None):
@@ -106,17 +159,29 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
     identity = spec.identity(config)
     path = Path(path)
     path = path.with_name(f'{path.stem}-{identity[:16]}{path.suffix}')
+    frozen, rejected = [], []
 
     def propose(index):
-        request = dict(index=index, kind=spec.kinds[index - 1],
+        request = dict(index=index, kind=spec.kinds[index - 1], strategy=spec.strategy_id,
             seed=int(hashlib.sha256(f'{config["seed"]}:{index}'.encode()).hexdigest()[:8], 16),
             evidence=evidence, remaining=budget.ceiling - budget.reserve - budget.spent)
         if spec.strategy_id == 'no-op':
             return CandidateRecord(f'{baseline.candidate_id}-noop', (baseline.candidate_id,), baseline.mechanism,
                 dict(baseline.changes), baseline.evidence_refs, baseline.hypothesis, baseline.falsifier)
         try:
-            return proposer(request)
+            proposed = proposer(request)
+            if predictions is None:
+                return proposed
+            candidate, receipt = _freeze(predictions, baseline, allowed_files, proposed)
+            frozen.append(dict(index=index, candidate_id=candidate.candidate_id, prediction_id=receipt['prediction_id'],
+                               receipt_id=receipt['receipt_id'], preregistered=receipt['preregistered']))
+            return candidate
+        except _Unfrozen as error:
+            rejected.append(dict(index=index, reason=str(error)))
+            return None
         except Exception:  # A failed proposal is retained as a rejection by the search, never a crash.
+            if predictions is not None:
+                rejected.append(dict(index=index, reason='proposal_failed'))
             return None
 
     result = search(path, baseline, propose, evaluate, certify, budget, allowed_files, enabled=True,
@@ -131,8 +196,13 @@ def run_strategy(strategy_id, version, path, baseline, proposer, evaluate, certi
         if spent > budget.ceiling or non_final > budget.ceiling - budget.reserve:
             raise ValueError(f'saved search state spent {spent} ({non_final} before the final reserve), '
                              f'more than the requested ceiling {budget.ceiling} and reserve {budget.reserve} allow')
+    report = {}
+    if predictions is not None:
+        resumed = result.get('resumed_without_execution', False)
+        report = dict(predictions=dict(profile=PREDICTION_GATE_PROFILE, receipts=None if resumed else frozen,
+                                       rejected=None if resumed else rejected, ledger_verified=predictions.ledger.verify()))
     return dict(result, strategy=dict(id=spec.strategy_id, version=version, config=config, identity=identity,
-                                      state_path=str(path)))
+                                      state_path=str(path)), **report)
 
 
 DEFAULT_COMPARISON = (('no-op', 1), ('single-revision', 1), ('reflective-gepa-inspired', 1))
@@ -287,7 +357,7 @@ def _exceeds_best_retry(selected, retry):
 
 def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve, allowed_files, evidence,
                        strategies=DEFAULT_COMPARISON, seed=0, *, controller=None, parent_deadline=None,
-                       retry_comparator=False):
+                       retry_comparator=False, predictions=None):
     """Run strategies under one matched stage ceiling and report every executed attempt, not only winners.
 
     Each strategy gets the same baseline, proposer, evaluator, development evidence, authorized files and a
@@ -303,9 +373,13 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
     per non-final controller run it made on the controller route, where each retry is an unchanged-versus-unchanged
     controller run re-verified from its receipt. The row's `exceeds_best_retry` is True only when the finalist dominates
     every feasible retry, and None when anything is unknown.
+    With a `PredictionGate` as `predictions`, every strategy freezes its proposals' predictions in the gate's one
+    shared ledger, so prediction IDs must differ across strategies (`request['strategy']` names the strategy), and each
+    row carries that strategy's `predictions` report.
     """
     if type(retry_comparator) is not bool:
         raise ValueError('retry_comparator must be True or False')
+    _check_gate(predictions)
     strategies = list(strategies)
     if not strategies or len(set(strategies)) != len(strategies) or any(
             type(key) is not tuple or len(key) != 2 for key in strategies):
@@ -321,7 +395,8 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
     for spec, budget in zip(specs, budgets):
         result = run_strategy(spec.strategy_id, spec.version, directory/f'{spec.strategy_id}.json', baseline, proposer,
                               evaluate, None if controller is not None else lambda candidate: _DEFERRED, budget, allowed_files,
-                              evidence, controller=controller, parent_deadline=parent_deadline, seed=seed)
+                              evidence, controller=controller, parent_deadline=parent_deadline, predictions=predictions,
+                              seed=seed)
         by_kind = {}
         for event in _events(result):
             by_kind[event['kind']] = by_kind.get(event['kind'], 0) + event['amount']
@@ -335,7 +410,7 @@ def compare_strategies(directory, baseline, proposer, evaluate, ceiling, reserve
             measured_usage=None, resumed_without_execution=result.get('resumed_without_execution', False),
             attempts=[dict(candidate_id=c['candidate_id'], digest=c['digest'], safe=c['safe'], metrics=c['metrics'])
                       for c in result.get('candidates', [])],
-            rejections=_rejections(result))
+            rejections=_rejections(result), **({} if predictions is None else dict(predictions=result['predictions'])))
         if retry_comparator:
             row['retry_comparator'] = None
             if finalist:
