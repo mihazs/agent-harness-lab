@@ -44,6 +44,8 @@ class Evaluation:
     other; None is unknown. inputs: the frozen-inputs digest the evaluation ran on; None is unknown. trials and seconds are
     what it spent; None is unknown. reserve_trials and reserve_seconds, set on the baseline only, are what re-evaluating a
     candidate will cost when that differs from what this evaluation spent (a paired run costs two arms); None means the same.
+    regressed_areas: the scored areas whose paired delta against the evaluated pair's baseline fell below the negative margin
+    (evaluation.area_gate); an area that is provisional or without evidence is never listed here, and never counted as a pass.
     """
     point: float
     lower: float
@@ -58,6 +60,7 @@ class Evaluation:
     inputs: str | None = None
     reserve_trials: int | None = None
     reserve_seconds: float | None = None
+    regressed_areas: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,8 +129,9 @@ def acceptance(evaluation, baseline, spec, *, candidate):
 
 
 def regression(evaluation, best, spec):
-    """Against the best: a critical flag, a fallen area, or a fall in the point value beyond the margin; None when unknown."""
+    """Against the best: a critical flag, a regressed or fallen area, or a fall in the point value beyond the margin; None when unknown."""
     if evaluation.critical: return 'critical'
+    if evaluation.regressed_areas: return 'area'
     before, now = dict(best.areas), dict(evaluation.areas)
     if not before.keys() <= now.keys(): return None
     if any(now[area] < lower - spec.regression_margin for area, lower in before.items()): return 'area'
@@ -141,6 +145,7 @@ def _summary(e):
                 seconds=e.seconds if _number(e.seconds) else None, inputs=e.inputs if _digest(e.inputs) else None, cause=text(e.cause),
                 reserve_trials=e.reserve_trials if _count(e.reserve_trials) else None,
                 reserve_seconds=e.reserve_seconds if _number(e.reserve_seconds) and e.reserve_seconds >= 0 else None)
+    if e.regressed_areas: base['regressed_areas'] = [area for area in e.regressed_areas if text(area) is not None]
     return dict(base, point=e.point, lower=e.lower, upper=e.upper, areas=dict(e.areas), critical=e.critical is True) if base['sound'] else base
 
 

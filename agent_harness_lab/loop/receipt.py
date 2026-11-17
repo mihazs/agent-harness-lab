@@ -36,6 +36,9 @@ STEPS = dict(
     budget_exhausted='The budget could not cover improving and re-evaluating again, so the loop stopped before spending it; raise it with --timeout SECONDS or limits.trials in ahl.json, then rerun.',
     interrupted='The loop was interrupted before it reached a criterion; resume it from its round ledger with the controller, or rerun the command, which starts from the harness on disk and carries over the mechanism dispositions recorded here; read loop.rounds for what finished.',
     comparison_invalid='A frozen input differed between evaluations, which is an AHL defect and not a verdict on the harness; read the investigation in the private run output, fix the cause, add a regression test for it, then rerun.')
+# The regression stop has two causes; one that a scored capability area lost paired outcomes (loop.rounds[].regressed_areas, area_gates) names the area evidence.
+AREA_REGRESSION = ('A candidate lost paired outcomes in a scored capability area and was kept out of the result, even if its pooled score did not fall; '
+                   'read regressed_areas in loop.rounds and area_gates in the private receipt, revise or discard that mechanism so no named area regresses, then rerun without raising the margin.')
 RECONCILE = ('A provider request of the evaluation that was running has no recorded outcome, so the loop did not repeat it and ended interrupted; '
              'reconcile that request with the provider\'s usage records and report its trials from the evaluator, then resume the loop from its round ledger.')
 _EVIDENCE = ('scored', 'provisional', 'no_evidence', 'blocked')
@@ -63,7 +66,8 @@ def _score(summary):
 def _evaluation(index, verdict, summary, **extra):
     summary = summary if isinstance(summary, dict) else {}
     return dict(evaluation_id=f'evaluation-{index}', validity=verdict, evidence=summary.get('evidence'), vacuity=summary.get('vacuity'),
-                trials=summary.get('trials'), score=_score(summary), **extra)
+                trials=summary.get('trials'), score=_score(summary), **extra,
+                **({'regressed_areas': summary['regressed_areas']} if summary.get('regressed_areas') else {}))
 
 
 def _paired(guard):
@@ -106,7 +110,7 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
                 mechanisms=result['mechanisms'], deferrals=list(deferrals), usage=result['usage'], events=result['ledger']['events'],
                 ledger_head_sha256=result['ledger']['head_sha256'], budget_stages=budget,
                 recommendation_only=True, automatic_promotion=False, certification='unverified',
-                remediation=RECONCILE if result['stop_reason'] == 'unresolved_request' else STEPS[stop],
+                remediation=RECONCILE if result['stop_reason'] == 'unresolved_request' else AREA_REGRESSION if stop == 'regression' and rounds and rounds[-1].get('regressed_areas') else STEPS[stop],
                 **({'resumed': result['resumed']} if 'resumed' in result else {}))
 
 

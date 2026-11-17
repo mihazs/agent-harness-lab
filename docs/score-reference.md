@@ -51,6 +51,7 @@ analyzed in each.
 | `areas[]` | One row per declared (or selected) area, below. |
 | `overall` | The same row shape over every experiment task, or `null`. |
 | `overall_withheld` | `null` when `overall` is shown, else `not_every_area_scored`, `area_selection` or `no_declared_area`. |
+| `multiplicity` | `null`, or, when `--area` narrows the report to fewer areas than are declared, `areas_examined` (every declared area), `correction` (`none`) and a `note`; Markdown prints the note. |
 
 An area row has `id`, `label`, `bank_tasks` (tasks of the bank with the tag), `tasks` and
 `independent_roots` (tasks and distinct roots of the experiment with the tag), `state`,

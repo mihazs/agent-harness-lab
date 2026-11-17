@@ -179,7 +179,9 @@ def run(args, context):
                  baseline=context['baseline'], baseline_hash=context['baseline_hash'], baseline_digest=baseline_digest, original=context['original'],
                  allowed=context['allowed'], agent=context['agent'], binary=context['binary'], plugin=context['plugin'], manifest_path=context['manifest_path'],
                  snapshots=folders, states={baseline_digest: context['original']}, frozen={}, queue=mechanisms(args), spec=spec, model_calls=[])
-    evaluator = FrozenBankEvaluator(context['manifest_path'], backend, folders.__getitem__, output, spec=spec)
+    registry = [entry['id'] for entry in (args.project_settings or {}).get('areas', [])]
+    evaluator = FrozenBankEvaluator(context['manifest_path'], backend, folders.__getitem__, output, spec=spec,
+                                    areas=dict(declared=registry, selected=list(getattr(args, 'area', None) or ())) if registry else None)
     charged = Charged(evaluator, stages)
     proposer = PreparationProposer(state, lambda: evaluator)
     from agent_harness_lab.workflow import state_root
@@ -200,4 +202,5 @@ def run(args, context):
         incremental.froze(args._incremental, best['attempt'], state['states'][result['best']['snapshot']])  # a later run finds this candidate applied or ignored
     for run_ in evaluator.runs:
         if run_['investigation'] is not None: found.setdefault('investigations', []).append(dict(evaluation_id=f'evaluation-{run_["index"]}', **run_['investigation']))
+        if run_['area_gate'] is not None: found.setdefault('area_gates', []).append(dict(evaluation_id=f'evaluation-{run_["index"]}', **run_['area_gate']))
     return found

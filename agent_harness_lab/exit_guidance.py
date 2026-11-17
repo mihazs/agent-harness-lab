@@ -30,7 +30,9 @@ REMEDIATION = {
     'configured_bank_cannot_combine_with_managed_experiment': 'Run without --experiment-request/--evaluation-store, or use the starter bank.',
     'configured_managed_bank_requires_controlled_workflow': 'Managed banks run only through the controlled workflow; use a non-managed bank.',
     'configured_bank_requires_development_regression_and_heldout': 'Add development, calibration and held-out (certification or transfer) partitions to the bank.',
-    'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count).',
+    'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count, or the count of tasks the --area selection keeps).',
+    'area_selection_requires_pinned_bank': 'Pin a task bank in ahl.json (bank.path and bank.sha256) whose tasks carry areas, or drop --area to run the whole bank.',
+    'area_selection_requires_development_regression_and_heldout': 'Tag development, calibration and held-out (certification or transfer) tasks with the selected areas, or select areas that already have them.',
     'configured_shared_trial_budget_infeasible': 'Increase the shared trial limit for the requested comparison.',
     'fixed_comparison_inference_budget_infeasible': 'Increase the declared inference budget for the comparison.',
     'precision_target_infeasible': 'Review the requested precision target and available budget.',
@@ -116,6 +118,13 @@ STATUS_ACTION = {
 }
 
 
+def loop_step(result):
+    """The one step the loop block recorded for its stop (the receipt picks it from the cause), or None when there is no usable one."""
+    loop = result.get('loop')
+    step = loop.get('remediation') if isinstance(loop, dict) else None
+    return step if isinstance(step, str) and step and str(result.get('reason')).startswith('loop_') else None
+
+
 def guidance(result):
     status = result.get('status')
     analysis = result.get('analysis') or {}
@@ -128,7 +137,7 @@ def guidance(result):
         reason = result.get('reason')
         category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
-                    'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
+                    'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'area_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected',
                     'accepted': 'Bar met on development and regression evidence (unverified)', 'not_accepted': 'Not accepted',
                     'requires_intervention': 'Requires intervention' if str(reason).startswith('loop_') else 'Inconclusive'}.get(status, 'Inconclusive')
@@ -136,7 +145,7 @@ def guidance(result):
         category = 'Inconclusive'
         action = 'Review the private receipt before retrying.'
     else:
-        action = REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+        action = loop_step(result) or REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
     if status != 'analyzed' and reason != 'history_not_found_for_worktree' and any(r.get('reason') == 'history_not_found_for_worktree' for r in result.get('capture_reasons') or ()):
         action += ' ' + REMEDIATION['history_not_found_for_worktree']
     steps = result.get('next_steps')
