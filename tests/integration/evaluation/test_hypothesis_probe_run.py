@@ -8,12 +8,13 @@ import pytest
 from agent_harness_lab.evaluation.hypothesis_probe import materialize
 
 
-def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('follow_up', ['same_call_retry', 'same_tool_changed_input'])
+def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch, capsys, follow_up):
     from agent_harness_lab.cli import main
     project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
     for folder in (project, baseline, candidate): folder.mkdir()
     (baseline / 'AGENTS.md').write_text('leave the synthetic state unchanged\n')
-    (candidate / 'AGENTS.md').write_text('repair the synthetic state\n')
+    (candidate / 'AGENTS.md').write_text('repair ' + follow_up + '\n')
     agent = tmp_path / 'codex'
     agent.write_text('''#!%s
 import json
@@ -25,14 +26,18 @@ if '--version' in sys.argv:
 sys.stdin.read()
 subprocess.run([sys.executable, 'synthetic_worker.py'], capture_output=True)
 if 'repair' in Path('AGENTS.md').read_text():
-    Path('config.json').write_text('{"ready": true}')
-    subprocess.run([sys.executable, 'synthetic_worker.py'], check=True, capture_output=True)
+    if 'same_call_retry' in Path('AGENTS.md').read_text():
+        Path('config.json').write_text('{"ready": true}')
+        args = []
+    else:
+        args = ['--recover']
+    subprocess.run([sys.executable, 'synthetic_worker.py', *args], check=True, capture_output=True)
 print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
 ''' % sys.executable)
     agent.chmod(agent.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex-home'))
     mechanism = dict(status='observed_pattern', tool_class='exec_command', error_category='tool_reported_error',
-                     next_action={'same_call_retry': 2})
+                     next_action={follow_up: 2})
     brief = tmp_path / 'brief.json'
     brief.write_text(json.dumps({'mechanisms': [mechanism]}))
     output = tmp_path / 'probe'
