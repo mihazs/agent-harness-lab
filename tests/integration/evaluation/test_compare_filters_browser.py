@@ -26,6 +26,7 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
             decision = tab.locator('body').inner_text().split('Task table', 1)[0]
             assert total > 2 and visible.count() == total
             group.locator('#pair-filter-all').focus()
+            assert group.locator('#pair-filter-all').evaluate('(element) => getComputedStyle(element).outlineStyle') != 'none'
             tab.keyboard.press('ArrowRight')
             assert group.locator('#pair-filter-improved').is_checked()
             assert visible.count() > 0

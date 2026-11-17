@@ -14,7 +14,7 @@ from . import resource_report, side_by_side as sbs
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 32px;max-width:72rem}'
          'table{border-collapse:collapse;width:100%}th,td{border:1px solid;padding:4px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}'
-         '.scroll{overflow-x:auto}a:focus,summary:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
+         '.scroll{overflow-x:auto}a:focus,summary:focus,input:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
 
 PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchanged', 'Unchanged'),
                 ('unknown', 'Missing or unknown'), ('not_comparable', 'Not comparable'))
