@@ -1,0 +1,49 @@
+{
+  "schema_version": "ATIF-v1.8",
+  "session_id": null,
+  "trajectory_id": null,
+  "agent": {
+    "name": "agent-x",
+    "version": "1.0.0",
+    "model_name": "model-x",
+    "tool_definitions": null,
+    "extra": null
+  },
+  "steps": [
+    {
+      "step_id": 1,
+      "timestamp": null,
+      "source": "user",
+      "model_name": null,
+      "reasoning_effort": null,
+      "message": [
+        {
+          "type": "text",
+          "text": "synthetic text",
+          "source": null
+        },
+        {
+          "type": "audio",
+          "text": null,
+          "source": {
+            "media_type": "audio/wav",
+            "path": "never-open.wav",
+            "duration_sec": null
+          }
+        }
+      ],
+      "reasoning_content": null,
+      "tool_calls": null,
+      "observation": null,
+      "metrics": null,
+      "is_copied_context": null,
+      "llm_call_count": null,
+      "extra": null
+    }
+  ],
+  "notes": null,
+  "final_metrics": null,
+  "continued_trajectory_ref": null,
+  "extra": null,
+  "subagent_trajectories": null
+}

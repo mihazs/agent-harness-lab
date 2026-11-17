@@ -533,3 +533,12 @@ def test_saved_upstream_model_dump_imports_without_private_content():
     assert report.counts['trajectories'] == 2 and report.to_dict()['outcome'] == 'unknown'
     assert all(row['lineage_verified'] is False for row in events)
     assert 'child task' not in json.dumps(events) and 'thinking' not in json.dumps(events)
+
+
+def test_saved_upstream_multimodal_dump_is_counted_without_loading_media():
+    from pathlib import Path
+    fixture = Path(__file__).resolve().parents[2]/'support/golden_profiles/atif-v1.8-upstream-media.json'
+    events, report = atif.convert(fixture.read_bytes())
+    assert report.unsupported_features['audio_content_parts_not_loaded'] == 1
+    assert any(row['activity'] == 'capture_coverage' for row in events)
+    assert 'never-open.wav' not in json.dumps(events) + json.dumps(report.to_dict())

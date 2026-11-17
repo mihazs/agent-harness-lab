@@ -113,6 +113,8 @@ def parts(value, where, media):
     if isinstance(value, str):
         return
     for part in array(value, where):
+        if isinstance(part, dict):
+            part = {key: item for key, item in part.items() if key not in ('text', 'source') or item is not None}
         kind = part.get('type') if isinstance(part, dict) else None
         if kind == 'text' and set(part) == {'type', 'text'} and isinstance(part['text'], str):
             continue

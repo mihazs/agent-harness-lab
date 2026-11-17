@@ -153,7 +153,7 @@ The report holds paths, counts and the source digest. It never holds a value fro
 
 ## Evidence status
 
-The mapping was checked against the pinned RFC. Two synthetic fixtures were accepted by
+The mapping was checked against the pinned RFC. Three synthetic fixtures, including a default-serialized audio part, were accepted by
 Harbor's `Trajectory` model at that commit and normalized after `model_dump_json()` using
 Pydantic 2.14.2. This is not exhaustive schema compatibility validation. No AI inference
 was run; an importer test is not fresh-model evaluation evidence.
