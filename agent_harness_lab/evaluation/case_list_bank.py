@@ -69,7 +69,8 @@ def receipt(**extra):
 try:
     spec = load(Path(sys.argv[2]))
     check('', spec)
-    if spec['schema_version'] != 1 or not positive(spec): raise ValueError('reference accepts every response')
+    if type(spec['schema_version']) is not int or spec['schema_version'] != 1 or spec.get('profile') != 'ahl-text-case-bank-v1' or not positive(spec):
+        raise ValueError('unsupported or vacuous reference')
 except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
     receipt(valid=False, outcome=None, error='reference_invalid')
     raise SystemExit(2)
