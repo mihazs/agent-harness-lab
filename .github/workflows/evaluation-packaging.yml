@@ -16,3 +16,4 @@ jobs:
       - run: python -m pytest -q tests/unit/evaluation/test_hypothesis_probe.py tests/integration/evaluation/test_hypothesis_probe_run.py
       - run: ahl hypothesis-probe --help
       - run: python -m ruff check agent_harness_lab/evaluation/hypothesis_probe.py agent_harness_lab/evaluation/probe_cli.py tests/unit/evaluation/test_hypothesis_probe.py tests/integration/evaluation/test_hypothesis_probe_run.py
+      - run: python -m pytest -q tests/unit/evaluation/test_task_bank_interaction.py tests/unit/evaluation/test_task_bank_holdout_overlap.py tests/unit/evaluation/test_task_bank_areas.py tests/unit/evaluation/test_bank_qualification.py tests/integration/evaluation/test_evaluation_foundation.py tests/integration/evaluation/test_bank_qualification_final.py tests/integration/cli/test_cli_surfaces_smoke.py tests/integration/cli/test_cli_help_boundary.py tests/integration/cli/test_cli_help.py tests/integration/cli/test_cli_agent_help.py
