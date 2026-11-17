@@ -142,15 +142,24 @@ class Limiter:
     def begin_run(self):
         self.run = dict(requests=0, conditional=0, waits=0, waited=0, halt=None, reset=None, resource=None, buckets={}, routes=[], routes_omitted=0)
 
+    def _wait_slot(self, deadline, resource, counted):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: raise self._halt('coordination_busy', None, resource)
+        started = time.monotonic()
+        cancelled = self.cancel.wait(min(0.05, remaining))
+        if not counted: self.run['waits'] += 1
+        self.run['waited'] += max(0.0, time.monotonic() - started)
+        if cancelled: raise self._halt('cancelled', None, resource)
+
     @contextmanager
     def slot(self, host, resource, identity, *, patience=None):
         """Serialize one shared bucket's check, request and observation; refuse unsafe or long waits."""
         if self.path is None:
             deadline = time.monotonic() + max(0.0, min(30.0, patience if patience is not None else 30.0))
+            counted = False
             while not self._local_slot.acquire(blocking=False):
-                remaining = deadline - time.monotonic()
-                if remaining <= 0: raise self._halt('coordination_busy', None, resource)
-                if self.cancel.wait(min(0.05, remaining)): raise self._halt('cancelled', None, resource)
+                self._wait_slot(deadline, resource, counted)
+                counted = True
             try: yield
             finally: self._local_slot.release()
             return
@@ -171,14 +180,14 @@ class Limiter:
             raise self._halt('coordination_unavailable', None, resource) from None
         try:
             deadline = time.monotonic() + max(0.0, min(30.0, patience if patience is not None else 30.0))
+            counted = False
             while True:
                 try:
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0: raise self._halt('coordination_busy', None, resource)
-                    if self.cancel.wait(min(0.05, remaining)): raise self._halt('cancelled', None, resource)
+                    self._wait_slot(deadline, resource, counted)
+                    counted = True
                 except OSError:
                     raise self._halt('coordination_unavailable', None, resource) from None
             self._slot_context.resource = resource

@@ -112,6 +112,25 @@ def test_busy_slot_is_bounded_and_does_not_reclassify_request_errors(tmp_path):
         pass
 
 
+def test_slot_contention_is_included_in_the_wait_receipt(tmp_path):
+    path = tmp_path / 'limits.json'
+    one, two = Limiter(path=path), Limiter(path=path)
+    def contender():
+        with two.slot('host', 'core', 'identity', patience=3):
+            pass
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with one.slot('host', 'core', 'identity'):
+            future = pool.submit(contender)
+            deadline = time.monotonic() + 2
+            while not two.run['waits'] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert two.run['waits'] > 0
+            time.sleep(0.12)
+        future.result(timeout=2)
+    assert two.receipt()['waits']['count'] == 1
+    assert two.receipt()['waits']['seconds'] > 0
+
+
 def test_lock_symlink_is_refused_without_touching_its_target(tmp_path):
     import hashlib
     from agent_harness_lab.sources.ratelimit import MAX_BUCKETS
