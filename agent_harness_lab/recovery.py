@@ -1,4 +1,4 @@
-"""Finalize a completed no-change proposal without repeating a model action."""
+"""Finalize a completed no-change proposal, or return a finished loop run's verified receipt, without repeating a model action."""
 import hashlib
 import os
 import re
@@ -32,6 +32,9 @@ def resume(args):
             if info.st_uid != os.geteuid() or info.st_mode & 0o077:
                 raise ValueError('resume requires an owner-only run directory')
         finally: os.close(descriptor)
+        from .loop import stored
+        finished=stored.read(output,args.project)  # a loop run that already stopped is returned as recorded, after its receipt and ledger verify
+        if finished is not None: return finished
         try: descriptor=open_nofollow(output/'recovery.json')
         except FileNotFoundError:
             return dict(status='blocked',reason='resume_requires_intervention',output=str(output),

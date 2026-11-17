@@ -113,6 +113,38 @@ private and explicitly marked as disallowed for publication.
 
 Not included yet: ratio inference (`decide` still reports `cost_per_success` as `not_computed`; see the descriptive view below), currency, automatic provenance capture, and total optimization spend in reports. A supplied decision and cost-per-success views can be shown in the [static review page](side-by-side-reports.md#resource-decision-and-cost-per-success).
 
+## Retries, interrupted attempts and resumed runs
+
+A row may carry an optional `trial` identifier for the trial the pair stands for. Two rows with
+the same identifier, or an identifier that is not a nonempty string, are refused by `decide` and
+`success_cost`: a second row for one trial could let a cheaper attempt replace a dearer one. Rows
+without the field are not checked, and the identifier is a caller declaration like the rest of the row.
+
+An arm may also carry `attempts`, a list of `{status, measurements}` records, one per attempt,
+including retries, interrupted attempts and the attempts of a resumed run. When present:
+
+- The arm's value for an endpoint is the sum over every attempt, so a retry or a resume can only
+  add spend and the cheaper of two completed attempts cannot be selected. An interrupted attempt
+  contributes its observed cost to date.
+- Each attempt needs a status among `completed`, `agent_timeout`, `infrastructure_interruption`
+  and `cancelled`, and a finite nonnegative measurement for the endpoint. A missing or invalid
+  measurement is unknown (`attempt_measurement_missing`), never zero. A malformed list, an
+  unknown status, more than 1,000 attempts, or a sum that is not finite is `attempt_record_invalid`.
+- The status of the arm is the status of its last attempt. A different supplied `status` is
+  `attempt_record_invalid`, so a trial cannot present a completed final attempt over a different history.
+- If the arm also supplies its own total in `measurements`, it must equal the attempt sum
+  (`attempt_total_mismatch` otherwise). A resumed run that reports only its last attempt is
+  therefore unknown instead of cheaper.
+- Censoring is judged on the summed value: a final `agent_timeout` is capped at the horizon once the
+  sum reaches it and stays censored (unknown) below it.
+- The version 4 token checks (category consistency and request coverage) run on the sums.
+  `measurement_provenance` still describes the whole trial and must cover every attempt.
+
+`success_cost` applies the same rule: the all-assigned mean and the spend per success include every
+attempt, and an unusable attempt makes the arm unknown. Rows without `attempts` behave as before.
+These records are caller-supplied and unverified; this accounting does not collect attempts, prove
+that none were omitted, or change a contract's digest.
+
 ## Responses controller usage
 
 The Responses controller retains a valid provider-reported `input_tokens_details.cached_tokens`

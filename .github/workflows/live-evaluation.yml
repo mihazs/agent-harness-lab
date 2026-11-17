@@ -1,0 +1,56 @@
+name: Live evaluation gate
+# Manual only. Never add pull_request, pull_request_target, schedule or push triggers: a schedule needs maintainers to opt in
+# to its cost and data policy first. This job reads no secret and calls no model; it validates a requested plan.
+on:
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: Runtime stratum (claude or codex); strata are never pooled
+        required: true
+        type: choice
+        options: [claude, codex]
+      provenance:
+        description: Dataset provenance allowed to feed CI artifacts
+        required: true
+        type: choice
+        options: [synthetic, approved-public]
+      max_trials:
+        description: Hard ceiling on counted trials, retries included (1-200)
+        required: true
+      budget_usd:
+        description: Hard spend ceiling in USD (above 0, at most 100)
+        required: true
+      pricing_date:
+        description: ISO date of the supplied pricing; cost is unknown without it
+        required: true
+      max_minutes:
+        description: Hard wall-clock ceiling in minutes (1-360)
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: live-evaluation
+  cancel-in-progress: false
+jobs:
+  gate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - name: Check workflow trust policy
+        run: python3 scripts/live_evaluation_gate.py policy
+      - name: Validate the requested plan
+        env:
+          INPUT_RUNTIME: ${{ inputs.runtime }}
+          INPUT_PROVENANCE: ${{ inputs.provenance }}
+          INPUT_MAX_TRIALS: ${{ inputs.max_trials }}
+          INPUT_BUDGET_USD: ${{ inputs.budget_usd }}
+          INPUT_PRICING_DATE: ${{ inputs.pricing_date }}
+          INPUT_MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: python3 scripts/live_evaluation_gate.py gate

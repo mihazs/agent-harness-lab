@@ -49,7 +49,11 @@ certify success. Behavioral candidates remain recommendations. Explicit
 has no such option and never writes harness files itself. The agent either command
 starts is cooperative: read-only project access is instructed, not enforced.
 `ahl improve --help` and `ahl watch --help` list what each command changes, what
-AHL never writes and that cooperative limit.
+AHL never writes and that cooperative limit. `ahl improve --help` also describes the
+evaluate, improve, evaluate loop it runs by default on a pinned bank, the deprecated
+`--single-pass`, and the loop's exit mapping (0 accepted, 1 requires intervention,
+2 invalid declaration, 3 not accepted or blocked); see
+[improve until an acceptance score is reached](improve-until-score.md).
 
 After an interruption, `ahl improve PROJECT --resume RUN_ID` finalizes a completed
 no-change proposal from a default private run directory without repeating a model

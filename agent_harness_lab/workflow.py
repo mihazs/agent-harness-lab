@@ -664,9 +664,12 @@ def _improve(args):
     print(f'Private run artifacts: {output}', file=sys.stderr)
     if getattr(args,'_loop',None) is not None:
         from .one_call import pinned_bank as frozen_bank
-        if frozen_bank(args) is None or controlled:  # a loop declaration is never run as a silent single pass
-            from .loop import improve as loop_improve
-            return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
+        if frozen_bank(args) is None or controlled:
+            if not getattr(args,'_loop_default',False):  # a loop the run asked for is never run as a silent single pass
+                from .loop import improve as loop_improve
+                return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
+            from .loop import entry as loop_entry  # the default loop needs one frozen bank: without it the single pass runs, and its receipt says so
+            args._loop, args._loop_label = None, loop_entry.not_used('loop_requires_frozen_bank')
     repeated=None
     if getattr(args,'experiment_request',None) is not None:
         from .evaluation.repeated_workflow import Request
@@ -690,7 +693,7 @@ def _improve(args):
         write_json(output/'workflow.json', result)
         return result
     static_convention_stage(args, data, progress)
-    from . import first_use, preparation
+    from . import first_use, preparation, provider_reported
     if first_use.blocked(data, args):
         # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
         # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
@@ -817,6 +820,7 @@ def _improve(args):
     protected = {}
     refinement_feedback = []
     proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
+    model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
     final_attempt = None
     proposed = None
@@ -913,6 +917,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
+            provider_reported.record(model_calls, 'preparation', attempt, check['stdout'], agent)
             if runner.trace_result(check, agent)[0] != 'completed':
                 # A preparation cut off by the shared budget is a budget exhaustion of that stage, not an unexplained execution error.
                 result['status'] = 'budget_exhausted' if run.get('timeout') or remaining() <= 0 else 'execution_error'
@@ -1112,6 +1117,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
                 (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
                 check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
+                provider_reported.record(model_calls, 'construction_retry' if made else 'construction', attempt, check['stdout'], agent)
                 # shortcut: one second of tolerance for process start and teardown, tighten if boxes shrink below it.
                 if construction['timeout'] or took > box + 1:
                     timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
@@ -1340,6 +1346,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         before_after.attach(result, output, dict(single_run, bindings=bindings), margin=getattr(args, 'regression_margin', None))
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
+    if model_calls: result['model_calls'] = model_calls
     if returned:
         result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
                                                   brief=getattr(args, '_analysis_brief', None))
@@ -1521,6 +1528,11 @@ def construction_receipt(result, args):
     """Content-free construction facts on every terminal result: repairs, authored digests dropped (count only) and elapsed seconds (0 when the stage never ran)."""
     if getattr(args, '_evaluation_repairs', None): result['evaluation_construction_repairs'] = list(args._evaluation_repairs)
     result['authored_digest_ignored'] = getattr(args, '_authored_digest_ignored', 0)
+    if 'loop' not in result:  # a run that made the single pass, or that a gate stopped before the loop began, says so and why
+        if getattr(args, '_loop_label', None): result['loop'] = dict(args._loop_label)
+        elif getattr(args, '_loop', None) is not None and result.get('status') == 'blocked':
+            from .loop import entry as loop_entry
+            result['loop'] = loop_entry.not_started(result.get('reason') or 'blocked')
     result['evaluation_construction_seconds'] = round(getattr(args, '_construction_seconds', 0.0), 1)
     if getattr(args, '_evaluation_reuse', None): result['evaluation_reuse'] = args._evaluation_reuse
     if getattr(args, '_reuse', None): result['reuse'] = args._reuse

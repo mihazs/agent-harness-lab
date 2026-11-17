@@ -11,10 +11,10 @@ import re
 import shutil
 import time
 
-from agent_harness_lab import surfaces
+from agent_harness_lab import provider_reported, surfaces
 from agent_harness_lab.evaluation import integrity
 
-from . import controller, entry, receipt
+from . import carryover, controller, entry, receipt
 from .adapters import ExecutorRunner, FrozenBankEvaluator
 from .ledger import LoopLedger
 
@@ -74,7 +74,9 @@ class PreparationProposer:
             run = runner.execute(command, prepare, stages.remaining(), prompt, env=environment)
         (output/f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
         (output/f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
-        if runner.trace_result(dict(run, stdout=(output/f'preparation-{attempt}.jsonl').read_text()), ctx['agent'])[0] != 'completed':
+        check = dict(run, stdout=(output/f'preparation-{attempt}.jsonl').read_text())
+        provider_reported.record(ctx['model_calls'], 'preparation', attempt, check['stdout'], ctx['agent'])
+        if runner.trace_result(check, ctx['agent'])[0] != 'completed':
             if run.get('timeout') or stages.remaining() <= 0: raise TimeoutError('improvement budget exhausted during loop preparation')
             return self.defer(mechanism, 'preparation_failed')
         if runner.digest(ctx['baseline']) != ctx['baseline_hash']: raise ValueError('Preparation modified the baseline; nothing was applied')
@@ -151,7 +153,7 @@ def blocked(args, output, reason, **extra):
     from agent_harness_lab import workflow
     from agent_harness_lab.exit_guidance import REMEDIATION
     result = dict(status='blocked', reason=reason, output=str(output), changed_files=[], remediation=REMEDIATION[reason], automatic_promotion=False,
-                  loop=dict(profile=receipt.PROFILE, status='not_started', reason=reason, recommendation_only=True, automatic_promotion=False, certification='unverified'), **extra)
+                  loop=entry.not_started(reason), **extra)
     workflow.construction_receipt(result, args)
     workflow.write_json(output/'workflow.json', result)
     return result
@@ -176,18 +178,21 @@ def run(args, context):
     state = dict(args=args, stages=stages, runner=runner, output=output, prepare=context['prepare'], started=context['started'], progress=context['progress'],
                  baseline=context['baseline'], baseline_hash=context['baseline_hash'], baseline_digest=baseline_digest, original=context['original'],
                  allowed=context['allowed'], agent=context['agent'], binary=context['binary'], plugin=context['plugin'], manifest_path=context['manifest_path'],
-                 snapshots=folders, states={baseline_digest: context['original']}, frozen={}, queue=mechanisms(args), spec=spec)
+                 snapshots=folders, states={baseline_digest: context['original']}, frozen={}, queue=mechanisms(args), spec=spec, model_calls=[])
     evaluator = FrozenBankEvaluator(context['manifest_path'], backend, folders.__getitem__, output, spec=spec)
     charged = Charged(evaluator, stages)
     proposer = PreparationProposer(state, lambda: evaluator)
     from agent_harness_lab.workflow import state_root
     ledger = LoopLedger(state_root()/'loops'/output.name, args.project)
-    result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started))
+    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs)  # what an earlier run hands over: dispositions, never a score or a trial
+    result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started), dispositions=carried and carried['dispositions'])
     block = receipt.build(spec, result, ledger.events(), [item['guard'] for item in evaluator.runs], budget=stages.receipt(), deferrals=proposer.deferrals)
+    if carried is not None: block['carry_over'] = carryover.finish(carried['block'], block)
     receipt.validate_receipt(block)
     stop = block['stop_criterion']
     found = dict(status=receipt.status_of(stop), reason=f'loop_{stop}', output=str(output), changed_files=[], agent=context['agent'], analysis=context['data']['execution'],
                  loop=block, automatic_promotion=False, publication_allowed=False)
+    if state['model_calls']: found['model_calls'] = state['model_calls']  # the runtime's own figures, never part of the validated loop block
     best = state['frozen'].get(result['best']['snapshot'])
     if best is not None:
         from agent_harness_lab import incremental

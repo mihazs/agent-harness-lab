@@ -3,10 +3,13 @@ import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import math
 import re
 import time
 from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
+from .ratelimit import identity_digest
+from .routing import choose
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
 from .transport import NOT_MODIFIED, JsonAPI, TransportError, budget_spent, endpoint, metered_exchange, next_page
@@ -39,6 +42,7 @@ THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
 }'''
 THREADS_QUERY = '''query ReviewThreads($owner: String!, $name: String!, $number: Int!,
     $after: String, $commentsAfter: String) {
+  rateLimit { cost remaining resetAt limit }
   repository(owner: $owner, name: $name) { id nameWithOwner
     pullRequest(number: $number) { id number headRefOid
       reviewThreads(first: 100, after: $after) {
@@ -47,7 +51,29 @@ THREADS_QUERY = '''query ReviewThreads($owner: String!, $name: String!, $number:
     }
   }
 }''' + THREAD_FIELDS
+COMMENT_PAGE = '''fragment CommentPage on IssueCommentConnection {
+  totalCount pageInfo { hasNextPage endCursor }
+  nodes { id fullDatabaseId body createdAt updatedAt
+    author { __typename ... on User { databaseId } ... on Bot { databaseId } ... on Mannequin { databaseId } ... on Organization { databaseId } }
+  }
+}'''
+# Aliased connections per query: ten numbers of at most 100 comments each cost one point and stay far below GitHub's node limit.
+MAX_ALIASES = 10
+ROUTINGS = ('rest', 'auto')
+
+
+def comments_query(count):
+    """One read-only GraphQL query for a page of comments of each of ``count`` issues or pulls (aliases c0, c1, ...)."""
+    heads = ''.join(f', $n{i}: Int!, $a{i}: String' for i in range(count))
+    reads = ''.join(f' c{i}: issueOrPullRequest(number: $n{i}) {{ __typename'
+        f' ... on Issue {{ number comments(first: 100, after: $a{i}) {{ ...CommentPage }} }}'
+        f' ... on PullRequest {{ number comments(first: 100, after: $a{i}) {{ ...CommentPage }} }} }}' for i in range(count))
+    return ('query IssueComments($owner: String!, $name: String!'+heads+') { rateLimit { cost remaining resetAt limit }'
+        ' repository(owner: $owner, name: $name) { databaseId'+reads+' } }\n'+COMMENT_PAGE)
+
+
 THREAD_COMMENTS_QUERY = '''query ReviewThreadComments($thread: ID!, $commentsAfter: String) {
+  rateLimit { cost remaining resetAt limit }
   node(id: $thread) { ...ThreadFields }
 }''' + THREAD_FIELDS
 
@@ -172,8 +198,10 @@ class GitHubSelection(Contract):
 
 
 class GitHubAPI:
-    def __init__(self, base_url, selection, *, authorization=None, conditional=False, **limits):
+    def __init__(self, base_url, selection, *, authorization=None, conditional=False, routing='rest', **limits):
         if type(conditional) is not bool: raise TransportError('explicit GitHub conditional request mode required')
+        if routing not in ROUTINGS: raise TransportError('explicit GitHub routing mode required')
+        self.routing = routing
         self.transport = JsonAPI(base_url, **limits)
         parsed, path = endpoint(base_url)
         if (self.transport.origin != ('api.github.com', 443) or parsed.query
@@ -232,12 +260,73 @@ class GitHubAPI:
         return copy.deepcopy(value), dict(headers)
 
     def _graphql(self, query, variables, state):
-        if query not in (THREADS_QUERY, THREAD_COMMENTS_QUERY) or self.authorization is None:
-            raise TransportError('explicit authenticated GitHub thread query required')
+        if (query not in (THREADS_QUERY, THREAD_COMMENTS_QUERY) and not query.startswith('query IssueComments(')) or self.authorization is None:
+            raise TransportError('explicit authenticated GitHub read query required')
         value, _ = self._request('/graphql', state, body=json.dumps(dict(query=query, variables=variables)).encode())
         if not isinstance(value, dict) or 'errors' in value or not isinstance(value.get('data'), dict):
             raise ValueError('GitHub GraphQL capability is blocked or incomplete')
         return value['data']
+
+    def _comments(self, number, state):
+        """The REST-shaped comments of one issue or pull: from the routed GraphQL batch when it supplied them, else the REST listing."""
+        routed = state.get('graphql_comments', {}).get(number)
+        return routed if routed is not None else self._list(f'/issues/{number}/comments', state)
+
+    def _route_comments(self, numbers, state):
+        """Choose REST or one GraphQL batch for the comments of every selected number; REST stays the default routing."""
+        state['graphql_comments'] = {}
+        if self.routing != 'auto' or not numbers: return
+        limiter = self.transport.limiter
+        route = choose(limiter, self.transport.origin[0], identity_digest(self.authorization), 'issue_comments',
+            ('rest', 'graphql') if self.authorization is not None else ('rest',),
+            cached=self.conditional and bool(self._validators), rest_requests=len(numbers),
+            graphql_cost=math.ceil(len(numbers)/MAX_ALIASES))
+        if route['transport'] != 'graphql': return
+        state['graphql_comments'] = self._graphql_comments(numbers, state)
+        if len(state['graphql_comments']) != len(numbers):
+            limiter.note_route('issue_comments', 'rest', 'core', 'graphql_cannot_supply_all_fields')
+
+    def _graphql_comments(self, numbers, state):
+        """REST-shaped comments per number from batched GraphQL pages.
+
+        A number whose comments GraphQL cannot name exactly as REST does (an author without a database id,
+        such as a deleted account) is left out, so the REST listing supplies it; nothing is defaulted.
+        """
+        owner, name = self.transport.path[len('/repos/'):].split('/')
+        pending = {n: None for n in numbers if n <= 2**31-1}
+        found, totals, seen, dropped = {n: [] for n in pending}, {}, {n: set() for n in pending}, set()
+        while pending:
+            batch = list(pending)[:MAX_ALIASES]
+            variables = dict(owner=owner, name=name)
+            for index, number in enumerate(batch): variables.update({f'n{index}': number, f'a{index}': pending[number]})
+            data = self._graphql(comments_query(len(batch)), variables, state)['repository']
+            if integer(data['databaseId'], minimum=1) != self.selection.repo_id: raise ValueError('GitHub GraphQL repository identity changed')
+            for index, number in enumerate(batch):
+                read = data[f'c{index}']
+                if not isinstance(read, dict) or integer(read['number'], minimum=1) != number: raise ValueError('GitHub GraphQL conversation mismatch')
+                page = read['comments']
+                total, nodes, info = integer(page['totalCount']), page['nodes'], page['pageInfo']
+                if totals.setdefault(number, total) != total: raise ValueError('GitHub GraphQL total changed')
+                if not isinstance(nodes, list) or len(nodes) > 100 or type(info['hasNextPage']) is not bool:
+                    raise ValueError('invalid GitHub GraphQL connection')
+                for node in nodes:
+                    native = bigint(node['fullDatabaseId'])
+                    if native in seen[number]: raise ValueError('duplicate GitHub GraphQL identity')
+                    seen[number].add(native)
+                    author = node['author']
+                    actor = author.get('databaseId') if isinstance(author, dict) else None
+                    if type(actor) is not int or actor < 1: dropped.add(number); continue
+                    found[number].append(dict(id=native, url=f'{self.transport.base}/issues/comments/{native}',
+                        issue_url=f'{self.transport.base}/issues/{number}', body=node['body'], created_at=node['createdAt'],
+                        updated_at=node['updatedAt'], user=dict(id=actor)))
+                if number in dropped: del pending[number]; continue  # REST supplies this number; paging it on would waste points
+                if len(seen[number]) > total: raise ValueError('GitHub GraphQL total exceeded')
+                if not info['hasNextPage']:
+                    if len(seen[number]) != total: raise ValueError('incomplete GitHub GraphQL connection')
+                    del pending[number]
+                elif not nodes or opaque_id(info['endCursor']) == pending[number]: raise ValueError('GitHub GraphQL pagination cycle')
+                else: pending[number] = info['endCursor']
+        return {n: rows for n, rows in found.items() if n not in dropped}
 
     @staticmethod
     def _connection(fetch):
@@ -286,6 +375,8 @@ class GitHubAPI:
         return lines
 
     def _threads(self, repository, pull, comments, state):
+        # Review threads (resolved state) exist only in GraphQL: the read is never routed to REST.
+        choose(self.transport.limiter, self.transport.origin[0], identity_digest(self.authorization), 'review_threads', ('graphql',))
         def bind(value, kind, native):
             value = opaque_id(value)
             identities = state.setdefault('graphql_ids', {})
@@ -686,11 +777,13 @@ class GitHubAPI:
         repository = self._repository(raw_repository)
         emit('github_repository', self.selection.repo_id, repository)
         issues, pulls, issue_keys = {}, {}, {}
-        for number in sorted(set(self.selection.issues)|set(self.selection.pulls)):
+        numbers = sorted(set(self.selection.issues)|set(self.selection.pulls))
+        self._route_comments(numbers, state)
+        for number in numbers:
             raw = self._get(f'/issues/{number}', state)[0]
             node = self._issue(raw, number); issues[number] = node
             parent = emit('github_issue', integer(raw['id'], minimum=1), node, node['created_at']); issue_keys[number] = parent
-            comments = self._list(f'/issues/{number}/comments', state)
+            comments = self._comments(number, state)
             if len(comments) != node['comments']: raise ValueError('GitHub conversation listing is incomplete')
             for comment in comments:
                 child = self._comment(comment, number)

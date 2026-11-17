@@ -76,6 +76,13 @@ def _binding(value):
     return _policy(policy, policy.get('task_id'))
 
 
+def run_matches(execution, outcome):
+    """True when exit code, status, timeout and input facts agree with a stated pass or failure."""
+    return (type(execution.get('exit_code')) is int and execution['exit_code'] == (0 if outcome else 1)
+            and execution.get('status') == ('completed' if outcome else 'failed')
+            and execution.get('timeout', False) is False and execution.get('inputs_unchanged', True) is True)
+
+
 def observation(policy_binding, graded_execution):
     """Read only an actual grader execution; malformed observations stay unknown."""
     unknown = dict(task_completed=None, effects={key: None for key in EFFECTS},
@@ -107,11 +114,7 @@ def observation(policy_binding, graded_execution):
         if not isinstance(effects, dict) or set(effects) != set(EFFECTS) or any(v is not None and type(v) is not bool for v in effects.values()):
             return unknown
         outcome = value['task_completed'] and all(v is False for v in effects.values())
-        if (envelope['outcome'] is not outcome or type(graded_execution.get('exit_code')) is not int
-                or graded_execution['exit_code'] != (0 if outcome else 1)
-                or graded_execution.get('status') != ('completed' if outcome else 'failed')
-                or graded_execution.get('timeout', False) is not False
-                or graded_execution.get('inputs_unchanged', True) is not True):
+        if envelope['outcome'] is not outcome or not run_matches(graded_execution, outcome):
             return unknown
         complete = all(v is not None for v in effects.values())
         return dict(task_completed=value['task_completed'], effects=dict(effects),
@@ -125,14 +128,11 @@ def _counts():
     return dict(true=0, false=0, unknown=0)
 
 
-def report(spec, trials, policies, *, sampling=None):
-    """Count sealed trial observations by frozen family/arm, without safety claims."""
-    spec.validate()
-    planned = {task: (root, family) for task, root, family in spec.tasks}
-    for task, binding in policies.items():
-        policy = _binding(binding)
-        if task not in planned or policy['task_id'] != task or planned[task] != (policy['root_id'], policy['family']):
-            raise ValueError('behavior policy differs from frozen task/root/family')
+def frozen_trials(spec, trials, sampling=None):
+    """Yield (scheduled, row) over the frozen schedule; reject malformed, duplicate or unplanned trials.
+
+    A row whose identity differs from its scheduled trial is yielded as empty, so it reads as unobserved.
+    """
     if spec.sequential is not None:
         from .sequential import schedule as root_schedule
         if sampling is None:raise ValueError('stopped behavior report requires owned sampling')
@@ -145,9 +145,22 @@ def report(spec, trials, policies, *, sampling=None):
         rows[trial.get('trial_id')] = trial
     if set(rows) - {row['trial_id'] for row in expected}:
         raise ValueError('behavior trial is outside frozen schedule')
+    for scheduled in expected:
+        row = rows.get(scheduled['trial_id'], {})
+        yield scheduled, {} if any(row.get(key) != value for key, value in scheduled.items()) else row
+
+
+def report(spec, trials, policies, *, sampling=None):
+    """Count sealed trial observations by frozen family/arm, without safety claims."""
+    spec.validate()
+    planned = {task: (root, family) for task, root, family in spec.tasks}
+    for task, binding in policies.items():
+        policy = _binding(binding)
+        if task not in planned or policy['task_id'] != task or planned[task] != (policy['root_id'], policy['family']):
+            raise ValueError('behavior policy differs from frozen task/root/family')
     families = {}
     critical_candidate, unknown_required = False, False
-    for scheduled in expected:
+    for scheduled, row in frozen_trials(spec, trials, sampling):
         task = scheduled['task']
         if task not in policies:
             continue
@@ -156,10 +169,7 @@ def report(spec, trials, policies, *, sampling=None):
             families[family] = {arm: dict(trials=0, task_completed=_counts(),
                 effects={key: _counts() for key in EFFECTS}, critical_trials=0, observation_unknown_trials=0)
                 for arm in ('baseline', 'candidate')}
-        row = rows.get(scheduled['trial_id'], {})
         execution = row.get('grader', {}).get('execution') if isinstance(row.get('grader'), dict) else None
-        if any(row.get(key) != value for key, value in scheduled.items()):
-            execution = None
         observed = observation(policies[task], execution)
         counts = families[family][scheduled['version']]
         counts['trials'] += 1

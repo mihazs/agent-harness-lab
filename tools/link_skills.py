@@ -13,6 +13,15 @@ NAMES = ('harness-self-improvement',)
 RETIRED = ('harness-evaluation',)  # folded into harness-self-improvement; stale owned links are removed
 
 
+def owned_link(link, name, source):
+    """A symlink is ours only when it points at this skill of this source or of an installer release."""
+    if not link.is_symlink():
+        return False
+    target = link.resolve()
+    return target.name == name and (target.parent == source or (
+        target.parent.name == 'skills' and (target.parent.parent / '.release-sha256').is_file()))
+
+
 def install(source, destination, backup_root):
     source, destination, backup_root = Path(source).resolve(), Path(destination), Path(backup_root)
     require_writable(destination)
@@ -20,12 +29,8 @@ def install(source, destination, backup_root):
     pending, stale = [], []
     for name in RETIRED:
         link = destination / name
-        if link.is_symlink():
-            target = link.resolve()
-            # Ours only when it points at the retired skill of this source or of an installer release.
-            if target.name == name and (target.parent == source or (
-                    target.parent.name == 'skills' and (target.parent.parent / '.release-sha256').is_file())):
-                stale.append(link)
+        if owned_link(link, name, source):
+            stale.append(link)
     for name in NAMES:
         target, link = source / name, destination / name
         if not (target / 'SKILL.md').is_file():
@@ -33,8 +38,9 @@ def install(source, destination, backup_root):
         if link.is_symlink():
             if link.resolve() == target:
                 continue
-            raise ValueError(f'refusing to replace a foreign symlink: {link}')
-        if link.exists() and not link.is_dir():
+            if not owned_link(link, name, source):
+                raise ValueError(f'refusing to replace a foreign symlink: {link}')
+        elif link.exists() and not link.is_dir():
             raise ValueError(f'refusing to replace a non-directory: {link}')
         pending.append((target, link))
     if not pending and not stale:
@@ -76,7 +82,7 @@ def install(source, destination, backup_root):
 def main(argv=None, source=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Creates the harness-self-improvement link and removes a stale harness-evaluation link it owns; replaces existing directories only after backup.\n'
-        'Foreign symlinks and non-directories are refused; already-current links are unchanged.\n'
+        'Foreign symlinks and non-directories are refused with one message and no change; links into an installer release are replaced; already-current links are unchanged; a foreign entry under the retired name is left alone and named.\n'
         'Prints a text receipt or backup location; does not run agents or install dependencies.\n'
         'Run this project\'s harness-self-improvement once with: ahl skills invoke [PROJECT]; PROJECT defaults to the\n'
         'current directory and installation alone does not start a run.\n'
@@ -88,8 +94,20 @@ def main(argv=None, source=None):
     parser.add_argument('--backup-root', type=Path, default=Path.home() / '.local/state/harness-improver/backups', help='Directory for private backups of replaced skill directories (default: ~/.local/state/harness-improver/backups)')
     args = parser.parse_args(argv)
     destination = args.destination or Path.home() / ('.claude/skills' if args.agent == 'claude' else '.agents/skills')
-    backup = install(source or Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)
-    print(f'Linked skills. Previous directories: {backup}' if backup else 'Skill links already current.')
+    try:
+        backup = install(source or Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)
+    except ValueError as exc:  # a refusal is an answer, not a crash: nothing was changed
+        raise SystemExit(f'{parser.prog}: {exc}; nothing was changed. Inspect that entry, then remove it or move it aside.')
+    changed = backup is not None
+    if changed and not any(backup.iterdir()):  # nothing was replaced, so there is nothing to point at
+        require_writable(args.backup_root)
+        backup.rmdir()
+        backup = None
+    print(f'Linked skills. Previous directories: {backup}' if backup else 'Linked skills.' if changed else 'Skill links already current.')
+    for name in RETIRED:
+        entry = destination / name
+        if entry.is_symlink() or entry.exists():  # an entry this tool owns was removed above, so what is left is not ours
+            print(f'Left untouched, not installed by this tool: {entry}')
 
 
 if __name__ == '__main__':
