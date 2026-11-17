@@ -38,7 +38,7 @@ def _label(name):
         return 'unknown', 'unknown'
     if name in BUILT_IN:
         return name, 'built_in'
-    return 'opaque:' + hashlib.sha256(name.encode()).hexdigest()[:8], 'opaque'
+    return 'opaque:' + hashlib.sha256(name.encode('utf-8', 'surrogatepass')).hexdigest()[:8], 'opaque'
 
 
 class Scan:
