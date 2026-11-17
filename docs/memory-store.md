@@ -70,6 +70,7 @@ HistoryStore's own validators, so changes in authority show up at the next read:
 The index requires an existing protected-access dependency lock when a history
 uses one. If it is missing, the index leaves it missing and marks that history
 unreadable; if it disappears before the live authority check, authority is not current.
+Qualified-bank author readback also requires its existing dependency lock.
 
 A run lacking bank binding, a harness snapshot, grader provenance or runtime is
 `legacy_unverified`, listed with the reasons (`bank_binding_missing`, `snapshot_missing`,

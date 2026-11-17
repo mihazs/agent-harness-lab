@@ -166,3 +166,18 @@ def test_history_index_does_not_recreate_lock_lost_before_live_check(saved, monk
     assert row['original_run_id'] == run_id
     assert row['current_validity'] == 'authority_not_current'
     assert not lock.exists()
+
+
+def test_construction_readback_does_not_recreate_a_missing_dependency_lock(tmp_path):
+    from agent_harness_lab.evaluation.certification_access import begin_construction, construction_record
+
+    ledger = tmp_path/'protected-access.json'
+    ident = begin_construction(ledger, 'final_bank_author', 'a'*64)
+    lock = ledger.with_suffix('.lock')
+    assert construction_record(ledger, ident)['state'] == 'pending'
+    lock.unlink()
+    before = state(tmp_path)
+    with pytest.raises(ValueError, match='existing protected-access dependency lock'):
+        construction_record(ledger, ident)
+    assert not lock.exists()
+    assert state(tmp_path) == before
