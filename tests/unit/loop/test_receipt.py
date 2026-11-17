@@ -114,6 +114,22 @@ def test_a_regression_is_kept_out_of_the_best_and_the_best_round_stays_the_basel
     assert found['rounds'][0]['paired']['delta'] < 0
 
 
+def test_abandoned_rounds_do_not_consume_a_journaled_evaluation_id():
+    events = [('spec_frozen', {}), ('baseline_evaluated', {'value': 'valid', 'snapshot': BASE}),
+              ('round_started', {'round': 1}), ('candidate_frozen', {'snapshot': CAND}),
+              ('candidate_evaluated', {'value': 'incomplete', 'abandoned': True}),
+              ('decided', {'value': 'inconclusive', 'abandoned': True}),
+              ('round_started', {'round': 2}), ('candidate_frozen', {'snapshot': CAND}),
+              ('candidate_evaluated', {'value': 'valid'})]
+    guards = [None, {'delta': {'mean': 0.5, 'low': 0.2, 'high': 0.8}}]
+    _, legacy = receipt._projection(events, guards)
+    assert [item['evaluation_id'] for item in legacy] == ['evaluation-1', 'evaluation-2']
+    events[0][1]['candidate_dispatch_journal'] = 'v1'
+    _, journaled = receipt._projection(events, guards)
+    assert [item['evaluation_id'] for item in journaled] == [None, 'evaluation-1']
+    assert journaled[0]['paired'] is None and journaled[1]['paired']['delta'] == 0.5
+
+
 def test_a_comparison_that_ran_on_other_inputs_has_no_score_decision_or_paired_delta(tmp_path):
     found = block(tmp_path, 'comparison_invalid')
     assert [(item['validity'], item['score'], item['decision'], item['paired']) for item in found['rounds']] == [('comparison_invalid', None, None, None)]

@@ -1,4 +1,4 @@
-"""Finalize a completed no-change proposal, or return a finished loop run's verified receipt, without repeating a model action."""
+"""Resume a verified loop, or return a finished run or completed no-change proposal."""
 import hashlib
 import os
 import re
@@ -35,6 +35,9 @@ def resume(args):
         from .loop import stored
         finished=stored.read(output,args.project)  # a loop run that already stopped is returned as recorded, after its receipt and ledger verify
         if finished is not None: return finished
+        if os.path.lexists(output/'loop-resume-context.json'):
+            from .loop import cold_resume
+            return cold_resume.resume(args, output)
         try: descriptor=open_nofollow(output/'recovery.json')
         except FileNotFoundError:
             return dict(status='blocked',reason='resume_requires_intervention',output=str(output),

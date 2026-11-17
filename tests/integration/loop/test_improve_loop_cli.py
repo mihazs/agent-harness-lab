@@ -78,9 +78,10 @@ def test_every_stop_criterion_is_reachable_and_its_receipt_and_exit_code_match_t
     assert (loop['recommendation_only'], loop['automatic_promotion'], loop['certification']) == (True, False, 'unverified')
     assert (found['changed_files'], found['automatic_promotion']) == ([], False) and (project.project/'AGENTS.md').read_bytes() == baseline
     assert json.loads((Path(found['output'])/'workflow.json').read_text()) == found
-    assert loop['remediation'] == receipt.STEPS[name] and not claims(loop['remediation']) and not claims(stderr)
+    remediation = receipt.RECONCILE if loop.get('stop_reason') == 'unresolved_request' else receipt.STEPS[name]
+    assert loop['remediation'] == remediation and not claims(loop['remediation']) and not claims(stderr)
     if expected:
-        assert found['exit_receipt'] == dict(profile=typed_exit.PROFILE, code=expected, stage='run', next_step=receipt.STEPS[name])
+        assert found['exit_receipt'] == dict(profile=typed_exit.PROFILE, code=expected, stage='run', next_step=remediation)
     else:
         assert 'exit_receipt' not in found and 'unverified' in stderr and 'not certification' in stderr
     assert f'outcome={status}' in stderr and 'outcome=inconclusive' not in stderr

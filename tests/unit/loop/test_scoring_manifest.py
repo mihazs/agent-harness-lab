@@ -93,3 +93,27 @@ def test_the_frozen_scoring_manifest_is_reused_when_identical_and_never_rewritte
     with pytest.raises(LoopError) as error:
         scoring_manifest(manifest)
     assert error.value.reason == 'loop_port_invalid' and first.read_bytes() == frozen
+
+
+def test_existing_scoring_manifest_is_not_rewritten_during_recovery(tmp_path):
+    import os
+    manifest = fb.write_bank(tmp_path)
+    target, _ = scoring_manifest(manifest)
+    os.utime(target, ns=(1_000_000_000, 1_000_000_000))
+    before = target.stat()
+    scoring_manifest(manifest)
+    after = target.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_size) == (before.st_ino, before.st_mtime_ns, before.st_size)
+
+
+def test_existing_scoring_manifest_symlink_is_refused_without_touching_target(tmp_path):
+    manifest = fb.write_bank(tmp_path)
+    target, _ = scoring_manifest(manifest)
+    content = target.read_bytes()
+    outside = tmp_path / 'outside.json'
+    outside.write_bytes(content)
+    target.unlink()
+    target.symlink_to(outside)
+    with pytest.raises(LoopError):
+        scoring_manifest(manifest)
+    assert outside.read_bytes() == content

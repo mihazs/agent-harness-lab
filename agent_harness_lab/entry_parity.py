@@ -39,6 +39,9 @@ _BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spe
 # between the routes.
 _LOOP_TIMING = ('loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.*.spent_seconds', 'loop.ledger_head_sha256')
 ALLOWED_DIFFERENCES = {
+    # The recovery record hashes manifests containing run-specific paths and timing, which are compared separately.
+    'loop-resume-context.json': ('initial_elapsed', 'initial_stage_spent.construction', 'initial_stage_spent.trials',
+                                 'manifest_sha256', 'scoring_sha256'),
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',

@@ -242,10 +242,12 @@ def test_a_run_killed_in_the_middle_leaves_no_lock_that_blocks_the_next_one(stub
 def test_a_lock_left_by_a_dead_run_ends_busy_with_the_removal_step(stub, capsys):
     folder = stub.root / 'state/locks'
     folder.mkdir(parents=True)
-    (folder / (workflow.identity(stub.project.resolve()) + '.lock')).write_text('2147483646:synthetic')
+    lock = folder / (workflow.identity(stub.project.resolve()) + '.lock')
+    lock.write_text('2147483646:synthetic')
     code, captured = improve(stub, capsys, {})
     receipt = end_state(code, captured)
     assert outcome(receipt) == ('conflict', 'workspace_busy') and 'PID' in receipt['exit_receipt']['next_step']
+    assert lock.read_text() == '2147483646:synthetic'
 
 
 @pytest.mark.parametrize('stage', STAGES)
