@@ -261,9 +261,9 @@ repair from #1014 applied, and passed 17,620 tests with 300 skipped:
 
 Worker peaks were read from Linux `/proc` `VmHWM` at one-second intervals.
 These are individual direct xdist processes, not an aggregate peak: child processes
-are excluded, workers can peak at different times, and very short-lived processes
-can be missed. The runs do not identify memory-heavy tests. Cache state, background
-work, hardware and skipped tests affect these single-run figures; choose a worker
+are excluded, workers can peak at different times, and a peak after the final sample
+can be missed. The runs do not identify memory-heavy tests. Sampling overhead, cache
+state, background work, hardware and skipped tests affect these single-run figures; choose a worker
 count and cap appropriate for your own host.
 
 CI tests Python 3.14; package installation still requires Python 3.11 or newer.
