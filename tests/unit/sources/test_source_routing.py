@@ -309,6 +309,37 @@ class TestRoutedComments(GitHubCase):
         assert receipt['buckets']['graphql']['points'] < len(self.selection.issues)+len(self.selection.pulls)
         assert not any(t == '/issues/7/comments?per_page=100&page=1' for t in self.targets)
 
+    def test_unrelated_validators_do_not_make_graphql_comments_a_cached_refresh(self):
+        self.headers['ETag'] = 'W/"synthetic-validator"'
+        client = self.client(conditional=True)
+        first = self.identities(client, client.read(self.source))
+        self.targets.clear()
+        self.graph_calls.clear()
+
+        second = self.identities(client, client.read(self.source))
+
+        assert second == first
+        assert len(self.graph_calls) == 1 and self.comment_requests() == []
+        assert client.transport.limiter.receipt()['routes'] == [
+            dict(read='issue_comments', transport='graphql', bucket='graphql', reason='cheaper_graphql')]
+
+    def test_a_missing_later_page_validator_is_not_a_cached_refresh(self):
+        rows = [dict(self.comment, id=1000+n, url=self.base+f'/issues/comments/{1000+n}') for n in range(150)]
+        self.headers['ETag'] = 'W/"synthetic-validator"'
+        self.serve(7, rows)
+        client = self.client(conditional=True)
+        client.routing = 'rest'
+        first = self.identities(client, client.read(self.source))
+        from agent_harness_lab.sources.github import digest, text_hash
+        key = digest(('github-conditional-v1', client.transport.path+'/issues/7/comments?per_page=100&page=2', text_hash(TOKEN)))
+        assert client._validators.pop(key) is not None
+        client.routing = 'auto'
+        self.targets.clear()
+
+        assert self.identities(client, client.read(self.source)) == first
+        assert len(self.graph_calls) == 2 and self.comment_requests() == []
+        assert client.transport.limiter.receipt()['routes'][0]['reason'] == 'cheaper_graphql'
+
     def test_a_cached_refresh_goes_through_rest_conditional_requests(self):
         self.headers['ETag'] = 'W/"synthetic-validator"'
         client = GitHubAPI(self.base, self.selection, authorization=TOKEN, routing='rest', conditional=True)
