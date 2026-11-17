@@ -42,7 +42,9 @@ def structural_pattern(mechanism):
 def fixture_files(mechanism):
     """Build a deterministic synthetic recovery task; no source-session content enters it."""
     pattern = structural_pattern(mechanism)
-    if pattern['tool_class'] not in ('Bash', 'exec_command', 'shell', 'shell_command') or pattern['follow_up'] != 'same_call_retry':
+    if (pattern['tool_class'] not in ('Bash', 'exec_command', 'shell', 'shell_command')
+            or pattern['follow_up'] != 'same_call_retry'
+            or pattern['error_category'] not in ('tool_reported_error', 'exit_code')):
         raise ValueError('no synthetic fixture for this pattern')
     task = dict(prompt=('Run python3 synthetic_worker.py. If it fails, inspect the synthetic configuration, '
                         'correct it and run it again. Leave config.json and result.json as the final artifacts.'),
@@ -52,6 +54,8 @@ from pathlib import Path
 import sys
 
 config = json.loads(Path('config.json').read_text())
+with Path('attempts.jsonl').open('a') as attempts:
+    attempts.write(json.dumps({'status': 'success' if config.get('ready') is True else 'error'}) + '\\n')
 if config.get('ready') is not True:
     print(json.dumps({'status': 'error', 'category': %r}))
     raise SystemExit(1)
@@ -92,8 +96,12 @@ except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
 try:
     root = Path(sys.argv[1])
     config, result = (json.loads(read(root / name)) for name in ('config.json', 'result.json'))
+    attempts = [json.loads(line) for line in read(root / 'attempts.jsonl').splitlines()]
     outcome = (type(config) is dict and config.get('ready') is True and type(result) is dict
                and result.get('records') == [3, 5] and all(type(n) is int for n in result['records'])
+               and len(attempts) >= 2 and attempts[0] == {'status': 'error'}
+               and attempts[-1] == {'status': 'success'}
+               and all(item in ({'status': 'error'}, {'status': 'success'}) for item in attempts)
                and hashlib.sha256(read(root / 'synthetic_worker.py')).hexdigest() == pin
                and json.loads(read(root / 'ahl-synthetic-probe.json')) == {'profile': 'ahl-synthetic-probe-v1'})
 except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
@@ -136,13 +144,15 @@ def materialize(mechanism, output, *, project, harness_paths):
         folder.mkdir(mode=0o700, parents=True)
         values = dict(fixture)
         if state != 'broken': values['config.json'] = '{"ready": true}\n'
-        if state == 'complete': values['result.json'] = '{"records": [3, 5]}\n'
+        if state == 'complete':
+            values['result.json'] = '{"records": [3, 5]}\n'
+            values['attempts.jsonl'] = '{"status": "error"}\n{"status": "success"}\n'
         for name, content in values.items(): write_bytes(folder / name, content.encode())
         controls.append(dict(task='hypothesis-probe', state=state, fixture=str(folder.relative_to(output)), digest=digest(folder)))
     task = json.loads(fixture['task.json'])
     manifest = dict(schema_version=1, profile='descriptive_smoke', skills=[], harness_paths=harness_paths,
         tasks=[dict(id='hypothesis-probe', root='hypothesis-probe', split='development', fixture='fixture', prompt=task['prompt'],
-                    artifacts=['config.json', 'result.json', 'synthetic_worker.py', PROBE_MARKER],
+                    artifacts=['config.json', 'result.json', 'attempts.jsonl', 'synthetic_worker.py', PROBE_MARKER],
                     grader=[sys.executable, str(grader_dir / 'grade.py.txt'), '{workspace}', str(grader_dir / 'expected.json')])],
         grader_self_tests=controls, grader_bundles={'hypothesis-probe': dict(path='grader', digest=digest(grader_dir))},
         max_trials=2, budget_seconds=60, timeout_seconds=20, no_nested_agents=True,
@@ -170,7 +180,8 @@ def _paired_result(result, *, inputs_unchanged):
                 if outcomes == [False, True]: verdict = 'supported_hypothesis'
                 elif outcomes == [True, False]: verdict = 'refuted_hypothesis'
     return dict(profile='ahl-synthetic-probe-result-v1', verdict=verdict, scope='one_synthetic_pair',
-                independence='unverified', source_session_outcome='unknown', automatic_promotion=False, publication_allowed=False)
+                independence='unverified', sequence_evidence='cooperative_fixture_log',
+                source_session_outcome='unknown', automatic_promotion=False, publication_allowed=False)
 
 
 def _runtime_digest(path):

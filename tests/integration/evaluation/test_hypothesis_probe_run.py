@@ -22,6 +22,7 @@ import sys
 if '--version' in sys.argv:
     print('synthetic-agent'); raise SystemExit(0)
 sys.stdin.read()
+subprocess.run([sys.executable, 'synthetic_worker.py'], capture_output=True)
 if 'repair' in Path('AGENTS.md').read_text():
     Path('config.json').write_text('{"ready": true}')
     subprocess.run([sys.executable, 'synthetic_worker.py'], check=True, capture_output=True)

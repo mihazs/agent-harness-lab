@@ -47,6 +47,8 @@ def test_fixture_refuses_a_follow_up_it_does_not_reproduce():
     mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
                      next_action={'user_intervention': 2})
     with pytest.raises(ValueError, match='no synthetic fixture'): fixture_files(mechanism)
+    mechanism.update(error_category='network', next_action={'same_call_retry': 2})
+    with pytest.raises(ValueError, match='no synthetic fixture'): fixture_files(mechanism)
 
 
 def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
@@ -63,6 +65,8 @@ def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
     assert broken.returncode == 1 and json.loads(broken.stdout)['outcome'] is False
     (workspace / 'config.json').write_text('{"ready": true}')
     (workspace / 'result.json').write_text('{"records": [3, 5]}')
+    assert grade().returncode == 1  # Final files alone do not establish a retry.
+    (workspace / 'attempts.jsonl').write_text('{"status": "error"}\n{"status": "success"}\n')
     complete = grade()
     assert complete.returncode == 0 and json.loads(complete.stdout)['outcome'] is True
     outside = tmp_path / 'outside.json'
