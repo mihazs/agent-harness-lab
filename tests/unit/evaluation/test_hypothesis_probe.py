@@ -98,9 +98,10 @@ def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
     assert grade().returncode == 1
 
 
-def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_path):
+@pytest.mark.parametrize('follow_up', ['same_call_retry', 'same_tool_changed_input'])
+def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_path, follow_up):
     mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
-                     next_action={'same_call_retry': 2})
+                     next_action={follow_up: 2})
     project = tmp_path / 'project'; project.mkdir()
     output = tmp_path / 'probe'
     path = materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
@@ -115,6 +116,8 @@ def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_pat
         command = [sys.executable, str(output / 'grader/grade.py.txt'), str(folder), str(output / 'grader/expected.json')]
         grade = subprocess.run(command, capture_output=True, text=True, check=False)
         assert json.loads(grade.stdout)['outcome'] is (control['state'] == 'complete')
+    (output / 'fixture/ahl-synthetic-probe.json').unlink()
+    assert is_probe(output / 'fixture')
     with pytest.raises(FileExistsError): materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
     with pytest.raises(ValueError): materialize(mechanism, project / 'probe', project=project, harness_paths=['AGENTS.md'])
 
