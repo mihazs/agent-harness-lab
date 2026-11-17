@@ -61,7 +61,7 @@ HistoryStore's own validators, so changes in authority show up at the next read:
 
 | `current_validity` | Meaning | `comparison_eligibility` |
 | --- | --- | --- |
-| `current` | Sealed, oracles active, bank authority still eligible | `eligible` unless provenance is missing |
+| `current` | Sealed, oracles active, bank authority still eligible | `unknown` unless provenance is missing |
 | `invalidated_by_oracle_quarantine` | A dependent oracle was quarantined; the result is historical evidence only | `not_comparable` |
 | `authority_not_current` | Sealed, but the bank authority or sealed evidence no longer validates | `not_comparable` |
 | `incomplete` | Not sealed | `not_comparable` |
@@ -71,6 +71,11 @@ The index requires an existing protected-access dependency lock when a history
 uses one. If it is missing, the index leaves it missing and marks that history
 unreadable; if it disappears before the live authority check, authority is not current.
 Qualified-bank author readback also requires its existing dependency lock.
+
+Current authority and recorded digests do not establish that a run is comparable: this
+overview does not qualify the harness identities, verify execution independence, or assess
+the other comparison gates. It reports `comparison_not_assessed` for a current run with
+recorded provenance; a separate comparison must assess those gates.
 
 A run lacking bank binding, a harness snapshot, grader provenance or runtime is
 `legacy_unverified`, listed with the reasons (`bank_binding_missing`, `snapshot_missing`,
