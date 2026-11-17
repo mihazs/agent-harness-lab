@@ -16,6 +16,7 @@ jobs:
       - name: Run changed loop tests
         run: >-
           python -m pytest -x -q
+          tests/unit/workflow/test_entry_parity_durations.py
           tests/integration/loop/test_resume_stored_run.py
           tests/integration/loop/test_cold_resume_cli.py
           tests/integration/loop/test_controller_ledger.py
@@ -29,4 +30,3 @@ jobs:
           tests/unit/loop/test_scoring_manifest.py
           tests/integration/docs/test_improve_until_score_howto.py
           tests/integration/workflow/test_workflow.py
-          tests/unit/workflow/test_entry_parity_durations.py

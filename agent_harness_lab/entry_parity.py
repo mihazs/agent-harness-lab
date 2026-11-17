@@ -40,7 +40,7 @@ _BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spe
 _LOOP_TIMING = ('loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.*.spent_seconds', 'loop.ledger_head_sha256')
 ALLOWED_DIFFERENCES = {
     # Recovery records freeze the elapsed time and stage spend of each run.
-    'loop-resume-context.json': ('initial_elapsed', 'initial_stage_spent.*'),
+    'loop-resume-context.json': ('initial_elapsed', 'initial_stage_spent.construction', 'initial_stage_spent.trials'),
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
