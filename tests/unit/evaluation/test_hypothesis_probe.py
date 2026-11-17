@@ -87,6 +87,11 @@ def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
     (workspace / 'attempts.jsonl').write_text('{"status": "error"}\n{"status": "success"}\n')
     complete = grade()
     assert complete.returncode == 0 and json.loads(complete.stdout)['outcome'] is True
+    for attempts in ('{"status": "success"}\n{"status": "error"}\n',
+                     '{"status": "success"}\n', '{"status": "error"}\ninvalid\n'):
+        (workspace / 'attempts.jsonl').write_text(attempts)
+        assert grade().returncode == 1
+    (workspace / 'attempts.jsonl').write_text('{"status": "error"}\n{"status": "success"}\n')
     outside = tmp_path / 'outside.json'
     outside.write_text('{"records": [3, 5]}')
     (workspace / 'result.json').unlink()

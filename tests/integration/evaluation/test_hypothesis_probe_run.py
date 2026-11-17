@@ -56,7 +56,8 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
     assert json.loads((output / 'probe-result.json').read_text()) == result
 
 
-def test_runner_rejects_an_intact_probe_relabelled_as_heldout_before_dispatch(tmp_path):
+@pytest.mark.parametrize('remove_marker', [False, True])
+def test_runner_rejects_a_probe_relabelled_as_heldout_before_dispatch(tmp_path, remove_marker):
     from agent_harness_lab.cli import evaluator
     from agent_harness_lab.loop.adapters import ExecutorRunner
     project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
@@ -65,6 +66,8 @@ def test_runner_rejects_an_intact_probe_relabelled_as_heldout_before_dispatch(tm
                      next_action={'same_call_retry': 2})
     output = tmp_path / 'probe'
     manifest_path = materialize(mechanism, output, project=project, harness_paths=[])
+    if remove_marker:
+        (output / 'fixture/ahl-synthetic-probe.json').unlink()
     manifest = json.loads(manifest_path.read_text())
     manifest['tasks'][0].update(id='renamed', split='heldout')
     manifest_path.write_text(json.dumps(manifest))
