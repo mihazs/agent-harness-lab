@@ -140,7 +140,7 @@ def project_lock(project):
             existing = True
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
-            raise ValueError('unsafe workspace lock')
+            raise typed_exit.TypedExit('workspace_busy', f'Another run or unsafe lock exists: {path}; reconcile the process, surviving children and pending requests before removing it')
         try: fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; reconcile the process, surviving children and pending requests before removing it') from None

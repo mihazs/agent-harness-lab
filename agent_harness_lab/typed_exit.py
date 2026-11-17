@@ -21,7 +21,7 @@ REASONS = {
     'protected_destination': ('invalid_input', 'usage', 'Choose an output or state location outside the project and its history, then rerun.'),
     'unsupported_instruction_layout': ('invalid_input', 'harness_discovery', 'Make each instruction file a regular file inside the project instead of a symbolic link, then rerun.'),
     'run_input_rejected': ('invalid_input', 'run', 'Read the rejected input named on stderr, correct it, then rerun; the private receipt of the run records the stage.'),
-    'workspace_busy': ('conflict', 'workspace', 'Wait for the active run on this project to finish, or resume it, then rerun; before removing a stale lock, reconcile the recorded process, any surviving children and pending requests.'),
+    'workspace_busy': ('conflict', 'workspace', 'Wait for the active run on this project to finish, or resume it, then rerun; before removing a stale lock, reconcile the recorded PID, any surviving children and pending requests.'),
     'run_conflict': ('conflict', 'run', 'Read the conflict recorded in the private receipt of the run, resolve it, then rerun.'),
     'budget_exhausted': ('budget_exhausted', 'run', 'Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun.'),
     'execution_failed': ('execution_error', 'run', 'Read the stage error recorded in the private receipt, fix the runtime or environment problem it names, then rerun.'),

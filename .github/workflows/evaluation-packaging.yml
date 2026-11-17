@@ -16,6 +16,9 @@ jobs:
       - name: Run changed loop tests
         run: >-
           python -m pytest -x -q
+          tests/unit/workflow/test_exit_guidance.py
+          tests/integration/loop/test_improve_loop_cli.py
+          tests/integration/improve/test_stress_matrix.py
           tests/unit/workflow/test_entry_parity_durations.py
           tests/integration/loop/test_resume_stored_run.py
           tests/integration/loop/test_cold_resume_cli.py
