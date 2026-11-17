@@ -78,7 +78,7 @@ def count(value, where):
 
 
 def real(value, where):
-    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+    if type(value) not in (int, float) or not 0 <= value <= COUNT_MAX or not math.isfinite(value):
         raise Rejected('invalid_measurement', where)
     return value
 
@@ -229,8 +229,16 @@ class Importer:
             report.missing_fields[STEP + '.timestamp'] += 1
         if 'model_name' in step:
             common['reported_model_fingerprint'] = digest(text(step['model_name'], STEP + '.model_name'))
+        if 'reasoning_content' in step and not isinstance(step['reasoning_content'], str):
+            raise Rejected('invalid_structure', STEP + '.reasoning_content')
+        if 'reasoning_effort' in step:
+            effort = step['reasoning_effort']
+            if not isinstance(effort, str) and (type(effort) not in (int, float) or not -COUNT_MAX <= effort <= COUNT_MAX or not math.isfinite(effort)):
+                raise Rejected('invalid_structure', STEP + '.reasoning_effort')
         if 'llm_call_count' in step:
             count(step['llm_call_count'], STEP + '.llm_call_count')
+            if source == 'agent' and step['llm_call_count'] == 0 and any(name in step for name in ('metrics', 'reasoning_content')):
+                raise Rejected('invalid_structure', STEP + '.llm_call_count')
         if step.get('is_copied_context') is not None and type(step['is_copied_context']) is not bool:
             raise Rejected('invalid_structure', STEP + '.is_copied_context')
         calls = [self.call(item) for item in array(step.get('tool_calls', []), STEP + '.tool_calls')]

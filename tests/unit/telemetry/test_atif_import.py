@@ -502,3 +502,19 @@ def test_optional_null_fields_are_treated_as_absent():
     events, report = convert(document)
     assert len(events) == 1 and events[0]['activity'] == 'user_message'
     assert events[0]['capture_complete'] is False and report.missing_fields['steps[].timestamp'] == 1
+
+
+@pytest.mark.parametrize('changes', [
+    {'reasoning_content': {'not': 'text'}},
+    {'reasoning_effort': {'not': 'a scalar'}},
+    {'llm_call_count': 0, 'reasoning_content': 'unexpected'},
+    {'llm_call_count': 0, 'metrics': {'completion_tokens': 1}},
+])
+def test_invalid_reasoning_or_zero_call_metrics_are_rejected(changes):
+    assert rejected(trajectory([agent_step(1, **changes)])).reason == 'invalid_structure'
+
+
+@pytest.mark.parametrize('field', ['reasoning_effort', 'cost_usd'])
+def test_huge_numeric_fields_return_a_typed_rejection(field):
+    step = agent_step(1, **({'reasoning_effort': 10**400} if field == 'reasoning_effort' else {'metrics': {'cost_usd': 10**400}}))
+    assert rejected(trajectory([step])).reason in ('invalid_structure', 'invalid_measurement')
