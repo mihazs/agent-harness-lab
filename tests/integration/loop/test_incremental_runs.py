@@ -138,6 +138,18 @@ def test_changed_frozen_inputs_make_the_earlier_scores_not_comparable_omit_the_d
     assert carry['mechanisms']['reopened'] == ['m1'] and [call['mechanism'] for call in project.calls()] == ['m1', 'm1']
 
 
+def test_runtime_changed_in_place_makes_prior_scores_not_comparable(stack, monkeypatch):
+    project, first = regressed_run(stack, monkeypatch)
+    agent = project.fixture.agent
+    agent.write_text(agent.read_text() + '\n# synthetic runtime revision\n')
+    project.write({0: dict(harness=li.NOTHING)})
+    _, second, _ = project.invoke('--accept-score', '0.9')
+    carry = second['loop']['carry_over']
+    assert second['loop']['frozen_inputs_sha256'] != first['loop']['frozen_inputs_sha256']
+    assert (carry['historical']['comparison'], carry['delta_reason']) == ('not_comparable', 'frozen_inputs_changed')
+    assert carry['mechanisms']['reopened'] == ['m1'] and [call['mechanism'] for call in project.calls()] == ['m1', 'm1']
+
+
 def test_a_previous_run_that_was_not_a_loop_run_is_stated_and_carries_nothing(stack, monkeypatch):
     project = li.LoopProject(stack, monkeypatch, baseline='solves=responses', script={0: dict(harness=li.EVERYTHING)})
     _, first, _ = project.invoke('--single-pass')  # the loop is the default, so a single pass needs its flag

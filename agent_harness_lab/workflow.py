@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import random
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -97,20 +98,79 @@ def project_lock(project):
     from .read_only import require_external_output
     require_external_output(project, folder)
     owner = os.getpid()
-    token = f'{owner}:{uuid.uuid4().hex}'
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = folder / (identity(project) + '.lock')
     try:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
-        raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
-    with os.fdopen(descriptor, 'w') as stream:
-        stream.write(token)
+        import fcntl
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        if re.fullmatch(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', boot) is None:
+            raise ValueError('invalid boot identity')
+    except (ImportError, OSError):
+        # shortcut: hosts without a verified boot identity keep the existing manual stale-lock recovery
+        token = f'{owner}:{uuid.uuid4().hex}'
+        try: descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; reconcile the process, surviving children and pending requests before removing it') from None
+        with os.fdopen(descriptor, 'w') as stream: stream.write(token)
+        try: yield
+        finally:
+            if os.getpid() == owner and path.exists() and path.read_text() == token: path.unlink()
+        return
+
+    from .evaluation.integrity import open_directory_nofollow
+    directory = open_directory_nofollow(folder)
+    guard = descriptor = None
+    token = f'v2:{boot}:{owner}:{uuid.uuid4().hex}'.encode()
     try:
-        yield
+        info = os.fstat(directory)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077: raise ValueError('unsafe workspace lock directory')
+        flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+        guard = os.open(path.name + '.guard', flags | os.O_CREAT, 0o600, dir_fd=directory)
+        info = os.fstat(guard)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise ValueError('unsafe workspace lock guard')
+        try: fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; reconcile the process, surviving children and pending requests before removing it') from None
+        try:
+            descriptor = os.open(path.name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+            existing = False
+        except FileExistsError:
+            descriptor = os.open(path.name, flags, dir_fd=directory)
+            existing = True
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+            raise ValueError('unsafe workspace lock')
+        try: fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; reconcile the process, surviving children and pending requests before removing it') from None
+        if existing:
+            old = os.read(descriptor, 160)
+            found = re.fullmatch(rb'v2:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):[1-9][0-9]{0,19}:[0-9a-f]{32}', old)
+            if found is None or found.group(1).decode() == boot:
+                raise typed_exit.TypedExit('workspace_busy', f'Another run or stale lock exists: {path}; reconcile the process, surviving children and pending requests before removing it')
+        current = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino): raise ValueError('workspace lock changed')
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        os.ftruncate(descriptor, 0)
+        if os.write(descriptor, token) != len(token): raise OSError('short workspace lock write')
+        os.fsync(descriptor)
+        try:
+            yield
+        finally:
+            if os.getpid() == owner:
+                try:
+                    current = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    if ((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino)
+                            and os.read(descriptor, 160) == token):
+                        os.unlink(path.name, dir_fd=directory)
+                except FileNotFoundError:
+                    pass
     finally:
-        if os.getpid() == owner and path.exists() and path.read_text() == token:
-            path.unlink()
+        if descriptor is not None: os.close(descriptor)
+        if guard is not None: os.close(guard)
+        os.close(directory)
 
 
 def evidence(args, output, source_context=None, *, progress=None):

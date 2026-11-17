@@ -199,6 +199,27 @@ class LoopSpec:
         return dict(self._identity(), looks=self.max_rounds, acceptance_source=self.acceptance_source,
                     sources=dict(self.sources), digest=self.digest)
 
+    @classmethod
+    def from_document(cls, document):
+        """Restore the exact validated declaration, including its source labels."""
+        document_digest(document)
+        try:
+            score = document['accept_score']
+            if isinstance(score, dict): score = tuple(sorted(score.items()))
+            limits = document['limits']
+            if not isinstance(limits, dict) or set(limits) != {'seconds', 'trials'}: raise ValueError('invalid loop limits')
+            values = {name: document[name] for name in DECLARED if name != 'accept_score'}
+            spec = cls(accept_score=score, **values, limit_seconds=limits['seconds'], limit_trials=limits['trials'],
+                       sources=tuple((name, document['sources'][name]) for name in (*DECLARED, 'limits')),
+                       schema_version=document['schema_version'], profile=document['profile'],
+                       recommendation_only=document['recommendation_only'], automatic_promotion=document['automatic_promotion'],
+                       certification=document['certification']).validate()
+            if json.dumps(spec.to_dict(), sort_keys=True, allow_nan=False) != json.dumps(document, sort_keys=True, allow_nan=False):
+                raise ValueError('loop spec does not round-trip')
+            return spec
+        except (KeyError, TypeError, OverflowError):
+            raise ValueError('invalid loop spec document') from None
+
 
 def resolve(*, limits, limits_source='project', cli=None, user=None, project=None, areas=()):
     """Merge the layers (cli over user over project over default) into one validated spec naming each value's source.

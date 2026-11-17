@@ -188,6 +188,16 @@ class _Loop:
 
         if not _number(spent) or spent < 0: raise LoopError('loop_port_invalid', 'spent', 'declared')
         self.spec, self.evaluator, self.proposer, self.ledger, self.now = spec, evaluator, proposer, ledger, now
+        self.resume_context = getattr(proposer, 'resume_context_sha256', None)
+        if self.resume_context is not None and not _digest(self.resume_context):
+            raise LoopError('loop_port_invalid', 'resume_context', 'declared')
+        if reopened is not None and reopened[0][1].get('resume_context_sha256') != self.resume_context:
+            raise LoopError('resume_inputs_changed', 'resume_context', 'declared')
+        self.journal_baseline = (self.resume_context is not None if reopened is None
+                                 else reopened[0][1].get('baseline_dispatch_journal') == 'v1')
+        self.journal_candidate = (self.resume_context is not None if reopened is None
+                                  else reopened[0][1].get('candidate_dispatch_journal') == 'v1')
+        self.retry_frozen = False
         self.journal_proposal = (getattr(proposer, 'journal_proposal_dispatch', False) is True if reopened is None
                                  else reopened[0][1].get('proposal_dispatch_journal') == 'v1')
         if self.journal_proposal and getattr(proposer, 'journal_proposal_dispatch', False) is not True:
@@ -209,6 +219,27 @@ class _Loop:
     def record(self, event, value=None, **payload):
         """Check the move against the machine, write it to the ledger, then commit it: an illegal move writes nothing."""
         moved = step(self.position, event, value) if event in MACHINE_EVENTS else self.position
+        if self.resume_context is not None:
+            usage = getattr(self.evaluator, 'recovery_stage_spent', None)
+            usage = usage() if callable(usage) else None
+            if (not isinstance(usage, dict) or set(usage) != {'construction', 'trials'}
+                    or any(not _number(v) or v < 0 for v in usage.values())):
+                raise LoopError('loop_port_invalid', 'stage_spent', 'declared')
+            payload['stage_spent'] = dict(usage)
+            wall_clock = getattr(self.evaluator, 'recovery_wall_ns', None)
+            wall = wall_clock() if callable(wall_clock) else None
+            if type(wall) is not int or wall <= 0: raise LoopError('loop_port_invalid', 'wall_clock', 'declared')
+            payload['wall_recorded_ns'] = wall
+            if event in ('baseline_evaluated', 'candidate_evaluated') and payload.get('abandoned') is not True:
+                capture = getattr(self.evaluator, 'recovery_evaluation', None)
+                observed = capture() if callable(capture) else None
+                if not isinstance(observed, dict): raise LoopError('loop_port_invalid', 'recovery_evaluation', 'declared')
+                payload['recovery_evaluation'] = observed
+            if event == 'candidate_frozen':
+                capture = getattr(self.proposer, 'recovery_candidate', None)
+                candidate = capture(payload.get('snapshot')) if callable(capture) else None
+                if not isinstance(candidate, dict): raise LoopError('loop_port_invalid', 'recovery_candidate', 'declared')
+                payload['recovery_candidate'] = candidate
         self.ledger.write(event, dict(payload, value=value) if value is not None else payload, elapsed=self.elapsed())
         self.position = moved
 
@@ -293,6 +324,8 @@ class _Loop:
         """Close the round that was in flight when the run stopped: no evaluation completed, so it holds no evidence and counts
         as a round that did not improve the best. Its mechanism goes back to pending, because nothing was learned about it."""
         self.record('candidate_evaluated', 'incomplete', round=self.position.rounds, snapshot=self.round.get('snapshot'), abandoned=True)
+        preserve = getattr(self.evaluator, 'preserve_abandoned', None)
+        if callable(preserve): preserve(self.position.rounds)
         return self.close()
 
     def close(self):
@@ -312,11 +345,15 @@ class _Loop:
         spec = self.spec
         self.record('spec_frozen', spec_sha256=spec.digest, frozen_inputs_sha256=self.frozen, mode=spec.mode, looks=spec.max_rounds,
                     per_look_alpha=spec.per_look_alpha, mechanisms=list(self.dispositions), **({'carried': self.carried} if self.carried else {}),
-                    **({'proposal_dispatch_journal': 'v1'} if self.journal_proposal else {}))
+                    **({'proposal_dispatch_journal': 'v1'} if self.journal_proposal else {}),
+                    **({'baseline_dispatch_journal': 'v1'} if self.journal_baseline else {}),
+                    **({'candidate_dispatch_journal': 'v1'} if self.journal_candidate else {}),
+                    **({'resume_context_sha256': self.resume_context} if self.resume_context is not None else {}))
         self.go()
 
     def baseline(self):
         """Evaluate the baseline and record it; (outcome, stop) of the decision on it, or None for an invalid comparison, which stops."""
+        if self.journal_baseline: self.record('baseline_started', snapshot=self.best)
         found, verdict = self.evaluate(self.best)
         self.baseline_evaluation = self.best_evaluation = found
         self.baseline_verdict = verdict
@@ -328,11 +365,18 @@ class _Loop:
         outcome, stop, _ = self.decision(self.baseline_verdict, self.baseline_evaluation, False)
         return outcome, stop
 
+    def evaluate_candidate(self, mechanism, snapshot):
+        if self.journal_candidate: self.record('candidate_started', round=self.position.rounds, snapshot=snapshot)
+        found, verdict = self.evaluate(snapshot)
+        self.record('candidate_evaluated', verdict, round=self.position.rounds, snapshot=snapshot, evaluation=_summary(found))
+        return self.conclude(mechanism, snapshot, found, verdict)
+
     def go(self):
         """Run from the position the machine is in, which is the freshly declared one for a new run and the last durable one for a resumed run."""
         state = self.position.state
         if state == 'declared': moved = self.baseline()
         elif state == 'baseline_evaluated': moved = self.after_baseline()
+        elif state == 'improving' and self.retry_frozen: moved = self.evaluate_candidate(self.round['mechanism'], self.round['snapshot'])
         elif state == 'improving': moved = self.abandon()
         elif state == 'candidate_evaluated' and 'found' not in self.round: moved = self.close()
         elif state == 'candidate_evaluated': moved = self.conclude(self.round['mechanism'], self.round['snapshot'], self.round['found'], self.round['verdict'])
@@ -344,9 +388,7 @@ class _Loop:
             if candidate is None: return self.stopped('no_actionable_mechanism', outcome)
             self.record('round_started', round=self.position.rounds + 1, mechanism=candidate.mechanism, base=self.best, mechanisms=dict(self.dispositions))
             self.record('candidate_frozen', round=self.position.rounds, snapshot=candidate.snapshot, mechanism=candidate.mechanism)
-            found, verdict = self.evaluate(candidate.snapshot)
-            self.record('candidate_evaluated', verdict, round=self.position.rounds, snapshot=candidate.snapshot, evaluation=_summary(found))
-            outcome, stop = self.conclude(candidate.mechanism, candidate.snapshot, found, verdict)
+            outcome, stop = self.evaluate_candidate(candidate.mechanism, candidate.snapshot)
         self.stopped(stop, outcome)
 
     def restore(self, events):
@@ -357,6 +399,9 @@ class _Loop:
             if kind == 'spec_frozen':
                 if (payload.get('frozen_inputs_sha256') != self.frozen or payload.get('mechanisms') != list(self.dispositions)
                         or payload.get('carried', {}) != self.carried): raise LoopError('resume_inputs_changed', 'frozen_inputs', 'declared')
+            elif kind == 'baseline_started':
+                if not self.journal_baseline or payload.get('snapshot') != self.best:
+                    raise LoopError('loop_ledger_invalid', 'baseline_started', 'declared')
             elif kind == 'baseline_evaluated':
                 if payload.get('snapshot') != self.best: raise LoopError('resume_inputs_changed', 'baseline', 'declared')
                 found = _restored(payload.get('evaluation'))
@@ -367,6 +412,9 @@ class _Loop:
                 self.round = dict(mechanism=payload.get('mechanism'), snapshot=None)
                 self.dispositions = self._listed(payload)
             elif kind == 'candidate_frozen' and self.round is not None: self.round['snapshot'] = payload.get('snapshot')
+            elif kind == 'candidate_started':
+                if not self.journal_candidate or self.round is None or payload.get('snapshot') != self.round.get('snapshot'):
+                    raise LoopError('loop_ledger_invalid', 'candidate_started', 'declared')
             elif kind == 'candidate_evaluated' and self.round is not None and payload.get('abandoned') is not True:
                 found = _restored(payload.get('evaluation'))
                 self.account(found)
@@ -401,10 +449,12 @@ class _Loop:
         index = next((i for i in range(len(events) - 1, -1, -1) if events[i][0] not in ('stopped', 'resumed')), None)
         kind, payload = events[index]
         if any(later == 'resumed' and later_payload.get('unresolved') is not True for later, later_payload in events[index + 1:]): return None
-        return self.best if kind == 'spec_frozen' else payload.get('snapshot') if kind == 'candidate_frozen' else None
+        return self.best if kind == 'baseline_started' or kind == 'spec_frozen' and not self.journal_baseline else payload.get('snapshot') if kind == 'candidate_started' or kind == 'candidate_frozen' and not self.journal_candidate else None
 
     def proceed(self, events):
         """Resume: ask the evaluator about the evaluation that was running, record the resumption, then go on from the last durable event."""
+        kind, payload = next((kind, payload) for kind, payload in reversed(events) if kind not in ('stopped', 'resumed'))
+        baseline_dispatched = kind == 'baseline_started' or kind == 'spec_frozen' and not self.journal_baseline
         running, charged, unresolved = self.in_flight(events), 0, False
         if running is not None:
             settle = getattr(self.evaluator, 'settle', None)
@@ -412,7 +462,7 @@ class _Loop:
             if _count(settled): charged = settled
             else: unresolved = True
         else:
-            kind, payload = next((kind, payload) for kind, payload in reversed(events) if kind not in ('stopped', 'resumed'))
+            self.retry_frozen = self.journal_candidate and kind == 'candidate_frozen'
             ambiguous = kind in ('baseline_evaluated', 'proposal_started', 'round_started') or kind == 'decided' and payload.get('stop') is None
             if self.journal_proposal and kind in ('baseline_evaluated', 'decided'): ambiguous = False
             if ambiguous:
@@ -422,6 +472,16 @@ class _Loop:
         self.record('resumed', from_events=len(events), previous_head_sha256=self.ledger.head, charged_trials=charged, unresolved=unresolved)
         self.trials, self.resumes = self.trials + charged, self.resumes + 1
         if unresolved: return self.stopped('interrupted', None, UNRESOLVED)
+        if self.position.state == 'declared':
+            reserve = getattr(self.evaluator, 'baseline_reserve_trials', None)
+            needed = reserve() if callable(reserve) else None
+            if not _count(needed): needed = self.allotment()[1]
+            if self.spec.limit_trials - self.trials < needed or self.stages.remaining() <= 0:
+                return self.stopped('budget_exhausted', None)
+        if self.retry_frozen and self.budget() != 'covers_round':
+            return self.stopped('budget_exhausted', None)
+        preserve = getattr(self.evaluator, 'preserve_abandoned', None)
+        if baseline_dispatched and callable(preserve): preserve(0, self.resumes)
         self.go()
 
     def result(self, seconds=None):
@@ -429,7 +489,8 @@ class _Loop:
         return dict(profile=PROFILE, spec_sha256=spec.digest, frozen_inputs_sha256=self.frozen, mode=spec.mode, acceptance_source=spec.acceptance_source,
                     looks=spec.max_rounds, per_look_alpha=spec.per_look_alpha, outcome=self.outcome, stop=position.stop, stop_reason=self.stop_reason,
                     rounds=position.rounds, best=dict(snapshot=self.best, evaluation=None if self.best_evaluation is None else _summary(self.best_evaluation)),
-                    mechanisms=dict(self.dispositions), usage=dict(trials=self.trials, seconds=round(self.elapsed() if seconds is None else seconds, 6), unknown_usage_evaluations=self.unknown),
+                    mechanisms=dict(self.dispositions), usage=dict(trials=self.trials, seconds=round(self.elapsed() if seconds is None else seconds, 6), unknown_usage_evaluations=self.unknown,
+                               **({'pending_usage': 'unknown', 'recorded_values': 'lower_bounds'} if self.stop_reason == UNRESOLVED else {})),
                     ledger=dict(events=self.ledger.count, head_sha256=self.ledger.head), recommendation_only=True, automatic_promotion=False,
                     certification=spec.certification, **(dict(resumed=dict(count=self.resumes, abandoned_rounds=self.abandoned)) if self.resumes else {}))
 
@@ -440,7 +501,10 @@ def _finish(loop, ledger, advance):
     try: advance()
     except KeyboardInterrupt:
         if not loop.live or loop.position.state == 'stopped' or ledger.head is None: raise
-        loop.stopped('interrupted', None)
+        last = ledger.events()[-1][0]
+        pending = loop.resume_context is not None and (last in ('baseline_started', 'proposal_started', 'round_started', 'candidate_started')
+                  or last == 'spec_frozen' and not loop.journal_baseline or last == 'candidate_frozen' and not loop.journal_candidate)
+        loop.stopped('interrupted', None, UNRESOLVED if pending else None)
     except TimeoutError:  # a port ran out of the shared budget mid-round: the typed budget stop, not a crash with no criterion
         if not loop.live or loop.position.state == 'stopped' or ledger.head is None: raise
         loop.stopped('budget_exhausted', None, MID_ROUND)
@@ -463,7 +527,7 @@ def run(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=Non
     finally: ledger.unclaim()
 
 
-def resume(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=None):
+def resume(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=None, expected_head=None):
     """Continue the run a ledger recorded, from its last durable event, and return its result.
 
     ledger is a new LoopLedger over the store of the run, and spec, the frozen inputs, the baseline, the mechanism queue and
@@ -484,8 +548,12 @@ def resume(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=
     ledger.reopen(spec)
     try:
         events, last = ledger.events(), ledger.last_elapsed
+        if expected_head is not None and (not _digest(expected_head) or ledger.head != expected_head):
+            raise LoopError('resume_inputs_changed', 'ledger_head', 'declared')
         final = events[-1][0] == 'stopped' and events[-1][1].get('value') != 'interrupted'
         loop = _Loop(spec, evaluator, proposer, ledger, clock, last if final else max(spent, last), dispositions=dispositions, reopened=events)
+        bind = getattr(evaluator, 'bind_recovered_loop', None)
+        if callable(bind): bind(loop)
         if final: return loop.result(seconds=last)
         loop.live = False
         return _finish(loop, ledger, lambda: loop.proceed(events))
