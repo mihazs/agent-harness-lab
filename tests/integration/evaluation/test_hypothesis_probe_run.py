@@ -3,7 +3,9 @@ import json
 import stat
 import sys
 
-from agent_harness_lab.evaluation.hypothesis_probe import run
+import pytest
+
+from agent_harness_lab.evaluation.hypothesis_probe import materialize, run
 
 
 def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch):
@@ -40,3 +42,21 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
         ('baseline', 'hypothesis-probe', 'development', 'failed'),
         ('candidate', 'hypothesis-probe', 'development', 'passed')]
     assert json.loads((output / 'probe-result.json').read_text()) == result
+
+
+def test_runner_rejects_an_intact_probe_relabelled_as_heldout_before_dispatch(tmp_path):
+    from agent_harness_lab.cli import evaluator
+    from agent_harness_lab.loop.adapters import ExecutorRunner
+    project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
+    for folder in (project, baseline, candidate): folder.mkdir()
+    mechanism = dict(status='observed_pattern', tool_class='exec_command', error_category='tool_reported_error',
+                     next_action={'same_call_retry': 2})
+    output = tmp_path / 'probe'
+    manifest_path = materialize(mechanism, output, project=project, harness_paths=[])
+    manifest = json.loads(manifest_path.read_text())
+    manifest['tasks'][0].update(id='renamed', split='heldout')
+    manifest_path.write_text(json.dumps(manifest))
+    runner = ExecutorRunner(evaluator().evaluate, 'codex', sys.executable, inherit_env=False)
+    with pytest.raises(ValueError, match='synthetic probes cannot be held-out'):
+        runner.run(('baseline', 'candidate'), {'baseline': baseline, 'candidate': candidate}, manifest_path, output / 'evaluation')
+    assert not (output / 'evaluation').exists()

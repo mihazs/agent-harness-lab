@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from agent_harness_lab.evaluation.hypothesis_probe import _paired_result, fixture_files, grader_files, materialize, structural_pattern
+from agent_harness_lab.evaluation.hypothesis_probe import _paired_result, fixture_files, grader_files, is_probe, materialize, structural_pattern
 from agent_harness_lab.evaluation.integrity import digest
 
 
@@ -85,6 +85,7 @@ def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_pat
     manifest = json.loads(path.read_text())
     assert manifest['probe']['heldout_allowed'] is False and manifest['probe']['source_session_outcome'] == 'unknown'
     assert [task['split'] for task in manifest['tasks']] == ['development']
+    assert is_probe(output / 'fixture')
     assert manifest['grader_bundles']['hypothesis-probe']['digest'] == digest(output / 'grader')
     for control in manifest['grader_self_tests']:
         folder = output / control['fixture']
@@ -94,6 +95,22 @@ def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_pat
         assert json.loads(grade.stdout)['outcome'] is (control['state'] == 'complete')
     with pytest.raises(FileExistsError): materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
     with pytest.raises(ValueError): materialize(mechanism, project / 'probe', project=project, harness_paths=['AGENTS.md'])
+
+
+def test_probe_marker_cannot_be_relabelled_as_a_final_bank_task(tmp_path):
+    from agent_harness_lab.evaluation.task_bank import validate
+    mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
+                     next_action={'same_call_retry': 2})
+    project = tmp_path / 'project'; project.mkdir()
+    output = tmp_path / 'probe'
+    materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
+    task = dict(task_id='renamed', root_id='renamed', family='synthetic', partition='certification',
+                project_group='synthetic', time_group='v1', fixture='fixture', fixture_digest=digest(output / 'fixture'),
+                grader_bundle='grader', grader_digest=digest(output / 'grader'), grader_version='v1',
+                source_kind='synthetic', source_ref='synthetic', permission='approved', reviewer='synthetic',
+                review_status='accepted', independence='unverified', safety=['synthetic'], artifacts=['result.json'])
+    bank = output / 'bank.json'; bank.write_text(json.dumps(dict(schema_version=1, tasks=[task])))
+    with pytest.raises(ValueError, match='synthetic probes cannot be held-out'): validate(bank)
 
 
 @pytest.mark.parametrize(('baseline', 'candidate', 'expected'), [

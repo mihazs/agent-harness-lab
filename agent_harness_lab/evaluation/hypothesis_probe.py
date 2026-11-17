@@ -10,6 +10,19 @@ import sys
 
 from agent_harness_lab.diagnostics.brief import BUILT_IN, ERROR_CATEGORIES, NEXT_ACTIONS
 
+PROBE_MARKER = 'ahl-synthetic-probe.json'
+PROBE_PROFILE = 'ahl-synthetic-probe-v1'
+
+
+def is_probe(fixture):
+    """Recognize an intact probe marker; an invalid marker is never treated as absence."""
+    from agent_harness_lab.private_journal import record
+    marker = Path(fixture) / PROBE_MARKER
+    if not os.path.lexists(marker): return False
+    value, _ = record(marker, 4096)
+    if value != {'profile': PROBE_PROFILE}: raise ValueError('invalid synthetic probe marker')
+    return True
+
 
 def structural_pattern(mechanism):
     """Select only closed structural labels; reject patterns that cannot define one follow-up."""
@@ -45,7 +58,8 @@ if config.get('ready') is not True:
 Path('result.json').write_text(json.dumps({'records': [3, 5]}) + '\\n')
 ''' % pattern['error_category']
     encode = lambda value: json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n'
-    return {'task.json': encode(task), 'config.json': encode({'ready': False}), 'synthetic_worker.py': worker}
+    return {'task.json': encode(task), 'config.json': encode({'ready': False}), 'synthetic_worker.py': worker,
+            PROBE_MARKER: encode({'profile': PROBE_PROFILE})}
 
 
 GRADER = '''import hashlib
@@ -80,7 +94,8 @@ try:
     config, result = (json.loads(read(root / name)) for name in ('config.json', 'result.json'))
     outcome = (type(config) is dict and config.get('ready') is True and type(result) is dict
                and result.get('records') == [3, 5] and all(type(n) is int for n in result['records'])
-               and hashlib.sha256(read(root / 'synthetic_worker.py')).hexdigest() == pin)
+               and hashlib.sha256(read(root / 'synthetic_worker.py')).hexdigest() == pin
+               and json.loads(read(root / 'ahl-synthetic-probe.json')) == {'profile': 'ahl-synthetic-probe-v1'})
 except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
     outcome = False
 receipt(True, outcome)
@@ -127,7 +142,7 @@ def materialize(mechanism, output, *, project, harness_paths):
     task = json.loads(fixture['task.json'])
     manifest = dict(schema_version=1, profile='descriptive_smoke', skills=[], harness_paths=harness_paths,
         tasks=[dict(id='hypothesis-probe', root='hypothesis-probe', split='development', fixture='fixture', prompt=task['prompt'],
-                    artifacts=['config.json', 'result.json', 'synthetic_worker.py'],
+                    artifacts=['config.json', 'result.json', 'synthetic_worker.py', PROBE_MARKER],
                     grader=[sys.executable, str(grader_dir / 'grade.py.txt'), '{workspace}', str(grader_dir / 'expected.json')])],
         grader_self_tests=controls, grader_bundles={'hypothesis-probe': dict(path='grader', digest=digest(grader_dir))},
         max_trials=2, budget_seconds=60, timeout_seconds=20, no_nested_agents=True,

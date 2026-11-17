@@ -121,6 +121,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
     for task in tasks:
         fixture = contained(path.parent, task.fixture)
         grader = contained(path.parent, task.grader_bundle)
+        if task.partition in FINAL_PARTITIONS:
+            from .hypothesis_probe import is_probe
+            if is_probe(fixture): raise ValueError('synthetic probes cannot be held-out tasks')
         if fixture == grader or fixture.is_relative_to(grader) or grader.is_relative_to(fixture):
             raise ValueError('grader and fixture overlap')
         if verify_contents and (digest(fixture, **limits) != task.fixture_digest or digest(grader, **limits) != task.grader_digest):
