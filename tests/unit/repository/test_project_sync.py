@@ -171,3 +171,16 @@ def test_the_project_read_queries_ask_for_their_own_cost():
         sync.main()
     assert len(queries) == 2
     assert all('rateLimit{cost remaining resetAt limit}' in query for query in queries)
+
+
+def test_secondary_limit_cooldown_is_shared_before_another_sync(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    limited = gh_output(403, {'retry-after': '60', 'x-ratelimit-resource': 'graphql'}, {'message': 'rate limit'})
+    with patch.object(sync.subprocess, 'run', return_value=limited) as run:
+        with pytest.raises(RuntimeError, match='not a permission problem'):
+            sync.graphql('query {a}', {})
+        monkeypatch.setattr(sync, 'LIMITER', None)
+        with pytest.raises(RuntimeError, match='halted'):
+            sync.graphql('query {a}', {})
+        assert run.call_count == 1

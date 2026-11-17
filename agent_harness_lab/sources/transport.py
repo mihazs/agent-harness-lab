@@ -38,7 +38,8 @@ class HTTPStatusError(TransportError):
 class RateLimited(HTTPStatusError):
     """A rate limit (observed or enforced locally) that halts the read: never a permission denial, never retried blindly.
 
-    ``reason`` is primary_limit, secondary_limit, reserve_floor, request_budget or cancelled; ``reset`` is epoch seconds or None.
+    ``reason`` includes primary_limit, secondary_limit, reserve_floor, request_budget, coordination_busy,
+    coordination_unavailable or cancelled; ``reset`` is epoch seconds or None.
     """
 
     def __init__(self, reason, reset=None, resource=None):
@@ -194,29 +195,34 @@ def metered_exchange(api, target, headers, state, *, authorization=None, body=No
     limiter, host, who, bucket = api.limiter, api.origin[0], identity_digest(authorization), resource_for(target)
     attempt = 0
     while True:
-        limiter.before(host, bucket, who, need=cost, patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
-        state['requests'] += 1
-        remaining = None if api.max_bytes is None else api.max_bytes-state['used']
-        limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
-        try:
-            value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
-                deadline=state['deadline'], max_bytes=limit, not_modified=not_modified)
-        except HTTPStatusError as error:
-            found = signals(error.evidence)
-            kind = classify(error.status, found, error.hint)
-            limiter.observe(host, who, bucket, error.status, found)
-            if kind is None: raise
-            # Only an idempotent GET is retried; the limiter shares the cooldown either way and halts when the wait is long.
-            limiter.wait(limiter.retry_delay(host, who, bucket, kind, found, attempt, retry=body is None,
-                patience=None if state['deadline'] is None else state['deadline']-time.monotonic()))
-            attempt += 1
-            continue
-        lowered = {k.lower(): v for k, v in metadata.items()}
-        limiter.observe(host, who, bucket, 304 if value is NOT_MODIFIED else 200, signals(lowered))
-        spent = graphql_cost(value) if bucket == 'graphql' else None
-        if spent is not None: limiter.charge(host, who, bucket, spent)
-        state['used'] += size
-        return value, lowered
+        patience = None if state['deadline'] is None else state['deadline'] - time.monotonic()
+        delay = None
+        with limiter.slot(host, bucket, who, patience=patience):
+            limiter.before(host, bucket, who, need=cost, patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
+            state['requests'] += 1
+            remaining = None if api.max_bytes is None else api.max_bytes-state['used']
+            limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
+            try:
+                value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
+                    deadline=state['deadline'], max_bytes=limit, not_modified=not_modified)
+            except HTTPStatusError as error:
+                found = signals(error.evidence)
+                kind = classify(error.status, found, error.hint)
+                limiter.observe(host, who, bucket, error.status, found)
+                if kind is None: raise
+                delay = limiter.retry_delay(host, who, bucket, kind, found, attempt, retry=body is None,
+                    patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
+            else:
+                lowered = {k.lower(): v for k, v in metadata.items()}
+                limiter.observe(host, who, bucket, 304 if value is NOT_MODIFIED else 200, signals(lowered))
+                spent = graphql_cost(value) if bucket == 'graphql' else None
+                if spent is not None: limiter.charge(host, who, bucket, spent)
+                state['used'] += size
+                return value, lowered
+        # Only idempotent GETs retry; release the request slot while waiting for cooldown.
+        limiter.wait(delay)
+        attempt += 1
+
 
 
 def guarded_get(api, target, state, *, authorization=None, credential_header='Authorization'):
