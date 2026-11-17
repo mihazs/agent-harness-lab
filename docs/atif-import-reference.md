@@ -50,7 +50,7 @@ Each limit rejects the document; none truncates it.
 | JSON nesting | 32 levels, checked over the whole document | `nesting_limit_exceeded` |
 | Steps per trajectory | 10 000 | `step_limit_exceeded` |
 | Embedded subagent trajectories | 64 | `subagent_limit_exceeded` |
-| Events written | 500 000 | `event_limit_exceeded` |
+| Events written, including generated unmatched-call coverage | 500 000 | `event_limit_exceeded` |
 
 ## Field mapping
 

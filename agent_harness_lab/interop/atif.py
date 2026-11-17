@@ -156,6 +156,8 @@ class Importer:
         rows = [row for walk in self.walks for row in walk['events']]
         events, bases = [], {walk['case']: walk['base'] for walk in self.walks}
         for row in correlate(rows):
+            if len(events) >= self.limits.max_events:
+                raise Rejected('event_limit_exceeded', 'events')
             events.append(event({**bases[row['case_id']], **row}) if row['case_id'] in bases and 'source_format' not in row else row)
         report.counts.update(trajectories=len(self.walks), steps=sum(walk['steps'] for walk in self.walks), events=len(events))
         report.counts.update('status:' + row['capture_status'] for row in events if row['capture_status'] != 'unverified')

@@ -542,3 +542,10 @@ def test_saved_upstream_multimodal_dump_is_counted_without_loading_media():
     assert report.unsupported_features['audio_content_parts_not_loaded'] == 1
     assert any(row['activity'] == 'capture_coverage' for row in events)
     assert 'never-open.wav' not in json.dumps(events) + json.dumps(report.to_dict())
+
+
+def test_event_limit_includes_unmatched_call_coverage_events():
+    sample = trajectory([agent_step(1, [call('unmatched')], results=[])])
+    assert rejected(sample, max_events=2).reason == 'event_limit_exceeded'
+    events, _ = convert(sample, max_events=3)
+    assert len(events) == 3 and events[-1]['capture_status'] == 'unmatched_call'
