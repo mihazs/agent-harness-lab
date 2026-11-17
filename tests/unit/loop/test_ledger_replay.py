@@ -154,7 +154,7 @@ def test_a_ledger_that_was_never_begun_cannot_be_reopened(tmp_path):
 def test_a_reopened_ledger_allows_two_more_events_for_each_resume_a_run_may_make_and_no_more(tmp_path):
     spec = begun(tmp_path, events=BASELINE)
     ledger = reopened(tmp_path, spec)
-    assert (ledger.max_events, event_cap(spec)) == (event_cap(spec) + 3*MAX_RESUMES, 5*spec.max_rounds + 9)
+    assert (ledger.max_events, event_cap(spec)) == (event_cap(spec) + 3*MAX_RESUMES, 6*spec.max_rounds + 9)
 
 
 def test_the_kept_head_follows_every_event_the_ledger_writes(tmp_path):
