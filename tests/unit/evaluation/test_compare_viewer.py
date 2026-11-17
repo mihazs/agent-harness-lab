@@ -49,6 +49,17 @@ def test_verdicts_are_text_labels_and_no_color_semantics():
     assert not re.search(r'color|#[0-9a-f]{3,6}', style, re.I) and 'style=' not in document
 
 
+def test_pair_filters_preserve_every_row_and_the_backend_decision():
+    document = page(fixture())
+    assert 'id="pair-filter-all" checked' in document
+    assert 'the backend decision and analysis population stay unchanged' in document
+    for verdict in ('improved', 'regressed', 'unknown'):
+        assert f'id="pair-filter-{verdict}"' in document
+        assert f'<tr data-verdict="{verdict}">' in document
+    assert 'insufficient_independent_roots' in document
+    assert '<script' not in document
+
+
 def test_event_bodies_never_render():
     value = fixture()
     value['trials'][0]['events'][0]['arguments'] = 'SECRET-BODY'

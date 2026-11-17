@@ -16,6 +16,11 @@ STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 3
          'table{border-collapse:collapse;width:100%}th,td{border:1px solid;padding:4px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}'
          '.scroll{overflow-x:auto}a:focus,summary:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
 
+PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchanged', 'Unchanged'),
+                ('unknown', 'Missing or unknown'), ('not_comparable', 'Not comparable'))
+STYLE += ''.join(f'#pair-filter-{name}:checked~.scroll tbody tr:not([data-verdict="{name}"]){{display:none}}'
+                 for name, _ in PAIR_FILTERS)
+
 
 def _e(value):
     return html.escape('' if value is None else str(value))
@@ -25,6 +30,20 @@ def _table(headers, rows):
     head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
     body = ''.join('<tr>' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>' for row in rows)
     return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def _pair_table(headers, rows):
+    """Filter presentation only; the supplied analysis and pair data stay unchanged."""
+    options = (('all', 'All pairs'), *PAIR_FILTERS)
+    controls = ''.join(f'<input type="radio" name="pair-filter" id="pair-filter-{name}"'
+                       + (' checked' if name == 'all' else '')
+                       + f'><label for="pair-filter-{name}">{label}</label> ' for name, label in options)
+    head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
+    body = ''.join(f'<tr data-verdict="{_e(verdict)}">' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
+                   for verdict, row in rows)
+    return ('<div role="group" aria-label="Filter task pairs">' + controls
+            + '<p>Filters change this table only; the backend decision and analysis population stay unchanged.</p>'
+            + f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div></div>')
 
 
 def _arm(pair, arm):
@@ -286,9 +305,9 @@ def render(report):
     rows, details = [], []
     for number, pair in enumerate(pairs):
         reasons = ', '.join(pair['reasons']) or 'none'
-        rows.append((pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
+        rows.append((pair['verdict'], (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
                      _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons,
-                     'gap' if pair['coverage_gap'] else 'complete'))
+                     'gap' if pair['coverage_gap'] else 'complete')))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
         truncated = [f"{arm}: {record['events_total']} events, first {len(record['events'])} + {record['invalid_events']} invalid shown"
@@ -319,7 +338,7 @@ def render(report):
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             + _resource(report) +
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'
-            f'<h2 id="pairs">Task table</h2>{_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'
+            f'<h2 id="pairs">Task table</h2>{_pair_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'
             f'<h2>Timelines</h2>{"".join(details)}'
             + (f'<h2>Invalid records and mappings</h2>{_table(("Index", "Reason"), invalid)}' if invalid else '')
             + f'<h2>Limitations</h2><ul>{"".join(f"<li>{_e(item)}</li>" for item in limitations)}</ul></body></html>')
