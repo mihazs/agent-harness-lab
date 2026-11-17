@@ -243,6 +243,10 @@ task lint PYTHON=.venv/bin/python
 ```
 
 Set `TEST_WORKERS=4` to select a worker count, or `TEST_WORKERS=0` for debugging.
+On systems with a working user systemd manager, opt into a memory cap with
+`TEST_WORKERS=4 task test:capped MEMORY_MAX=4G PYTHON=.venv/bin/python`. This runs
+the ordinary test task inside a scope; it skips if `systemd-run` is absent, and
+reports an error if the manager cannot create the scope.
 CI tests Python 3.14; package installation still requires Python 3.11 or newer.
 
 Licensed under [MIT](LICENSE).

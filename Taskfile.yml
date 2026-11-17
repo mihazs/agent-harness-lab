@@ -205,6 +205,12 @@ tasks:
       PYTHONDONTWRITEBYTECODE: '1'
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+  test:capped:
+    desc: Run the normal test task in an opt-in systemd memory scope
+    requires:
+      vars: [MEMORY_MAX]
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/capped_test.py --memory {{.MEMORY_MAX | shellQuote}} --python {{.PYTHON | shellQuote}}'
   setup:test:installed:
     desc: Install test and lint extras for the already installed release without replacing it
     vars:
