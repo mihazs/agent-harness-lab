@@ -101,17 +101,34 @@ def role_files(root, assets, rows, project, **options):
             for role, folder in prepared.items()}
 
 
-def sweep(root, assets, case):
+def sweep(root, assets, case, text=CANARY):
     """Poison each string slot in turn and list the slots whose canary reached a view."""
     reached, accepted = [], 0
     for path in sorted(set(signatures(case.rows)), key=str):
-        poisoned = poison(deepcopy(case.rows), path)
+        poisoned = poison(deepcopy(case.rows), path, text)
         try: files = role_files(root / ('slot-' + '-'.join(path).replace('[]', 'n')), assets, poisoned, case.project, **case.options)
         except UnicodeError: raise  # a codec crash on hostile text is a defect, never a safe rejection
         except ValueError: continue
         accepted += 1
         if any(CANARY in text for role in files.values() for text in role.values()): reached.append('.'.join(path))
     return reached, accepted
+
+
+@pytest.mark.parametrize('adapter', ADAPTERS)
+def test_lone_surrogate_in_any_imported_string_slot_does_not_crash(adapter, tmp_path, assets):
+    case = build(adapter, tmp_path)
+    _, accepted = sweep(tmp_path, assets, case, SURROGATE)
+    assert accepted > 0
+
+
+@pytest.mark.parametrize('slot', ['case_id', 'tool_name'])
+def test_lone_surrogate_case_and_tool_are_accepted_without_exposure(slot, tmp_path, assets):
+    case = build('normalized', tmp_path)
+    rows = [{**row, slot: SURROGATE + row[slot] if slot == 'case_id' else SURROGATE} for row in case.rows]
+    files = role_files(tmp_path / 'poisoned', assets, rows, case.project, **case.options)
+    for texts in files.values():
+        assert json.loads(texts['analysis-summary.json'])['events'] > 0
+        assert SURROGATE not in ''.join(texts.values())
 
 
 @pytest.mark.parametrize('adapter', ADAPTERS)
