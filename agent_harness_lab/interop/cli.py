@@ -16,7 +16,7 @@ from . import atif
 from .mapping import Rejected
 
 FORMATS = {'atif': atif}
-EVENTS, REPORT = 'events.v2.jsonl', 'conversion-report.json'
+EVENTS, REPORT, OTEL_LOGS = 'events.v2.jsonl', 'conversion-report.json', 'otel-logs.json'
 
 
 def load(path, limits):
@@ -63,7 +63,7 @@ def publish(output, files):
         os.mkdir(stage_name, 0o700, dir_fd=parent_fd)
         stage_fd = os.open(stage_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
         for name, raw in files.items():
-            if name not in (EVENTS, REPORT): raise ValueError('unexpected output file')
+            if name not in (EVENTS, REPORT, OTEL_LOGS): raise ValueError('unexpected output file')
             written[name] = _write_at(stage_fd, name, raw)
         os.fsync(stage_fd)
         listed = os.open(stage_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
