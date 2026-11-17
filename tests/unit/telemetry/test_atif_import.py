@@ -549,3 +549,11 @@ def test_event_limit_includes_unmatched_call_coverage_events():
     assert rejected(sample, max_events=2).reason == 'event_limit_exceeded'
     events, _ = convert(sample, max_events=3)
     assert len(events) == 3 and events[-1]['capture_status'] == 'unmatched_call'
+
+
+def test_direct_converter_enforces_its_byte_limit_before_parsing():
+    content = raw(trajectory())
+    with pytest.raises(Rejected) as stopped:
+        atif.convert(content, atif.Limits(max_bytes=len(content)-1))
+    assert stopped.value.reason == 'input_too_large'
+    assert atif.convert(content, atif.Limits(max_bytes=len(content)))[0]

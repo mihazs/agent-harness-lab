@@ -375,6 +375,8 @@ def version_label(value):
 
 def convert(raw, limits=Limits()):
     """Bytes of one ATIF-v1.8 document -> (normalized events, ConversionReport); raises Rejected and returns nothing partial."""
+    if not isinstance(raw, bytes): raise Rejected('invalid_json', 'document')
+    if len(raw) > limits.max_bytes: raise Rejected('input_too_large', 'input')
     document = parse(raw, limits)
     detected = document.get('schema_version') if isinstance(document, dict) else None
     if detected != VERSION:
