@@ -69,7 +69,8 @@ incomplete, never a checkpoint and never evidence of absence.
   `primary_limit` or `secondary_limit` and the reset time. GraphQL POSTs are never retried.
 - Before sending, a request halts with `reserve_floor` at the reserve, `request_budget` at the
   per-run budget, or `secondary_limit` during a shared cooldown; a shorter wait is taken
-  within `max_wait`. Waits use an injectable clock and can be cancelled.
+  within `max_wait`. Backoff and spacing waits use the injectable clock; slot
+  waits use monotonic wall time. Both can be cancelled and appear in the receipt.
 - The state file is owner-only (`0600`, directory `0700`), updated atomically under a
   lock, holds at most 64 numeric entries, drops entries after their reset, and a corrupt,
   oversized or malformed file is ignored and rebuilt. It never holds a token, header,
