@@ -2,6 +2,9 @@
 
 import hashlib
 import json
+import os
+from pathlib import Path
+import sys
 
 from agent_harness_lab.diagnostics.brief import BUILT_IN, ERROR_CATEGORIES, NEXT_ACTIONS
 
@@ -87,3 +90,45 @@ def grader_files(mechanism):
     """Freeze an artifact-only oracle for the generated worker, separate from the fixture."""
     worker = fixture_files(mechanism)['synthetic_worker.py'].encode()
     return {'grade.py.txt': GRADER, 'expected.json': json.dumps({'worker_sha256': hashlib.sha256(worker).hexdigest()}, sort_keys=True) + '\n'}
+
+
+def materialize(mechanism, output, *, project, harness_paths):
+    """Create one private development-only probe manifest, outside the project and without overwriting."""
+    from agent_harness_lab.evaluation.integrity import digest, open_directory_nofollow
+    from agent_harness_lab.evaluation.workspace import names
+    from agent_harness_lab.private_journal import encoded, write_bytes
+    from agent_harness_lab.read_only import require_writable
+
+    fixture, grader = fixture_files(mechanism), grader_files(mechanism)
+    if not isinstance(harness_paths, list) or list(names(harness_paths)) != harness_paths:
+        raise ValueError('safe harness paths required')
+    output, project = Path(output).absolute(), Path(project).resolve(strict=True)
+    if '..' in output.parts or output.is_relative_to(project) or project.is_relative_to(output):
+        raise ValueError('probe output must not overlap project')
+    require_writable(output)
+    parent = open_directory_nofollow(output.parent)
+    try: os.mkdir(output.name, 0o700, dir_fd=parent)
+    finally: os.close(parent)
+    fixture_dir, grader_dir = output / 'fixture', output / 'grader'
+    fixture_dir.mkdir(mode=0o700); grader_dir.mkdir(mode=0o700)
+    for name, content in fixture.items(): write_bytes(fixture_dir / name, content.encode())
+    for name, content in grader.items(): write_bytes(grader_dir / name, content.encode())
+    controls = []
+    for state in ('broken', 'partial', 'complete'):
+        folder = grader_dir / 'controls' / state
+        folder.mkdir(mode=0o700, parents=True)
+        values = dict(fixture)
+        if state != 'broken': values['config.json'] = '{"ready": true}\n'
+        if state == 'complete': values['result.json'] = '{"records": [3, 5]}\n'
+        for name, content in values.items(): write_bytes(folder / name, content.encode())
+        controls.append(dict(task='hypothesis-probe', state=state, fixture=str(folder.relative_to(output)), digest=digest(folder)))
+    task = json.loads(fixture['task.json'])
+    manifest = dict(schema_version=1, profile='descriptive_smoke', skills=[], harness_paths=harness_paths,
+        tasks=[dict(id='hypothesis-probe', root='hypothesis-probe', split='development', fixture='fixture', prompt=task['prompt'],
+                    artifacts=['config.json', 'result.json', 'synthetic_worker.py'],
+                    grader=[sys.executable, str(grader_dir / 'grade.py.txt'), '{workspace}', str(grader_dir / 'expected.json')])],
+        grader_self_tests=controls, grader_bundles={'hypothesis-probe': dict(path='grader', digest=digest(grader_dir))},
+        max_trials=2, budget_seconds=60, timeout_seconds=20, no_nested_agents=True,
+        probe=dict(profile='ahl-synthetic-probe-v1', source_session_outcome='unknown', heldout_allowed=False, automatic_promotion=False))
+    write_bytes(output / 'manifest.json', encoded(manifest))
+    return output / 'manifest.json'

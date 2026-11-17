@@ -5,7 +5,8 @@ import sys
 
 import pytest
 
-from agent_harness_lab.evaluation.hypothesis_probe import fixture_files, grader_files, structural_pattern
+from agent_harness_lab.evaluation.hypothesis_probe import fixture_files, grader_files, materialize, structural_pattern
+from agent_harness_lab.evaluation.integrity import digest
 
 
 def test_pattern_does_not_copy_private_fields():
@@ -73,3 +74,23 @@ def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
     (workspace / 'result.json').write_text('{"records": [3, 5]}')
     (workspace / 'synthetic_worker.py').write_text('changed')
     assert grade().returncode == 1
+
+
+def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_path):
+    mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
+                     next_action={'same_call_retry': 2})
+    project = tmp_path / 'project'; project.mkdir()
+    output = tmp_path / 'probe'
+    path = materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
+    manifest = json.loads(path.read_text())
+    assert manifest['probe']['heldout_allowed'] is False and manifest['probe']['source_session_outcome'] == 'unknown'
+    assert [task['split'] for task in manifest['tasks']] == ['development']
+    assert manifest['grader_bundles']['hypothesis-probe']['digest'] == digest(output / 'grader')
+    for control in manifest['grader_self_tests']:
+        folder = output / control['fixture']
+        assert digest(folder) == control['digest']
+        command = [sys.executable, str(output / 'grader/grade.py.txt'), str(folder), str(output / 'grader/expected.json')]
+        grade = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert json.loads(grade.stdout)['outcome'] is (control['state'] == 'complete')
+    with pytest.raises(FileExistsError): materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
+    with pytest.raises(ValueError): materialize(mechanism, project / 'probe', project=project, harness_paths=['AGENTS.md'])
