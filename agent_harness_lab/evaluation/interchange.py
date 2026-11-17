@@ -124,11 +124,9 @@ def _sample(value):
     if not 0<len(ideals)<=32 or any(not isinstance(v,str) for v in ideals): raise ValueError('bounded ideal references required')
 
 
-def _mapping(value):
-    fields(value,'schema_version format source review runtime score_descriptor items registry_sha256')
-    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['format'] not in FORMATS:
-        raise ValueError('unsupported interchange mapping profile')
-    source=value['source']; fields(source,'repository revision format_version dataset_id source_kind permission dataset_license sha256')
+def check_source(source):
+    """An approved, licensed, digest-pinned source declaration; permission and license are never inferred."""
+    fields(source,'repository revision format_version dataset_id source_kind permission dataset_license sha256')
     for key in ('repository','revision','format_version','dataset_id'): text(source[key])
     if source['source_kind'] not in ('synthetic','public','private') or source['permission']!='approved':
         raise ValueError('explicitly approved source permission required')
@@ -137,8 +135,19 @@ def _mapping(value):
         text(item)
         if item.casefold() in ('unknown','unverified','unspecified'): raise ValueError('applicable dataset license evidence required')
     sha256(source['sha256'])
-    review=value['review']; fields(review,'identity source evidence_refs'); identifier(review['identity']); references(review['evidence_refs'])
+
+
+def check_review(review):
+    """An operator review attestation with evidence; without it no executable grader may be generated."""
+    fields(review,'identity source evidence_refs'); identifier(review['identity']); references(review['evidence_refs'])
     if review['source']!='operator_attestation' or not review['evidence_refs']: raise ValueError('explicit operator review evidence required')
+
+
+def _mapping(value):
+    fields(value,'schema_version format source review runtime score_descriptor items registry_sha256')
+    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['format'] not in FORMATS:
+        raise ValueError('unsupported interchange mapping profile')
+    source=value['source']; check_source(source); check_review(value['review'])
     fields(value['runtime'],'provider model_revision configuration_sha256')
     for key in ('provider','model_revision'): _optional(value['runtime'][key])
     if value['runtime']['configuration_sha256'] is not None: sha256(value['runtime']['configuration_sha256'])
@@ -300,18 +309,25 @@ def import_local(mapping_path, source_path, output, *, registry_path=None):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='ahl bank-interchange',description='Inspect or import explicitly reviewed local foreign evaluation data using a versioned mapping JSON. Imported scores remain observations, never executable grades, independence proof or certified bank admission.',epilog='Examples: ahl bank-interchange inspect --mapping mapping.json --source samples.jsonl; ahl bank-interchange import --mapping mapping.json --source samples.jsonl --output /private/new-import. JSON stdout; exit 0 completed, 2 rejected input. No providers, registry code or model packages are executed.')
-    parser.add_argument('operation',choices=('inspect','import'),help='inspect validates and reports without writing; import additionally creates a new private data/proposal directory')
+    parser=argparse.ArgumentParser(prog='ahl bank-interchange',description='Inspect or import explicitly reviewed local foreign evaluation data using a versioned mapping JSON, or convert a reviewed task-plus-text-expectations case list into a native task bank. Imported scores remain observations, never executable grades, independence proof or certified bank admission.',epilog='Examples: ahl bank-interchange inspect --mapping mapping.json --source samples.jsonl; ahl bank-interchange import --mapping mapping.json --source samples.jsonl --output /private/new-import; ahl bank-interchange convert --mapping mapping.json --source cases.json --output /private/new-bank. JSON stdout; exit 0 completed, 2 rejected input or nothing convertible. No providers, registry code or model packages are executed.')
+    parser.add_argument('operation',choices=('inspect','import','convert'),help='inspect validates and reports without writing; import additionally creates a new private data/proposal directory; convert writes a new private native bank with offline text graders for the cases of a task-text-cases-json-v1 list that can be graded offline and lists every other case with a typed exclusion reason')
     for name in ('mapping','source'): parser.add_argument('--'+name,type=Path,required=True,help={
         'mapping':'Existing schema-1 reviewed mapping JSON declaring format, exact source digest/license, runtime provenance and item boundaries',
         'source':'Existing local data file in the mapping-declared format; exact bytes must match the declared source SHA-256'}[name])
     parser.add_argument('--registry',type=Path,help='Existing data-only registry JSON required for the selected OpenAI Evals mapping; never imports Python registry classes')
-    parser.add_argument('--output',type=Path,help='New private output directory, required only for import and rejected for inspect; must not already exist')
+    parser.add_argument('--output',type=Path,help='New private output directory, required for import and convert and rejected for inspect; must not already exist')
     args=parser.parse_args(argv)
     try:
-        if (args.operation=='import')!=(args.output is not None): raise ValueError('only import requires a new private output')
-        result=inspect(args.mapping,args.source,registry_path=args.registry) if args.operation=='inspect' else import_local(
-            args.mapping,args.source,args.output,registry_path=args.registry)
-        print(json.dumps(result,indent=2,allow_nan=False)); return 0
+        if (args.operation!='inspect')!=(args.output is not None): raise ValueError('only import and convert require a new private output')
+        if args.operation=='convert':
+            if args.registry is not None: raise ValueError('unexpected registry metadata')
+            from .case_list_bank import convert
+            result=convert(args.mapping,args.source,args.output)
+        else:
+            result=inspect(args.mapping,args.source,registry_path=args.registry) if args.operation=='inspect' else import_local(
+                args.mapping,args.source,args.output,registry_path=args.registry)
+        print(json.dumps(result,indent=2,allow_nan=False))
+        if result.get('status')=='nothing_convertible': parser.exit(2,'case-list conversion wrote no bank: no case can be graded offline, see the exclusions in the report\n')
+        return 0
     except (ValueError,OSError,TypeError,KeyError):
         parser.exit(2,'evaluation interchange rejected: invalid, unsupported or unavailable private input\n')

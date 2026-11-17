@@ -59,6 +59,7 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `task_areas_too_many` | project declaration defect | no |
 | `task_areas_invalid` | project declaration defect | no |
 | `task_area_undeclared` | project declaration defect | no |
+| `score_area_undeclared` | project declaration defect | no |
 
 An unexpected `KeyError`, `TypeError`, `AttributeError` or `IndexError` inside a stage is
 caught at the stage boundary and reported as `internal_contract_error` with the stage
@@ -90,8 +91,10 @@ The reasons are `area_registry_invalid` (shape, size or an id or text outside th
 `area_duplicate` (an id listed twice in the registry or in one task), `task_areas_empty`
 (an empty list or an empty id), `task_areas_too_many` (more than three tags),
 `task_areas_invalid` (not a list of kebab-case ids) and `task_area_undeclared` (a tag the
-project does not declare; areas are never created implicitly). Errors name the stage
-(`configuration` for `ahl.json`, `bank_validation` for the bank), the file, and a field
+project does not declare; areas are never created implicitly). `ahl score` adds
+`score_area_undeclared` (an `--area` the project does not declare) and reports a repeated
+`--area` as `area_duplicate`. Errors name the stage
+(`configuration` for `ahl.json`, `bank_validation` for the bank, `score_selection` for `--area`), the file, and a field
 such as `tasks[2].areas[1]`, never the offending value. Tags are checked against the
 registry wherever a configured bank is validated: before `ahl improve` dispatches
 anything and when a configured evaluation starts. `ahl bank` has no project, so it checks

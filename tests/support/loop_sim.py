@@ -263,15 +263,25 @@ def digest(*parts):
 
 class ScriptedPorts:
     """The controller's Evaluator and Proposer over a script: the k-th evaluation is the script's round k, and each
-    proposal is a fresh snapshot digest. asked records (best snapshot, mechanism) for every propose call."""
-    def __init__(self, script, meter):
+    proposal is a fresh snapshot digest. asked records (best snapshot, mechanism) for every propose call.
+
+    A resumed run builds fresh ports for the work still to do: evaluated and proposed say how many evaluations and proposals the
+    ledger already holds, so the next ones are the script's next rounds. on_call, when set, runs at the start of every port
+    call (a place to interrupt); settle answers the controller's question about an evaluation that was running when the run
+    stopped: settled is the trials it consumed, or None for a request that may have no outcome."""
+    def __init__(self, script, meter, *, evaluated=0, proposed=0, settled=0):
         self.script, self.meter, self.evaluations, self.asked, self.order = script, meter, ScriptedEvaluator(script, meter), [], []
-        self.investigated = []
+        self.investigated, self.evaluated, self.proposed, self.settled, self.on_call, self.settling = [], evaluated, proposed, settled, None, []
         self.frozen_inputs, self.baseline, self.mechanisms = script.frozen_inputs, digest(script.name, script.seed, 'baseline'), script.mechanisms
 
+    def settle(self, snapshot):
+        self.settling.append(snapshot)
+        return self.settled
+
     def evaluate(self, snapshot, frozen_inputs):
+        if self.on_call is not None: self.on_call()
         self.order.append('evaluate')
-        return self.evaluations.evaluate(frozen_inputs, Candidate(snapshot, len(self.evaluations.calls)))
+        return self.evaluations.evaluate(frozen_inputs, Candidate(snapshot, self.evaluated + len(self.evaluations.calls)))
 
     def investigate(self, best_evaluation, candidate_evaluation):
         """The simulation's investigation: it blames whoever the script says caused the regression."""
@@ -279,9 +289,10 @@ class ScriptedPorts:
         return candidate_evaluation.cause
 
     def propose(self, best_snapshot, mechanism):
+        if self.on_call is not None: self.on_call()
         self.order.append('propose')
         self.asked.append((best_snapshot, mechanism))
-        return controller.Candidate(digest(self.script.name, self.script.seed, len(self.asked), mechanism), mechanism)
+        return controller.Candidate(digest(self.script.name, self.script.seed, self.proposed + len(self.asked), mechanism), mechanism)
 
 
 class InterruptedLedger(LoopLedger):

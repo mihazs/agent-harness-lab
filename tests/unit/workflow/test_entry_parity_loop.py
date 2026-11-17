@@ -3,6 +3,7 @@
 The receipt is the real builder's output over scripted ports, so a key the builder adds is compared the way it is written.
 """
 import copy
+import hashlib
 
 import pytest
 
@@ -34,6 +35,7 @@ def differences(first, second):
 def retimed(loop, seconds):
     loop = copy.deepcopy(loop)
     loop['usage']['seconds'] = seconds
+    loop['ledger_head_sha256'] = hashlib.sha256(str(seconds).encode()).hexdigest()  # the head of a ledger whose events are stamped with the measured seconds
     loop['budget_stages']['remaining_seconds'] = 60 - seconds
     for stage in loop['budget_stages']['stages'].values(): stage['spent_seconds'] = seconds / 4
     return loop
@@ -43,7 +45,7 @@ def test_two_runs_of_one_receipt_that_differ_only_in_their_measured_time_agree(l
     assert differences(workflow(loop, RUN_A), workflow(retimed(loop, 3.2), RUN_B)) == []
 
 
-@pytest.mark.parametrize('key', ['loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.trials.spent_seconds'])
+@pytest.mark.parametrize('key', ['loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.trials.spent_seconds', 'loop.ledger_head_sha256'])
 def test_each_listed_timing_key_is_allowed_to_differ_in_value(key):
     assert entry_parity.allowed(entry_parity.RECEIPT, key)
 
@@ -85,4 +87,4 @@ def test_the_run_directory_inside_a_loop_value_is_normalized_not_compared(loop):
 def test_every_key_the_receipt_builder_writes_is_either_compared_or_a_listed_timing_key(loop):
     flat = {key for key, _ in entry_parity._flatten(dict(loop=loop))}
     timing = {key for key in flat if entry_parity.allowed(entry_parity.RECEIPT, key)}
-    assert timing == {'loop.usage.seconds', *{key for key in flat if key.startswith('loop.budget_stages.') and key.endswith(('remaining_seconds', 'spent_seconds'))}}
+    assert timing == {'loop.usage.seconds', 'loop.ledger_head_sha256', *{key for key in flat if key.startswith('loop.budget_stages.') and key.endswith(('remaining_seconds', 'spent_seconds'))}}

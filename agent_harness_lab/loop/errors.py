@@ -18,6 +18,9 @@ REASONS = {
     'loop_ledger_invalid': 'Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again.',
     'loop_ledger_full': 'The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run.',
     'loop_requires_frozen_bank': 'Pin a task bank in ahl.json (bank.path and bank.sha256, with development, calibration and certification or transfer tasks) and use the cooperative runtime it names, then rerun; the loop evaluates every round on one frozen bank, so it never falls back to a single pass.',
+    'resume_spec_changed': 'Resume with the declaration the run was frozen with, or start a new run: a declaration is immutable once a run starts, and nothing ran.',
+    'resume_inputs_changed': 'Resume with the frozen inputs, baseline, mechanism queue and carried dispositions the run was frozen with, or start a new run; nothing ran.',
+    'resume_busy': 'Another run or resume holds this loop; wait for it to finish, then resume again. Nothing ran.',
     'loop_receipt_invalid': 'This is an AHL defect, not an input defect: the loop receipt failed its own validation, so it was not reported as a result; report it with the named field. Nothing was applied.',
     'loop_order_violation': 'This is an AHL ordering defect, not an input defect: improve only after a valid evaluation of the current best and report a result only after a post-improvement evaluation; report it with the named state and event.',
 }

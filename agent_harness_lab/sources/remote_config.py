@@ -8,7 +8,7 @@ from .ratelimit import state_path as shared_state_path
 from .schema import SourceSpec, digest, fingerprint
 
 FIELDS = frozenset(('schema_version', 'source', 'endpoint', 'selection'))
-LIMITS = frozenset(('max_pages', 'max_bytes', 'timeout', 'seconds', 'request_budget', 'reserve_fraction', 'max_wait'))
+LIMITS = frozenset(('max_pages', 'max_bytes', 'timeout', 'seconds', 'request_budget', 'reserve_fraction', 'max_wait', 'routing'))
 
 
 class ConfiguredAPI:

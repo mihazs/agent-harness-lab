@@ -139,3 +139,35 @@ def test_graphql_keeps_the_existing_shape_for_ordinary_responses(tmp_path, monke
     monkeypatch.setattr(sync, 'LIMITER', None)
     with patch.object(sync.subprocess, 'run', return_value=gh_output(200, {}, {'data': {'x': 1}})):
         assert sync.graphql('query {a}', {}) == {'x': 1}
+
+
+def test_graphql_charges_the_reported_cost_and_records_the_graphql_only_route(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path))
+    monkeypatch.setattr(sync, 'LIMITER', None)
+    report = {'cost': 3, 'remaining': 4000, 'limit': 5000, 'resetAt': '2999-01-01T00:00:00Z'}
+    with patch.object(sync.subprocess, 'run', return_value=gh_output(200, {}, {'data': {'rateLimit': report, 'x': 1}})):
+        sync.graphql('query {a}', {})
+    receipt = sync.limiter().receipt()
+    assert receipt['buckets']['graphql']['points'] == 3
+    assert receipt['routes'] == [{'read': 'project_items', 'transport': 'graphql', 'bucket': 'graphql', 'reason': 'only_graphql'}]
+    state = (tmp_path / 'agent-harness-lab' / 'forge-rate-limits.json').read_text()
+    assert '"remaining": 4000' in state
+
+
+def test_the_project_read_queries_ask_for_their_own_cost():
+    fields = [{'id': n, 'name': n, 'options': [{'id': v, 'name': v} for v in m.values()]} for n, m in sync.AXES.items()]
+    fields.append({'id': 'Status', 'name': 'Status', 'options': [{'id': n, 'name': n} for n in ('Backlog', 'Done')]})
+    project = {'id': 'synthetic-project', 'repositories': {'nodes': [{'nameWithOwner': sync.REPO}], 'pageInfo': {'hasNextPage': False}},
+               'fields': {'nodes': fields, 'pageInfo': {'hasNextPage': False}}}
+    queries = []
+
+    def api(query, variables):
+        queries.append(query)
+        if query.startswith('query {user'):
+            return {'user': {'projectV2': project}}
+        return {'node': {'items': {'nodes': [], 'pageInfo': {'hasNextPage': False, 'endCursor': None}}}}
+
+    with patch.object(sync, 'graphql', side_effect=api), patch('sys.argv', ['sync']), redirect_stdout(io.StringIO()):
+        sync.main()
+    assert len(queries) == 2
+    assert all('rateLimit{cost remaining resetAt limit}' in query for query in queries)

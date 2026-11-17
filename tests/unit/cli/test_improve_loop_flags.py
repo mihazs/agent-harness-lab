@@ -13,6 +13,7 @@ from agent_harness_lab import config, typed_exit, user_config
 from agent_harness_lab.cli import main
 from agent_harness_lab.loop import entry
 from agent_harness_lab.loop.errors import REASONS, LoopError
+from agent_harness_lab.loop.spec import DECLARED
 from agent_harness_lab.monitoring.state import atomic_json
 
 ENTRIES = (pytest.param(('improve',), id='improve'), pytest.param(('skills', 'invoke'), id='skills-invoke'))
@@ -59,9 +60,57 @@ def test_a_valid_flag_opts_into_the_loop_and_resolves_to_a_cli_sourced_spec(flag
     assert (spec.recommendation_only, spec.automatic_promotion, spec.certification) == (True, False, 'unverified')
 
 
-def test_without_a_flag_or_a_declaration_the_run_is_not_a_loop_run():
+def test_without_a_flag_or_a_declaration_the_run_is_the_default_loop_run_with_every_value_labelled_default():
     args = arguments()
-    assert entry.prepare(args) is None and args._loop is None
+    found = entry.prepare(args)
+    spec = entry.spec_for(args, found)
+    assert args._loop is found and found['cli'] is None and found['user'] is None and found['project'] is None and args._loop_default is True
+    assert (spec.mode, spec.acceptance_source, spec.max_rounds, spec.plateau_rounds, spec.on_regression) == ('relative_supported_improvement', 'default', 3, 2, 'stop')
+    assert {name: source for name, source in spec.sources if name != 'limits'} == {name: 'default' for name in DECLARED}
+
+
+def test_a_flag_or_a_declaration_is_an_explicit_loop_run_and_not_the_default():
+    args = arguments(max_rounds='2')
+    entry.prepare(args)
+    assert args._loop is not None and args._loop_default is False
+
+
+def test_single_pass_is_no_loop_run_and_carries_the_deprecated_label():
+    args = arguments(single_pass=True)
+    assert entry.prepare(args) is None
+    assert (args._loop, args._loop_default) == (None, False)
+    assert args._loop_label == entry.not_used('single_pass_requested') and args._loop_label['deprecated'] is True
+
+
+def test_single_pass_does_not_read_a_loop_declaration_so_a_bad_one_cannot_block_the_escape_hatch():
+    args = arguments(single_pass=True, project_settings=dict(loop=dict(max_rounds=0)))
+    assert entry.prepare(args) is None and args._loop is None and args._loop_label['reason'] == 'single_pass_requested'
+
+
+@pytest.mark.parametrize('flags', [dict(accept_score='0.5'), dict(max_rounds='2'), dict(plateau_rounds='1'), dict(on_regression='stop'), dict(max_rounds='bogus')],
+                         ids=['accept-score', 'max-rounds', 'plateau-rounds', 'on-regression', 'unparsable'])
+def test_single_pass_with_a_loop_flag_is_an_invalid_usage_before_anything_runs(flags):
+    with pytest.raises(typed_exit.TypedExit) as stop:
+        entry.prepare(arguments(single_pass=True, **flags))
+    assert stop.value.reason == 'invalid_usage'
+
+
+def test_a_contract_repair_is_no_improvement_pass_and_is_neither_a_loop_run_nor_labelled():
+    args = arguments(repair_contracts=True)
+    assert entry.prepare(args) is None
+    assert (args._loop, args._loop_label, args._loop_default) == (None, None, False)
+
+
+@pytest.mark.parametrize('reason', sorted(entry.NOT_USED))
+def test_every_not_used_label_is_closed_content_free_and_carries_one_step(reason):
+    label = entry.not_used(reason)
+    assert set(label) == {'profile', 'status', 'reason', 'single_pass', 'deprecated', 'recommendation_only', 'automatic_promotion', 'certification', 'remediation'}
+    assert (label['status'], label['reason'], label['single_pass'], label['remediation']) == ('not_used', reason, True, entry.NOT_USED[reason])
+    assert (label['recommendation_only'], label['automatic_promotion'], label['certification'], label['deprecated']) == (True, False, 'unverified', reason == 'single_pass_requested')
+
+
+def test_an_unknown_not_used_reason_is_an_error_and_never_a_label():
+    with pytest.raises(KeyError): entry.not_used('anything_else')
 
 
 def test_a_loop_object_in_the_project_file_opts_in_and_names_its_source():
@@ -157,6 +206,7 @@ def test_the_help_of_both_entries_documents_every_flag_and_the_exit_mapping(entr
                     'plateau', 'regression', 'no_actionable_mechanism', 'evidence_insufficient', 'loop_requires_frozen_bank'):
         assert stopped in text, stopped
     assert 'Loop exits' in text and '2 invalid declaration' in text and 'not certification' in text
+    assert '--single-pass' in text and 'deprecated' in text and 'default' in text and 'loop not_used' in text
 
 
 def test_a_loop_error_is_typed_by_the_entry_point_as_an_input_error_unless_it_is_an_ahl_defect():
