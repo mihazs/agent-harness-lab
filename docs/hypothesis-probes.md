@@ -1,7 +1,6 @@
 # Why hypothesis probes are separate from analysis
 
-This page explains a design that is specified here but not built. It gives the reasoning so a
-later implementation can be reviewed against it; it is not a procedure to follow.
+This page explains the design and the limits of the current synthetic probe.
 
 ## The gap
 
@@ -12,7 +11,7 @@ is the honest result. Asking the maintainer to collect outcomes is a valid next 
 slow. A probe offers a faster, narrower step: a small synthetic task that reproduces the
 pattern on purpose, so a paired evaluation can support or refute one candidate repair.
 
-## What a probe would be
+## What a probe is
 
 A probe is a controller-built task whose fixture contains only the structural conditions of
 the observed pattern (the tool class, the error category and the follow-up shape), with a
@@ -39,8 +38,31 @@ normal evaluation and adoption path.
 - No probe-derived success label for the original sessions; unknown stays unknown.
 - No reuse of a probe as a held-out task for the repair it was built to test.
 
-## Status
+## Running the current probe
 
-Not implemented. The follow-up work is tracked in [#708](https://github.com/mihazs/agent-harness-lab/issues/708). The brief already lists
-a `targeted_probe` entry under missing evidence whose command runs a focused `ahl improve`;
-that is a focus hint, not a probe.
+The current fixture supports a shell tool, a reported tool error or nonzero exit,
+and an unambiguous same-call retry. Other patterns are refused rather than
+represented by a different task. Select the zero-based mechanism index in a
+private analysis brief and provide two distinct harness snapshots:
+
+```sh
+ahl hypothesis-probe --brief /private/brief.json --mechanism 0 \
+  --project /path/to/project --baseline /private/baseline --candidate /private/candidate \
+  --output /private/new-probe --agent codex --binary codex --harness-path AGENTS.md
+```
+
+The output directory must be new and separate from the project and snapshots.
+The command runs a cooperative agent twice; the agent's own permissions still apply.
+The development task records a failed synthetic worker attempt and a later successful
+attempt, and the grader checks those records and the final files. This log is written
+inside the agent workspace: it is not an independent or tamper-proof tool trace, and
+does not prove which tool was used. The result describes one synthetic pair only.
+
+The generated fixture is marked as a probe. Final-bank and held-out validation reject
+the marker and an unchanged generated worker even if the marker is removed. These
+checks cannot recognize every edited derivative; maintainers must preserve provenance
+and exclude all probe-derived tasks from the repair's held-out evaluation. They do not
+establish independence or authorize promotion.
+
+The brief's `targeted_probe` entry runs a focused `ahl improve`; it remains a focus hint,
+not this probe.

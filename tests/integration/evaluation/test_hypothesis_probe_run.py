@@ -5,10 +5,11 @@ import sys
 
 import pytest
 
-from agent_harness_lab.evaluation.hypothesis_probe import materialize, run
+from agent_harness_lab.evaluation.hypothesis_probe import materialize
 
 
-def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch):
+def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab.cli import main
     project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
     for folder in (project, baseline, candidate): folder.mkdir()
     (baseline / 'AGENTS.md').write_text('leave the synthetic state unchanged\n')
@@ -32,9 +33,14 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex-home'))
     mechanism = dict(status='observed_pattern', tool_class='exec_command', error_category='tool_reported_error',
                      next_action={'same_call_retry': 2})
+    brief = tmp_path / 'brief.json'
+    brief.write_text(json.dumps({'mechanisms': [mechanism]}))
     output = tmp_path / 'probe'
-    result = run(mechanism, project=project, baseline=baseline, candidate=candidate, output=output,
-                 agent='codex', binary=str(agent), harness_paths=['AGENTS.md'])
+    code = main(['hypothesis-probe', '--brief', str(brief), '--mechanism', '0', '--project', str(project),
+                 '--baseline', str(baseline), '--candidate', str(candidate), '--output', str(output),
+                 '--agent', 'codex', '--binary', str(agent), '--harness-path', 'AGENTS.md'])
+    assert code == 0
+    result = json.loads(capsys.readouterr().out)
     assert result['verdict'] == 'supported_hypothesis'
     assert result['scope'] == 'one_synthetic_pair' and result['source_session_outcome'] == 'unknown'
     assert result['independence'] == 'unverified' and result['automatic_promotion'] is False
