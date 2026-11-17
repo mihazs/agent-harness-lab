@@ -41,7 +41,7 @@ normal evaluation and adoption path.
 ## Running the current probe
 
 The current fixture supports a shell tool, a reported tool error or nonzero exit,
-and an unambiguous same-call retry. Other patterns are refused rather than
+and an unambiguous same-call retry or changed-input follow-up. Other patterns are refused rather than
 represented by a different task. Select the zero-based mechanism index in a
 private analysis brief and provide two distinct harness snapshots:
 

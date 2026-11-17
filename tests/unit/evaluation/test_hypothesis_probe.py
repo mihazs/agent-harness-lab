@@ -37,10 +37,28 @@ def test_synthetic_fixture_reproduces_an_error_and_recovery_without_copying_sour
     for name, content in files.items(): (tmp_path / name).write_text(content)
     run = lambda: subprocess.run([sys.executable, 'synthetic_worker.py'], cwd=tmp_path, capture_output=True, text=True, check=False)
     first = run()
-    assert first.returncode != 0 and json.loads(first.stdout) == {'status': 'error', 'category': 'tool_reported_error'}
+    assert first.returncode != 0 and json.loads(first.stdout) == {
+        'status': 'error', 'category': 'tool_reported_error', 'hint': 'check configuration'}
     assert not (tmp_path / 'result.json').exists()
     (tmp_path / 'config.json').write_text('{"ready": true}')
     assert run().returncode == 0 and json.loads((tmp_path / 'result.json').read_text()) == {'records': [3, 5]}
+
+
+def test_changed_input_probe_retries_with_an_option_and_preserves_configuration(tmp_path):
+    mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='exit_code',
+                     next_action={'same_tool_changed_input': 2})
+    workspace, oracle = tmp_path / 'workspace', tmp_path / 'oracle'
+    workspace.mkdir(); oracle.mkdir()
+    for name, content in fixture_files(mechanism).items(): (workspace / name).write_text(content)
+    for name, content in grader_files(mechanism).items(): (oracle / name).write_text(content)
+    command = [sys.executable, 'synthetic_worker.py']
+    first = subprocess.run(command, cwd=workspace, capture_output=True, text=True, check=False)
+    assert first.returncode != 0 and json.loads(first.stdout)['hint'] == 'use --recover'
+    assert subprocess.run(command + ['--recover'], cwd=workspace, capture_output=True, check=False).returncode == 0
+    grader = [sys.executable, str(oracle / 'grade.py.txt'), str(workspace), str(oracle / 'expected.json')]
+    assert subprocess.run(grader, capture_output=True, check=False).returncode == 0
+    (workspace / 'config.json').write_text('{"ready": true}')
+    assert subprocess.run(grader, capture_output=True, check=False).returncode == 1
 
 
 def test_fixture_refuses_a_follow_up_it_does_not_reproduce():

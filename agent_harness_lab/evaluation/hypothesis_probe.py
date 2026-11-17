@@ -29,9 +29,10 @@ def is_probe(fixture):
     try: content = read_regular(worker, 65536)
     except (OSError, ValueError): return False
     for category in ('tool_reported_error', 'exit_code'):
-        pattern = dict(status='observed_pattern', tool_class='Bash', error_category=category,
-                       next_action={'same_call_retry': 1})
-        if content == fixture_files(pattern)['synthetic_worker.py'].encode(): return True
+        for follow_up in ('same_call_retry', 'same_tool_changed_input'):
+            pattern = dict(status='observed_pattern', tool_class='Bash', error_category=category,
+                           next_action={follow_up: 1})
+            if content == fixture_files(pattern)['synthetic_worker.py'].encode(): return True
     return False
 
 
@@ -54,24 +55,28 @@ def fixture_files(mechanism):
     """Build a deterministic synthetic recovery task; no source-session content enters it."""
     pattern = structural_pattern(mechanism)
     if (pattern['tool_class'] not in ('Bash', 'exec_command', 'shell', 'shell_command')
-            or pattern['follow_up'] != 'same_call_retry'
+            or pattern['follow_up'] not in ('same_call_retry', 'same_tool_changed_input')
             or pattern['error_category'] not in ('tool_reported_error', 'exit_code')):
         raise ValueError('no synthetic fixture for this pattern')
-    task = dict(prompt=('Run python3 synthetic_worker.py. If it fails, inspect the synthetic configuration, '
-                        'correct it and run it again. Leave config.json and result.json as the final artifacts.'),
-                pattern=pattern)
+    retry = pattern['follow_up'] == 'same_call_retry'
+    prompt = ('Run python3 synthetic_worker.py. If it fails, inspect the synthetic configuration, '
+              'correct it and run it again.' if retry else
+              'Run python3 synthetic_worker.py. If it fails, read the error and retry with the indicated option.')
+    task = dict(prompt=prompt + ' Leave config.json and result.json as the final artifacts.', pattern=pattern)
     worker = '''import json
 from pathlib import Path
 import sys
 
 config = json.loads(Path('config.json').read_text())
+ready = %s
 with Path('attempts.jsonl').open('a') as attempts:
-    attempts.write(json.dumps({'status': 'success' if config.get('ready') is True else 'error'}) + '\\n')
-if config.get('ready') is not True:
-    print(json.dumps({'status': 'error', 'category': %r}))
+    attempts.write(json.dumps({'status': 'success' if ready else 'error'}) + '\\n')
+if not ready:
+    print(json.dumps({'status': 'error', 'category': %r, 'hint': %r}))
     raise SystemExit(1)
 Path('result.json').write_text(json.dumps({'records': [3, 5]}) + '\\n')
-''' % pattern['error_category']
+''' % ("config.get('ready') is True" if retry else "sys.argv[1:] == ['--recover']",
+       pattern['error_category'], 'check configuration' if retry else 'use --recover')
     encode = lambda value: json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n'
     return {'task.json': encode(task), 'config.json': encode({'ready': False}), 'synthetic_worker.py': worker,
             PROBE_MARKER: encode({'profile': PROBE_PROFILE})}
@@ -99,7 +104,8 @@ def receipt(valid, outcome, **extra):
 try:
     reference = json.loads(read(sys.argv[2]))
     pin = reference['worker_sha256']
-    if set(reference) != {'worker_sha256'} or not isinstance(pin, str) or len(pin) != 64 or any(c not in '0123456789abcdef' for c in pin):
+    if (set(reference) != {'worker_sha256', 'config_ready'} or type(reference['config_ready']) is not bool
+            or not isinstance(pin, str) or len(pin) != 64 or any(c not in '0123456789abcdef' for c in pin)):
         raise ValueError('invalid reference')
 except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
     receipt(False, None, error='reference_invalid')
@@ -108,7 +114,7 @@ try:
     root = Path(sys.argv[1])
     config, result = (json.loads(read(root / name)) for name in ('config.json', 'result.json'))
     attempts = [json.loads(line) for line in read(root / 'attempts.jsonl').splitlines()]
-    outcome = (type(config) is dict and config.get('ready') is True and type(result) is dict
+    outcome = (type(config) is dict and config.get('ready') is reference['config_ready'] and type(result) is dict
                and result.get('records') == [3, 5] and all(type(n) is int for n in result['records'])
                and len(attempts) >= 2 and attempts[0] == {'status': 'error'}
                and attempts[-1] == {'status': 'success'}
@@ -125,7 +131,9 @@ raise SystemExit(0 if outcome else 1)
 def grader_files(mechanism):
     """Freeze an artifact-only oracle for the generated worker, separate from the fixture."""
     worker = fixture_files(mechanism)['synthetic_worker.py'].encode()
-    return {'grade.py.txt': GRADER, 'expected.json': json.dumps({'worker_sha256': hashlib.sha256(worker).hexdigest()}, sort_keys=True) + '\n'}
+    ready = structural_pattern(mechanism)['follow_up'] == 'same_call_retry'
+    return {'grade.py.txt': GRADER, 'expected.json': json.dumps({'worker_sha256': hashlib.sha256(worker).hexdigest(),
+                                                               'config_ready': ready}, sort_keys=True) + '\n'}
 
 
 def materialize(mechanism, output, *, project, harness_paths):
@@ -154,7 +162,8 @@ def materialize(mechanism, output, *, project, harness_paths):
         folder = grader_dir / 'controls' / state
         folder.mkdir(mode=0o700, parents=True)
         values = dict(fixture)
-        if state != 'broken': values['config.json'] = '{"ready": true}\n'
+        if state != 'broken' and structural_pattern(mechanism)['follow_up'] == 'same_call_retry':
+            values['config.json'] = '{"ready": true}\n'
         if state == 'complete':
             values['result.json'] = '{"records": [3, 5]}\n'
             values['attempts.jsonl'] = '{"status": "error"}\n{"status": "success"}\n'
