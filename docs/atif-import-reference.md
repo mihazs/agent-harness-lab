@@ -56,7 +56,7 @@ Each limit rejects the document; none truncates it.
 Paths are shown for the root trajectory; embedded subagent trajectories use the same paths. A
 field marked *retained* reaches the ledger as a typed value, *digest* only as a content-free
 digest, *presence* only as the fact that it existed, and *dropped* never. Dropped fields are
-still validated and counted in the report. A field the table does not list is *undeclared*: it
+still validated and counted in the report. A null optional field is treated as absent. A field the table does not list is *undeclared*: it
 is dropped and counted under `PREFIX.<undeclared>`, and its name is never recorded.
 
 | Source field | Treatment | AHL destination and rule |
@@ -79,7 +79,7 @@ is dropped and counted under `PREFIX.<undeclared>`, and its name is never record
 | `steps[].message` | dropped | Text or typed parts. `image` and `audio` parts are counted as unsupported and their locations are never read |
 | `steps[].reasoning_content` | presence | One `reasoning` event when non-empty |
 | `steps[].reasoning_effort`, `steps[].extra`, `steps[].llm_call_count` | dropped | A step with `llm_call_count` above 1 raises the warning `aggregated_llm_calls_in_one_step` |
-| `steps[].is_copied_context` | presence | A `true` step is not imported as a new interaction and is counted as `copied_context_steps_not_imported` |
+| `steps[].is_copied_context` | presence | A `true` step is not imported as a new interaction; `null` is treated as a new interaction and is counted as `copied_context_steps_not_imported` |
 | `steps[].tool_calls[].tool_call_id` | digest | `call_id`, scoped to the case |
 | `steps[].tool_calls[].function_name` | digest | `tool_name` as `tool:` plus a digest |
 | `steps[].tool_calls[].arguments` | digest | `input_fingerprint`, a case-salted 64-bit fingerprint |

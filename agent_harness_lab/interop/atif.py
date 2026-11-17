@@ -17,7 +17,7 @@ from ..evaluation.integrity import invalid_constant, unique_object
 from ..sources.schema import digest
 from ..telemetry.adapters import correlate
 from ..telemetry.schema import event, input_fingerprint
-from .mapping import (AGENT, CALL, FINAL, METRICS, OBSERVATION, REF, REQUIRED, RESULT, STEP, TRAJECTORY,
+from .mapping import (AGENT, ATIF_FIELDS, CALL, FINAL, METRICS, OBSERVATION, REF, REQUIRED, RESULT, STEP, TRAJECTORY,
                       ConversionReport, Rejected)
 
 VERSION = 'ATIF-v1.8'
@@ -96,6 +96,8 @@ def fields(value, prefix, report):
     """One object of a declared kind: required fields present, every field counted under its disposition."""
     if not isinstance(value, dict):
         raise Rejected('invalid_structure', prefix)
+    optional = set(ATIF_FIELDS[prefix]) - set(REQUIRED[prefix])
+    value = {key: item for key, item in value.items() if item is not None or key not in optional}
     for key, item in value.items():
         report.seen(prefix, key)
         if key == 'extra' and not isinstance(item, dict):
@@ -132,7 +134,8 @@ class Importer:
 
     def run(self, document):
         report = self.report
-        embedded = array(document.get('subagent_trajectories', []), TRAJECTORY + '.subagent_trajectories')
+        children = document.get('subagent_trajectories')
+        embedded = array([] if children is None else children, TRAJECTORY + '.subagent_trajectories')
         if len(embedded) > self.limits.max_subagents:
             raise Rejected('subagent_limit_exceeded', 'subagent_trajectories')
         identities = {document['trajectory_id']} if isinstance(document.get('trajectory_id'), str) else set()
@@ -158,7 +161,7 @@ class Importer:
 
     def trajectory(self, doc, key, embedded):
         report, limits = self.report, self.limits
-        fields(doc, TRAJECTORY, report)
+        doc = fields(doc, TRAJECTORY, report)
         if doc['schema_version'] != VERSION:
             raise Rejected('unsupported_schema_version', 'schema_version')
         if embedded and 'subagent_trajectories' in doc:
@@ -206,7 +209,7 @@ class Importer:
 
     def step(self, walk, step, index):
         report = self.report
-        fields(step, STEP, report)
+        step = fields(step, STEP, report)
         step_id, source = step['step_id'], step['source']
         if type(step_id) is not int:
             raise Rejected('invalid_structure', STEP + '.step_id')
@@ -228,7 +231,7 @@ class Importer:
             common['reported_model_fingerprint'] = digest(text(step['model_name'], STEP + '.model_name'))
         if 'llm_call_count' in step:
             count(step['llm_call_count'], STEP + '.llm_call_count')
-        if 'is_copied_context' in step and type(step['is_copied_context']) is not bool:
+        if step.get('is_copied_context') is not None and type(step['is_copied_context']) is not bool:
             raise Rejected('invalid_structure', STEP + '.is_copied_context')
         calls = [self.call(item) for item in array(step.get('tool_calls', []), STEP + '.tool_calls')]
         results = [self.result(item, media) for item in array(

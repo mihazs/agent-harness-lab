@@ -197,8 +197,8 @@ def test_malformed_structure_is_rejected_with_a_typed_reason(mutate, reason):
     assert rejected(with_(trajectory(), mutate)).reason == reason
 
 
-@pytest.mark.parametrize('stamp', ['yesterday', '2025-10-16T14:30:00', '', 20251016, None, '2025-13-40T00:00:00Z'],
-    ids=['words', 'no-timezone', 'empty', 'number', 'null', 'impossible-date'])
+@pytest.mark.parametrize('stamp', ['yesterday', '2025-10-16T14:30:00', '', 20251016, '2025-13-40T00:00:00Z'],
+    ids=['words', 'no-timezone', 'empty', 'number', 'impossible-date'])
 def test_an_invalid_or_zoneless_timestamp_is_rejected_not_read_as_a_time(stamp):
     assert rejected(with_(trajectory(), lambda d: d['steps'][0].update(timestamp=stamp))).reason == 'invalid_timestamp'
 
@@ -484,3 +484,21 @@ def test_retained_metadata_survives_serialization_and_ledger_ingestion_unchanged
 
 def test_the_dropped_content_is_not_claimed_to_round_trip_in_the_report():
     assert convert(full())[1].to_dict()['round_trip'] == 'retained_metadata_only'
+
+
+def test_null_copied_context_is_a_new_interaction():
+    events, report = convert(trajectory([agent_step(1, [call('c1')], is_copied_context=None)]))
+    assert sum(row['activity'] == 'tool_call' for row in events) == 1
+    assert report.unsupported_features['copied_context_steps_not_imported'] == 0
+
+
+def test_optional_null_fields_are_treated_as_absent():
+    document = trajectory([dict(step_id=1, source='user', message='hello', timestamp=None, model_name=None,
+        reasoning_effort=None, reasoning_content=None, tool_calls=None, observation=None, metrics=None,
+        is_copied_context=None, llm_call_count=None, extra=None)])
+    document.update(session_id=None, trajectory_id=None, notes=None, final_metrics=None,
+                    continued_trajectory_ref=None, subagent_trajectories=None, extra=None)
+    document['agent'].update(model_name=None, tool_definitions=None, extra=None)
+    events, report = convert(document)
+    assert len(events) == 1 and events[0]['activity'] == 'user_message'
+    assert events[0]['capture_complete'] is False and report.missing_fields['steps[].timestamp'] == 1
