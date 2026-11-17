@@ -103,6 +103,18 @@ def test_a_decision_already_recorded_is_finalized_without_asking_a_port_again(tm
     assert (result['stop'], ports.order, ports.settling) == ('acceptance_score_reached', [], [])
 
 
+def test_resume_preserves_area_regression_before_decision(tmp_path):
+    script = loop_sim.build('area-regression-on-resume', [loop_sim.score(0.6),
+        loop_sim.score(0.9, regressed_areas=('ux-ui',), cause='candidate')])
+    reference, _, _ = loop_sim.drive(script, tmp_path/'reference')
+    first, ledger, _ = interrupted(script, tmp_path/'interrupted', 5)
+    assert first['stop'] == 'interrupted'
+    result, ports = resume(script, tmp_path/'interrupted', ledger.events())
+    assert (reference['stop'], reference['outcome']) == ('regression', 'regressed')
+    assert (result['stop'], result['outcome'], result['best']) == (reference['stop'], reference['outcome'], reference['best'])
+    assert ports.order == []
+
+
 def test_a_baseline_that_was_never_recorded_is_evaluated_again_when_the_evaluator_confirms_nothing_is_in_flight(tmp_path, nominal):
     _, ledger, _ = interrupted(SCRIPT, tmp_path, 1)
     result, ports = resume(SCRIPT, tmp_path, ledger.events())

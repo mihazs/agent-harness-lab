@@ -158,7 +158,8 @@ def _restored(summary):
     found = summary if isinstance(summary, dict) else {}
     return Evaluation(found.get('point', 0.0), found.get('lower', 0.0), found.get('upper', 1.0), evidence=found.get('evidence') or 'blocked',
                       vacuity=found.get('vacuity'), areas=tuple(sorted((found.get('areas') or {}).items())), critical=found.get('critical') is True,
-                      cause=found.get('cause'), trials=found.get('trials'), seconds=found.get('seconds'), inputs=found.get('inputs'),
+                      cause=found.get('cause'), regressed_areas=tuple(found.get('regressed_areas', ())),
+                      trials=found.get('trials'), seconds=found.get('seconds'), inputs=found.get('inputs'),
                       reserve_trials=found.get('reserve_trials'), reserve_seconds=found.get('reserve_seconds'))
 
 
