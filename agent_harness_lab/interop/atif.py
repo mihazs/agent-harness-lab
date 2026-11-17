@@ -237,6 +237,8 @@ class Importer:
                 raise Rejected('invalid_structure', STEP + '.reasoning_effort')
         if 'llm_call_count' in step:
             count(step['llm_call_count'], STEP + '.llm_call_count')
+            if step['llm_call_count'] > 1:
+                report.warnings['aggregated_llm_calls_in_one_step'] += 1
             if source == 'agent' and step['llm_call_count'] == 0 and any(name in step for name in ('metrics', 'reasoning_content')):
                 raise Rejected('invalid_structure', STEP + '.llm_call_count')
         if step.get('is_copied_context') is not None and type(step['is_copied_context']) is not bool:
@@ -244,7 +246,7 @@ class Importer:
         calls = [self.call(item) for item in array(step.get('tool_calls', []), STEP + '.tool_calls')]
         results = [self.result(item, media) for item in array(
             fields(step['observation'], OBSERVATION, report)['results'], OBSERVATION + '.results')] if 'observation' in step else []
-        usage = self.usage(step['metrics'], step.get('llm_call_count')) if 'metrics' in step else None
+        usage = self.usage(step['metrics']) if 'metrics' in step else None
         walk['steps'] += 1
         if step.get('is_copied_context'):  # a step copied from an earlier trajectory is not a new interaction
             report.unsupported_features['copied_context_steps_not_imported'] += 1
@@ -298,7 +300,7 @@ class Importer:
             refs.append((ident, path))
         return call_id, refs
 
-    def usage(self, metrics, calls):
+    def usage(self, metrics):
         report = self.report
         metrics = fields(metrics, METRICS, report)
         values = {name: count(metrics[name], METRICS + '.' + name) for name in ('prompt_tokens', 'completion_tokens', 'cached_tokens') if name in metrics}
@@ -309,8 +311,6 @@ class Importer:
                 array(metrics[name], METRICS + '.' + name)
         if values.get('cached_tokens', 0) > values.get('prompt_tokens', COUNT_MAX):
             raise Rejected('invalid_measurement', METRICS + '.cached_tokens')
-        if calls is not None and calls > 1:
-            report.warnings['aggregated_llm_calls_in_one_step'] += 1
         # AHL input_tokens are uncached counts, so a prompt total without its cached share is not one.
         usage = {}
         if 'completion_tokens' in values:

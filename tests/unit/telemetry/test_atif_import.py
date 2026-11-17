@@ -518,3 +518,8 @@ def test_invalid_reasoning_or_zero_call_metrics_are_rejected(changes):
 def test_huge_numeric_fields_return_a_typed_rejection(field):
     step = agent_step(1, **({'reasoning_effort': 10**400} if field == 'reasoning_effort' else {'metrics': {'cost_usd': 10**400}}))
     assert rejected(trajectory([step])).reason in ('invalid_structure', 'invalid_measurement')
+
+
+def test_aggregated_llm_calls_are_reported_even_without_metrics():
+    _, report = convert(trajectory([agent_step(1, llm_call_count=3)]))
+    assert report.warnings['aggregated_llm_calls_in_one_step'] == 1
