@@ -15,13 +15,24 @@ PROBE_PROFILE = 'ahl-synthetic-probe-v1'
 
 
 def is_probe(fixture):
-    """Recognize an intact probe marker; an invalid marker is never treated as absence."""
+    """Recognize intact markers and unchanged generated workers in copied fixtures."""
     from agent_harness_lab.private_journal import record
+    from agent_harness_lab.evaluation.integrity import read_regular
     marker = Path(fixture) / PROBE_MARKER
-    if not os.path.lexists(marker): return False
-    value, _ = record(marker, 4096)
-    if value != {'profile': PROBE_PROFILE}: raise ValueError('invalid synthetic probe marker')
-    return True
+    if os.path.lexists(marker):
+        value, _ = record(marker, 4096)
+        if value != {'profile': PROBE_PROFILE}: raise ValueError('invalid synthetic probe marker')
+        return True
+    worker = Path(fixture) / 'synthetic_worker.py'
+    if not os.path.lexists(worker): return False
+    # shortcut: edited derivatives need lineage review, upgrade when probe provenance is tracked across transformations.
+    try: content = read_regular(worker, 65536)
+    except (OSError, ValueError): return False
+    for category in ('tool_reported_error', 'exit_code'):
+        pattern = dict(status='observed_pattern', tool_class='Bash', error_category=category,
+                       next_action={'same_call_retry': 1})
+        if content == fixture_files(pattern)['synthetic_worker.py'].encode(): return True
+    return False
 
 
 def structural_pattern(mechanism):

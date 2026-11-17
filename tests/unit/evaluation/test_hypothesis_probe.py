@@ -115,6 +115,10 @@ def test_probe_marker_cannot_be_relabelled_as_a_final_bank_task(tmp_path):
                 review_status='accepted', independence='unverified', safety=['synthetic'], artifacts=['result.json'])
     bank = output / 'bank.json'; bank.write_text(json.dumps(dict(schema_version=1, tasks=[task])))
     with pytest.raises(ValueError, match='synthetic probes cannot be held-out'): validate(bank)
+    (output / 'fixture/ahl-synthetic-probe.json').unlink()
+    task['fixture_digest'] = digest(output / 'fixture')
+    bank.write_text(json.dumps(dict(schema_version=1, tasks=[task])))
+    with pytest.raises(ValueError, match='synthetic probes cannot be held-out'): validate(bank)
 
 
 @pytest.mark.parametrize(('baseline', 'candidate', 'expected'), [
