@@ -11,9 +11,13 @@ def main(argv):
         'The agent can access files and services permitted by its own settings; no promotion is performed.'))
     parser.add_argument('--brief', type=Path, required=True, help='Private analysis brief JSON')
     parser.add_argument('--mechanism', type=int, required=True, help='Zero-based mechanism index in the brief')
-    for name in ('project', 'baseline', 'candidate', 'output'):
-        parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--agent', choices=('codex', 'claude'), required=True)
+    descriptions = {'project': 'Existing project to associate with the probe',
+                    'baseline': 'Existing baseline harness snapshot directory',
+                    'candidate': 'Existing candidate harness snapshot directory',
+                    'output': 'New private output directory outside the project and snapshots'}
+    for name, description in descriptions.items():
+        parser.add_argument('--' + name, type=Path, required=True, help=description)
+    parser.add_argument('--agent', choices=('codex', 'claude'), required=True, help='Cooperative agent runtime to execute both trials')
     parser.add_argument('--binary', required=True, help='Explicit agent executable')
     parser.add_argument('--harness-path', action='append', default=[], help='Relative harness path; repeat as needed')
     args = parser.parse_args(argv)
