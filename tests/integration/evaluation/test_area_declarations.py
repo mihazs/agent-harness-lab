@@ -11,15 +11,16 @@ from agent_harness_lab.evaluation.manifest_contract import PROJECT, ContractErro
 from tests.support.area_bank import REGISTRY, two_area_bank
 
 
-def configured(tmp_path, registry):
+def configured(tmp_path, registry, mutate=None, tags=None):
     """A project whose pinned bank is the synthetic two-area bank; returns a call that prepares the evaluation."""
     project = tmp_path/'project'; project.mkdir()
-    bank = two_area_bank(project)
+    bank = two_area_bank(project, tags=tags)
     value = config.prepare(dict(bank=dict(path='bank/bank.json', sha256=hashlib.sha256(bank.read_bytes()).hexdigest()),
                                 harness_paths=['AGENTS.md']))
     if registry is not None: value['areas'] = registry
     (project/'ahl.json').write_text(json.dumps(value))
     manifest = export_manifest(bank, tmp_path/'export')
+    if mutate is not None: mutate(manifest['tasks'][0])
     return lambda: config.evaluation_settings(project/'ahl.json', tmp_path/'export/manifest.json', manifest, {}, 'offline', None)
 
 
@@ -27,6 +28,24 @@ def test_declared_areas_pass_and_are_frozen_in_the_effective_configuration(tmp_p
     prepared = configured(tmp_path, REGISTRY)()
     assert prepared['blocked_reason'] is None
     assert prepared['configuration']['areas'] == REGISTRY
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda task: task.pop('areas'), id='remove'),
+    pytest.param(lambda task: task.update(areas=['ux-ui']), id='reassign'),
+    pytest.param(lambda task: task.update(areas=['coding', 'ux-ui']), id='add'),
+    pytest.param(lambda task: task.update(areas=None), id='null'),
+])
+def test_a_manifest_cannot_change_the_pinned_banks_area_tags(tmp_path, change):
+    with pytest.raises(ValueError, match='task differs from configured bank'):
+        configured(tmp_path, REGISTRY, change)()
+
+
+def test_an_untagged_bank_task_cannot_gain_a_tag_or_explicit_null(tmp_path):
+    for index, value in enumerate((['coding'], None)):
+        root = tmp_path / str(index); root.mkdir()
+        with pytest.raises(ValueError, match='task differs from configured bank'):
+            configured(root, REGISTRY, lambda task: task.update(areas=value), tags={})()
 
 
 @pytest.mark.parametrize('registry, field', [
