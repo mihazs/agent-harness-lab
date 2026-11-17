@@ -523,3 +523,13 @@ def test_huge_numeric_fields_return_a_typed_rejection(field):
 def test_aggregated_llm_calls_are_reported_even_without_metrics():
     _, report = convert(trajectory([agent_step(1, llm_call_count=3)]))
     assert report.warnings['aggregated_llm_calls_in_one_step'] == 1
+
+
+def test_saved_upstream_model_dump_imports_without_private_content():
+    from pathlib import Path
+    fixture = Path(__file__).resolve().parents[2]/'support/golden_profiles/atif-v1.8-upstream-model.json'
+    events, report = atif.convert(fixture.read_bytes())
+    assert len(events) == 7 and report.source_version == 'ATIF-v1.8'
+    assert report.counts['trajectories'] == 2 and report.to_dict()['outcome'] == 'unknown'
+    assert all(row['lineage_verified'] is False for row in events)
+    assert 'child task' not in json.dumps(events) and 'thinking' not in json.dumps(events)
