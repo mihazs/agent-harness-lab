@@ -161,13 +161,34 @@ These controls follow the [kernel cgroup v2 interface](https://docs.kernel.org/a
 Native synthetic control-file tests validate setup, pre-exec failure, accounting
 and cleanup failure handling; they do not establish kernel enforcement. Separate
 real kernel canaries are opt-in. On a Linux host with a systemd user manager, run
-`task test:sandbox:kernel`: it creates a disposable foreground user scope with
-memory/process/runtime ceilings and delegates cpu/memory/pids for that test only.
+`task test:sandbox:kernel`: it collects every canary and creates disposable foreground
+user scopes with memory/process/runtime ceilings, delegating cpu/memory/pids only
+for each scope. It groups tests by class and splits the longer regression-draft
+class by test; each scope retains the 90-second limit. A filtered invocation keeps
+one scope. A failed or killed scope fails the task and stops the remaining groups.
 The native fixture verifies scope identity and exclusive process membership,
 moves its controller to a leaf and enables child controllers inside that scope.
 Cleanup restores its layout; systemd collects the completed scope. No persistent
 unit, privileged service or production controller setting is changed. See
 [systemd delegation](https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html#Delegate=).
+
+On one Linux x86-64 host, a CPU sample was 97% idle before the original unfiltered
+run. Its single scope hit the 90-second limit after 15 passes and failed. Separate
+class runs on the same host gave these wall times (one run each, no skips):
+
+| Class | Wall time |
+| --- | ---: |
+| Namespace | 12.75 s |
+| Offline | 2.78 s |
+| Pinned image | 20.56 s |
+| Regression draft | exceeded 90 s after 4 passes; seven individual scopes totalled 113.59 s |
+| Controlled workflow | 21.11 s |
+| Trajectory | 28.20 s |
+| Storage | 2.80 s |
+| Resource | 0.45 s |
+
+The individual regression scopes all passed. These figures include task and scope
+startup, and vary with host load and kernel configuration; they are not a new timeout.
 
 Alternatively, explicitly set `AHL_TEST_CGROUP_ROOT` to an already-delegated
 subtree for `task test:sandbox`. No setup is performed on that supplied root.
