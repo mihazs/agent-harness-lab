@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
+import stat
 import sys
 
 from agent_harness_lab.diagnostics.brief import BUILT_IN, ERROR_CATEGORIES, NEXT_ACTIONS
@@ -154,3 +156,56 @@ def _paired_result(result, *, inputs_unchanged):
                 elif outcomes == [True, False]: verdict = 'refuted_hypothesis'
     return dict(profile='ahl-synthetic-probe-result-v1', verdict=verdict, scope='one_synthetic_pair',
                 independence='unverified', source_session_outcome='unknown', automatic_promotion=False, publication_allowed=False)
+
+
+def _runtime_digest(path):
+    from agent_harness_lab.evaluation.integrity import open_nofollow
+    fd = open_nofollow(path)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode): raise ValueError('runtime must be a regular file')
+        value = hashlib.sha256()
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''): value.update(chunk)
+        after = os.fstat(fd)
+        if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise ValueError('runtime changed while hashing')
+        return value.hexdigest()
+    finally:
+        os.close(fd)
+
+
+def run(mechanism, *, project, baseline, candidate, output, agent, binary, harness_paths):
+    """Run both snapshots through the existing executor and report only a frozen synthetic pair."""
+    from agent_harness_lab.cli import evaluator
+    from agent_harness_lab.evaluation.integrity import digest, read_regular
+    from agent_harness_lab.loop.adapters import ExecutorRunner
+    from agent_harness_lab.private_journal import encoded, write_bytes
+
+    if agent not in ('codex', 'claude') or not isinstance(binary, str) or not binary:
+        raise ValueError('explicit cooperative agent and executable required')
+    executable = shutil.which(binary)
+    if executable is None: raise ValueError('runtime executable unavailable')
+    executable = Path(executable).resolve(strict=True)
+    roots = {name: Path(path).resolve(strict=True) for name, path in (('baseline', baseline), ('candidate', candidate))}
+    output = Path(output).absolute()
+    if any(output.is_relative_to(root) or root.is_relative_to(output) for root in roots.values()):
+        raise ValueError('probe output must not overlap either snapshot')
+    snapshots = {name: digest(path) for name, path in roots.items()}
+    if snapshots['baseline'] == snapshots['candidate']: raise ValueError('probe requires distinct snapshots')
+    runtime = _runtime_digest(executable)
+    manifest = materialize(mechanism, output, project=project, harness_paths=harness_paths)
+    def frozen():
+        return dict(snapshots={name: digest(path) for name, path in roots.items()}, runtime=_runtime_digest(executable),
+                    fixture=digest(output / 'fixture'), grader=digest(output / 'grader'),
+                    manifest=hashlib.sha256(read_regular(manifest, 1024 * 1024)).hexdigest())
+    before = frozen()
+    if before['snapshots'] != snapshots or before['runtime'] != runtime: raise ValueError('probe inputs changed before execution')
+    runner = ExecutorRunner(evaluator().evaluate, agent, str(executable), inherit_env=False)
+    result = runner.run(('baseline', 'candidate'), roots, manifest, output / 'evaluation')
+    try: unchanged = frozen() == before
+    except (OSError, ValueError): unchanged = False
+    summary = _paired_result(result, inputs_unchanged=unchanged)
+    write_bytes(output / 'probe-result.json', encoded(summary))
+    return summary

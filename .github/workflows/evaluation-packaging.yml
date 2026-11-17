@@ -13,4 +13,4 @@ jobs:
         with:
           python-version: '3.14'
       - run: python -m pip install -e ".[test,lint]"
-      - run: python -m pytest -q tests/unit/evaluation/test_hypothesis_probe.py
+      - run: python -m pytest -q tests/unit/evaluation/test_hypothesis_probe.py tests/integration/evaluation/test_hypothesis_probe_run.py

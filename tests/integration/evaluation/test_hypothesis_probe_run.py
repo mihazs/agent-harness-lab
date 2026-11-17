@@ -1,0 +1,42 @@
+"""Run the synthetic probe through the actual paired evaluator with a stub cooperative agent."""
+import json
+import stat
+import sys
+
+from agent_harness_lab.evaluation.hypothesis_probe import run
+
+
+def test_real_paired_runner_grades_the_same_synthetic_task_for_both_snapshots(tmp_path, monkeypatch):
+    project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
+    for folder in (project, baseline, candidate): folder.mkdir()
+    (baseline / 'AGENTS.md').write_text('leave the synthetic state unchanged\n')
+    (candidate / 'AGENTS.md').write_text('repair the synthetic state\n')
+    agent = tmp_path / 'codex'
+    agent.write_text('''#!%s
+import json
+from pathlib import Path
+import subprocess
+import sys
+if '--version' in sys.argv:
+    print('synthetic-agent'); raise SystemExit(0)
+sys.stdin.read()
+if 'repair' in Path('AGENTS.md').read_text():
+    Path('config.json').write_text('{"ready": true}')
+    subprocess.run([sys.executable, 'synthetic_worker.py'], check=True, capture_output=True)
+print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
+''' % sys.executable)
+    agent.chmod(agent.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex-home'))
+    mechanism = dict(status='observed_pattern', tool_class='exec_command', error_category='tool_reported_error',
+                     next_action={'same_call_retry': 2})
+    output = tmp_path / 'probe'
+    result = run(mechanism, project=project, baseline=baseline, candidate=candidate, output=output,
+                 agent='codex', binary=str(agent), harness_paths=['AGENTS.md'])
+    assert result['verdict'] == 'supported_hypothesis'
+    assert result['scope'] == 'one_synthetic_pair' and result['source_session_outcome'] == 'unknown'
+    assert result['independence'] == 'unverified' and result['automatic_promotion'] is False
+    recorded = json.loads((output / 'evaluation/results.json').read_text())
+    assert [(row['version'], row['task'], row['split'], row['status']) for row in recorded['trials']] == [
+        ('baseline', 'hypothesis-probe', 'development', 'failed'),
+        ('candidate', 'hypothesis-probe', 'development', 'passed')]
+    assert json.loads((output / 'probe-result.json').read_text()) == result
