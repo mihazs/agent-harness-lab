@@ -9,7 +9,7 @@ automatic schedule, model trial or promotional publication has occurred.
 Baseline main: `a2a3d3abb71c14ea4f384d8ef1cd4015f94e6104`; latest inspected release:
 v0.2.0. GitHub reported zero stars/forks, empty topics, no homepage and Discussions
 disabled. MIT license, security/support/conduct/contribution policies, templates,
-Dependabot, an Ubuntu Python 3.11–3.13 test matrix, packaging CI and Changesets exist.
+Dependabot, an Ubuntu Python 3.11–3.13 test matrix, packaging CI and Changesets existed at that baseline. For current CI coverage, see [platform evidence](installation.md#platform-evidence).
 Only scientific tasks #4–#6 are closed; the implemented/pending distinction in
 [scientific epic #3](https://github.com/mihazs/agent-harness-lab/issues/3) remains authoritative.
 

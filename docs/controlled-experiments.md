@@ -631,5 +631,6 @@ Dollar cost remains unknown without measured usage and supplied dated pricing.
 Reports retain failed, skipped, inconclusive and not-run statuses, keep runtime
 strata separate and never turn fake-agent/replay results into real-model evidence.
 Packaging CI has no provider secrets, paid workflow, schedule or public result
-uploads. Existing Python 3.11–3.13 tests exercise the new modules; packaging smoke
-checks a clean wheel and versioned archive without inference dependencies.
+uploads. Existing tests exercise the modules; the current CI platform is listed in
+[platform evidence](installation.md#platform-evidence). Packaging smoke checks a
+clean wheel and versioned archive without inference dependencies.
