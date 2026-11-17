@@ -1,5 +1,6 @@
 """Synthetic, private OTLP log projection: no fabricated span timings or task authority."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +17,14 @@ def attributes(record):
 
 def rows(document):
     return document['resourceLogs'][0]['scopeLogs'][0]['logRecords']
+
+
+def test_projection_matches_pinned_synthetic_otlp_fixture():
+    fixture = Path(__file__).resolve().parents[2] / 'fixtures/otel/synthetic-logs-v1.json'
+    expected = json.loads(fixture.read_text())
+    source = dict(schema_version=2, case_id='synthetic-case', event_id='usage-1', activity='response_usage',
+                  timestamp='2026-01-01T00:00:00.123456789Z', input_tokens=5, output_tokens=3)
+    assert otel.convert([source])[0] == expected
 
 
 def test_observed_usage_is_exported_once_and_unknown_time_stays_unknown():
