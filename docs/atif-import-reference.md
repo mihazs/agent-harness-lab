@@ -33,8 +33,9 @@ REASON at PATH` on stderr. Refusals before publication leave no output;
 `output_durability_unknown` means the output was published but its parent-directory sync
 failed. A failed publication may leave a private staging directory beside the requested output;
 unexpected files in it are never deleted. The command reads nothing but `FILE` and
-opens no socket. Atomic publication requires Linux `renameat2` with
-`RENAME_NOREPLACE`; where it is unavailable, the command fails closed without publishing.
+opens no socket. Atomic publication requires Linux `renameat2` with `RENAME_NOREPLACE` or macOS
+`renameatx_np` with `RENAME_EXCL`; where neither is available, it fails closed. The macOS
+dispatch is simulated in tests but has not been exercised on a native macOS filesystem.
 Use a parent directory that other processes cannot modify during import: checking the
 staging directory before rename cannot prevent a same-user writer from swapping it
 between the check and the rename.

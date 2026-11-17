@@ -48,7 +48,11 @@ def publish(output, files):
     parent_fd = stage_fd = None
     stage_name = None
     try:
-        rename = getattr(ctypes.CDLL(None, use_errno=True), 'renameat2', None)
+        library = ctypes.CDLL(None, use_errno=True)
+        rename = getattr(library, 'renameat2', None)
+        flags = 1  # Linux RENAME_NOREPLACE
+        if rename is None:
+            rename, flags = getattr(library, 'renameatx_np', None), 4  # macOS RENAME_EXCL
         if rename is None: raise OSError(errno.ENOTSUP, 'atomic no-replace rename unavailable')
         require_writable(output)
         parent_fd = open_directory_nofollow(output.parent)
@@ -68,7 +72,7 @@ def publish(output, files):
             os.close(current)
         stage, named = os.fstat(stage_fd), os.stat(stage_name, dir_fd=parent_fd, follow_symlinks=False)
         if (stage.st_dev, stage.st_ino) != (named.st_dev, named.st_ino): raise Rejected('unsafe_output', 'output')
-        if rename(parent_fd, os.fsencode(stage_name), parent_fd, os.fsencode(output.name), 1) != 0:
+        if rename(parent_fd, os.fsencode(stage_name), parent_fd, os.fsencode(output.name), flags) != 0:
             error = ctypes.get_errno()
             if error in (errno.EEXIST, errno.ENOTEMPTY): raise Rejected('output_exists', 'output')
             raise OSError(error, 'atomic no-replace rename failed')

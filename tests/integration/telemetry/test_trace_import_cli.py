@@ -311,3 +311,24 @@ def test_replaced_staging_directory_is_not_published(tmp_path, monkeypatch):
         trace_cli.publish(tmp_path/'out', {'events.v2.jsonl': b'example'})
     assert not (tmp_path/'out').exists()
     assert next(tmp_path.glob('.trace-import-*')).joinpath('foreign').read_text() == 'untouched'
+
+
+def test_apple_no_replace_dispatch_publishes_and_refuses_a_racing_destination(tmp_path, monkeypatch):
+    native = getattr(trace_cli.ctypes.CDLL(None, use_errno=True), 'renameat2', None)
+    if native is None: pytest.skip('Linux renameat2 is required to simulate the macOS dispatch')
+    calls = []
+    class AppleOnly:
+        def renameatx_np(self, parent, source, target_parent, target, flags):
+            calls.append(flags)
+            return native(parent, source, target_parent, target, 1)
+    monkeypatch.setattr(trace_cli.ctypes, 'CDLL', lambda *args, **kwargs: AppleOnly())
+    trace_cli.publish(tmp_path/'first', {'events.v2.jsonl': b'example'})
+    assert (tmp_path/'first'/'events.v2.jsonl').read_bytes() == b'example' and calls == [4]
+    original = trace_cli._write_at
+    def race(directory, name, raw):
+        original(directory, name, raw)
+        (tmp_path/'second').mkdir()
+    monkeypatch.setattr(trace_cli, '_write_at', race)
+    with pytest.raises(Rejected) as caught:
+        trace_cli.publish(tmp_path/'second', {'events.v2.jsonl': b'example'})
+    assert caught.value.reason == 'output_exists' and list((tmp_path/'second').iterdir()) == []
