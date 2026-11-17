@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import stat
 
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, read_regular
 from agent_harness_lab.private_journal import encoded
@@ -36,6 +37,7 @@ def _write_at(directory, name, raw):
         stream.write(raw)
         stream.flush()
         os.fsync(stream.fileno())
+        return os.fstat(stream.fileno())
 
 
 def publish(output, files):
@@ -47,6 +49,7 @@ def publish(output, files):
         raise Rejected('output_exists', 'output')
     parent_fd = stage_fd = None
     stage_name = None
+    written = {}
     try:
         library = ctypes.CDLL(None, use_errno=True)
         rename = getattr(library, 'renameat2', None)
@@ -61,8 +64,21 @@ def publish(output, files):
         stage_fd = os.open(stage_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
         for name, raw in files.items():
             if name not in (EVENTS, REPORT): raise ValueError('unexpected output file')
-            _write_at(stage_fd, name, raw)
+            written[name] = _write_at(stage_fd, name, raw)
         os.fsync(stage_fd)
+        listed = os.open(stage_name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent_fd)
+        try:
+            opened, listed_stat = os.fstat(stage_fd), os.fstat(listed)
+            if ((opened.st_dev, opened.st_ino) != (listed_stat.st_dev, listed_stat.st_ino)
+                    or set(os.listdir(listed)) != set(files)):
+                raise Rejected('unsafe_output', 'output')
+            for name, original in written.items():
+                current_file = os.stat(name, dir_fd=listed, follow_symlinks=False)
+                if (not stat.S_ISREG(current_file.st_mode) or current_file.st_nlink != 1 or current_file.st_mode & 0o077
+                        or (current_file.st_dev, current_file.st_ino) != (original.st_dev, original.st_ino)):
+                    raise Rejected('unsafe_output', 'output')
+        finally:
+            os.close(listed)
         current = open_directory_nofollow(output.parent)
         try:
             expected, actual = os.fstat(parent_fd), os.fstat(current)

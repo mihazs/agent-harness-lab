@@ -183,10 +183,11 @@ def test_concurrent_empty_output_is_not_replaced(tmp_path, monkeypatch):
     original = trace_cli._write_at
     inode = []
     def write_and_race(directory, name, content):
-        original(directory, name, content)
+        result = original(directory, name, content)
         if not inode:
             output.mkdir()
             inode.append(output.stat().st_ino)
+        return result
     monkeypatch.setattr(trace_cli, '_write_at', write_and_race)
     with pytest.raises(Rejected) as caught:
         trace_cli.publish(output, {'events.v2.jsonl': b'example'})
@@ -215,12 +216,13 @@ def test_swapped_output_parent_does_not_redirect_publication(tmp_path, monkeypat
     original = trace_cli._write_at
     swapped = []
     def write_and_swap(directory, name, content):
-        original(directory, name, content)
+        result = original(directory, name, content)
         if not swapped:
             parent.rename(moved)
             parent.mkdir()
             (parent/'intruder').write_text('untouched')
             swapped.append(True)
+        return result
     monkeypatch.setattr(trace_cli, '_write_at', write_and_swap)
     with pytest.raises(Rejected):
         trace_cli.publish(output, {'events.v2.jsonl': b'one', 'conversion-report.json': b'two'})
@@ -274,7 +276,7 @@ def test_cleanup_does_not_delete_a_replaced_staged_file(tmp_path, monkeypatch):
             with os.fdopen(fd, 'wb') as stream:
                 stream.write(b'foreign')
             raise OSError('write failed')
-        original(directory, name, content)
+        return original(directory, name, content)
     monkeypatch.setattr(trace_cli, '_write_at', replace_and_fail)
     with pytest.raises(Rejected):
         trace_cli.publish(tmp_path/'out', {'events.v2.jsonl': b'one', 'conversion-report.json': b'two'})
@@ -301,11 +303,12 @@ def test_failed_stage_open_does_not_remove_replacement_directory(tmp_path, monke
 def test_replaced_staging_directory_is_not_published(tmp_path, monkeypatch):
     original = trace_cli._write_at
     def replace(directory, name, content):
-        original(directory, name, content)
+        result = original(directory, name, content)
         stage = next(tmp_path.glob('.trace-import-*'))
         stage.rename(tmp_path/'original-stage')
         stage.mkdir()
         (stage/'foreign').write_text('untouched')
+        return result
     monkeypatch.setattr(trace_cli, '_write_at', replace)
     with pytest.raises(Rejected):
         trace_cli.publish(tmp_path/'out', {'events.v2.jsonl': b'example'})
@@ -326,9 +329,44 @@ def test_apple_no_replace_dispatch_publishes_and_refuses_a_racing_destination(tm
     assert (tmp_path/'first'/'events.v2.jsonl').read_bytes() == b'example' and calls == [4]
     original = trace_cli._write_at
     def race(directory, name, raw):
-        original(directory, name, raw)
+        result = original(directory, name, raw)
         (tmp_path/'second').mkdir()
+        return result
     monkeypatch.setattr(trace_cli, '_write_at', race)
     with pytest.raises(Rejected) as caught:
         trace_cli.publish(tmp_path/'second', {'events.v2.jsonl': b'example'})
     assert caught.value.reason == 'output_exists' and list((tmp_path/'second').iterdir()) == []
+
+
+def test_unexpected_staging_file_is_not_published_or_deleted(tmp_path, monkeypatch):
+    original = trace_cli._write_at
+    def inject(directory, name, raw):
+        result = original(directory, name, raw)
+        fd = os.open('foreign', os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=directory)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(b'foreign')
+        return result
+    monkeypatch.setattr(trace_cli, '_write_at', inject)
+    with pytest.raises(Rejected) as caught:
+        trace_cli.publish(tmp_path/'out', {'events.v2.jsonl': b'example'})
+    assert caught.value.reason == 'unsafe_output' and not (tmp_path/'out').exists()
+    stage = next(tmp_path.glob('.trace-import-*'))
+    assert (stage/'foreign').read_bytes() == b'foreign'
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'hardlink'])
+def test_replaced_output_file_link_is_not_published(tmp_path, monkeypatch, kind):
+    original = trace_cli._write_at
+    outside = tmp_path/'outside'
+    outside.write_bytes(b'foreign')
+    def replace(directory, name, raw):
+        result = original(directory, name, raw)
+        os.unlink(name, dir_fd=directory)
+        if kind == 'symlink': os.symlink(str(outside), name, dir_fd=directory)
+        else: os.link(outside, name, dst_dir_fd=directory)
+        return result
+    monkeypatch.setattr(trace_cli, '_write_at', replace)
+    with pytest.raises(Rejected) as caught:
+        trace_cli.publish(tmp_path/'out', {'events.v2.jsonl': b'example'})
+    assert caught.value.reason == 'unsafe_output' and not (tmp_path/'out').exists()
+    assert outside.read_bytes() == b'foreign'
