@@ -88,7 +88,7 @@ def derived():
         assert 'derivation_binding_sha256' in history.store.opened(ordinary['run_id'])[2]
         yield history, ordinary['run_id']
     finally:
-        harness.doCleanups()
+        harness.cleanups.close()
 
 
 def test_derived_saved_history_is_analyzed_without_writing_to_its_store(derived):
