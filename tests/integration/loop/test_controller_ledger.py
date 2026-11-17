@@ -153,7 +153,7 @@ def test_the_ledger_refuses_an_event_out_of_order_with_a_typed_error_and_writes_
 
 def test_an_append_that_crashes_before_it_is_published_leaves_no_event_and_the_next_append_continues_the_chain(tmp_path):
     ledger, spec = started(tmp_path)
-    ledger.write('spec_frozen', {}, elapsed=0.0)
+    ledger.write('spec_frozen', {'spec_sha256': spec.digest}, elapsed=0.0)
     head = ledger.head
 
     def crash(): raise OSError('power loss')

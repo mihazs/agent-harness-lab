@@ -4,6 +4,7 @@ The agent, bank and project are the synthetic ones of tests.support.loop_improve
 directory, the round ledger and the stub agent's call log are compared before and after.
 """
 from contextlib import ExitStack
+import hashlib
 import json
 from pathlib import Path
 
@@ -57,15 +58,32 @@ def test_resuming_with_other_execution_options_is_still_refused(stack, monkeypat
     assert code != 0 and refused['reason'] == 'usage_conflict' and project.calls() == []
 
 
-@pytest.mark.parametrize('damage', ['receipt-stop', 'receipt-events', 'ledger-event', 'ledger-head', 'ledger-removed'])
+@pytest.mark.parametrize('damage', ['receipt-stop', 'receipt-events', 'receipt-spec', 'receipt-sources', 'ledger-spec', 'both-spec-rehashed',
+                                    'ledger-event', 'ledger-head', 'ledger-removed'])
 def test_a_tampered_receipt_or_ledger_is_not_returned_as_the_run_result(stack, monkeypatch, damage):
     project, _, found = finished(stack, monkeypatch)
     run = Path(found['output'])
     document = json.loads((run/'workflow.json').read_text())
     if damage == 'receipt-stop': document['loop']['stop_criterion'] = 'acceptance_score_reached'
     if damage == 'receipt-events': document['loop']['events'] += 1
+    if damage == 'receipt-spec': document['loop']['spec']['accept_score'] = 0.99
+    if damage == 'receipt-sources':
+        document['loop']['spec']['sources']['accept_score'] = 'project'
+        document['loop']['spec']['acceptance_source'] = 'project'
     if damage.startswith('receipt'): (run/'workflow.json').write_text(json.dumps(document))
     case = ledger_case(found)
+    if damage == 'ledger-spec':
+        spec_path = case/'spec.json'
+        spec = json.loads(spec_path.read_text())
+        spec['accept_score'] = 0.99
+        spec_path.write_text(json.dumps(spec))
+    if damage == 'both-spec-rehashed':
+        spec = document['loop']['spec']
+        spec['accept_score'] = 0.99
+        identity = {key: value for key, value in spec.items() if key not in ('digest', 'sources', 'acceptance_source', 'looks')}
+        spec['digest'] = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        (case/'spec.json').write_text(json.dumps(spec))
+        (run/'workflow.json').write_text(json.dumps(document))
     if damage == 'ledger-event': (case/'events/0001.json').write_text((case/'events/0001.json').read_text().replace('"valid"', '"vacuous"'))
     if damage == 'ledger-head': (case/'head.json').write_text(json.dumps(dict(events=2, head_sha256='0'*64)))
     if damage == 'ledger-removed': (case/'events/0001.json').unlink()

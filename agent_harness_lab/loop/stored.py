@@ -21,6 +21,6 @@ def read(output, project):
     block = found.get('loop') if isinstance(found, dict) else None
     if not isinstance(block, dict) or block.get('stop_criterion') in (None, 'interrupted'): return None  # blocked before it started, or not final
     validate_receipt(block)
-    events, head = LoopLedger(state_root()/'loops'/output.name, project).verified()
+    events, head = LoopLedger(state_root()/'loops'/output.name, project).verified(spec=block['spec'])
     if events != block.get('events') or head != block.get('ledger_head_sha256', head): raise LoopError('loop_ledger_invalid', 'head', 'declared')
     return found

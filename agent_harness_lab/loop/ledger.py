@@ -9,11 +9,11 @@ from pathlib import Path
 import secrets
 
 from agent_harness_lab.evaluation.integrity import create_directory_at
-from agent_harness_lab.private_journal import PrivateJournal, record, sync_directory
+from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory
 
 from .errors import LoopError
 from .machine import replay as replay_machine
-from .spec import LoopSpec
+from .spec import LoopSpec, document_digest
 
 FORMAT = 'ahl-loop-ledger-v1'
 # kind -> the state it leaves the run in; kinds that follow it. candidate_frozen and resumed are the ledger's own events: no state change.
@@ -111,10 +111,14 @@ class LoopLedger(PrivateJournal):
         A stop that a later resumed event followed was only an interruption and is not replayed; with interrupted=True a last
         stop of that kind is skipped too, which gives the position the run was interrupted in. After any other stop a
         resumed event is refused."""
-        try: recorded, _ = record(self.case_dir/'spec.json')
+        try:
+            recorded, _ = record(self.case_dir/'spec.json')
+            document_digest(recorded)
         except (ValueError, OSError, TypeError) as error: raise LoopError('loop_ledger_invalid', 'spec', 'declared') from error
         if recorded.get('digest') != spec.digest: raise LoopError('loop_ledger_invalid', 'spec', 'declared')
         events, moves = self.events(), []
+        if not events or not isinstance(events[0][1], dict) or events[0][1].get('spec_sha256') != spec.digest:
+            raise LoopError('loop_ledger_invalid', 'spec', 'declared')
         for index, (kind, payload) in enumerate(events):
             after = events[index + 1][0] if index + 1 < len(events) else ('resumed' if interrupted else None)
             if kind == 'stopped' and after == 'resumed':
@@ -122,17 +126,22 @@ class LoopLedger(PrivateJournal):
             elif kind in MACHINE_EVENTS: moves.append((kind, payload.get('value')))
         return replay_machine(spec, moves)
 
-    def verified(self):
-        """(event count, head SHA-256) of the one case in this store after its chain, order and kept head verify. Read only: no claim, no spec."""
+    def verified(self, *, spec=None):
+        """Return event count and head after verification; when supplied, bind the receipt spec to the stored spec and first event."""
         try:
             found = self.case_ids(2)
             if len(found) != 1: raise ValueError('a store holds exactly one case')
             case = self.case(found[0])
             with self.locked(): events = self.history(case)
+            recorded, _ = record(case/'spec.json')
+            digest = document_digest(recorded)
+            if (not events or events[0][0]['payload'].get('spec_sha256') != digest
+                    or spec is not None and encoded(spec) != encoded(recorded)):
+                raise ValueError('receipt spec differs from ledger')
             held, self.case_dir, self._events = self.case_dir, case, events
             try: self._check_head()
             finally: self.case_dir, self._events = held, []
-        except (ValueError, OSError, TypeError) as error: raise LoopError('loop_ledger_invalid', 'events', 'declared') from error
+        except (ValueError, OSError, TypeError, KeyError, AttributeError) as error: raise LoopError('loop_ledger_invalid', 'events', 'declared') from error
         return len(events), events[-1][1]
 
     def _hold(self, case):
@@ -167,7 +176,9 @@ class LoopLedger(PrivateJournal):
         except (ValueError, OSError) as error: raise LoopError('loop_ledger_invalid', 'case', 'declared') from error
         try:
             self.case_dir, self.max_events = case, event_cap(spec) + 2*MAX_RESUMES
-            try: recorded, _ = record(case/'spec.json')
+            try:
+                recorded, _ = record(case/'spec.json')
+                document_digest(recorded)
             except (ValueError, OSError, TypeError) as error: raise LoopError('loop_ledger_invalid', 'spec', 'declared') from error
             if recorded.get('digest') != spec.digest: raise LoopError('resume_spec_changed', 'spec', 'declared')
             try:

@@ -2,4 +2,4 @@
 "agent-harness-lab": patch
 ---
 
-Prevent interrupted loops from repeating an ambiguous proposal without verified retry safety, and preserve recorded area regressions when resuming.
+Prevent ambiguous proposal retries, preserve recorded area regressions, and verify stored loop specs when resuming.

@@ -22,7 +22,8 @@ def begun(tmp_path, spec=None, events=()):
     (tmp_path/'project').mkdir(exist_ok=True)
     spec = spec or spec_for()
     ledger = LoopLedger(tmp_path/'store', tmp_path/'project').begin(spec)
-    for index, (kind, payload) in enumerate(events): ledger.write(kind, payload, elapsed=float(index))
+    for index, (kind, payload) in enumerate(events):
+        ledger.write(kind, {'spec_sha256': spec.digest, **payload} if kind == 'spec_frozen' else payload, elapsed=float(index))
     ledger.unclaim()
     return spec
 
@@ -90,7 +91,7 @@ def test_a_run_that_is_alive_holds_its_case_so_a_resume_is_busy(tmp_path):
     (tmp_path/'project').mkdir()
     spec = spec_for()
     alive = LoopLedger(tmp_path/'store', tmp_path/'project').begin(spec)
-    alive.write('spec_frozen', {}, elapsed=0.0)
+    alive.write('spec_frozen', {'spec_sha256': spec.digest}, elapsed=0.0)
     with pytest.raises(LoopError) as caught:
         reopened(tmp_path, spec)
     assert caught.value.reason == 'resume_busy'
