@@ -51,6 +51,27 @@ The diagnose limits are loose absolute limits. `task bench:check` is deliberatel
 of `task test`, because wall time is not reliable on shared CI hosts. When a change
 earns an improvement, tighten the matching limit in the same pull request.
 
+## Source help import deferral (#756)
+
+An indicative comparison on the same Linux machine and Python 3.14.9, with other tests
+running: one warm-up and seven fresh-process runs per command using `perf_bench.run`.
+Values are milliseconds; ranges show the observed minimum and maximum, not confidence intervals.
+
+| Command | Before median (range) | After median (range) |
+| --- | --- | --- |
+| `ahl --help` | 57.9 (56.3–60.4) | 59.7 (56.3–61.0) |
+| `ahl sources --help` | 125.7 (121.8–129.0) | 46.3 (45.1–47.4) |
+| `ahl regression-review --help` | 58.4 (56.1–61.5) | 57.5 (55.6–60.0) |
+| `ahl experiment-history --help` | 66.9 (64.4–68.2) | 62.9 (62.0–65.8) |
+
+`-X importtime` on the before tree attributes 75 ms cumulatively to importing the
+source CLI, including 12 ms for the snapshot module and 13 ms for the GitHub
+configuration stack. The regression-review median was close to root help in this
+sample, so its earlier reported excess remains unverified. A synthetic local-source
+preview that needs providers measured 124.2 ms before and 124.5 ms after (nine runs;
+observed ranges 120.7–133.4 and 118.9–128.0 ms), with identical output and status.
+These measurements do not establish performance on other hosts or all providers.
+
 ## Baseline
 
 One run on a Linux x86-64 workstation with Python 3.14.9 while other jobs were running
