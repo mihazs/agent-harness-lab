@@ -123,7 +123,8 @@ def project_lock(project):
     guard = descriptor = None
     try:
         info = os.fstat(directory)
-        if info.st_uid != os.geteuid() or info.st_mode & 0o077: raise ValueError('unsafe workspace lock directory')
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise typed_exit.TypedExit('workspace_busy', f'Unsafe lock directory: {folder}; reconcile the process, surviving children and pending requests before correcting it')
         flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
         guard = os.open(path.name + '.guard', flags | os.O_CREAT, 0o600, dir_fd=directory)
         info = os.fstat(guard)

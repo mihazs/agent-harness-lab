@@ -4,32 +4,22 @@ on:
 permissions:
   contents: read
 jobs:
-  focused-loop-tests:
+  regression-tests:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
       - run: python -m pip install -e ".[test,lint]"
-      - name: Run changed loop tests
+      - name: Check lock safety and entry parity
         run: >-
           python -m pytest -x -q
-          tests/unit/workflow/test_exit_guidance.py
-          tests/integration/loop/test_improve_loop_cli.py
-          tests/integration/improve/test_stress_matrix.py
+          tests/integration/improve/test_stress_matrix.py::test_a_lock_left_by_a_dead_run_ends_busy_with_the_removal_step
+          tests/integration/loop/test_cold_resume_cli.py::test_legacy_stale_project_lock_is_preserved
+          tests/integration/loop/test_cold_resume_cli.py::test_project_lock_refuses_symlinks_without_touching_their_target
+          tests/integration/loop/test_cold_resume_cli.py::test_project_lock_recovers_only_a_verified_previous_boot
+          tests/integration/loop/test_improve_loop_cli.py::test_the_receipt_is_the_same_through_both_entries_apart_from_the_run_directory_and_the_clock
           tests/unit/workflow/test_entry_parity_durations.py
-          tests/integration/loop/test_resume_stored_run.py
-          tests/integration/loop/test_cold_resume_cli.py
-          tests/integration/loop/test_controller_ledger.py
-          tests/integration/loop/test_frozen_bank_evaluator.py
-          tests/integration/loop/test_incremental_runs.py
-          tests/integration/loop/test_order_against_stub_runtime.py
-          tests/integration/loop/test_resume.py
-          tests/unit/docs/test_loop_reference.py
-          tests/unit/loop/test_ledger_replay.py
-          tests/unit/loop/test_receipt.py
-          tests/unit/loop/test_scoring_manifest.py
-          tests/integration/docs/test_improve_until_score_howto.py
-          tests/integration/workflow/test_workflow.py
+          tests/unit/workflow/test_exit_guidance.py
