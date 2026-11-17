@@ -6,15 +6,18 @@ import secrets
 from agent_harness_lab.private_journal import PrivateJournal, record, sync_directory
 from agent_harness_lab.evaluation.integrity import create_directory_at
 from .schema import CampaignSpec
+from .state import may_follow
+
+_KINDS = dict(created='planned',cancelled='cancelled')  # the only events this store can write; nothing else is dispatched
 
 
 def _transition(previous,kind,state,_previous_kind):
-    return previous is None and kind == 'created' and state == 'planned'
+    return type(kind) is str and _KINDS.get(kind) == state and may_follow(previous,state)
 
 
 class CampaignStore(PrivateJournal):
     def __init__(self,root):
-        super().__init__(root,'ahl-campaign-store-v1',_transition,max_events=1)
+        super().__init__(root,'ahl-campaign-store-v1',_transition,max_events=2)
 
     def create(self,spec,project_root):
         """Create one private planned record without dispatching or touching the project."""
@@ -44,17 +47,28 @@ class CampaignStore(PrivateJournal):
             return self._view(case_id,spec,events)
 
     def inspect(self,case_id):
-        """Inspect only a valid planned record; caller identities remain unverified."""
+        """Inspect one valid record; caller identities remain unverified."""
         with self.locked():
-            case = self.case(case_id); events = self.history(case)
-            value,_ = record(case/'spec.json'); spec = CampaignSpec.parse(value)
-            if events[0][0]['payload'] != dict(spec_sha256=spec.digest):
-                raise ValueError('campaign specification changed')
+            return self._view(case_id,*self._load(case_id)[1:])
+
+    def cancel(self,case_id):
+        """Cancel a campaign that never dispatched; a replay returns the retained record without a new event."""
+        with self.locked():
+            case,spec,events = self._load(case_id)
+            if events[-1][0]['state'] != 'cancelled':
+                self.append(case,events,'cancelled','cancelled',dict(spec_sha256=spec.digest))
             return self._view(case_id,spec,events)
+
+    def _load(self,case_id):
+        case = self.case(case_id); events = self.history(case)
+        value,_ = record(case/'spec.json'); spec = CampaignSpec.parse(value)
+        if any(event['payload'] != dict(spec_sha256=spec.digest) for event,_ in events):
+            raise ValueError('campaign specification changed')
+        return case,spec,events
 
     @staticmethod
     def _view(case_id,spec,events):
-        return dict(profile='ahl-campaign-inspection-v1',campaign_id=case_id,state='planned',spec_sha256=spec.digest,
+        return dict(profile='ahl-campaign-inspection-v1',campaign_id=case_id,state=events[-1][0]['state'],spec_sha256=spec.digest,
                     event_sha256=events[-1][1],input_identity='caller_supplied_unverified',budget='not_enforced',
                     execution='not_started',review_decision='not_requested',evaluation_disposition='not_evaluated',
                     deployment_state='not_applied',publication_allowed=False,automatic_promotion=False)

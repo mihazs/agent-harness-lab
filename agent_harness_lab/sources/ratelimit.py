@@ -20,6 +20,7 @@ except ImportError:  # shortcut: no cross-process lock off POSIX; atomic replace
     fcntl = None
 
 MAX_BUCKETS = 64
+MAX_ROUTES = 100
 MAX_STATE_BYTES = 64*1024
 LIMIT_FIELDS = ('limit', 'remaining', 'reset', 'cooldown', 'next_at')
 # Retry-After and reset values past a day are not a short wait and not a plausible window.
@@ -82,6 +83,21 @@ def identity_digest(authorization):
     return hashlib.sha256(b'ahl-forge-identity-v1\0'+authorization.encode()).hexdigest()[:16]
 
 
+def graphql_cost(value):
+    """The validated ``rateLimit`` {cost, remaining, limit, reset} a GraphQL response body reports, or None; invalid fields are dropped."""
+    data = value.get('data') if isinstance(value, dict) else None
+    report = data.get('rateLimit') if isinstance(data, dict) else None
+    if not isinstance(report, dict) or type(report.get('cost')) is not int or _number(report['cost']) is None: return None
+    found = dict(cost=report['cost'])
+    for name in ('remaining', 'limit'):
+        if type(report.get(name)) is int and _number(report[name]) is not None: found[name] = report[name]
+    try:
+        found['reset'] = int(datetime.strptime(report['resetAt'], '%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc).timestamp())
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        pass
+    return found
+
+
 def _clean(value, now):
     """The validated bucket map of a loaded state value, or {}; times past a day ahead are clamped as observe() does."""
     if not isinstance(value, dict) or value.get('v') != 1 or not isinstance(value.get('buckets'), dict): return {}
@@ -120,7 +136,7 @@ class Limiter:
         self.begin_run()
 
     def begin_run(self):
-        self.run = dict(requests=0, conditional=0, waits=0, waited=0, halt=None, reset=None, resource=None, buckets={})
+        self.run = dict(requests=0, conditional=0, waits=0, waited=0, halt=None, reset=None, resource=None, buckets={}, routes=[], routes_omitted=0)
 
     # -- shared state ------------------------------------------------------------------------------------------
     def _update(self, change):
@@ -172,9 +188,24 @@ class Limiter:
         if self.reserve is not None: return self.reserve
         return math.ceil(entry['limit']*self.reserve_fraction) if 'limit' in entry else 0
 
+    def _blocked(self, entry, now, need=1):
+        """(reason, until) when a cooldown or the reserve floor bars spending ``need`` more, else None; spacing is not a block."""
+        if entry.get('cooldown', 0) > now: return 'secondary_limit', entry['cooldown']
+        if 'remaining' in entry and entry['remaining'] < self._floor(entry)+need and entry.get('reset', 0) > now:
+            return ('primary_limit' if entry['remaining'] == 0 else 'reserve_floor'), entry['reset']
+        return None
+
+    def blocked(self, host, resource, identity, need=1):
+        """Read-only headroom check of one bucket in the shared state: (reason, until) or None. It spends and waits for nothing."""
+        now, key = self.clock(), self.key(host, resource, identity)
+        return self._update(lambda buckets: self._blocked(buckets.get(key, {}), now, need))
+
     # -- before a request --------------------------------------------------------------------------------------
-    def before(self, host, resource, identity, *, patience=None):
-        """Wait out a short block, or raise RateLimited at the reserve floor, cooldown or per-run budget."""
+    def before(self, host, resource, identity, *, patience=None, need=1):
+        """Wait out a short block, or raise RateLimited at the reserve floor, cooldown or per-run budget.
+
+        ``need`` is the spend (requests, or GraphQL points) the request may cost; the reserve floor must survive it.
+        """
         if self.request_budget is not None and self.run['requests'] >= self.request_budget:
             raise self._halt('request_budget', None, resource)
         key = self.key(host, resource, identity)
@@ -183,9 +214,8 @@ class Limiter:
 
             def check(buckets):
                 entry = buckets.get(key, {})
-                if entry.get('cooldown', 0) > now: return ('secondary_limit', entry['cooldown']), None
-                if 'remaining' in entry and entry['remaining'] <= self._floor(entry) and entry.get('reset', 0) > now:
-                    return ('primary_limit' if entry['remaining'] == 0 else 'reserve_floor', entry['reset']), None
+                verdict = self._blocked(entry, now, need)
+                if verdict is not None: return verdict, None
                 if entry.get('next_at', 0) > now: return ('spacing', entry['next_at']), None
                 if self.min_interval: buckets.setdefault(key, {})['next_at'] = math.ceil(now+self.min_interval)
                 return None, entry.get('remaining')
@@ -239,6 +269,18 @@ class Limiter:
             if 'limit' in found and found['reset'] >= entry['reset']: entry['limit'] = found['limit']
         self._update(merge)
 
+    def charge(self, host, identity, resource, report):
+        """Charge the cost a GraphQL response reports (see graphql_cost) to its bucket; the reported remaining is shared."""
+        bucket = self.run['buckets'].setdefault(resource, dict(requests=0, remaining_start=None, remaining_end=None))
+        bucket['points'] = bucket.get('points', 0)+report['cost']
+        self.observe(host, identity, resource, 200, {**{k: report[k] for k in ('remaining', 'limit', 'reset') if k in report},
+            'resource': resource}, charged=False)
+
+    def note_route(self, read, transport, bucket, reason):
+        """Record one routing decision for the receipt; the list is bounded and the overflow only counted."""
+        if len(self.run['routes']) >= MAX_ROUTES: self.run['routes_omitted'] += 1
+        else: self.run['routes'].append(dict(read=read, transport=transport, bucket=bucket, reason=reason))
+
     def retry_delay(self, host, identity, guess, kind, found, attempt, *, retry=True, patience=None):
         """Seconds to wait before retrying a limited GET, or None to halt; the cooldown is shared either way."""
         now = self.clock()
@@ -265,10 +307,11 @@ class Limiter:
 
     # -- receipt -----------------------------------------------------------------------------------------------
     def receipt(self):
-        """Counts only: requests charged, remaining per bucket, waits, conditional hits and any halt."""
+        """Counts only: requests charged, GraphQL points, remaining per bucket, waits, conditional hits, routing decisions and any halt."""
         run = self.run
         reset = None if run['reset'] is None else datetime.fromtimestamp(run['reset'], timezone.utc).isoformat()
         return dict(requests_used=run['requests'], conditional_hits=run['conditional'],
             waits=dict(count=run['waits'], seconds=round(run['waited'], 3)), halt_reason=run['halt'],
             halt_resource=run['resource'], reset=reset, reset_epoch=run['reset'],
-            buckets={k: dict(v) for k, v in sorted(run['buckets'].items())})
+            buckets={k: dict(v) for k, v in sorted(run['buckets'].items())}, routes=[dict(r) for r in run['routes']],
+            routes_omitted=run['routes_omitted'])

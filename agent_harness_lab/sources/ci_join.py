@@ -1,4 +1,5 @@
 """Offline join of declared-commit test results and quality findings to GitHub Actions jobs; CI process evidence, never a task grade."""
+from .artifact_zip import report_identity
 from .schema import digest
 from .test_results import commit
 
@@ -10,12 +11,12 @@ FAILED_JOBS = ('failure', 'timed_out')
 
 def _origin(declared, paths, jobs, repository_id):
     """Resolve one caller-declared report origin to a captured job and optional step; refusals carry a reason."""
-    if not isinstance(declared, dict) or set(declared) - {'path', 'job_id', 'step'} or {'path', 'job_id'} - set(declared):
+    if not isinstance(declared, dict) or set(declared) - {'path', 'member', 'job_id', 'step'} or {'path', 'job_id'} - set(declared):
         raise ValueError('invalid report origin declaration')
     path, job_id, step = declared['path'], declared['job_id'], declared.get('step')
     if type(job_id) is not int or job_id < 1 or step is not None and (type(step) is not int or step < 1):
         raise ValueError('invalid report origin job or step')
-    path_sha256 = digest(path)
+    path_sha256 = report_identity(path, declared.get('member'))
     if path_sha256 not in paths: raise ValueError('origin names an unselected report')
     job = jobs.get(digest(('github_workflow_job', repository_id, job_id)))
     result = dict(report_path_sha256=path_sha256, origin_binding='caller_declared', origin_verified=False)

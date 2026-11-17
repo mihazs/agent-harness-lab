@@ -174,9 +174,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False, similarity_alg
     return result
 
 
-def inspect(path, *, similarity_algorithm=None):
-    """Inspect complete declared contents without admission or execution authority."""
-    result = _validate(path, analysis_only=True, similarity_algorithm=similarity_algorithm)
+def inspect(path, *, similarity_algorithm=None, registry=None):
+    """Inspect complete declared contents without admission or execution authority; a registry checks the task areas."""
+    result = _validate(path, analysis_only=True, similarity_algorithm=similarity_algorithm, registry=registry)
     profile = result.pop('_controller_profile', None)
     if profile is not None:
         from .bank_revisions import PROFILE as REVISION

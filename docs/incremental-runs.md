@@ -133,6 +133,16 @@ scope or runtime, or an unknown runtime is evaluated as usual. To get a differen
 the focus or the harness, or read `investigation.json` of the earlier run first. Preparation has
 already run when the guard fires, so the result also carries `spend_label: spent_without_evaluation`.
 
+## Loop runs
+
+A loop run (`--accept-score`, `--max-rounds` or a `loop` declaration) reads the same previous record
+and receipt, then adds a `carry_over` block to its `loop` block. The detection above is consumed as it
+is, not repeated: a harness edited outside the earlier candidate reopens the carried mechanism
+dispositions, and different frozen inputs make the earlier scores `not_comparable` with no delta. The
+earlier score stays a labelled historical observation beside the fresh baseline evaluation and is never
+reused as a trial. See [later runs](loop-reference.md#later-runs) for the block and
+[resuming a loop](loop-reference.md#resuming-a-loop) for an interrupted run.
+
 ## Not covered here
 
 Frozen development and regression tasks are never reused across runs: held-out inputs stay fresh

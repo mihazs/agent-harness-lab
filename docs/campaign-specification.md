@@ -22,8 +22,12 @@ recovery, quality, approval, certification, or application.
 
 `CampaignStore.create(spec, project_root)` creates a private planned record
 under an owner-only store outside the project, with an opaque campaign ID.
-`CampaignStore.inspect(id)` validates the saved specification against the
-creation event and returns a private summary. Both operations are offline;
+`CampaignStore.inspect(id)` validates the saved specification against every
+event and returns a private summary of the latest state.
+`CampaignStore.cancel(id)` appends one `cancelled` event to a campaign that
+never dispatched anything (the only kind this store can hold) and keeps the
+record and specification; cancelling an already cancelled campaign returns the
+same record and writes nothing. All three operations are offline;
 their status fields explicitly say that budget enforcement, execution, review,
 evaluation and deployment have not occurred. Store locking excludes a second
 controller for that store. The project/store separation check observes current
@@ -36,9 +40,25 @@ The offline CLI exposes the same planned-only operations:
 ```text
 ahl campaign --store PRIVATE_STORE create --spec PRIVATE_SPEC.json --project-root PROJECT
 ahl campaign --store PRIVATE_STORE inspect --campaign CAMPAIGN_ID
+ahl campaign --store PRIVATE_STORE cancel --campaign CAMPAIGN_ID
 ```
 
 Both commands print private JSON. Creation requires a complete v1 specification;
-the specification and output contain private identities. Inspecting does not
-start or resume work. Exit 0 means the requested offline action completed; 2
+the specification and output contain private identities. Inspecting or
+cancelling does not start, stop or resume work, because none exists to stop. Exit 0 means the requested offline action completed; 2
 means invalid or unavailable input, and 3 means the store lock is busy.
+
+## Lifecycle states
+
+`agent_harness_lab.campaigns.state` holds the lifecycle table that later slices
+will drive: `planned`, `ready`, `running`, `paused`, `blocked`, `interrupted`,
+`awaiting_review`, `budget_exhausted`, `completed`, `cancelled` and `failed`.
+`completed`, `cancelled` and `failed` are terminal, every other state can be
+cancelled, and a campaign cannot reach `completed` without passing
+`awaiting_review`. An `interrupted` campaign leaves that state only through an
+explicit reconciliation or an operator decision. The table is not an executor:
+the store accepts only the `created` (`planned`) and `cancelled` events, so a
+journal entry for any other state is rejected as an invalid transition. Review
+approval, completion, budget settlement and deployment remain unimplemented, and
+`review_decision`, `evaluation_disposition` and `deployment_state` stay
+separate fields from `state`.

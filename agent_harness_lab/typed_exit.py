@@ -39,12 +39,13 @@ REASONS = {
     'capability_unavailable': ('blocked', 'run', 'Run where the required filesystem capabilities exist; there is no unsafe fallback.'),
     'nested_invocation_refused': ('blocked', 'usage', 'Run ahl from the user shell, not from a managed preparation session.'),
     'legacy_attempted': ('legacy_attempted', 'run', 'Read the recorded legacy operation in the private receipt before retrying.'),
+    'loop_not_accepted': ('not_accepted', 'run', 'Read loop.stop_criterion and loop.remediation in the private receipt, then act on that one step.'),
 }
 DEFAULT_REASON = {'execution_error': 'execution_failed', 'invalid_proposal': 'proposal_invalid', 'evaluation_failed': 'evaluation_run_failed',
                   'conflict': 'run_conflict', 'budget_exhausted': 'budget_exhausted', 'interrupted': 'interrupted',
                   'incomplete': 'run_incomplete', 'invalid_input': 'run_input_rejected', 'setup_error': 'setup_failed',
                   'inconclusive': 'evidence_inconclusive', 'blocked': 'prerequisite_blocked', 'legacy_attempted': 'legacy_attempted',
-                  'requires_intervention': 'intervention_required'}
+                  'requires_intervention': 'intervention_required', 'not_accepted': 'loop_not_accepted'}
 
 
 class TypedExit(ValueError):
@@ -122,6 +123,9 @@ def classify(exc, started):
     """(reason, status) of an exception that reached the entry point; every exception maps into the vocabulary."""
     if isinstance(exc, TypedExit):
         return exc.reason, exc.status
+    from .loop.errors import DEFECTS, LoopError
+    if isinstance(exc, LoopError):  # a bad declaration is an input error; an invalid adapter, ledger or receipt is AHL's own defect
+        return exc.reason, 'requires_intervention' if exc.reason in DEFECTS else 'invalid_input'
     from .evaluation.manifest_contract import ContractError
     if isinstance(exc, ContractError):  # only it registers its reason; ssl.SSLError and URLError carry free text in `.reason`
         return exc.reason, 'invalid_input'

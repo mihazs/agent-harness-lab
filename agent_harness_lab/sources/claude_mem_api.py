@@ -1,7 +1,7 @@
 """Explicit read-only Claude-Mem worker listings over HTTPS: observations, generated summaries and prompts as separate claims.
 
-Only the pinned v15.9.0 paged list routes are read, for one named project; nothing here starts a worker, calls an MCP tool,
-opens a database or turns a memory into a task outcome.
+Only the pinned v15.9.0 list routes are read, for one named project, and the tool-use index only when the selection asks for it;
+nothing here starts a worker, calls an MCP tool, opens a database, reads a tool body or turns a memory into a task outcome.
 """
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -21,6 +21,9 @@ CEILING = 10000
 VERSION_ROUTE = '/api/version'
 LISTINGS = (('observations', 'observation', '/api/observations'), ('summaries', 'generated_summary', '/api/summaries'),
             ('prompts', 'user_prompt', '/api/prompts'))
+# GET /api/tool-uses (DataRoutes.handleListToolUses) answers {count, toolUses} with no cursor and clamps `limit` to 1..500; a body
+# is never in it (tool_input and tool_response are only sizes), and the POST /api/tool-uses/batch body route is never requested.
+TOOL_USES = ('tool_uses', 'tool_use', '/api/tool-uses')
 # Row fields of the three list queries at the pin (src/services/worker/PaginationHelper.ts); `media` is added by withObservationMedia.
 FIELDS = dict(
     observations=('id', 'memory_session_id', 'content_session_id', 'project', 'merged_into_project', 'platform_source', 'type',
@@ -28,9 +31,12 @@ FIELDS = dict(
         'created_at', 'created_at_epoch', 'media'),
     summaries=('id', 'session_id', 'platform_source', 'request', 'investigated', 'learned', 'completed', 'next_steps', 'notes',
         'project', 'merged_into_project', 'created_at', 'created_at_epoch'),
-    prompts=('id', 'content_session_id', 'project', 'platform_source', 'prompt_number', 'prompt_text', 'created_at', 'created_at_epoch'))
+    prompts=('id', 'content_session_id', 'project', 'platform_source', 'prompt_number', 'prompt_text', 'created_at', 'created_at_epoch'),
+    tool_uses=('id', 'tool_use_id', 'tool_name', 'project', 'content_session_id', 'memory_session_id', 'platform_source', 'agent_id',
+        'agent_type', 'observation_id', 'or_generation_id', 'or_session_id', 'prompt_number', 'created_at', 'created_at_epoch',
+        'tool_input_bytes', 'tool_response_bytes'))
 # The identity field each list names its session by; a summary's `session_id` is the content session ID.
-SESSION_FIELD = dict(observations='memory_session_id', summaries='session_id', prompts='content_session_id')
+SESSION_FIELD = dict(observations='memory_session_id', summaries='session_id', prompts='content_session_id', tool_uses='content_session_id')
 MAX_FIELDS = 128
 # A missing route is one listing's gap; a denial, a rate limit or a spent budget ends every later read.
 CONTINUES = ('not_found',)
@@ -48,6 +54,7 @@ class ClaudeMemSelection(Contract):
     project: str
     platform_source: str | None = None
     max_rows: int = 1000
+    tool_uses: bool = False
     schema_version: int = 1
     provider = PROVIDER
     profile = PROFILE
@@ -63,6 +70,17 @@ class ClaudeMemSelection(Contract):
             label(self.platform_source)
             if self.platform_source not in PLATFORMS: raise ValueError('unsupported Claude-Mem platform source')
         if type(self.max_rows) is not int or not 1 <= self.max_rows <= CEILING: raise ValueError('invalid Claude-Mem row bound')
+        if type(self.tool_uses) is not bool: raise ValueError('invalid Claude-Mem tool-use option')
+
+    @classmethod
+    def parse(cls, value):
+        # A selection declared before the option existed has no `tool_uses` and keeps its scope digest.
+        return super().parse({'tool_uses': False, **value} if isinstance(value, dict) else value)
+
+    def to_dict(self):
+        value = super().to_dict()
+        if not self.tool_uses: del value['tool_uses']
+        return value
 
     @property
     def root(self): return instance_root(self.base_url, '/api')
@@ -110,14 +128,16 @@ class ClaudeMemWorkerAPI:
         if len(row) > MAX_FIELDS: raise ValueError('Claude-Mem field bound exceeded')
         tally['digests'][kind].append(digest(row))
         identity, session = row.get('id'), text(row.get(SESSION_FIELD[kind]))
-        if type(identity) is not int or identity <= 0 or session is None:
+        if (type(identity) is not int or identity <= 0 or session is None
+                or kind == 'tool_uses' and text(row.get('tool_use_id')) is None):
             tally['rejected'][kind] += 1; warnings.add('row_without_native_identity'); return None
         if identity in tally['seen'][kind]: raise ValueError('duplicate listing identity')
         tally['seen'][kind].add(identity)
         if set(row) - set(FIELDS[kind]): tally['unknown'][kind] += 1; warnings.add('unknown_row_fields')
         platform = row.get('platform_source')
-        # Upstream filters on project or merged_into_project; a row the filter would not return names another scope.
-        if (project_key(selection.project) not in (project_key(row.get('project')), project_key(row.get('merged_into_project')))
+        # Upstream filters on project or merged_into_project (the tool-use index on project alone); a row the filter would not return names another scope.
+        named = (row.get('project'),) if kind == 'tool_uses' else (row.get('project'), row.get('merged_into_project'))
+        if (project_key(selection.project) not in map(project_key, named)
                 or selection.platform_source is not None and platform != selection.platform_source):
             tally['excluded'][kind] += 1; warnings.add('row_outside_selection'); return None
         platform = None if platform is None else platform if platform in PLATFORMS else 'other'
@@ -131,7 +151,7 @@ class ClaudeMemWorkerAPI:
             if detail == 'unrecognized': warnings.add('unrecognized_observation_type')
         number = row.get('prompt_number')
         if number is not None and (type(number) is not int or number < 0): warnings.add('invalid_prompt_number')
-        memory = session if kind == 'observations' else None
+        memory = text(row.get('memory_session_id')) if kind in ('observations', 'tool_uses') else None
         content = text(row.get('content_session_id' if kind != 'summaries' else 'session_id'))
         project = text(row.get('project'))
         return MemoryClaim(claim_type, self._scoped(claim_type, identity, 0), 0, DERIVATION[claim_type],
@@ -140,6 +160,23 @@ class ClaudeMemWorkerAPI:
             None if content is None else self._scoped('content-session', content), platform, detail,
             number if type(number) is int and number >= 0 else None, original, status,
             synthesizes_multiple_origins=claim_type == 'generated_summary')
+
+    @staticmethod
+    def _window(kind, value, offset, size):
+        """(rows, more) of one page, or ValueError for a page that skips, repeats or misreports its window."""
+        if kind == 'tool_uses':
+            # No cursor: a short page ends the index, a full one may have a successor, so only a later short or empty page proves the end.
+            rows = value.get('toolUses') if isinstance(value, dict) else None
+            if (not isinstance(rows, list) or set(value) != {'count', 'toolUses'} or type(value['count']) is not int
+                    or value['count'] != len(rows) or len(rows) > size):
+                raise ValueError('malformed Claude-Mem tool-use page')
+            return rows, len(rows) == size
+        items = value.get('items') if isinstance(value, dict) else None
+        if (not isinstance(items, list) or set(value) != {'items', 'hasMore', 'offset', 'limit'} or type(value['hasMore']) is not bool
+                or type(value['offset']) is not int or value['offset'] != offset or type(value['limit']) is not int
+                or value['limit'] != size or len(items) > size or value['hasMore'] and len(items) != size):
+            raise ValueError('malformed Claude-Mem page or a page that skips, repeats or misreports its window')
+        return items, value['hasMore']
 
     def _list(self, ledger, kind, claim_type, route, tally):
         """Offset pages of one list; only an explicit end of the list is captured, and the last page is never assumed."""
@@ -151,21 +188,18 @@ class ClaudeMemWorkerAPI:
                 value, _ = ledger.fetch(f'{route}?{urlencode(sorted(dict(query, limit=size, offset=offset).items()))}')
             except Unavailable as blocked:
                 return ((blocked.state, None) if not offset else ('pagination_incomplete', blocked.state)), blocked.state
-            items = value.get('items') if isinstance(value, dict) else None
-            if (not isinstance(items, list) or set(value) != {'items', 'hasMore', 'offset', 'limit'} or type(value['hasMore']) is not bool
-                    or type(value['offset']) is not int or value['offset'] != offset or type(value['limit']) is not int
-                    or value['limit'] != size or len(items) > size or value['hasMore'] and len(items) != size):
-                raise ValueError('malformed Claude-Mem page or a page that skips, repeats or misreports its window')
+            items, more = self._window(kind, value, offset, size)
             claims = [self._row(kind, claim_type, row, tally) for row in items]
             tally['claims'].extend(claim for claim in claims if claim is not None)
             offset += len(items)
-            if not value['hasMore']: return ('captured', None), None
+            if not more: return ('captured', None), None
             if offset >= selection.max_rows: return ('pagination_incomplete', 'max_rows_reached'), None
 
     def _capture(self, source):
         selection = self.selection
         ledger = CaptureLedger(source, self.transport, self.authorization, ())
-        tally = dict(claims=[], warnings=set(), digests={kind: [] for kind, *_ in LISTINGS}, seen={kind: set() for kind, *_ in LISTINGS},
+        listings = (*LISTINGS, TOOL_USES) if selection.tool_uses else LISTINGS
+        tally = dict(claims=[], warnings=set(), digests={kind: [] for kind, *_ in listings}, seen={kind: set() for kind, *_ in listings},
             rejected=Counter(), unknown=Counter(), excluded=Counter(), timestamps=Counter())
         attestation, stop = 'caller_declared', None
         version, state = ledger.version(VERSION_ROUTE)
@@ -176,7 +210,7 @@ class ClaudeMemWorkerAPI:
         else:
             tally['warnings'].add('worker_version_'+('unrecognized' if state == 'unrecognized' else 'unreported'))
             if state not in ('unrecognized', *CONTINUES): ledger.note('version', (state, None)); stop = state
-        for kind, claim_type, route in LISTINGS:
+        for kind, claim_type, route in listings:
             if stop is not None: break
             outcome, stop = self._list(ledger, kind, claim_type, route, tally)
             ledger.note(kind, outcome)
@@ -184,16 +218,16 @@ class ClaudeMemWorkerAPI:
         claims = tuple(tally['claims'])
         counts = Counter(c.claim_type for c in claims)
         capture_sha256 = digest(dict(scope=selection.sha256, rows=tally['digests']))
-        warnings = set(BASE_WARNINGS) | tally['warnings']
+        warnings = set(BASE_WARNINGS) | tally['warnings'] | ({'tool_events_unverified'} if selection.tool_uses else set())
         if any(entry['state'] == 'pagination_incomplete' for entry in ledger.coverage): warnings.add('listing_truncated')
         if not ledger.ready: warnings.add('capture_blocked_or_incomplete')
         summary = dict(schema_version=1, provider=PROVIDER, source_version=SOURCE_VERSION, profile=PROFILE,
             claude_mem_version=selection.release, upstream_commit=PINNED[selection.release], version_attestation=attestation,
             upstream_shape='source_inferred', compatibility='unverified', instance_sha256=digest(('claude-mem.worker', selection.instance)),
-            project_scope='worker_filtered', claims={claim_type: counts.get(claim_type, 0) for _, claim_type, _ in LISTINGS},
-            rows_rejected={kind: tally['rejected'].get(kind, 0) for kind, *_ in LISTINGS},
-            rows_with_unknown_fields={kind: tally['unknown'].get(kind, 0) for kind, *_ in LISTINGS},
-            excluded=dict(rows_outside_selection={kind: tally['excluded'].get(kind, 0) for kind, *_ in LISTINGS}),
+            project_scope='worker_filtered', claims={claim_type: counts.get(claim_type, 0) for _, claim_type, _ in listings},
+            rows_rejected={kind: tally['rejected'].get(kind, 0) for kind, *_ in listings},
+            rows_with_unknown_fields={kind: tally['unknown'].get(kind, 0) for kind, *_ in listings},
+            excluded=dict(rows_outside_selection={kind: tally['excluded'].get(kind, 0) for kind, *_ in listings}),
             timestamps={status: tally['timestamps'].get(status, 0) for status in ('native', 'missing', 'invalid', 'conflicting')},
             native_session_correlation='not_attempted', task_outcomes_verified=False, evidence_of_use=False, independent_trials=None,
             publication_allowed=False, network_used=True, server_contacted=True, worker_started=False, database_opened=False,

@@ -8,6 +8,7 @@ import pytest
 from tests.unit.sources.test_source_github import GitHubCase, Response
 
 from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection, THREADS_QUERY, THREAD_COMMENTS_QUERY
+from agent_harness_lab.sources.ratelimit import Limiter, identity_digest
 from agent_harness_lab.sources.registry import Capability, Registry
 from agent_harness_lab.sources.schema import digest
 from agent_harness_lab.sources.store import SourceStore
@@ -105,6 +106,25 @@ class TestGitHubThread(GitHubCase):
         client, _ = self.read()
         assert next(n for n in client.summary['nodes'] if n['kind'] == 'github_review_thread')['outdated']
         assert not next(n for n in client.summary['nodes'] if n['kind'] == 'github_review_comment')['outdated']
+
+    def test_review_threads_are_a_graphql_only_read_and_the_receipt_says_so(self):
+        client, _ = self.read()
+
+        assert client.transport.limiter.receipt()['routes'][0] == dict(
+            read='review_threads', transport='graphql', bucket='graphql', reason='only_graphql')
+
+    def test_review_threads_halt_at_the_graphql_reserve_instead_of_borrowing_the_rest_bucket(self, tmp_path):
+        state, now = str(tmp_path/'limits.json'), 1_000_000
+        Limiter(path=state, clock=lambda: now).observe('api.github.com', identity_digest('Bearer SYNTHETIC_SECRET'), 'graphql', 200,
+            dict(limit=5000, remaining=10, reset=now+600), charged=False)
+        client = GitHubAPI(self.base, self.selection, authorization='Bearer SYNTHETIC_SECRET', path=state, clock=lambda: now)
+
+        with pytest.raises(TransportError):
+            client.read(self.source)
+
+        receipt = client.transport.limiter.receipt()
+        assert (receipt['halt_reason'], receipt['halt_resource'], receipt['reset_epoch']) == ('reserve_floor', 'graphql', now+600)
+        assert self.graph_calls == [] and receipt['routes'][-1]['transport'] == 'none'
 
     def test_v3_roundtrip(self):
         assert GitHubSelection.parse(json.loads(json.dumps(self.selection.to_dict()))) == self.selection

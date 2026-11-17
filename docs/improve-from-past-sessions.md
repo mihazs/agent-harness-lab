@@ -57,6 +57,12 @@ declared no change with typed reasons, supplied no hypothesis, or (native CLI-ru
 proposal, and which missing evidence it named. The fields are the preparation agent's own declaration against a fixed vocabulary, not a
 verified finding; see [analysis](analysis.md#exit-reasons-and-next-actions) for the field list.
 
+A run that spent preparation also shows what the runtime itself reported for each call, when it reported anything. If a call
+reported a cost, stderr prints `ahl: provider-reported cost: preparation-0=0.0123 usd (unverified)` before the outcome line, and
+the receipt's `model_calls` entries carry the duration, turns, cost and token counts under `provider_reported`. These are the
+provider's figures, not AHL's: they are unverified, never summed, and never used for a decision. A figure the runtime did not
+report is missing from the block rather than zero, and `cost=unknown` on the outcome line stays because AHL measures no money.
+
 ## Try it in a worktree
 
 Sessions are looked up by the project's own path, and a linked worktree has a

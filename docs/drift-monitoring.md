@@ -4,7 +4,8 @@
 capture path, a different task population and a change in verified outcomes. This
 first slice of issue #76 is a library API. It freezes the monitoring plan, freezes a
 reference as counts, and returns a receipt for one later window. It adds no CLI
-command and no background monitor, and it does not change `promotion/monitor.py`.
+command and no background monitor. A sealed receipt reaches the promotion monitor only
+through [`promotion.monitor.signal`](#feeding-a-receipt-to-the-promotion-monitor).
 
 ## Plan
 
@@ -118,3 +119,30 @@ Every receipt states `regression_label: not_established`, `causal_claim: false`,
 `automatic_rollback: false`, `promotion_authority: none` and
 `publication_allowed: false`. A drift alert is a reason to look, not evidence that
 the harness got worse.
+
+## Feeding a receipt to the promotion monitor
+
+`agent_harness_lab.promotion.monitor.signal(deployment, plan, reference, receipt)` folds one
+receipt into a `promotion-monitor-signal-v1`. It first checks that the receipt is sealed over the
+same plan and reference (`drift.check_receipt`, also used by `describe_task_mix`), that its window
+fits the frozen schedule and that every channel state is `alert`, `no_alert` or
+`insufficient_evidence`. Anything else raises `ValueError` and returns no signal.
+
+The signal copies the detector identity (receipt profile, plan, reference and receipt digests), the
+window, each channel's state and reasons, the capture counts and coverage, each statistical
+channel's `tested` flag and `per_window_alpha`, and the multiplicity state (window index,
+windows remaining and the plan's reset policy). It is a pure function of its inputs, so restarting
+the process and calling it again with the same plan, reference and runs returns the same signal.
+Nothing in it is stored: the budget is spent by the plan's fixed schedule, and a reset still needs
+a new plan that keeps the history and the error already spent.
+
+An alert only fills `requests`: a capture alert asks for `investigate_capture`, a task-mix alert for
+`review_task_mix` and a performance alert for `reproduce_performance` (a controlled reproduction
+under the experiment protocol, not a deployment action). `action` is then `review`, otherwise
+`observe`. A receipt does not name the deployment each run used, so the signal states
+`deployment_attribution: not_established`, `regression_label: not_established`,
+`causal_attribution: unestablished`, `deployment_state: unchanged`, `stability_claim: false`,
+`automatic_rollback: false`, `rollback_authorization: false`, `promotion_authority: none` and
+`publication_allowed: false`. It never creates a `suspected_regression`, `rollback_eligible` or
+`rolled_back` state. A digest detects an edited receipt; it does not authenticate who made it
+(`receipt_authority: unverified`).

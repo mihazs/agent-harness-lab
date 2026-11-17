@@ -62,6 +62,9 @@ def _improve_summary(result, elapsed, budget=None):
     if isinstance(result.get('preparation'), dict):
         from . import preparation
         print(preparation.line(result['preparation']), file=sys.stderr, flush=True)
+    from . import provider_reported
+    if spend := provider_reported.line(result.get('model_calls')):  # the runtime's own figure, labelled unverified; cost= below stays AHL's own
+        print(spend, file=sys.stderr, flush=True)
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
           f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
@@ -169,6 +172,9 @@ def main(argv=None):
     if argv and argv[0] == 'compare':
         from agent_harness_lab.evaluation.compare import main as compare_main
         return compare_main(argv[1:])
+    if argv and argv[0] == 'score':
+        from agent_harness_lab.evaluation.score import main as score_main
+        return score_main(argv[1:])
     if argv and argv[0] == 'adapters':
         from agent_harness_lab.evaluation.adapter_cli import main as adapters_main
         return adapters_main(argv[1:])
@@ -222,14 +228,14 @@ def main(argv=None):
         'benchmark':'Compare local incident classifiers on supplied labels; optional ML packages and existing local models only',
         'skills':'Install bundled skill links for Codex or Claude (writes to the selected skill directory)',
         'bank':'Validate a task-bank manifest or export selected task fixtures for evaluation',
-        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks',
+        'bank-interchange':'Inspect or import supported external evaluation formats as descriptive task banks, or convert a text-expectations case list into a native bank',
         'bank-review':'Manage private final-bank intake, native controls and separately signed conditional review',
         'experiment':'Plan or analyze a predeclared fixed or sequential baseline/candidate experiment',
         'experiment-history':'Inspect private controller history and explicitly reserve or execute selected runs',
         'grader-correction':'Record and review corrections without rewriting original graded evidence',
         'regression':'Construct or replay explicit regression tasks with fixed controls',
         'regression-review':'Manage private regression cases, replay evidence and dedicated review transitions',
-        'campaign':'Create and inspect private planned campaigns offline; execution is not implemented',
+        'campaign':'Create, inspect and cancel private planned campaigns offline; execution is not implemented',
         'sandbox-check':'Probe explicitly configured offline worker isolation; does not authenticate agents',
         'research-simulate':'Run reproducible synthetic research scenarios without a model service',
         'incident-search':'Search an explicitly approved private incident corpus with a local lexical index',
@@ -239,6 +245,7 @@ def main(argv=None):
         'instruction-adherence':'Report where captured sessions ignored harness rules or user-prompt instructions; offline, read-only, redacted by default',
         'instruction-repair':'Name candidate mechanisms and repair classes for ignored instructions and screen one repair against recorded arms; offline, recommendation only',
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
+        'score':'Report one recorded paired experiment per declared capability area with an evidence state per area; offline, read-only',
         'adapters':'Stage one reviewed presentation adapter version under a controller-owned manifest, or roll it back; offline, no hook or runtime',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
@@ -250,6 +257,7 @@ def main(argv=None):
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
+    from .loop.entry import EXIT_TEXT
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
@@ -270,9 +278,11 @@ def main(argv=None):
             epilog=(boundary[name]+'Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
-                +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
+                +(('An explicit nonstarter ahl.json bank is frozen for the loop (with --single-pass, for one cooperative comparison); its entire paired task set and preparation must fit the configured budget.\n' if name=='improve' else
+                    'An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n') if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
-                +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
+                +(EXIT_TEXT if name=='improve' else '')+
+                ('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')
                 +('Watch writes a private checkpoint and continues until stopped unless --once is set.\n' if name=='watch' else '')+
                 'Example: ahl '+name+' . '+('--events ./events.jsonl --format normalized' if name=='analyze' else '--agent codex --timeout 600'+(' --once' if name=='watch' else ''))))
@@ -330,12 +340,14 @@ def main(argv=None):
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
             from .evaluation.before_after import margin_option
-            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
+            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal, or return the verified receipt of a finished loop run, without repeating model actions')
             command.add_argument('--construction-fraction', type=budget_stages.fraction, help=f'Share of --timeout given to each evaluation-construction pass, strictly between 0 and 1 (default: {budget_stages.DEFAULT_CONSTRUCTION_FRACTION}); a pass that overruns it ends evaluation_construction_timeout, and the other stages keep their proportions of the remainder')
             command.add_argument('--regression-margin', type=margin_option, help='Tolerated paired score loss for the before/after guard, from 0 up to but not including 1 (default: 0, any net loss); a candidate worse by more ends blocked as candidate_regressed with an investigation, and improved then needs its interval above this margin. A fixed-bank request declares its own margins')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
             command.add_argument('--scope', choices=('project', 'global', 'project+global'), default='project', help='Harness layers to evaluate: project (default; never reads or writes user-level files), global (the user-level skill directory of the runtime named with --agent codex|claude) or project+global (both, user level first, one budget and one receipt). Only the command line or your saved default (ahl config set-scope) selects a scope; a project ahl.json cannot. Changes are limited to --repair-contracts; model-driven evaluation of the user-level layer is not available and returns blocked')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
+            from .loop import entry as loop_entry
+            loop_entry.add_options(command)
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks (default: %(default)s)')
             command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration (default: %(default)s); completed unchanged work is not repeated')
@@ -412,6 +424,9 @@ def main(argv=None):
             resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
+            if args.command == 'improve':
+                from .loop import entry as loop_entry
+                loop_entry.prepare(args)  # a bad loop value is exit 2 with its own reason before anything runs
             result = improve(args)
         typed_exit.seal(result, args)
         args._progress(result['status'])

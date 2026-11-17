@@ -105,6 +105,19 @@ These numbers describe that run only. Memory grows roughly linearly with the eve
 count and time grows roughly linearly, so extrapolation beyond the measured sizes is
 an assumption, not a result.
 
+## Recorded comparisons
+
+A change that claims a speed-up leaves one row here, so a later run has something to
+compare with. A row is one comparison on one machine, not a promise for yours.
+
+| Change | Corpus | Before (median, min–max) | After (median, min–max) | Result |
+| --- | --- | --- | --- | --- |
+| Less per-event work in `diagnose` ingestion (#754) | 80,000 events, 15 interleaved pairs of runs | 2.82 s wall (2.52–3.08), 2.70 s CPU | 2.64 s wall (2.30–3.30), 2.46 s CPU | Median paired difference 0.20 s wall (7%) and 0.21 s CPU (8%). The new code was faster in 13 of 15 pairs by wall time and in all 15 by CPU time. `findings.json` and `report.md` were byte-identical in all 30 runs; peak memory did not change (106 MB median). |
+
+The pairs alternated which checkout ran first, on a machine with a load average of 12
+to 18 from other jobs, so one run's wall time varies by more than the gain. Read the
+paired difference, not a single run: two pairs ran slower than their partner.
+
 ## Limits
 
 - The corpus is synthetic and uniform. Real traces differ in field mix, case length

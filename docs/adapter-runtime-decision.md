@@ -56,10 +56,14 @@ Both claims are documentation reads. None was exercised against a live runtime.
   starts from a hash-checked artifact. `evaluation.adapter_worker` runs those
   bytes in the offline sandbox with no network, host home, credentials or oracle
   and verifies the answer against the original envelope. A hook command runs
-  with the user's privileges; the isolation boundary for a transforming worker
-  must be a controller-owned relay from the hook to that worker, and the relay is
-  not built or verified. The worker is exercised only directly, never through
-  a hook.
+  with the user's privileges, so the isolation boundary for a transforming worker
+  is a controller-owned relay from the hook to that worker.
+  `evaluation.adapter_relay.Relay` is that relay's controller side: it takes the
+  hook's stdin bytes, applies the bridge's checks, runs the worker only for a
+  failed call and answers with fixed controller text. Only the library exists,
+  exercised by a fake runtime and, where bubblewrap is usable, by real sandbox
+  canaries. The hook-side client, the channel from a hook command to a
+  long-lived controller process and the hook deployment are not built.
 - Staging and rollback of an adapter version reuse the promotion journal
   (`evaluation.adapter_deployment`): the candidate is reviewed against the
   controller's authorized spec, only the two declared artifacts are owned, and a
@@ -79,10 +83,13 @@ independent grading for any effectiveness claim:
 
 - A live run showing the bridge hook executes and that the model-visible result
   equals what the bridge returned, observed through a separate hook.
-- A decision on how failed calls are presented, given that replacement is not
-  available there.
-- A containment check for the relay, with secret, oracle and network canaries
-  (the worker's own sandbox canaries run on a host with bubblewrap and are
-  skipped, never counted as passed, where it is missing).
+- Whether the additive failure context changes what the model does. The
+  presentation is decided: the relay delivers one controller sentence with a
+  category the project declared before the run, never tool or adapter text, and
+  leaves the original output untouched. Its effect is unmeasured.
+- A containment check of the hook-side client and its channel to the relay.
+  The relay and worker canaries (secret, oracle, network, host home and the
+  adapter's own bytes) run on a host with bubblewrap and are skipped, never
+  counted as passed, where it is missing.
 - A matched identity, prompt-only and adapter comparison; fewer calls or tidier
   output is not an adoption criterion.

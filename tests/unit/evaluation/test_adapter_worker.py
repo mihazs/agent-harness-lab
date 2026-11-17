@@ -199,6 +199,24 @@ def test_a_sandbox_that_cannot_start_is_a_failure_never_a_pass(error, code):
     assert (result['outcome'], result['code'], result['presented'], result['worker']) == ('failed', code, None, None)
 
 
+@pytest.mark.parametrize('policy', [
+    pytest.param('required', id='required'), pytest.param('optional-identity', id='optional-identity')])
+@pytest.mark.parametrize('failing', [
+    pytest.param('TemporaryDirectory', id='no-private-directory'),
+    pytest.param('Path.write_bytes', id='no-room-to-write-the-inputs'),
+])
+def test_a_host_that_cannot_prepare_the_private_run_directory_is_a_code_not_an_exception(monkeypatch, failing, policy):
+    def refuse(*args, **kwargs):
+        raise OSError(28, 'No space left on device')
+
+    owner, name = (adapter_worker.tempfile, failing) if failing == 'TemporaryDirectory' else (Path, 'write_bytes')
+    monkeypatch.setattr(owner, name.rpartition('.')[2], refuse)
+    backend = scripted(failure_envelope())
+    result = run(failure_envelope(), backend, policy=policy)
+    assert (result['code'], result['worker'], backend.calls) == ('sandbox_unavailable', None, [])
+    assert result['outcome'] == {'required': 'failed', 'optional-identity': 'fallback'}[policy]
+
+
 def test_an_answer_is_rejected_when_the_read_only_inputs_changed_during_the_run():
     envelope = failure_envelope()
     result = run(envelope, scripted(envelope, inputs_unchanged=False))
