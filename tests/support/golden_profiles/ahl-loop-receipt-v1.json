@@ -1,0 +1,117 @@
+{
+  "acceptance_source": "project",
+  "after": {
+    "evaluation_id": "evaluation-1",
+    "evidence": "scored",
+    "round": 1,
+    "score": {
+      "lower": 0.3893333813000507,
+      "point": 1.0,
+      "upper": 1.0
+    },
+    "snapshot": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7",
+    "trials": 16,
+    "vacuity": null,
+    "validity": "valid"
+  },
+  "alpha_per_look": 0.45,
+  "automatic_promotion": false,
+  "before": {
+    "evaluation_id": "evaluation-0",
+    "evidence": "scored",
+    "score": {
+      "lower": 0.0,
+      "point": 0.25,
+      "upper": 0.8606666186999493
+    },
+    "snapshot": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+    "trials": 8,
+    "vacuity": null,
+    "validity": "valid"
+  },
+  "best_round": 1,
+  "budget_stages": null,
+  "certification": "unverified",
+  "deferrals": [],
+  "events": 7,
+  "frozen_inputs_sha256": "d6f39c30c1f3af5eba64607b08b16b354c1528cdef0792abf675a63b223406e7",
+  "ledger_head_sha256": "78281bccfa7890ee9b76e80b4dcd523fa7e8659d72ea974199e7fe769d122d1d",
+  "looks": 2,
+  "mechanisms": {
+    "m1": "accepted",
+    "m2": "pending",
+    "m3": "pending"
+  },
+  "mode": "absolute",
+  "profile": "ahl-loop-receipt-v1",
+  "recommendation_only": true,
+  "remediation": "A candidate meets the declared bar on the frozen development and regression evidence; this is not certification and nothing was applied, so read loop.rounds, review the best candidate and run an independent certification before adopting it.",
+  "rounds": [
+    {
+      "base": "cae662172fd450bb0cd710a769079c05bfc5d8e35efa6576edc7d0377afdd4a2",
+      "candidate": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7",
+      "decision": "accepted",
+      "disposition": "accepted",
+      "evaluation_id": "evaluation-1",
+      "evidence": "scored",
+      "mechanism": "m1",
+      "paired": {
+        "delta": 0.75,
+        "lower": 0.13933338130005068,
+        "upper": 1
+      },
+      "round": 1,
+      "score": {
+        "lower": 0.3893333813000507,
+        "point": 1.0,
+        "upper": 1.0
+      },
+      "trials": 16,
+      "vacuity": null,
+      "validity": "valid"
+    }
+  ],
+  "schema_version": 1,
+  "spec": {
+    "accept_basis": "lower_bound",
+    "accept_score": 0.3,
+    "acceptance_source": "project",
+    "alpha": 0.9,
+    "automatic_promotion": false,
+    "certification": "unverified",
+    "digest": "d3e38c0fc2f025f9e76909b363324b8311a23e432565cf4edc5be3d4a4208515",
+    "limits": {
+      "seconds": 600,
+      "trials": 400
+    },
+    "looks": 2,
+    "max_rounds": 2,
+    "mode": "absolute",
+    "noise_margin": 0.0,
+    "on_regression": "stop",
+    "per_look_alpha": 0.45,
+    "plateau_rounds": 2,
+    "profile": "ahl-loop-spec-v1",
+    "recommendation_only": true,
+    "regression_margin": 0.0,
+    "schema_version": 1,
+    "sources": {
+      "accept_basis": "default",
+      "accept_score": "project",
+      "alpha": "project",
+      "limits": "project",
+      "max_rounds": "project",
+      "noise_margin": "default",
+      "on_regression": "default",
+      "plateau_rounds": "default",
+      "regression_margin": "default"
+    }
+  },
+  "stop_criterion": "acceptance_score_reached",
+  "stop_reason": null,
+  "usage": {
+    "seconds": 0.0,
+    "trials": 24,
+    "unknown_usage_evaluations": 0
+  }
+}
