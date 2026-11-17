@@ -192,9 +192,8 @@ class HistoryStore(PrivateJournal):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
-        if read_only and (type(version) is not int or version not in (1, 2)
-                or any(key in inputs for key in ('protected_access_sha256', 'derivation_binding_sha256'))):
-            raise ValueError('read-only saved analysis supports only fixed history, optionally bound to its bank, without protected access or derivation')
+        if read_only and (type(version) is not int or version not in (1, 2)):
+            raise ValueError('read-only saved analysis supports only fixed history, optionally bound to its bank or its protected access and derivation')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6,7,8) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4,5,6,7,8) else '')
@@ -225,12 +224,12 @@ class HistoryStore(PrivateJournal):
             from .certification_access import validate_derivations
             derivation,derivation_pin=record(case/'derivation.json',1024*1024)
             if derivation_pin!=inputs['derivation_binding_sha256']: raise ValueError('historical derivation binding changed')
-            validate_derivations(self.access_ledger().path,derivation)
+            validate_derivations(self.access_ledger().path,derivation,read_only=read_only)
         if 'protected_access_sha256' in inputs:
             receipt, receipt_hash = record(case/'protected-access.json',1024*1024)
             if receipt_hash != inputs['protected_access_sha256'] or receipt.get('run_id') != run_id:
                 raise ValueError('managed access frozen binding changed')
-            self.access_ledger().validate_managed_history(receipt)
+            self.access_ledger().validate_managed_history(receipt,read_only=read_only)
             binding = receipt['binding']
             if (binding['plan_sha256'] != spec.digest or binding['manifest_sha256'] != manifest_hash
                     or binding['oracle_sha256'] != spec.grader_hash or binding['runtime_sha256'] != spec.runtime_hash):

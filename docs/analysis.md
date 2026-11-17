@@ -349,10 +349,17 @@ Supported contract, which fails closed:
 - Only fixed histories are read: schema 1 (unbound) and schema 2 (bound to a
   bank revision). A bound history re-checks that the bank revision is still
   current and eligible, and a revoked, retired or changed bank fails explicitly
-  instead of reporting current authority. Protected, derived, behavior-policy,
-  cohort, sequential and responses-bound histories fail explicitly before their
-  transitive validators run, because those validators may create dependency locks
-  inside the store. Their standalone commands keep their own contracts.
+  instead of reporting current authority. A history that carries managed
+  protected access or a controlled derivation binding re-checks its receipt
+  against the existing protected-access ledger without creating its dependency
+  lock: a missing lock or ledger, a reopened or removed reservation or a changed
+  derivation link fails explicitly (exit 2) and nothing is created. The result
+  keeps `qualification=unverified`, `independence=unverified` and no promotion or
+  publication; it never claims fresh protected access or qualification.
+  Behavior-policy, cohort, sequential and responses-bound histories (schemas 3
+  to 8) fail explicitly before their transitive validators run, because those
+  validators may create dependency locks inside the store. Their standalone
+  commands keep their own contracts.
 - Validation scratch, such as the temporary directory used to verify an
   authenticated bank review signature, is created inside the private analysis
   output and never inside the history or the bank store.
