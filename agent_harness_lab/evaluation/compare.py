@@ -207,6 +207,59 @@ def _resource(report):
     return page
 
 
+PRECISION_ENDPOINT = (('Required', 'required', ''), ('Declared roots', 'declared_roots', 'not computed'), ('Effective roots', 'effective_roots', 'not checked'),
+                      ('Minimum roots', 'min_roots', 'not computed'), ('Margin', 'margin', 'not computed'), ('Strict', 'strict', 'not computed'),
+                      ('Per-endpoint alpha', 'per_endpoint_alpha', 'not computed'), ('Half-width', 'half_width', 'not computed'),
+                      ('Minimum observed effect', 'minimum_observed_effect', 'not computed'), ('Best-case lower bound', 'best_case_lower', 'not computed'),
+                      ('Criteria possible', 'criteria_possible', 'not evaluated'), ('Numeric status', 'numeric_status', 'none'))
+
+
+def _precision(block):
+    """The supplied precision-feasibility preflight (#9) as text; display only, so nothing is recomputed, coloured or promoted."""
+    if block is None: return ''
+    got = lambda *path, missing='not computed': _cell(_shown(_at(block, *path), missing))
+    plan = block.get('sample_size_plan')
+    solver_reasons = [str(reason) for reason in _at(plan, 'reasons')] if isinstance(_at(plan, 'reasons'), list) else None
+    reasons = [f'{name}: the frozen criteria are not possible with these roots' for name, item in block['endpoints'].items() if item['required'] and not item['criteria_possible']]
+    if not block['trial_ceiling_met']: reasons.append('planned trials exceed the trial ceiling')
+    if block.get('precision_target_met') is False: reasons.append('half-width target not met')
+    reasons += [f'sample size plan: {reason}' for reason in solver_reasons or ()]
+    solver = lambda key: _cell(_shown(_at(plan, key)))
+    limitations = block['limitations'] if isinstance(block.get('limitations'), list) else []
+    families = [row for row in block['family_weights'] if isinstance(row, dict)] if isinstance(block.get('family_weights'), list) else []
+    return ('<h3>Precision-feasibility preflight (supplied, not recomputed here)</h3>'
+            '<p>Fixed-plan analytic precision of the frozen plan, copied from the supplied preflight, not recomputed here. It says whether the frozen '
+            'criteria and half-width target could be met with the planned roots. It is not power, an observed effect, a qualification of the roots or a '
+            'promotion decision. Roots are the independent unit: repeats and extra tasks inside a root add trials, not roots. A value that was not '
+            'computed is shown as such, never as zero.</p>'
+            + _table(('Measure', 'Value'), [
+                ('Status', got('status')), ('Execution allowed', got('execution_allowed')), ('Why not feasible', '; '.join(reasons) or 'none'),
+                ('Selected tasks', got('selected_tasks')), ('Distinct declared roots', got('declared_roots')),
+                ('Effective roots after similarity grouping', got('effective_roots', missing='not checked')), ('Repetitions per task', got('repetitions')),
+                ('Planned trials', got('planned_trials')), ('Trial ceiling', got('max_trials')), ('Caller trial limit', got('caller_trial_limit', missing='not set')),
+                ('Trial ceiling met', got('trial_ceiling_met')), ('Half-width target', got('precision_half_width', missing='not set')),
+                ('Half-width target met', got('precision_target_met', missing='no target')), ('Analysis method', got('analysis_method')),
+                ('Analysis mode', got('analysis_mode')), ('Error allocation', got('error_allocation', 'method')),
+                ('Total alpha', got('error_allocation', 'total_alpha')), ('Endpoints sharing alpha', got('error_allocation', 'endpoints')),
+                ('Required cohorts', got('error_allocation', 'required_cohorts')), ('Plan SHA-256', got('plan_sha256')),
+                ('Qualification authority', got('qualification_authority')), ('Root independence', got('root_independence')),
+                ('Root similarity check', got('root_similarity_check', 'status')), ('Power', got('power')),
+                ('Time feasibility', got('time_feasibility')), ('Automatic promotion', got('automatic_promotion')),
+                ('Publication allowed', got('publication_allowed'))])
+            + '<h3>Precision by endpoint</h3>'
+            + _table(('Endpoint', *(label for label, _, _ in PRECISION_ENDPOINT)),
+                     [(name, *(_cell(_shown(item.get(key), missing)) for _, key, missing in PRECISION_ENDPOINT)) for name, item in sorted(block['endpoints'].items())])
+            + ('<h3>Frozen family weights</h3>'
+               + _table(('Family', 'Weight', 'Roots', 'Per-root weight'), [tuple(_cell(_shown(row.get(key))) for key in ('family', 'weight', 'roots', 'per_root_weight')) for row in families])
+               if families else '')
+            + ('<h3>Sample size plan (descriptive, never authority)</h3>'
+               + _table(('Measure', 'Value'), [('Status', solver('status')), ('Reasons', (', '.join(solver_reasons) or 'none') if solver_reasons is not None else solver('reason')),
+                                               ('Roots required at the frozen target', solver('required_roots')), ('Minimum planned trials', solver('minimum_planned_trials')),
+                                               ('Trial ceiling', solver('trial_ceiling')), ('Solved primary half-width', solver('solved_primary_half_width'))])
+               if plan is not None else '')
+            + (f'<ul>{"".join(f"<li>{_e(item)}</li>" for item in limitations)}</ul>' if limitations else ''))
+
+
 def render(report):
     """Return one self-contained HTML document for a `side_by_side.build` report."""
     if (report.get('profile') != sbs.REPORT_PROFILE or report.get('publication_allowed') is not False
@@ -262,7 +315,7 @@ def render(report):
             f'<h1>Side-by-side experiment review: {_e(report["experiment_id"])}</h1>'
             f'<p>{scope} Observation only: no causal attribution, '
             'no pooled treatment effect, no promotion authority. Unknown is not failure.</p>'
-            f'<h2>Summary</h2>{lead}{_preservation(analysis)}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
+            f'<h2>Summary</h2>{lead}{_precision(report["precision_preflight"])}{_preservation(analysis)}{_bayesian(analysis)}{_descriptive(analysis)}{_table(("Measure", "Value"), counts)}'
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             + _resource(report) +
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'

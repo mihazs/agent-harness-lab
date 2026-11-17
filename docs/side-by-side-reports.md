@@ -21,6 +21,7 @@ The input is one JSON object with profile `ahl-side-by-side-experiment-v1`:
 | `analysis` | Optional backend analysis, such as the `statistics.analyze` result, with a `status` |
 | `resource_decision` | Optional [`resource_decision.decide`](resource-decisions.md) result, shown as supplied |
 | `resource_success_cost` | Optional list of 1 to 64 [`resource_decision.success_cost`](resource-decisions.md#descriptive-cost-per-success) views |
+| `precision_preflight` | Optional [precision preflight](experiment-precision.md) result (`fixed-root-precision-v1`), shown as supplied |
 | `provenance` | Read only by an explicit [public export](#public-export): `source_kind`, `approved_publication`, `source_ref` and `derived_from_private` |
 
 A malformed profile, execution kind, hash, plan or analysis object refuses the
@@ -155,6 +156,24 @@ imputed. A malformed member shows `unknown` or is skipped. The section grants no
 real preservation result is labelled `publication_allowed: false`, so a public export of it is
 refused.
 
+When the experiment carries a `precision_preflight` (the fixed-plan precision preflight of
+[#9](https://github.com/mihazs/agent-harness-lab/issues/9)), a "Precision-feasibility preflight" section
+follows the leading analysis. It shows, as text copied from the supplied result and never recomputed: the
+status and whether execution is allowed; the distinct selected-task, declared-root and repetition counts apart
+from the planned trials, the trial ceiling and the caller's limit; the half-width target and whether it was met;
+every endpoint's roots, margin, half-width, minimum observed effect, best-case lower bound and whether its
+frozen criteria are possible; the family weights; the error allocation labels, the qualification, independence,
+power and time-feasibility labels as supplied; the solver's descriptive sample-size plan (status, reasons,
+required roots, minimum trials); and the stated limitations. A "Why not feasible" row lists, from the supplied
+flags only, each required endpoint whose criteria are not possible, an unmet trial ceiling, an unmet target and
+the solver's reasons, so an infeasible plan states why it is infeasible rather than being read as a failed
+candidate. A value that was not computed shows `not computed`, `not checked` (no root-similarity check) or
+`not set`, never zero. The block is refused, like the resource blocks, when it is malformed, claims promotion,
+budget or publication authority, or contradicts itself: `feasible` with an unmet trial ceiling or target or a
+required endpoint whose criteria are not possible, or execution allowed over an unmet trial ceiling. A preflight
+with no frozen target can still allow execution of a plan whose criteria are not possible, and is shown that way.
+It is private planning material, so a [public export](#public-export) refuses it.
+
 All values are HTML-escaped. The page carries no script, no external asset or link,
 and a `default-src 'none'` Content-Security-Policy, and it is usable without
 JavaScript.
@@ -175,7 +194,7 @@ archive layouts of the full suite.
 
 Not yet covered: browser-driven keyboard and network-interception checks (this
 audit proves structure, not rendering or focus order in a browser) and the
-optimization-receipt, interaction (#123) and review-queue (#73) panels.
+optimization-receipt (#77), interaction (#123) and review-queue (#73) panels.
 
 ## Public export
 
@@ -201,7 +220,8 @@ The whole input is refused, and no output directory is created, when:
   `publication_allowed` that is not `true` (an analysis without either label is accepted, as in
   the benchmark exporter);
 - a `resource_decision` or `resource_success_cost` is supplied: the resource material is private
-  throughout [resource decisions](resource-decisions.md), so it is never exported.
+  throughout [resource decisions](resource-decisions.md), so it is never exported;
+- a `precision_preflight` is supplied: a preflight never grants publication, so it is never exported.
 
 An export keeps every verdict, count and usage total of the private report. It drops
 each trial's events, so no event ID, name, status or error class reaches the page or
