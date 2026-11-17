@@ -316,16 +316,17 @@ candidate or captured text.
 | --- | --- | --- |
 | `spec_frozen` | none | declaration digest, frozen inputs, mode, looks, per-look alpha, mechanism queue, and `carried` dispositions when an earlier run handed any on |
 | `baseline_evaluated` | `spec_frozen` | verdict, snapshot, evaluation summary |
-| `round_started` | `baseline_evaluated`, `decided` | round, mechanism, base snapshot, every mechanism's disposition |
+| `proposal_started` | `baseline_evaluated`, `decided`, `resumed` | durable marker before invoking a journaled proposer |
+| `round_started` | `baseline_evaluated`, `decided`, `proposal_started` | round, mechanism, base snapshot, every mechanism's disposition |
 | `candidate_frozen` | `round_started` | round, candidate snapshot, mechanism |
 | `candidate_evaluated` | `candidate_frozen` | verdict, snapshot, evaluation summary |
 | `decided` | `candidate_evaluated` | outcome, mechanism, its disposition, best, every disposition, acceptance, regression, improvement and the `stop` the decision reached (or `null` to go on); `abandoned: true` for a round no evaluation completed |
 | `stopped` | any other event | stop criterion, reason, rounds, best, dispositions, last outcome |
 | `resumed` | any event, `stopped` only when it was `interrupted` | events held, previous head, trials charged for the evaluation that was running, and whether it was `unresolved` |
 
-A ledger holds at most `4 * max_rounds + 8` events, above anything a run within
+A ledger holds at most `5 * max_rounds + 9` events, above anything a run within
 `max_rounds` writes; one more is `loop_ledger_full` and writes nothing. A ledger that is
-reopened for a resume allows two more events for each of at most ten resumes. Beside the
+reopened for a resume allows three more events for each of at most ten resumes. Beside the
 events, `head.json` keeps the count and SHA-256 of the newest event, because no later
 event links to it, and `resume.lock` is the claim a run or resume holds on the case. An event
 out of this order is `loop_ledger_invalid`, as is a missing, extra, edited or
@@ -350,6 +351,7 @@ request reconciliation checks below, goes on:
 | a `stopped` that is final | returns the recorded result, with no port call and no new event |
 | `spec_frozen` | evaluates the baseline again: no evaluation of it was recorded |
 | `baseline_evaluated` | takes the decision on the baseline and goes on |
+| `proposal_started` | requires reconciliation before any retry |
 | `round_started`, `candidate_frozen` | records the round `abandoned` and starts a fresh round |
 | `candidate_evaluated` | takes the decision on the recorded evaluation |
 | `decided` | goes on to the next round or records the stop the decision reached |
@@ -391,8 +393,12 @@ not ask again unless the optional proposer port `proposal_retry_safe(events)` ve
 from durable evidence that retrying cannot repeat an unresolved or unrecorded request.
 The controller trusts only its exact `True` result; a missing port or any other result
 ends `interrupted` with `unresolved_request`. A proposal lost before its candidate was
-frozen is also ambiguous. The real proposer does not yet implement this proof; it is
-not a completed proposal or a trial.
+frozen is also ambiguous. New runs using the built-in proposer freeze the journal protocol and write `proposal_started`
+before entering it. If a verified new ledger stops at a baseline or non-final decision
+without that marker, no proposal was dispatched in that phase. A marker still requires
+reconciliation; legacy ledgers with no protocol cannot treat its absence as proof.
+The command-line cold-resume path remains unsupported, and the marker is neither a
+completed proposal nor a trial.
 
 When request reconciliation permits continuation, a resumed run reaches the stop
 criterion the uninterrupted run reaches and charges the same trials and seconds,
@@ -845,7 +851,7 @@ Each reason has one remediation in the [exit reason table](analysis.md#exit-reas
 | `loop_order_violation` | an event the table does not allow |
 | `loop_port_invalid` | an evaluator, proposer, candidate, evaluation or clock outside its port contract; a bank that cannot be frozen as a scoring bank (`bank`) or whose frozen inputs cannot be read (`frozen_inputs`) |
 | `loop_ledger_invalid` | a ledger root inside the project or on a link, an event out of order, a reused ledger, or a tampered or incomplete ledger read back |
-| `loop_ledger_full` | a ledger event beyond `4 * max_rounds + 8`, or beyond that plus two for each of ten resumes in a reopened ledger |
+| `loop_ledger_full` | a ledger event beyond `5 * max_rounds + 9`, or beyond that plus two for each of ten resumes in a reopened ledger |
 | `resume_spec_changed` | a resume under a declaration other than the one the run was frozen with; nothing ran |
 | `resume_inputs_changed` | a resume under other frozen inputs, baseline, mechanism queue or carried dispositions than the run was frozen with; nothing ran |
 | `resume_busy` | a resume while a run or another resume holds the case; nothing ran |

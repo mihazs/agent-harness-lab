@@ -16,21 +16,21 @@ from .machine import replay as replay_machine
 from .spec import LoopSpec, document_digest
 
 FORMAT = 'ahl-loop-ledger-v1'
-# kind -> the state it leaves the run in; kinds that follow it. candidate_frozen and resumed are the ledger's own events: no state change.
+# kind -> ledger state; proposal_started, candidate_frozen and resumed do not move the controller machine.
 # resumed follows anything, a stop that was only an interruption included; ledger.replay() is what refuses it after any other stop.
-STATE = dict(spec_frozen='declared', baseline_evaluated='baseline_evaluated', round_started='improving', candidate_frozen='improving',
+STATE = dict(spec_frozen='declared', baseline_evaluated='baseline_evaluated', proposal_started='proposing', round_started='improving', candidate_frozen='improving',
              candidate_evaluated='candidate_evaluated', decided='decided', stopped='stopped', resumed='resumed')
-NEXT = {None: ('spec_frozen',), 'spec_frozen': ('baseline_evaluated', 'stopped', 'resumed'), 'baseline_evaluated': ('round_started', 'stopped', 'resumed'),
-        'round_started': ('candidate_frozen', 'stopped', 'resumed'), 'candidate_frozen': ('candidate_evaluated', 'stopped', 'resumed'),
-        'candidate_evaluated': ('decided', 'stopped', 'resumed'), 'decided': ('round_started', 'stopped', 'resumed'), 'stopped': ('resumed',),
-        'resumed': ('baseline_evaluated', 'round_started', 'candidate_frozen', 'candidate_evaluated', 'decided', 'stopped', 'resumed')}
+NEXT = {None: ('spec_frozen',), 'spec_frozen': ('baseline_evaluated', 'stopped', 'resumed'), 'baseline_evaluated': ('proposal_started', 'round_started', 'stopped', 'resumed'),
+        'proposal_started': ('round_started', 'stopped', 'resumed'), 'round_started': ('candidate_frozen', 'stopped', 'resumed'), 'candidate_frozen': ('candidate_evaluated', 'stopped', 'resumed'),
+        'candidate_evaluated': ('decided', 'stopped', 'resumed'), 'decided': ('proposal_started', 'round_started', 'stopped', 'resumed'), 'stopped': ('resumed',),
+        'resumed': ('baseline_evaluated', 'proposal_started', 'round_started', 'candidate_frozen', 'candidate_evaluated', 'decided', 'stopped', 'resumed')}
 MACHINE_EVENTS = ('baseline_evaluated', 'round_started', 'candidate_evaluated', 'decided', 'stopped')
-MAX_RESUMES = 10  # each resume writes at most two events beyond a run's own: the interruption and the resumption
+MAX_RESUMES = 10  # a resume may add an interruption, a resumption and a proposal marker
 
 
 def event_cap(spec):
-    """Four events per round plus the freeze, the baseline and the stop, and five spare; a run never writes more."""
-    return 4*spec.max_rounds + 8
+    """Five events per round plus the freeze, baseline, final proposal and stop, with spare capacity."""
+    return 5*spec.max_rounds + 9
 
 
 def _transition(_previous_state, kind, state, previous_kind):
@@ -177,7 +177,7 @@ class LoopLedger(PrivateJournal):
         except BlockingIOError as error: raise LoopError('resume_busy', 'ledger', 'declared') from error
         except (ValueError, OSError) as error: raise LoopError('loop_ledger_invalid', 'case', 'declared') from error
         try:
-            self.case_dir, self.max_events = case, event_cap(spec) + 2*MAX_RESUMES
+            self.case_dir, self.max_events = case, event_cap(spec) + 3*MAX_RESUMES
             try:
                 recorded, _ = record(case/'spec.json')
                 digest = document_digest(recorded)

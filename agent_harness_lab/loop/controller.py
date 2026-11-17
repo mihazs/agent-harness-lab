@@ -89,6 +89,7 @@ class Proposer(Protocol):
     mechanisms: Sequence[str]  # the mechanism queue, in priority order
 
     def propose(self, best_snapshot: str, mechanism: str) -> Candidate | None: ...
+    # Optional: journal_proposal_dispatch=True only if this port can dispatch proposals solely inside propose().
     # Optional: proposal_retry_safe(events) -> bool, true only with durable proof that retrying repeats no unresolved or unrecorded request.
 
 
@@ -187,6 +188,10 @@ class _Loop:
 
         if not _number(spent) or spent < 0: raise LoopError('loop_port_invalid', 'spent', 'declared')
         self.spec, self.evaluator, self.proposer, self.ledger, self.now = spec, evaluator, proposer, ledger, now
+        self.journal_proposal = (getattr(proposer, 'journal_proposal_dispatch', False) is True if reopened is None
+                                 else reopened[0][1].get('proposal_dispatch_journal') == 'v1')
+        if self.journal_proposal and getattr(proposer, 'journal_proposal_dispatch', False) is not True:
+            raise LoopError('resume_inputs_changed', 'proposal_journal', 'declared')
         self.frozen, self.started = frozen, now() - spent  # the budget began `spent` seconds before the loop did
         self.stages = Stages(spec.limit_seconds, self.started, clock=now)
         self.position = Run(spec)
@@ -262,6 +267,7 @@ class _Loop:
 
     def next_candidate(self):
         """The first pending mechanism the proposer can stage a candidate for; one that cannot is deferred and not asked again."""
+        if self.journal_proposal: self.record('proposal_started')
         for mechanism in self.pending():
             candidate = self.proposer.propose(self.best, mechanism)
             if candidate is None:
@@ -305,7 +311,8 @@ class _Loop:
     def play(self):
         spec = self.spec
         self.record('spec_frozen', spec_sha256=spec.digest, frozen_inputs_sha256=self.frozen, mode=spec.mode, looks=spec.max_rounds,
-                    per_look_alpha=spec.per_look_alpha, mechanisms=list(self.dispositions), **({'carried': self.carried} if self.carried else {}))
+                    per_look_alpha=spec.per_look_alpha, mechanisms=list(self.dispositions), **({'carried': self.carried} if self.carried else {}),
+                    **({'proposal_dispatch_journal': 'v1'} if self.journal_proposal else {}))
         self.go()
 
     def baseline(self):
@@ -406,7 +413,8 @@ class _Loop:
             else: unresolved = True
         else:
             kind, payload = next((kind, payload) for kind, payload in reversed(events) if kind not in ('stopped', 'resumed'))
-            ambiguous = kind in ('baseline_evaluated', 'round_started') or kind == 'decided' and payload.get('stop') is None
+            ambiguous = kind in ('baseline_evaluated', 'proposal_started', 'round_started') or kind == 'decided' and payload.get('stop') is None
+            if self.journal_proposal and kind in ('baseline_evaluated', 'decided'): ambiguous = False
             if ambiguous:
                 proof = getattr(self.proposer, 'proposal_retry_safe', None)
                 unresolved = not callable(proof) or proof(deepcopy(events)) is not True
