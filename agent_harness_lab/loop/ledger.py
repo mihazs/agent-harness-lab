@@ -178,13 +178,16 @@ class LoopLedger(PrivateJournal):
             self.case_dir, self.max_events = case, event_cap(spec) + 2*MAX_RESUMES
             try:
                 recorded, _ = record(case/'spec.json')
-                document_digest(recorded)
+                digest = document_digest(recorded)
             except (ValueError, OSError, TypeError) as error: raise LoopError('loop_ledger_invalid', 'spec', 'declared') from error
-            if recorded.get('digest') != spec.digest: raise LoopError('resume_spec_changed', 'spec', 'declared')
             try:
                 with self.locked(): self._events = self.history(case)
                 self._check_head()
             except (ValueError, OSError, TypeError) as error: raise LoopError('loop_ledger_invalid', 'events', 'declared') from error
+            first = self._events[0][0]['payload'] if self._events else None
+            if not isinstance(first, dict) or first.get('spec_sha256') != digest:
+                raise LoopError('loop_ledger_invalid', 'spec', 'declared')
+            if digest != spec.digest: raise LoopError('resume_spec_changed', 'spec', 'declared')
             self.replay(spec)
         except BaseException:
             self.case_dir, self._events = None, []

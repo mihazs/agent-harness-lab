@@ -295,14 +295,15 @@ def test_a_tampered_ledger_fails_verification_and_runs_nothing(tmp_path, damage)
     assert (caught.value.reason, ports.order, ports.settling, ports.asked) == ('loop_ledger_invalid', [], [], [])
 
 
-def test_rehashed_stored_spec_cannot_override_the_frozen_event(tmp_path):
+@pytest.mark.parametrize('caller', ['original', 'changed'])
+def test_rehashed_stored_spec_cannot_override_the_frozen_event(tmp_path, caller):
     _, ledger, _ = interrupted(SCRIPT, tmp_path, 5)
     case = next((tmp_path/'store'/'cases').iterdir())
     changed = replace(SCRIPT.spec, accept_score=0.99)
     (case/'spec.json').write_text(json.dumps(changed.to_dict()))
     ports = ScriptedPorts(SCRIPT, Meter(), evaluated=1, proposed=0)
     with pytest.raises(LoopError) as caught:
-        controller.resume(changed, ports, ports, ledger_for(tmp_path), lambda: ports.meter.seconds)
+        controller.resume(changed if caller == 'changed' else SCRIPT.spec, ports, ports, ledger_for(tmp_path), lambda: ports.meter.seconds)
     assert caught.value.reason == 'loop_ledger_invalid' and ports.order == ports.settling == ports.asked == [] and ledger.events()
 
 
