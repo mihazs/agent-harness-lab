@@ -78,8 +78,8 @@ is dropped and counted under `PREFIX.<undeclared>`, and its name is never record
 | `steps[].model_name` | digest | `reported_model_fingerprint` |
 | `steps[].message` | dropped | Text or typed parts. `image` and `audio` parts are counted as unsupported and their locations are never read |
 | `steps[].reasoning_content` | presence | One `reasoning` event when non-empty |
-| `steps[].reasoning_effort`, `steps[].extra`, `steps[].llm_call_count` | dropped | A step with `llm_call_count` above 1 raises the warning `aggregated_llm_calls_in_one_step` |
-| `steps[].is_copied_context` | presence | A `true` step is not imported as a new interaction; `null` is treated as a new interaction and is counted as `copied_context_steps_not_imported` |
+| `steps[].reasoning_effort`, `steps[].extra`, `steps[].llm_call_count` | dropped | A step with `llm_call_count` above 1 raises the warning `aggregated_llm_calls_in_one_step`; zero cannot accompany metrics or reasoning on an agent step. Numeric reasoning effort is finite and bounded by ±(2^63-1) |
+| `steps[].is_copied_context` | presence | A `true` step is not imported as a new interaction and is counted as `copied_context_steps_not_imported`; `null` is treated as a new interaction |
 | `steps[].tool_calls[].tool_call_id` | digest | `call_id`, scoped to the case |
 | `steps[].tool_calls[].function_name` | digest | `tool_name` as `tool:` plus a digest |
 | `steps[].tool_calls[].arguments` | digest | `input_fingerprint`, a case-salted 64-bit fingerprint |
