@@ -34,7 +34,7 @@ def _timestamp(value):
         seconds = delta.days * 86400 + delta.seconds
         nanos = seconds * 1_000_000_000 + int((match[2] or '').ljust(9, '0'))
     except (ValueError, OverflowError): return None
-    return str(nanos) if 0 <= nanos < 2**64 else None
+    return str(nanos) if 0 < nanos < 2**64 else None
 
 
 def _attribute(key, value):

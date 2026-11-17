@@ -13,7 +13,8 @@ leave a private staging directory.
 The wire schema is [OpenTelemetry protobuf v1.11.1 LogsData](https://github.com/open-telemetry/opentelemetry-proto/blob/v1.11.1/opentelemetry/proto/logs/v1/logs.proto),
 encoded using OTLP JSON. This is a log representation, not a trace: it creates no
 spans, trace IDs, parent links, or start/end times. A missing or invalid timestamp
-is omitted, not replaced by zero. It uses AHL custom `ahl.*` attributes and no
+is omitted, not replaced by zero. OTLP reserves zero for unknown, so an epoch-zero timestamp is reported as
+unrepresentable and omitted. It uses AHL custom `ahl.*` attributes and no
 standard GenAI semantic attributes (baseline [semantic conventions v1.37.0](https://github.com/open-telemetry/semantic-conventions/tree/v1.37.0)): the source cannot establish that usage is
 unique per model invocation. No message, reasoning, tool name, argument, result,
 cost, or arbitrary extension content is exported. A task outcome stays unknown

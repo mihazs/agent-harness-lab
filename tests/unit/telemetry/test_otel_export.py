@@ -57,6 +57,12 @@ def test_unrecognized_labels_and_unrepresentable_timestamp_are_not_echoed():
     assert 'SECRET-ACTIVITY' not in json.dumps([document, report])
 
 
+def test_epoch_timestamp_is_not_encoded_as_otlp_unknown_time():
+    document, report = otel.convert([item('epoch', 'context', timestamp='1970-01-01T00:00:00Z')])
+    assert 'timeUnixNano' not in rows(document)[0]
+    assert report['invalid_timestamps'] == 1
+
+
 def test_input_and_record_limits_fail_without_returning_partial_output(monkeypatch):
     with pytest.raises(ValueError, match='record_limit_exceeded'):
         otel.convert([item('one', 'context'), item('two', 'context')], max_records=1)
