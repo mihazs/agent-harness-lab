@@ -105,7 +105,7 @@ manifest carries `lineage_groupings` cut to the exported revisions, and
 `development_export` re-checks them. Protected-only members are omitted, so, as with
 near-duplicate decisions, the complete private store is required to check a group that
 involves a protected record. Older manifests lack the field and no longer validate.
-An intact legacy v1 export that lacks the duplicate and lineage fields is
+An intact legacy v1 export that predates the current duplicate, lineage or review evidence is
 rejected with `diagnostic_corpus_v1_requires_migration`. Re-export from the original
 corpus after recording the required evidence; missing decisions and approvals are
 not inferred from the old export. A changed manifest fails its digest check first.

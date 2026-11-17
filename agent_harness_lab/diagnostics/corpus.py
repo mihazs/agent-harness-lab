@@ -696,9 +696,12 @@ def development_export(value):
 
     The digest detects changed or truncated content; it is not an authenticity signature,
     so the protected-partition, eligibility and provenance checks run independently."""
-    legacy = 'schema_version profile revision_sha256 records publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256'
-    if (isinstance(value, dict) and set(value) == set(legacy.split()) and type(value['schema_version']) is int
-            and value['schema_version'] == 1 and value['profile'] == FORMAT):
+    legacy = set('schema_version profile revision_sha256 records publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256'.split())
+    near, lineage = legacy | {'near_duplicate_decisions'}, legacy | {'near_duplicate_decisions', 'lineage_groupings'}
+    old_limitations = ['Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
+        'Near-duplicate detection is lexical only; recorded lineage groupings are operator-attested links over frozen cache revisions, not verified native lineage, and held-out classifier evaluation is not implemented.']
+    if (isinstance(value, dict) and (set(value) in (legacy, near) or set(value) == lineage and value['limitations'] == old_limitations)
+            and type(value['schema_version']) is int and value['schema_version'] == 1 and value['profile'] == FORMAT):
         _sha(value['manifest_sha256'])
         if value['manifest_sha256'] != _digest({k: v for k, v in value.items() if k != 'manifest_sha256'}):
             raise ValueError('diagnostic corpus manifest digest differs')

@@ -29,3 +29,13 @@ def test_saved_corpus_export_requires_named_migration_and_stays_private(tmp_path
     with pytest.raises(SystemExit) as exc:
         main(['benchmark-report', '--input', str(source), '--output', str(destination), '--public'])
     assert exc.value.code == 2 and not destination.exists()
+
+
+@pytest.mark.parametrize('stage', ['near', 'lineage'])
+def test_intermediate_historical_exports_require_migration(stage):
+    value = json.loads((GOLDEN.parent / f'diagnostic-corpus-v1-{stage}.json').read_text())
+    assert value['records'] == [] and value['publication_allowed'] is False
+    with pytest.raises(ValueError, match='diagnostic_corpus_v1_requires_migration'):
+        development_export(value)
+    with pytest.raises(ValueError, match='diagnostic corpus manifest digest differs'):
+        development_export(value | {'revision_sha256': 'a' * 64})
