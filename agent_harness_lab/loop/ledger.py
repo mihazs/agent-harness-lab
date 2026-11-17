@@ -126,7 +126,7 @@ class LoopLedger(PrivateJournal):
             elif kind in MACHINE_EVENTS: moves.append((kind, payload.get('value')))
         return replay_machine(spec, moves)
 
-    def verified(self, *, spec=None, stop=None):
+    def verified(self, *, spec=None, stop=None, include_events=False):
         """Return event count and head after verification, binding supplied receipt values to the ledger."""
         try:
             found = self.case_ids(2)
@@ -143,7 +143,8 @@ class LoopLedger(PrivateJournal):
             try: self._check_head()
             finally: self.case_dir, self._events = held, []
         except (ValueError, OSError, TypeError, KeyError, AttributeError) as error: raise LoopError('loop_ledger_invalid', 'events', 'declared') from error
-        return len(events), events[-1][1]
+        result = len(events), events[-1][1]
+        return (*result, [(event['kind'], event['payload']) for event, _ in events]) if include_events else result
 
     def _hold(self, case):
         """Take the exclusive claim on one case; the claim is a lock on a file inside it."""

@@ -10,7 +10,7 @@ from agent_harness_lab.evaluation.integrity import read_regular
 
 from .errors import LoopError
 from .ledger import LoopLedger
-from .receipt import status_of, validate_receipt
+from .receipt import status_of, validate_receipt, verify_projection
 
 
 def read(output, project):
@@ -25,6 +25,7 @@ def read(output, project):
     if (found.get('status') != status_of(stop) or found.get('reason') != f'loop_{stop}' or found.get('output') != str(output)
             or found.get('changed_files') != [] or found.get('automatic_promotion') is not False or found.get('publication_allowed') is not False):
         raise LoopError('loop_receipt_invalid', 'envelope', 'declared')
-    events, head = LoopLedger(state_root()/'loops'/output.name, project).verified(spec=block['spec'], stop=stop)
+    events, head, recorded = LoopLedger(state_root()/'loops'/output.name, project).verified(spec=block['spec'], stop=stop, include_events=True)
     if events != block.get('events') or head != block.get('ledger_head_sha256', head): raise LoopError('loop_ledger_invalid', 'head', 'declared')
+    verify_projection(block, recorded)
     return found

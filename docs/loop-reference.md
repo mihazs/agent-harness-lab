@@ -365,8 +365,11 @@ interruption, and a `resumed` event after any other stop is refused.
 The stored spec's identity is recomputed and checked against its digest and the
 first ledger event. Returning a finished receipt also requires its spec to match
 the stored spec, its stop criterion to match the final event, and its outer status,
-reason, output and authority fields to agree with that criterion. Other receipt
-details are not all bound to ledger events. Source labels are consistent within the document but excluded
+reason, output and authority fields to agree with that criterion. Baseline and
+candidate evaluations, decisions, the best result, frozen input digest, stop reason
+and mechanism dispositions must also match the verified events. Paired statistics,
+budget details and other fields absent from the ledger are not verified by this check.
+Source labels are consistent within the document but excluded
 from the identity digest, so coordinated changes to those labels in both copies
 are not authenticated by this check. The unkeyed ledger hashes detect inconsistent
 records; they do not authenticate a writer who can rewrite the whole ledger.

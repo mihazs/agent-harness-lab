@@ -77,12 +77,7 @@ def _paired(guard):
     return dict(delta=delta['mean'], lower=delta['low'], upper=delta['high'])
 
 
-def build(spec, result, events, guards, *, budget=None, deferrals=()):
-    """The `loop` block from the resolved spec, the controller result, the ledger's events and the paired guard of each evaluation.
-
-    guards[i] is the before_after block of evaluation i (None for the baseline or an unguarded run). budget is the run's
-    budget_stages receipt; deferrals lists each mechanism the proposer could not stage a candidate for and a closed reason. The one remediation step is the stop criterion's entry in STEPS.
-    """
+def _projection(events, guards):
     rounds, before, current = [], None, None
     for kind, payload in events:
         if kind == 'baseline_evaluated':
@@ -98,6 +93,12 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
         elif kind == 'decided' and current is not None:
             current.update(decision=payload.get('value'), disposition=payload.get('disposition'))
             if payload.get('abandoned') is True: current['abandoned'] = True  # an interrupted round: no evaluation completed, so no score
+    return before, rounds
+
+
+def build(spec, result, events, guards, *, budget=None, deferrals=()):
+    """Build the receipt from the controller result, ledger events and paired guards."""
+    before, rounds = _projection(events, guards)
     best = result['best']
     best_round = next((item['round'] for item in rounds if item['candidate'] == best['snapshot'] and item['decision'] in ('accepted', 'improved')), 0)
     after = None if before is None else dict(round=best_round, snapshot=best['snapshot'],
@@ -112,6 +113,32 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
                 recommendation_only=True, automatic_promotion=False, certification='unverified',
                 remediation=RECONCILE if result['stop_reason'] == 'unresolved_request' else AREA_REGRESSION if stop == 'regression' and rounds and rounds[-1].get('regressed_areas') else STEPS[stop],
                 **({'resumed': result['resumed']} if 'resumed' in result else {}))
+
+
+def verify_projection(block, events):
+    """Check receipt values that the verified ledger can establish."""
+    from agent_harness_lab.private_journal import encoded
+    before, rounds = _projection(events, ())
+    # Paired statistics are not recorded in the ledger and cannot be checked here.
+    saved_rounds = [{key: value for key, value in item.items() if key != 'paired'} for item in block['rounds']]
+    expected_rounds = [{key: value for key, value in item.items() if key != 'paired'} for item in rounds]
+    first, last = events[0][1], events[-1][1]
+    best_snapshot = last.get('best')
+    best_round = next((item['round'] for item in rounds if item['candidate'] == best_snapshot and item['decision'] in ('accepted', 'improved')), 0)
+    best_evaluation, candidate_evaluation = None, None
+    for kind, payload in events:
+        if kind == 'candidate_evaluated': candidate_evaluation = payload.get('evaluation')
+        elif kind == 'decided' and payload.get('value') in ('accepted', 'improved'):
+            best_evaluation = candidate_evaluation
+    after = None if before is None else dict(round=best_round, snapshot=best_snapshot,
+        **(_evaluation(best_round, 'valid', best_evaluation) if best_round else
+           {key: before[key] for key in ('evaluation_id', 'validity', 'evidence', 'vacuity', 'trials', 'score')}))
+    expected = dict(before=before, after=after, rounds=expected_rounds, best_round=best_round,
+                    frozen_inputs_sha256=first.get('frozen_inputs_sha256'), mode=first.get('mode'),
+                    looks=first.get('looks'), alpha_per_look=first.get('per_look_alpha'),
+                    stop_reason=last.get('reason'), mechanisms=last.get('mechanisms'))
+    actual = {key: saved_rounds if key == 'rounds' else block.get(key) for key in expected}
+    if encoded(actual) != encoded(expected): _fail('ledger_projection')
 
 
 def _fail(field):
