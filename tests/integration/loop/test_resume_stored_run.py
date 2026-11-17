@@ -100,7 +100,12 @@ def test_a_tampered_receipt_or_ledger_is_not_returned_as_the_run_result(stack, m
         spec['digest'] = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
         (case/'spec.json').write_text(json.dumps(spec))
         (run/'workflow.json').write_text(json.dumps(document))
-    if damage == 'ledger-event': (case/'events/0001.json').write_text((case/'events/0001.json').read_text().replace('"valid"', '"vacuous"'))
+    if damage == 'ledger-event':
+        event_path = next(path for path in (case/'events').glob('*.json') if json.loads(path.read_text())['kind'] == 'baseline_evaluated')
+        event = json.loads(event_path.read_text())
+        assert event['payload']['value'] == 'valid'
+        event['payload']['value'] = 'vacuous'
+        event_path.write_text(json.dumps(event))
     if damage == 'ledger-head': (case/'head.json').write_text(json.dumps(dict(events=2, head_sha256='0'*64)))
     if damage == 'ledger-removed': (case/'events/0001.json').unlink()
     code, resumed, stderr = project.invoke('--resume', run.name)

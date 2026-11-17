@@ -16,13 +16,13 @@ jobs:
       - name: Run changed loop tests
         run: >-
           python -m pytest -x -q
+          tests/integration/loop/test_resume_stored_run.py
           tests/integration/loop/test_cold_resume_cli.py
           tests/integration/loop/test_controller_ledger.py
           tests/integration/loop/test_frozen_bank_evaluator.py
           tests/integration/loop/test_incremental_runs.py
           tests/integration/loop/test_order_against_stub_runtime.py
           tests/integration/loop/test_resume.py
-          tests/integration/loop/test_resume_stored_run.py
           tests/unit/docs/test_loop_reference.py
           tests/unit/loop/test_ledger_replay.py
           tests/unit/loop/test_receipt.py
