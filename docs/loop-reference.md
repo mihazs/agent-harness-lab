@@ -342,7 +342,8 @@ continues a run from the last durable event of its ledger. `ledger` is a new
 `LoopLedger` over the store of the run, and the declaration, the frozen inputs, the
 baseline, the mechanism queue and the carried dispositions must be the ones the run
 was frozen with. Only a completed evaluation is durable, so resume replays the
-recorded events, rebuilds the controller's position from them and goes on:
+recorded events, rebuilds the controller's position from them and, subject to the
+request reconciliation checks below, goes on:
 
 | Last durable event | A resume |
 | --- | --- |
@@ -372,13 +373,18 @@ evaluation consumed when every request it sent has an outcome, `0` when none sta
 and `None` when one may not have. With no `settle`, or `None`, the evaluation is not
 repeated by itself: the run ends `interrupted` with `stop_reason: unresolved_request`
 and the receipt's remediation names the reconcile step. A later resume asks again, so
-reconciling the request is what lets the run go on. A proposal that was running when the
-run stopped left no durable record and is asked again; it consumed no trials of the
-frozen bank.
+reconciling the request is what lets the run go on. A proposal may also have been
+dispatched after the last durable baseline or non-final decision. The controller does
+not ask again unless the optional proposer port `proposal_retry_safe(events)` verifies
+from durable evidence that retrying cannot repeat an unresolved or unrecorded request.
+The controller trusts only its exact `True` result; a missing port or any other result
+ends `interrupted` with `unresolved_request`. A proposal lost before its candidate was
+frozen is also ambiguous. The real proposer does not yet implement this proof; it is
+not a completed proposal or a trial.
 
-A resumed run reaches the stop criterion the uninterrupted run reaches and charges the
-same trials and seconds, apart from the abandoned round it adds; `usage` never counts
-unrecorded work twice.
+When request reconciliation permits continuation, a resumed run reaches the stop
+criterion the uninterrupted run reaches and charges the same trials and seconds,
+apart from the abandoned round it adds; `usage` never counts unrecorded work twice.
 
 ## Frozen-bank evaluator
 
@@ -671,7 +677,7 @@ captured text.
 | `after` | The best snapshot (the baseline when no round improved it): the same fields plus `round`. |
 | `rounds` | One entry per round: `round`, `mechanism`, `base`, `candidate`, `evaluation_id`, `validity`, `evidence`, `vacuity`, `trials`, `score`, `paired` (the delta against the best with its interval), `decision` (`accepted`, `improved`, `inconclusive`, `regressed`) and `disposition`. A comparison that ran on other inputs has no score, no paired delta and no decision. |
 | `best_round` | The round of the best snapshot; 0 is the baseline. |
-| `stop_criterion`, `stop_reason` | The one criterion that stopped the run, and why when the criterion has a reason: `reserve_for_evaluation_unavailable` or `budget_exhausted_during_round` for `budget_exhausted`, `unresolved_request` for an `interrupted` resume that would have repeated an evaluation whose request has no outcome. |
+| `stop_criterion`, `stop_reason` | The one criterion that stopped the run, and why when the criterion has a reason: `reserve_for_evaluation_unavailable` or `budget_exhausted_during_round` for `budget_exhausted`, `unresolved_request` for an `interrupted` resume that might repeat an unresolved evaluation or proposal request. |
 | `mechanisms`, `deferrals` | Each mechanism's disposition, and each deferred mechanism with its closed reason (`preparation_failed`, `invalid_proposal`, `no_change`, `candidate_identical_to_best`, `instruction_validation_*`, `instruction_removal_*` or the review reason). |
 | `usage`, `events`, `ledger_head_sha256`, `budget_stages` | Trials and seconds spent, the number of ledger events and the SHA-256 of the last one, and the [stage budget](budget-stages.md). |
 | `resumed` | Only for a run that was resumed: `count` and `abandoned_rounds`. An abandoned round has `abandoned: true`, `validity: incomplete`, no score and the disposition `abandoned`. |

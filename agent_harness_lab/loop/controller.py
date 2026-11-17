@@ -10,8 +10,10 @@ subprocess, network or real clock, or writes a project file: time comes from the
 
 resume() continues a run from the last durable event of its ledger. Only a completed evaluation is durable: an evaluation that was
 in flight is recorded as an abandoned round, never counted, and its mechanism goes back in the queue; a request the evaluator cannot
-settle is never asked again, and the run ends interrupted. A stopped run is returned as it was recorded, with no port call.
+settle is never asked again, and the run ends interrupted. A possibly dispatched proposal is not retried without explicit
+durable proof that retrying cannot repeat an unresolved or unrecorded proposal. A stopped run is returned as recorded, with no port call.
 """
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 import re
@@ -31,7 +33,7 @@ RESERVE_UNAVAILABLE = 'reserve_for_evaluation_unavailable'
 MID_ROUND = 'budget_exhausted_during_round'  # a port hit the shared budget while preparing or evaluating
 FINAL = dict(accepted='accepted', improved='improved', regressed='rejected', inconclusive='inconclusive')  # outcome -> mechanism disposition
 CARRIED = ('rejected', 'inconclusive', 'deferred')  # the dispositions an earlier run may hand to this one; anything else is asked again
-UNRESOLVED = 'unresolved_request'  # a resume found an evaluation whose provider request the evaluator cannot settle
+UNRESOLVED = 'unresolved_request'  # a provider request may have been dispatched and cannot safely be repeated
 _DIGEST = re.compile('[0-9a-f]{64}')
 
 
@@ -87,6 +89,7 @@ class Proposer(Protocol):
     mechanisms: Sequence[str]  # the mechanism queue, in priority order
 
     def propose(self, best_snapshot: str, mechanism: str) -> Candidate | None: ...
+    # Optional: proposal_retry_safe(events) -> bool, true only with durable proof that retrying repeats no unresolved or unrecorded request.
 
 
 def _digest(value):
@@ -400,6 +403,12 @@ class _Loop:
             settled = settle(running) if callable(settle) else None
             if _count(settled): charged = settled
             else: unresolved = True
+        else:
+            kind, payload = next((kind, payload) for kind, payload in reversed(events) if kind not in ('stopped', 'resumed'))
+            ambiguous = kind in ('baseline_evaluated', 'round_started') or kind == 'decided' and payload.get('stop') is None
+            if ambiguous:
+                proof = getattr(self.proposer, 'proposal_retry_safe', None)
+                unresolved = not callable(proof) or proof(deepcopy(events)) is not True
         self.live = True  # an interrupt before this point leaves the ledger exactly as it was, still resumable
         self.record('resumed', from_events=len(events), previous_head_sha256=self.ledger.head, charged_trials=charged, unresolved=unresolved)
         self.trials, self.resumes = self.trials + charged, self.resumes + 1
@@ -456,7 +465,8 @@ def resume(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=
     A stopped run is returned as it was recorded, with no port call. Otherwise: before the baseline was evaluated it is evaluated
     again; an evaluation that was running is never counted and the round that held it is recorded abandoned, charging the trials
     evaluator.settle() reports and starting a fresh round; with no settle answer the run ends interrupted with reason
-    unresolved_request and the evaluation is not repeated; after a decision the run goes on to the next round or its stop.
+    unresolved_request and the evaluation is not repeated. An ambiguous proposal is not repeated unless the proposer proves
+    that retrying repeats no unresolved or unrecorded request; a completed decision can go straight to its recorded stop.
     spent is seconds used outside the ledger's clock, such as the time the run was down; the clock continues from the later of
     spent and the last recorded time, so recorded spend is never reset and unrecorded spend is only what the caller reports.
     """

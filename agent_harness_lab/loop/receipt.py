@@ -39,8 +39,8 @@ STEPS = dict(
 # The regression stop has two causes; one that a scored capability area lost paired outcomes (loop.rounds[].regressed_areas, area_gates) names the area evidence.
 AREA_REGRESSION = ('A candidate lost paired outcomes in a scored capability area and was kept out of the result, even if its pooled score did not fall; '
                    'read regressed_areas in loop.rounds and area_gates in the private receipt, revise or discard that mechanism so no named area regresses, then rerun without raising the margin.')
-RECONCILE = ('A provider request of the evaluation that was running has no recorded outcome, so the loop did not repeat it and ended interrupted; '
-             'reconcile that request with the provider\'s usage records and report its trials from the evaluator, then resume the loop from its round ledger.')
+RECONCILE = ('An evaluation or proposal may have an unresolved provider request, so the loop did not repeat it and ended interrupted; '
+             'reconcile the provider records before resuming, and report consumed evaluation trials from the evaluator.')
 _EVIDENCE = ('scored', 'provisional', 'no_evidence', 'blocked')
 _VALIDITY = ('valid', 'vacuous', 'incomplete', 'comparison_invalid')
 

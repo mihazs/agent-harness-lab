@@ -48,6 +48,8 @@ def resume(script, base, ledger_events, **options):
     """Resume with fresh ports that continue the script where the ledger left off; returns (result, ports)."""
     evaluated, proposed = offsets(ledger_events)
     ports = options.pop('ports', None) or ScriptedPorts(script, Meter(), evaluated=evaluated, proposed=proposed)
+    # The synthetic proposer sends no external requests, so a retry cannot duplicate one.
+    ports.proposal_retry_safe = lambda events: True
     result = controller.resume(script.spec, ports, ports, ledger_for(base), lambda: ports.meter.seconds, **options)
     return result, ports
 
