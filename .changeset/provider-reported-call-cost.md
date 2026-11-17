@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Show what the runtime itself reported for each owned preparation and evaluation-construction call. Every `ahl improve` receipt whose run called the model now lists those calls in `model_calls`, and when the runtime's closing transcript record carries figures the entry holds a `provider_reported` block (`ahl-provider-reported-v1`, `provider_reported_unverified`): `duration_ms`, `num_turns`, `reported_cost` in USD and the integer `usage` counters for Claude's `result` record, token usage only for Codex's `turn.completed` record. A figure the record lacks or reports malformed is absent rather than zero, a transcript without exactly one closing record gives the call no block, and nothing is converted, summed or used for a decision. The terminal prints one `ahl: provider-reported cost: preparation-0=... usd (unverified)` line before the `ahl: outcome=` line when a call reported a cost; the outcome line keeps `cost=unknown` because AHL measures no money. Covers the single-pass preparation and construction stages and the loop preparation stage; evaluation trials and the controlled inference stage are not part of this change.

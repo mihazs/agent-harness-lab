@@ -49,7 +49,7 @@ enforce filesystem/network boundaries.
 - [Codex captures](#native-codex-capture-journals) · [Claude captures](#native-claude-capture-journals) · [Git and harness metadata](#offline-git-and-selected-harness-metadata)
 - [ai-memory exports](#ai-memory-okf-project-exports) · [Knowledge bundles](#portable-knowledge-bundle-reader) · [Knowledge facets](#knowledge-page-temporal-facets) · [HTTPS transport](#shared-https-transport) · [ai-memory MCP](#opt-in-ai-memory-mcp-reads)
 - [GitHub](#explicit-github-rest-captures) · [Gitea](#explicit-gitea-rest-captures) · [GitLab](#explicit-gitlab-rest-v4-captures) · [CI test reports](#offline-ci-test-result-reports)
-- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports)
+- [Claude-Mem](#offline-claude-mem-exports) · [Claude-Mem worker reads](#explicit-claude-mem-worker-reads) · [Mem0](#offline-mem0-oss-memory-and-history-exports) · [Mem0 Platform](#offline-mem0-platform-v3-exports) · [Mem0 REST and Platform reads](#explicit-mem0-oss-rest-and-platform-v3-reads) · [Hindsight](#offline-hindsight-bank-archives) · [Hindsight REST reads](#explicit-hindsight-rest-reads) · [Cognee](#offline-cognee-graph-exports) · [Second-wave memory matrix](memory-compatibility-matrix.md)
 
 ## Execution identity and declared coverage
 
@@ -915,7 +915,7 @@ is the one lead implemented offline.
 gitlab_store, selection=SEL, project_id=ID, iid=IID, commit_sha=SHA)` relates one
 exact local commit to one GitLab merge request's server-reported commit listing,
 across a `local_git/git` journal and an `api/gitlab` journal captured with a
-[schema 9](#explicit-gitlab-rest-v4-captures) selection that includes `commits`
+[schema 9 or 10](#explicit-gitlab-rest-v4-captures) selection that includes `commits`
 and the IID. Like the GitHub joins it reads only the two selected journals, runs
 no Git, makes no network or model calls, changes neither journal, and has no CLI
 exposure yet. The SHA must be full, lowercase, 40-hex; the IID and numeric project
@@ -3922,6 +3922,34 @@ graph-less checkpoints. Schema 9 has a distinct scope from schemas 1–8.
 [`join_merge_request_commit`](#offline-gitgitlab-merge-request-commit-join) reads
 that graph.
 
+An opt-in selection schema 10 accepts every capability of schema 9, including the
+commit graph, and adds `pipelines` for selected merge requests using the
+[merge request pipelines endpoint](https://docs.gitlab.com/api/merge_requests/#list-merge-request-pipelines).
+Each returned pipeline becomes one `gitlab_mr_pipeline` record under that merge
+request, with its global ID and its project-scoped IID as separate fingerprints,
+the pipeline's project identity (`same_project`, `other_project` for a fork's
+pipeline, or `unknown` when the server omits `project_id`), the `source`, the
+status, ref, name and commit fingerprints, and the server's timestamps. The status is
+one of GitLab's documented labels (`created`, `waiting_for_resource`, `preparing`,
+`pending`, `running`, `success`, `failed`, `canceling`, `canceled`, `skipped`,
+`manual`, `scheduled`); any other value, a missing value or a non-text value is
+recorded as `unknown`, never as success or failure. `matches_mr_head` compares the
+pipeline commit with the merge request's reported head SHA by equality only, so it
+is `false` for a merged-result pipeline and `unknown` when either SHA is missing; it
+never infers ancestry. The reader does not read pipeline jobs, test reports,
+artifacts or the pipeline's own project, and it does not follow a fork's pipeline.
+Up to 10,000 pipelines are read per capture, with the offset pagination, coverage
+and fail-closed rules of the other MR listings. A 401, 403, 404 or 429 on the
+listing, an unavailable merge request or project, and incomplete pagination stay
+visible coverage and prevent a checkpoint; an empty listing is "no pipeline
+reported" and is not evidence that CI did not run. A retried pipeline keeps its ID
+and reports only its current status, so earlier attempts are not observable
+(warning `pipeline_attempt_history_not_observed`). A pipeline status, including
+`failed` or `success`, is a server claim and not a task outcome
+(`pipeline_status_server_reported_not_task_outcome`); records keep causal status
+and independence `unknown`. Schema 10 has a distinct scope from schemas 1–9, and
+the join above accepts a schema 10 selection that captured `commits`.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
@@ -4017,13 +4045,15 @@ approvals and a missing approvals endpoint; offset pagination and each
 incomplete-page case; unsafe or disagreeing pagination headers; IID versus
 global ID; cross-project, cross-host and sub-path IID collisions; fork source
 identity; nested path encoding and `..` or encoded-slash refusal; 401/403/404/429
-coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
+coverage; non-HTTPS refusal; GET-only requests; and repeat import and update. They
+also map one merge request with threaded discussions, a system note, a commit, a
+closing issue and a failed pipeline, deterministically and without a task outcome.
 Live GitLab compatibility, including the exact route parameters GitLab repeats
 in `Link` headers, is not established by these fixtures.
 Still open in #54: independently verified resolution and commit membership, MR
-changes and versions, state events, other linked issues, pipelines, jobs and
-test reports, confidential-visibility checks per note, absence tombstones and a
-relationship graph.
+changes and versions, state events, other linked issues, pipeline jobs, retry
+attempts, test reports and artifact metadata, confidential-visibility checks per
+note, absence tombstones and a relationship graph.
 
 The Gitea and GitLab readers share `sources.forge.CaptureLedger` (records,
 coverage, offset listing, version and snapshot manifest) and the transport

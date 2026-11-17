@@ -30,6 +30,32 @@ and `MoritzLaurer/multilingual-MiniLMv2-L6-mnli-xnli`. Local reports retain mode
 directory hashes, dependency versions, timing, and memory. The constant baseline
 correctly abstains with insufficient confidence. No model is promoted on this smoke test.
 
+## Evidence classes
+
+Every claim about this tool belongs to exactly one class below. A green unit-test run
+supports only the first; it never certifies a real-model effect, and an absent run is
+reported as not run rather than inferred.
+
+| Class | What it can support | What it cannot support | Public record |
+| --- | --- | --- | --- |
+| Deterministic checks | Parser, schema, controller and packaging behavior on committed fixtures; fake-agent end-to-end flows | Any statement about a real model, task bank or user outcome. Fake-agent and replayed-trace results are never labeled real-model capability | The test suite and CI logs |
+| Synthetic smoke tests | An adapter or report runs on reproducible synthetic input (such as the classifier table above) | Generalization; repeated vocabulary makes these easy by design | The committed fixture and its generator |
+| Real public-task experiments | A paired, repeated comparison on explicitly approved public tasks within one runtime and model stratum | Other models or runtimes; strata are reported separately and never pooled | None exists yet; a claim needs a link to the exact experiment record |
+| Private local experiments | The maintainer's own decisions about their own project | Anything published. Redaction, anonymization and aggregation do not change this | None, by policy |
+| Unexecuted plans | A design to be reviewed | Any result, including cost, which stays unknown without measured usage and a supplied dated price | The relevant issue or document |
+
+The manual [live evaluation gate](live-evaluation-gate.md) accepts a bounded plan only
+from the trusted default branch and executes nothing: it reads no secret and calls no
+model. Wiring execution with scoped credentials remains open in #16.
+
+## Recommended protected-branch checks
+
+These are recommendations; this repository does not change its own settings from code.
+Require the `Tests` and `Evaluation packaging` workflows before merge and require a
+conventional pull request title. Dependency-update pull requests already run the same
+workflows, so no separate check is needed for them. Do not require the live gate: it is
+manual and may legitimately be skipped.
+
 ## Remaining evidence gaps
 
 Real-world diagnostic accuracy and outcome-preserving intervention benefits

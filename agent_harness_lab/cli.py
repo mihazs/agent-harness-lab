@@ -235,7 +235,7 @@ def main(argv=None):
         'grader-correction':'Record and review corrections without rewriting original graded evidence',
         'regression':'Construct or replay explicit regression tasks with fixed controls',
         'regression-review':'Manage private regression cases, replay evidence and dedicated review transitions',
-        'campaign':'Create and inspect private planned campaigns offline; execution is not implemented',
+        'campaign':'Create, inspect and cancel private planned campaigns offline; execution is not implemented',
         'sandbox-check':'Probe explicitly configured offline worker isolation; does not authenticate agents',
         'research-simulate':'Run reproducible synthetic research scenarios without a model service',
         'incident-search':'Search an explicitly approved private incident corpus with a local lexical index',

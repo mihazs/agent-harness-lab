@@ -18,13 +18,13 @@ REVIEW = dict(id='review', label='Review', description='Find defects in a change
 FOUR = dict(registry=[*REGISTRY, DOCS, REVIEW], tags={**TAGS, 'resumption': ['review']}, reviewed=list(TAGS))
 
 
-def run(tmp_path, *, areas=(), issues=None, rows=None, only=None, min_roots=3, alpha=0.05, ungraded=(), critical=(),
+def run(tmp_path, *, areas=(), sessions=None, issues=None, rows=None, only=None, min_roots=3, alpha=0.05, ungraded=(), critical=(),
         arms=('baseline', 'candidate'), registry=REGISTRY, tags=None, reviewed=fixture.ALL, **fields):
     root = fixture.project(tmp_path, registry=registry, tags=tags, reviewed=reviewed)
     spec = fixture.experiment(root, only=only, min_roots=min_roots, alpha=alpha, **fields)
     found = fixture.records(spec, ungraded=ungraded, critical=critical, arms=arms) if rows is None else rows(spec)
     issues = inspect(root / 'bank/bank.json', registry=registry)['issues'] if issues is None else issues
-    return score.report(registry, fixture.bank_tasks(root), issues, spec, found, areas)
+    return score.report(registry, fixture.bank_tasks(root), issues, spec, found, areas, sessions)
 
 
 def by_id(result):
@@ -228,7 +228,15 @@ def test_a_report_narrowed_to_one_area_notes_that_it_was_read_out_of_several_exa
     assert 'Multiplicity: 4 areas were examined' in score.markdown(result)
 
 
+def test_narrowed_report_keeps_multiplicity_and_advisory_sessions(tmp_path):
+    result = run(tmp_path, areas=('ux-ui',), sessions=[], **FOUR)
+    assert result['multiplicity']['areas_examined'] == 4
+    assert result['advisory_sessions']['recorded'] == 0
+    rendered = score.markdown(result)
+    assert 'Multiplicity: 4 areas were examined' in rendered
+    assert 'Advisory: recorded sessions' in rendered
+
+
 def test_a_report_over_every_declared_area_carries_no_multiplicity_note(tmp_path):
     result = run(tmp_path, **FOUR)
     assert result['multiplicity'] is None and 'Multiplicity' not in score.markdown(result)
-

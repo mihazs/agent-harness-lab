@@ -34,7 +34,7 @@ reader purpose.
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Bayesian decision score reference](bayesian-decision-reference.md): the `bayes_decision` spec field, the output block with the recorded input behind each number, reasons, verdict meanings and the six synthetic fixtures.
 - [Repeat reliability profile](repeat-reliability.md), [controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
-- [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), [judge controls](diagnostic-judge.md), [retrieval leakage check](diagnostic-retrieval-leakage.md), and [audit sampling](audit-sampling.md).
+- [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), [judge controls](diagnostic-judge.md), [backend prediction envelope](diagnostic-backend-envelope.md), [retrieval leakage check](diagnostic-retrieval-leakage.md), and [audit sampling](audit-sampling.md).
 - [Instruction adherence](instruction-adherence.md): the sessions file, checkable sentence shapes, three-valued judging, the report and its calibration.
 - [Instruction repair](instruction-repair.md): candidate mechanisms, repair classes, the repair plan and the recorded-pair screen.
 - [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), [resource decisions](resource-decisions.md), and the [harness degradation report](harness-degradation-report.md) with its claim ladder and metric contracts.
@@ -49,8 +49,10 @@ reader purpose.
 - [Optimization strategy registry](optimization-strategies.md), [preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
 - [Private memory store](memory-store.md): create, verify, rebuild and clean the opt-in evidence store.
 - [Stage reuse planner](stage-reuse-planner.md): node keys, the stage graph, reuse rules and the `ahl-stage-reuse-v1` receipt.
+- [Live evaluation gate](live-evaluation-gate.md): the manual dispatch inputs and bounds, the refusal reasons and the static workflow trust policy; the gate runs no model.
 - [Comparability engine](comparability-engine.md): the gates, verdicts and strata that decide whether two evaluations may be compared.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
+- [Second-wave memory compatibility matrix](memory-compatibility-matrix.md): what the pinned source of Graphiti and Zep, Supermemory, Letta, LangMem with the LangGraph store, and Basic Memory shows about reading them read-only, with a closed status vocabulary.
 - [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
 
 ## Understand the context

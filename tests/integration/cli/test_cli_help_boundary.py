@@ -17,7 +17,7 @@ TOP_DESCRIPTION = ('Start with ahl analyze . for read-only analysis, or ahl impr
 SUMMARIES = {
     'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes '
                '(only --repair-contracts may apply bounded skill-header repairs)',
-    'campaign': 'Create and inspect private planned campaigns offline; execution is not implemented',
+    'campaign': 'Create, inspect and cancel private planned campaigns offline; execution is not implemented',
     'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence '
              'or configuration, or a classified transient retry; AHL never writes harness files',
 }

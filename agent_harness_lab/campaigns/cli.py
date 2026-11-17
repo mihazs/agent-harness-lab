@@ -10,7 +10,7 @@ from .store import CampaignStore
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl campaign',description=(
-        'Create or inspect private planned campaigns offline. No execution, budget enforcement, review, recovery or deployment is implemented. '
+        'Create, inspect or cancel private planned campaigns offline. No execution, budget enforcement, review, recovery or deployment is implemented. '
         'Project and store ancestry must remain controlled and stable during creation.'))
     parser.add_argument('--store',type=Path,required=True,help='Explicit private owner-only store outside the project')
     actions = parser.add_subparsers(dest='action',required=True,help='Choose a private planned-campaign operation')
@@ -21,6 +21,9 @@ def main(argv=None):
     inspect = actions.add_parser('inspect',help='Inspect one private planned record without launching work',
         description='Inspect a private planned campaign without executing, resuming, reviewing or deploying work.')
     inspect.add_argument('--campaign',required=True,help='Opaque campaign ID returned by create')
+    cancel = actions.add_parser('cancel',help='Cancel a planned campaign that never dispatched, keeping its record',
+        description='Mark a private planned campaign cancelled. Nothing is running to stop; the record and specification are retained and a repeat returns the same record.')
+    cancel.add_argument('--campaign',required=True,help='Opaque campaign ID returned by create')
     args = parser.parse_args(argv)
     try:
         store = CampaignStore(args.store)
@@ -28,7 +31,7 @@ def main(argv=None):
             value,_ = record(args.spec,64*1024)
             result = store.create(CampaignSpec.parse(value),args.project_root)
         else:
-            result = store.inspect(args.campaign)
+            result = (store.cancel if args.action == 'cancel' else store.inspect)(args.campaign)
         print(json.dumps(result,indent=2,allow_nan=False))
         return 0
     except BlockingIOError:
