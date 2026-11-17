@@ -48,6 +48,61 @@ class TestDiagnosis:
             with pytest.raises(ValueError): d.analyze(rows)
         with pytest.raises(ValueError): d.analyze([event('a', 1), event('a', 2)], 1)
 
+    @pytest.mark.parametrize('row, message', [
+        pytest.param({}, 'invalid case_id at event 2', id='empty-row'),
+        pytest.param(dict(case_id='', event_id='1', activity='x'), 'invalid case_id at event 2', id='empty-case-id'),
+        pytest.param(dict(case_id=1, event_id='1', activity='x'), 'invalid case_id at event 2', id='non-string-case-id'),
+        pytest.param(dict(case_id='a', activity='x'), 'invalid event_id at event 2', id='missing-event-id'),
+        pytest.param(dict(case_id='a', event_id='', activity='x'), 'invalid event_id at event 2', id='empty-event-id'),
+        pytest.param(dict(case_id='a', event_id='1'), 'invalid activity at event 2', id='missing-activity'),
+        pytest.param(dict(case_id='a', event_id='1', activity=3), 'invalid activity at event 2', id='non-string-activity'),
+        pytest.param(dict(case_id='a', event_id=None, activity=None), 'invalid event_id at event 2', id='first-bad-field-is-reported'),
+    ])
+    def test_a_row_without_a_usable_identity_is_refused_naming_the_field_and_position(self, row, message):
+        with pytest.raises(ValueError) as refusal:
+            d.analyze([event('a', 0), row])
+        assert str(refusal.value) == message
+
+    def test_a_case_is_an_observation_candidate_when_any_result_has_a_full_signature(self):
+        sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
+        rows = [event('late', 1), event('late', 2, **sig),                  # first result incomplete, second complete
+                event('early', 1, **sig), event('early', 2),                # first complete, second incomplete
+                event('never', 1), event('never', 2, tool_name='read', input_fingerprint='')]
+        assert d.analyze(rows)['method_inputs']['missing_observation_signature_cases'] == 1
+
+    @pytest.mark.parametrize('profile', [pytest.param('not-a-pinned-profile', id='unknown-profile'), pytest.param(7, id='non-string-profile')])
+    def test_an_undeclared_source_order_profile_is_counted_but_never_orders_a_case(self, profile):
+        rows = [event('a', number, source_order_profile=profile, source_order_segment=0, capture_order=number, source_suborder=0)
+                for number in range(3)]
+        declared = d.analyze(rows)['method_inputs']['source_order']
+        assert (declared['declared_events'], declared['source_profiles'], declared['declared_order_cases']) == (3, [], 0)
+
+    def test_each_timestamp_is_parsed_once_per_event(self, monkeypatch):
+        from agent_harness_lab.diagnostics.process_mining import ProcessMiner
+        parsed, real = [], ProcessMiner.instant
+        monkeypatch.setattr(ProcessMiner, 'instant', staticmethod(lambda value: parsed.append(value) or real(value)))
+        rows = [event('a', number, timestamp=f'2026-01-01T00:00:0{number}Z') for number in range(3)]
+        d.analyze(rows)
+        assert parsed == [row['timestamp'] for row in rows]
+
+    @pytest.mark.parametrize('stamps, ordered, missing, invalid, reversals', [
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:02Z'], 1, 0, 0, 0, id='increasing'),
+        pytest.param(['2026-01-01T00:00:02Z', '2026-01-01T00:00:01Z'], 0, 0, 0, 1, id='reversed'),
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:01Z'], 0, 0, 0, 0, id='equal'),
+        pytest.param(['2026-01-01T00:00:01Z', '2026-01-01T00:00:02'], 0, 1, 1, 0, id='second-without-a-timezone'),
+        pytest.param(['not-a-time', '2026-01-01T00:00:02Z'], 0, 1, 1, 0, id='first-unparseable'),
+        pytest.param([None, None], 0, 2, 0, 0, id='absent'),
+        pytest.param([5, '2026-01-01T00:00:02Z'], 0, 1, 1, 0, id='first-not-a-string'),
+    ])
+    @pytest.mark.parametrize('reuse', [pytest.param(False, id='mined'), pytest.param(True, id='reused-process-mining')])
+    def test_timestamp_order_and_defects_do_not_depend_on_who_parses_the_timestamp(self, stamps, ordered, missing, invalid, reversals, reuse):
+        rows = [event('a', number, **({} if stamp is None else dict(timestamp=stamp))) for number, stamp in enumerate(stamps)]
+        mined = d.analyze(rows)
+        result = d.analyze(rows, reused_process_mining=mined['process_mining']) if reuse else mined
+        assert result['method_inputs']['timestamp_order_cases'] == ordered
+        counts = result['process_mining']
+        assert (counts['missing_timestamps'], counts['invalid_timestamps'], counts['timestamp_reversals']) == (missing, invalid, reversals)
+
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
         assert 'SECRET' not in str(rows)
@@ -109,6 +164,16 @@ class TestDiagnosis:
         sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
         rows = [event('a', 1, **sig), dict(case_id='a', event_id='2', activity='metadata'), event('a', 3, **sig)]
         assert d.analyze(rows, observation_max_age=1)['findings'] == []
+
+    def test_interleaved_cases_each_keep_their_own_order_state(self):
+        rows = [event('a', 1, capture_order=0), event('b', 1, capture_order=1), event('a', 2, capture_order=1),
+                event('b', 2, capture_order=0), event('a', 3, capture_order=2)]
+        inputs = d.analyze(rows)['method_inputs']
+        assert (inputs['capture_order_cases'], inputs['unordered_sequence_cases'], inputs['unordered_observation_cases']) == (1, 1, 1)
+
+    def test_a_case_without_any_order_evidence_is_unordered_not_ordered_by_default(self):
+        inputs = d.analyze([event('a', 1), event('a', 2), event('b', 1)])['method_inputs']
+        assert (inputs['capture_order_cases'], inputs['timestamp_order_cases'], inputs['unordered_sequence_cases']) == (0, 0, 1)
 
 
 def random_value(rng, depth=0):

@@ -20,8 +20,19 @@ evidence gaps. `empty` means no events or prior evaluation records were found;
 task success or independent roots. A zero finding count is not a clean bill of health.
 
 For a cooperative `ahl.json` configuration with an explicitly pinned project task
-bank, `ahl improve` freezes the bank before preparing a candidate and evaluates
-all its tasks without an evaluation-author session. The bank must provide
+bank, `ahl improve` runs the evaluate, improve, evaluate loop by default: it freezes the
+bank, scores the baseline, improves one mechanism per round and re-evaluates each
+candidate on the same frozen inputs until the declared acceptance score is reached or
+another typed [stop criterion](loop-reference.md#stop-criteria-statuses-and-exit-codes)
+holds ([how to declare a score](improve-until-score.md)). Without a declaration the bar
+is a supported improvement over its own baseline, labelled `acceptance_source: default`.
+Only the development and regression tasks are scored and nothing is applied. A project
+without a pinned bank, a controlled runtime and an `--experiment-request` run keep the
+single pass and say so in a `loop.status: not_used` block.
+
+`--single-pass` (deprecated, removed after one release) reproduces the previous
+behavior for a pinned bank: it freezes the bank before preparing a candidate and
+evaluates all its tasks without an evaluation-author session. The bank must provide
 development, regression and held-out coverage; the configured trial budget must
 cover one preparation plus two trials per task. A fixed bank is used for one
 candidate only, without automatic refinement. Conflicting runtime overrides,
@@ -146,8 +157,8 @@ attempts is the configured `--timeout`, not that allowance multiplied per retry.
 `watch --once` reports the last disposition even when no new run is eligible.
 Exit codes: 0 completed, 1 failed/incomplete (including budget exhaustion and
 interruption), 2 invalid input/setup, 3 inconclusive/blocked. Unknown statuses fail
-closed with exit code 1. These codes apply to `improve` as well. A run that opts into
-the [loop](loop-reference.md#running-the-loop-from-ahl-improve) adds the statuses
+closed with exit code 1. These codes apply to `improve` as well. A loop run (the default
+on a pinned bank, see the [loop](loop-reference.md#running-the-loop-from-ahl-improve)) adds the statuses
 `accepted` (0) and `not_accepted` (3), and reports `requires_intervention` (1) for a
 budget stop, an interrupt or an invalid comparison.
 

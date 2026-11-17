@@ -100,13 +100,65 @@ import evidence reference when authoring the new proposal; do not modify its fro
 snapshot. Use the existing [review/admission lifecycle](regression-admission.md)
 for reproduction, draft, review, immutable development-bank admission and export.
 Imported references/assertions enter a frozen grader bundle only through that
-separate authored/reviewed contract. No executable grader or TaskSpec is generated.
+separate authored/reviewed contract. `import` generates no executable grader or TaskSpec; the
+only exception is the reviewed [case-list conversion](#case-list-conversion).
 
 Native controls exercise both case formats through this existing lifecycle with
 separately supplied synthetic snapshots and actual executor/grader subprocesses.
 Their containment attestations are simulated. Operator/native identity and
 scientific independence remain unverified; the tests do not qualify native agents,
 model behavior, isolation or a bank for certification.
+
+## Case-list conversion
+
+`ahl bank-interchange convert` is the one operation that does generate executable
+graders. It accepts the `task-text-cases-json-v1` profile only: a JSON array of
+records with `id`, `task`, `expect` and the optional context hints `repo_search` and
+`hosting_search`. The task-oriented steps are in [Convert a case list into a native
+bank](convert-a-case-list.md). The mapping has exactly `schema_version`, `format`,
+`source`, `review` and `bank`. `source` and `review` are the declarations of the table
+above and are checked by the same code; `bank` holds `project_group`, `time_group`,
+`partition` (`construction` or `development`) and `flag_marker` (text or `null`).
+Missing or unattested review evidence, unapproved permission, unknown license
+evidence, a changed source digest or any unknown mapping field rejects the run before
+any output exists.
+
+Assertion kinds, all checked offline on the `response` text of `result.json`:
+
+| `expect` key | Passes when |
+| --- | --- |
+| `contains` | every phrase appears, ignoring case |
+| `not_contains` | no phrase appears, ignoring case |
+| `names` | every name appears as a whole word with exactly the declared case |
+| `flag` | the mapping's `flag_marker` appears (`true`) or does not (`false`), ignoring case |
+
+A missing, malformed, oversized or duplicate-key `result.json`, or a `response` that is
+not text, fails the case; it never passes. Each list holds at most 32 single-line
+phrases of at most 512 bytes. The grader is one frozen program shared by every task
+plus a per-case `expected.json`, and a malformed reference is an invalid receipt, not a
+pass. Each task also carries `broken`, `partial`, `complete` and `alternative_valid`
+control fixtures, so `ahl bank --audit --cooperative-controls` can show that the grader
+rejects an empty workspace and the first two controls and accepts the last two. The
+`superficial` control some qualification profiles require is not generated.
+
+The report (`conversion.json`) keeps these facts apart:
+
+| Field | Meaning |
+| --- | --- |
+| `converted`, `excluded` | Every record is in exactly one; `coverage` counts them. `status` is `converted` or `nothing_convertible`. |
+| `excluded[].reason` | One of `invalid_record`, `invalid_case_id`, `duplicate_case_id`, `unknown_record_field`, `needs_repository_context`, `needs_hosting_service_context`, `unsupported_assertion_kind`, `invalid_assertion_value`, `flag_marker_undeclared`, `no_positive_assertion`, `contradictory_assertions`, tested in that order. |
+| `unknown_fields` | Each unrecognised field by record, case and place (`record` or `expect`). A record with one is excluded, never graded without it. |
+| `scores_cover` | Always `converted_cases_only`. |
+| `independence`, `root_policy` | `unverified` and `one_root_per_case`: ids do not prove that cases are unrelated. |
+| `bank_issues` | The bank validation issues, such as unreviewed prompt overlap. |
+| `certification_eligible`, `bank_admission`, `automatic_promotion`, `publication_allowed` | Always `false`. |
+
+The output is a private owner-only folder holding `bank.json`, `tasks/`, `graders/` and
+`conversion.json`. The same inputs always produce the same `bank_sha256`, and the bank
+validates and exports like any other, so the existing [before/after
+guard](before-after-guard.md) applies unchanged. Sources are read as bounded JSON, so a
+key named like a credential or header (`password`, `headers`, `env`) rejects the whole
+list rather than excluding one case.
 
 ## Rejection and limits
 

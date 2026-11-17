@@ -49,3 +49,27 @@ bodies keep private content out of any index. Excluding historical findings from
 projections preserves the existing role isolation. Treating the knowledge wiki as a
 navigation layer follows from all of the above: it can point to evidence but cannot
 decide what the evidence means.
+
+## A harness has an identity and a history
+
+A comparison is only as precise as the statement of what changed and what it was compared
+against. The [snapshot id](harness-snapshots.md) therefore names the declared surface
+files, their modes and the declared runtime and trust, and not a commit: a commit says
+nothing about uncommitted or ignored files, so two snapshots of one commit can differ and
+the commit relation is a separate annotation. Timeline events point at the authoritative
+record and never carry a cause, because a change that precedes a result is not shown to
+have produced it. A baseline chosen after outcomes were seen is a different, descriptive
+claim, so a fixed reference must be declared first, and reselecting one is recorded and
+never lifts an existing claim.
+
+## Why comparison fails closed into strata
+
+A trend line is only as honest as its least comparable point. If a grader, bank, model or runtime
+changed between two evaluations, a difference in pass rate may come from the measuring
+instrument rather than the harness, so the [comparability engine](comparability-engine.md)
+refuses to place the two on one line and names the gate instead. Unknown facts are treated the same
+way: a missing value cannot be shown equal, so it cannot support a comparison. Evidence that has
+degraded (a quarantined oracle, a revoked bank, a short root count) is reported apart from any
+agent difference, because it says the measurement is unusable, not that the agent got worse. An A/A
+check can show that a setup is unstable, but it cannot show that two different setups measure the
+same thing, so it never relaxes a gate.

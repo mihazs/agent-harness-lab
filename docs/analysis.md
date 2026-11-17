@@ -433,6 +433,18 @@ vocabulary, which is discarded, never echoed. The fields are the proposer's decl
 terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evidence=... baseline_checks_passed=N` line before the
 `ahl: outcome=` line. A run that stopped before any model call carries no block.
 
+Each owned preparation call, and each evaluation-construction call of a single-pass run, also appears in `model_calls` (`stage` is `preparation`, `construction` or `construction_retry` for a second construction pass, with its `attempt`). When the runtime's closing transcript
+record carries figures, the entry holds a `provider_reported` block (profile `ahl-provider-reported-v1`,
+`source: provider_reported_unverified`, `controller_verified: false`): `duration_ms`, `num_turns`, `reported_cost` with
+`reported_cost_unit: usd`, and `usage`, the integer token counters. Claude reports all four in its `result` record; Codex's
+`turn.completed` record carries token usage only. Values are copied as reported and never converted or summed. A figure the
+record lacks or reports malformed is absent, never zero, and a transcript without exactly one closing record gives the call no block.
+Nothing reads the block for a decision, an evidence label or a claim, and `ahl: outcome=` still prints `cost=unknown`: AHL
+measures no money. When a call reported a cost, the terminal prints one `ahl: provider-reported cost: preparation-0=0.0123 usd (unverified)`
+line before the outcome line, naming each call (`unreported` where it gave none) and showing no total. Evaluation trials (their records keep the
+closing record's token `usage` only) and the controlled and configured-inference stage (its `inference` block already lists
+provider-reported usage per request) are not covered.
+
 | Reason | Remediation |
 | --- | --- |
 | `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
@@ -479,7 +491,7 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `loop_declaration_invalid` | Write the loop declaration as one JSON object that uses only the documented loop fields. |
 | `loop_evidence_insufficient` | The evidence could not support a result, so none is claimed; read loop.before and loop.rounds for the evidence state and any vacuity label, fix the named cause, then rerun. |
 | `loop_field_unknown` | Remove the unknown field; the loop declares accept_score, accept_basis, regression_margin, noise_margin, max_rounds, plateau_rounds, on_regression and alpha. |
-| `loop_interrupted` | The loop was interrupted before it reached a criterion; this release cannot resume it, so rerun the command and read loop.rounds for what finished. |
+| `loop_interrupted` | The loop was interrupted before it reached a criterion; resume it from its round ledger with the controller, or rerun the command, which starts from the harness on disk and carries over the mechanism dispositions recorded here; read loop.rounds for what finished. |
 | `loop_ledger_full` | The round ledger reached its event cap, which is above anything a run within max_rounds writes; report it, and start a new ledger for a new run. |
 | `loop_ledger_invalid` | Keep the round ledger in a new owner-only directory outside the project that is not another store, then start the loop again. |
 | `loop_limits_invalid` | Pass the project limits as seconds above 0 and a whole number of trials above 0. |
@@ -572,12 +584,16 @@ terminal, which prints one `ahl: preparation outcome=... reasons=... missing_evi
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
 | `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
+| `resume_busy` | Another run or resume holds this loop; wait for it to finish, then resume again. Nothing ran. |
+| `resume_inputs_changed` | Resume with the frozen inputs, baseline, mechanism queue and carried dispositions the run was frozen with, or start a new run; nothing ran. |
 | `resume_requires_intervention` | The run left no completed no-change proposal to finalize, so it cannot be resumed; rerun ahl improve PROJECT. |
+| `resume_spec_changed` | Resume with the declaration the run was frozen with, or start a new run: a declaration is immutable once a run starts, and nothing ran. |
 | `no_change_evidence_insufficient` | The analysis could not support any repair; this does not show the harness is fine. Follow the ranked next_steps in the receipt, or read analysis-brief.json missing_evidence. |
 | `no_change_harness_supported` | Positive verified-outcome evidence covers only the examined behaviors; review which behaviors were examined before extending the conclusion. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
+| `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |

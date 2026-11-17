@@ -34,9 +34,10 @@ _CONSTRUCTION_TIMING = ('evaluation_construction_seconds', 'evaluation_construct
 # Measured stage durations and the stage that took most of them; embedded in recovery.json too.
 _BUDGET_TIMING = ('budget_stages.remaining_seconds', 'budget_stages.stages.*.spent_seconds',
                   'budget_exhaustion.consumed_most_by', 'spent_without_evaluation.preparation_seconds')
-# The loop receipt (#814): the seconds the loop spent and its copy of the budget stages. Every other loop key is derived from frozen
-# digests, scores and counts, so it must match between the routes.
-_LOOP_TIMING = ('loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.*.spent_seconds')
+# The loop receipt (#814): the seconds the loop spent and its copy of the budget stages, and the head of the round ledger, whose
+# events are stamped with those seconds. Every other loop key is derived from frozen digests, scores and counts, so it must match
+# between the routes.
+_LOOP_TIMING = ('loop.usage.seconds', 'loop.budget_stages.remaining_seconds', 'loop.budget_stages.stages.*.spent_seconds', 'loop.ledger_head_sha256')
 ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.

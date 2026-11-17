@@ -179,21 +179,22 @@ def budget_spent(api, state):
 
 
 def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None, not_modified=False,
-        credential_header='Authorization'):
+        credential_header='Authorization', cost=1):
     """One request charged to the capture budget; returns the JSON value and lowercase response headers.
 
     ``ceiling`` caps this one response below whatever remains of the cumulative byte budget.
     ``not_modified`` admits a 304 answer as ``NOT_MODIFIED``; only a caller that sent a validator sets it.
     ``credential_header`` names the header that carries ``authorization`` for a provider that does not use Authorization.
+    ``cost`` is the spend (GraphQL points) the reserve floor must survive; a GraphQL response's reported ``rateLimit`` cost is charged to its bucket.
     The limiter may refuse the request (RateLimited), and a rate-limited GET is retried only after a short allowed wait.
     """
-    from .ratelimit import classify, identity_digest, resource_for, signals
+    from .ratelimit import classify, graphql_cost, identity_digest, resource_for, signals
     headers = {'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader', **headers}
     if authorization is not None: headers[credential_header] = authorization
     limiter, host, who, bucket = api.limiter, api.origin[0], identity_digest(authorization), resource_for(target)
     attempt = 0
     while True:
-        limiter.before(host, bucket, who, patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
+        limiter.before(host, bucket, who, need=cost, patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
         state['requests'] += 1
         remaining = None if api.max_bytes is None else api.max_bytes-state['used']
         limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
@@ -212,6 +213,8 @@ def metered_exchange(api, target, headers, state, *, authorization=None, body=No
             continue
         lowered = {k.lower(): v for k, v in metadata.items()}
         limiter.observe(host, who, bucket, 304 if value is NOT_MODIFIED else 200, signals(lowered))
+        spent = graphql_cost(value) if bucket == 'graphql' else None
+        if spent is not None: limiter.charge(host, who, bucket, spent)
         state['used'] += size
         return value, lowered
 

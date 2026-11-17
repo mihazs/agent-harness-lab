@@ -110,7 +110,7 @@ def test_delayed_outcomes_use_task_start_version_and_fixed_window():
             dict(event_id='current',task_id='new',deployment='B',task_started=2,outcome=True,provenance='executable_grader')]
     versions={'old':'A','new':'B'}
     result=monitor('B',versions,events,policy,20)
-    assert result['state']=='stable'; assert result['verified_exposure']==1
+    assert result['state']=='no_alert'; assert result['verified_exposure']==1
     assert not result['automatic_rollback']
     assert monitor('A',versions,events,policy,20)['state']=='paused'
     assert monitor('B',versions,events,policy,5)['state']=='observing'
