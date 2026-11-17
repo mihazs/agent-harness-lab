@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from agent_harness_lab.evaluation.hypothesis_probe import fixture_files, grader_files, materialize, structural_pattern
+from agent_harness_lab.evaluation.hypothesis_probe import _paired_result, fixture_files, grader_files, materialize, structural_pattern
 from agent_harness_lab.evaluation.integrity import digest
 
 
@@ -94,3 +94,25 @@ def test_materialized_probe_freezes_development_task_and_grader_controls(tmp_pat
         assert json.loads(grade.stdout)['outcome'] is (control['state'] == 'complete')
     with pytest.raises(FileExistsError): materialize(mechanism, output, project=project, harness_paths=['AGENTS.md'])
     with pytest.raises(ValueError): materialize(mechanism, project / 'probe', project=project, harness_paths=['AGENTS.md'])
+
+
+@pytest.mark.parametrize(('baseline', 'candidate', 'expected'), [
+    (False, True, 'supported_hypothesis'), (True, False, 'refuted_hypothesis'),
+    (True, True, 'inconclusive'), (False, False, 'inconclusive'),
+])
+def test_synthetic_pair_never_labels_the_source_sessions(baseline, candidate, expected):
+    trials = [dict(version=arm, task='hypothesis-probe', split='development', status='passed' if passed else 'failed',
+                   grader=dict(valid=True, outcome=passed)) for arm, passed in (('baseline', baseline), ('candidate', candidate))]
+    result = _paired_result(dict(inputs_unchanged=True, trials=trials), inputs_unchanged=True)
+    assert result['verdict'] == expected and result['source_session_outcome'] == 'unknown'
+    assert result['independence'] == 'unverified' and result['automatic_promotion'] is False
+    assert _paired_result(dict(inputs_unchanged=True, trials=trials), inputs_unchanged=False)['verdict'] == 'inconclusive'
+    trials[0]['grader']['valid'] = False
+    assert _paired_result(dict(inputs_unchanged=True, trials=trials), inputs_unchanged=True)['verdict'] == 'inconclusive'
+
+
+def test_probe_pair_does_not_treat_heldout_or_missing_trials_as_evidence():
+    trial = dict(version='baseline', task='hypothesis-probe', split='heldout', status='failed', grader=dict(valid=True, outcome=False))
+    assert _paired_result(dict(inputs_unchanged=True, trials=[trial]), inputs_unchanged=True)['verdict'] == 'inconclusive'
+    candidate = dict(version='candidate', task='hypothesis-probe', split='development', status='passed', grader=dict(valid=True, outcome=True))
+    assert _paired_result(dict(inputs_unchanged=True, trials=[trial, candidate]), inputs_unchanged=True)['verdict'] == 'inconclusive'

@@ -132,3 +132,25 @@ def materialize(mechanism, output, *, project, harness_paths):
         probe=dict(profile='ahl-synthetic-probe-v1', source_session_outcome='unknown', heldout_allowed=False, automatic_promotion=False))
     write_bytes(output / 'manifest.json', encoded(manifest))
     return output / 'manifest.json'
+
+
+def _paired_result(result, *, inputs_unchanged):
+    """Summarize one verified synthetic pair; malformed or missing grading is unknown."""
+    verdict = 'inconclusive'
+    if inputs_unchanged is True and isinstance(result, dict) and result.get('inputs_unchanged') is True:
+        trials = result.get('trials')
+        if isinstance(trials, list) and len(trials) == 2 and all(isinstance(row, dict) for row in trials):
+            rows = {row.get('version'): row for row in trials if row.get('version') in ('baseline', 'candidate')}
+            if len(rows) == 2:
+                outcomes = []
+                for arm in ('baseline', 'candidate'):
+                    row = rows[arm]; grade = row.get('grader')
+                    outcome = grade.get('outcome') if isinstance(grade, dict) and grade.get('valid') is True else None
+                    if (row.get('task') != 'hypothesis-probe' or row.get('split') != 'development'
+                            or type(outcome) is not bool or row.get('status') != ('passed' if outcome else 'failed')):
+                        break
+                    outcomes.append(outcome)
+                if outcomes == [False, True]: verdict = 'supported_hypothesis'
+                elif outcomes == [True, False]: verdict = 'refuted_hypothesis'
+    return dict(profile='ahl-synthetic-probe-result-v1', verdict=verdict, scope='one_synthetic_pair',
+                independence='unverified', source_session_outcome='unknown', automatic_promotion=False, publication_allowed=False)
