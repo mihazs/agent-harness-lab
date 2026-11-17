@@ -12,9 +12,10 @@ def test_pattern_does_not_copy_private_fields():
 
 
 @pytest.mark.parametrize('change', [
-    {'tool_class': 'opaque:12345678'}, {'error_category': 'unknown'},
+    {'tool_class': 'opaque:12345678'}, {'tool_class': []}, {'error_category': 'unknown'},
     {'next_action': {'same_call_retry': 1, 'user_intervention': 1}},
-    {'next_action': {'same_call_retry': True}}, {'status': 'unknown'},
+    {'next_action': {'same_call_retry': True}}, {'next_action': {'unrecognized': 1}},
+    {'next_action': {str(index): 1 for index in range(100)}}, {'status': 'unknown'},
 ])
 def test_unknown_or_ambiguous_patterns_are_not_fabricated(change):
     mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
