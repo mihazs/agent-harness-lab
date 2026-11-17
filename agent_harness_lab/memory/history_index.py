@@ -29,7 +29,7 @@ def _row(store, ref, run_id):
                baseline_sha256=None, candidate_sha256=None, grader_sha256=None, runtime_sha256=None,
                event_sha256=None, publication_allowed=False)
     try:
-        plan = store._historical_plan(run_id)  # public historical_plan takes the lock this listing already holds
+        plan = store._historical_plan(run_id, dependency_read_only=True)  # public historical_plan takes the lock this listing already holds
         bundles = sorted({v['digest'] for v in plan['manifest']['grader_bundles'].values()})
         states = {store.oracle_events(b)[-1][0]['state'] for b in bundles}
     except (ValueError, OSError) as error:
@@ -44,7 +44,7 @@ def _row(store, ref, run_id):
                grader_sha256=spec.get('grader_hash'), runtime_sha256=spec.get('runtime_hash'),
                oracle_state='quarantined' if 'quarantined' in states else 'active')
     try:
-        live = store.summary(run_id, store.checked(run_id))
+        live = store.summary(run_id, store.checked(run_id, dependency_read_only=True))
         row['bank_authority'] = live.get('bank_authority')
     except (ValueError, OSError):
         live = None

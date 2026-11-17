@@ -218,3 +218,18 @@ def test_bound_schema3_keeps_live_revocation_and_private_historical_plan_separat
     historical=value.store.historical_plan(result['run_id'])
     assert historical['fixture_mode_evidence'] == 'pinned'
     assert historical['current_applicability'] == 'not_evaluated'
+
+
+def test_history_index_reads_advanced_history_without_writing(cleanups):
+    from agent_harness_lab.memory.history_index import list_histories
+
+    value = fixture(cleanups)
+    result, _ = value.run_history()
+    assert record(value.store.case(result['run_id'])/'inputs.json')[0]['schema_version'] == 3
+    before = {str(path.relative_to(value.store.root)): path.read_bytes()
+              for path in value.store.root.rglob('*') if path.is_file()}
+    [row] = list_histories([value.store.root])['histories']
+    assert row['original_run_id'] == result['run_id']
+    assert row['current_validity'] == 'current'
+    assert before == {str(path.relative_to(value.store.root)): path.read_bytes()
+                      for path in value.store.root.rglob('*') if path.is_file()}

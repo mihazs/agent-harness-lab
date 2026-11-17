@@ -19,14 +19,17 @@ def declaration(source,spec):
     return value
 
 
-def validate(binding,source,spec,bank_tasks,*,current=True):
+def validate(binding,source,spec,bank_tasks,*,current=True,dependency_read_only=False):
     if not isinstance(binding,dict): raise ValueError('frozen preservation binding must be an object')
     selected=declaration(source,spec)
     if selected is None or not isinstance(bank_tasks,dict) or not bank_tasks:
         raise ValueError('preservation requires actual current bank task authority')
     if binding.get('manifest_sha256')!=selected['sha256']:
         raise ValueError('cohort evidence differs from frozen plan')
-    (cohorts.revalidate if current else cohorts.validate_snapshot)(binding,spec.tasks,spec.baseline_hash)
+    if current:
+        cohorts.revalidate(binding,spec.tasks,spec.baseline_hash,dependency_read_only=dependency_read_only)
+    else:
+        cohorts.validate_snapshot(binding,spec.tasks,spec.baseline_hash)
     scheduled={row['trial_id'] for row in schedule(spec)}
     for evidence in binding['qualification_bindings'].values():
         if evidence['plan_sha256']==spec.digest or scheduled.intersection(evidence['trial_ids']):

@@ -106,7 +106,7 @@ def _manifest(value, planned_tasks):
     return value
 
 
-def _prior(qualification, cache):
+def _prior(qualification, cache, *, dependency_read_only=False):
     from .oracle_history import HistoryStore
     key = (qualification['history_store'], qualification['run_id'])
     if key in cache:
@@ -124,7 +124,7 @@ def _prior(qualification, cache):
                 or type(marker['schema_version']) is not int):
             raise ValueError('qualification history must be an existing owner-only controller store')
         # Read-side validation must work while the caller owns this same store's lock.
-        checked = history.checked(key[1])
+        checked = history.checked(key[1], **({'dependency_read_only': True} if dependency_read_only else {}))
         case, events, inputs, spec, result, validity = checked
         if (validity != 'current' or result is None or events[-1][0]['state'] != 'sealed'
                 or type(inputs['schema_version']) is not int or inputs['schema_version'] not in (2, 3, 4)
@@ -136,9 +136,9 @@ def _prior(qualification, cache):
         _ACTIVE.reset(token)
 
 
-def _qualify(cohort, baseline_hash, cache):
+def _qualify(cohort, baseline_hash, cache, *, dependency_read_only=False):
     qualification = cohort['qualification']
-    history, checked = _prior(qualification, cache)
+    history, checked = _prior(qualification, cache, dependency_read_only=dependency_read_only)
     case, events, inputs, spec, result, _ = checked
     evidence_hash = record(case / 'evidence.json')[1]
     if (events[-1][1] != qualification['event_sha256'] or evidence_hash != qualification['evidence_sha256']
@@ -207,7 +207,7 @@ def _qualify(cohort, baseline_hash, cache):
         independence='unverified', publication_allowed=False)
 
 
-def capture(path, expected_sha256, planned_tasks, baseline_hash):
+def capture(path, expected_sha256, planned_tasks, baseline_hash, *, dependency_read_only=False):
     """Capture exact public/private declarations plus actual prior qualification."""
     sha256(expected_sha256)
     sha256(baseline_hash)
@@ -217,9 +217,9 @@ def capture(path, expected_sha256, planned_tasks, baseline_hash):
         raise ValueError('preservation manifest digest changed')
     _manifest(manifest, planned_tasks)
     cache = {}
-    qualifications = {cohort['cohort_id']: _qualify(cohort, baseline_hash, cache) for cohort in manifest['cohorts']}
+    qualifications = {cohort['cohort_id']: _qualify(cohort, baseline_hash, cache, dependency_read_only=dependency_read_only) for cohort in manifest['cohorts']}
     for key, (_, checked) in cache.items():
-        fresh = _prior(dict(history_store=key[0], run_id=key[1]), {})[1]
+        fresh = _prior(dict(history_store=key[0], run_id=key[1]), {}, dependency_read_only=dependency_read_only)[1]
         if fresh != checked:
             raise ValueError('qualification authority changed during capture')
     if regular_sha256(path, MAX_BYTES) != manifest_hash:
@@ -286,10 +286,10 @@ def validate_snapshot(binding, planned_tasks, baseline_hash):
     return binding
 
 
-def revalidate(binding, planned_tasks, baseline_hash):
+def revalidate(binding, planned_tasks, baseline_hash, *, dependency_read_only=False):
     """Reopen exact authorities; revocation or any changed pin rejects the binding."""
     validate_snapshot(binding, planned_tasks, baseline_hash)
-    current = capture(binding['manifest_path'], binding['manifest_sha256'], planned_tasks, baseline_hash)
+    current = capture(binding['manifest_path'], binding['manifest_sha256'], planned_tasks, baseline_hash, dependency_read_only=dependency_read_only)
     if current != binding:
         raise ValueError('preservation qualification binding changed')
     return current

@@ -67,6 +67,10 @@ HistoryStore's own validators, so changes in authority show up at the next read:
 | `incomplete` | Not sealed | `not_comparable` |
 | `unreadable` | The original run does not validate; nothing else is claimed | `unknown` |
 
+The index requires an existing protected-access dependency lock when a history
+uses one. If it is missing, the index leaves it missing and marks that history
+unreadable; if it disappears before the live authority check, authority is not current.
+
 A run lacking bank binding, a harness snapshot, grader provenance or runtime is
 `legacy_unverified`, listed with the reasons (`bank_binding_missing`, `snapshot_missing`,
 `grader_provenance_missing`, `runtime_missing`) and null fields; nothing is inferred from path

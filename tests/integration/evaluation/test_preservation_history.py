@@ -148,3 +148,38 @@ def test_missing_actual_runner_qualification_marker_cannot_seal(history):
     executed.assert_called_once()
     assert calls==8
     assert result['state']=='incomplete'
+
+
+def test_history_index_never_recreates_a_nested_protected_lock():
+    from agent_harness_lab.memory.history_index import list_histories
+
+    def managed_prior(value, execute=None, store=None):
+        owner = store or value.store
+        manifest = value.export/'manifest.json'
+        reservation = owner.reserve_access(manifest, value.baseline, value.candidate)['reservation_id']
+        with patch.object(SandboxBackend, 'capability', return_value={'status':'available'}), \
+                patch.object(SandboxBackend, 'run', side_effect=execute or value.execute) as workers:
+            result = owner.run(manifest, value.baseline, value.candidate, cgroup_root=value.root/'delegation',
+                               image_root=value.root/'image', image_sha256=value.image_hash,
+                               disk_bytes=64*1024*1024, access_reservation=reservation)
+        return result, workers.call_count
+
+    with ExitStack() as cleanups:
+        with patch.object(core.authority.OracleBankAuthority, 'run_history', managed_prior):
+            history = PreservationHistory(cleanups)
+        prior_store = history.f.store
+        history.f.store = controller.HistoryStore(history.f.root/'new-history')
+        result, _ = history.f.run_history()
+        store = history.f.store
+        lock = prior_store.root/'protected-access.lock'
+        assert lock.exists()
+        [current] = [row for row in list_histories([store.root])['histories'] if row['original_run_id'] == result['run_id']]
+        assert current['current_validity'] == 'current'
+        lock.unlink()
+        before = {str(path.relative_to(history.f.root)):path.read_bytes()
+                  for root in (store.root, prior_store.root) for path in root.rglob('*') if path.is_file()}
+        [after] = [row for row in list_histories([store.root])['histories'] if row['original_run_id'] == result['run_id']]
+        assert after['current_validity'] == 'authority_not_current'
+        assert not lock.exists()
+        assert before == {str(path.relative_to(history.f.root)):path.read_bytes()
+                          for root in (store.root, prior_store.root) for path in root.rglob('*') if path.is_file()}
