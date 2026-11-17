@@ -40,7 +40,8 @@ STEPS = dict(
 AREA_REGRESSION = ('A candidate lost paired outcomes in a scored capability area and was kept out of the result, even if its pooled score did not fall; '
                    'read regressed_areas in loop.rounds and area_gates in the private receipt, revise or discard that mechanism so no named area regresses, then rerun without raising the margin.')
 RECONCILE = ('An evaluation or proposal may have an unresolved provider request, so the loop did not repeat it and ended interrupted; '
-             'reconcile the provider records before resuming, and report consumed evaluation trials from the evaluator.')
+             'reconcile the provider records and resume only through a controller port that verifies the result; an evaluator must also report consumed trials. '
+             'The built-in CLI cannot yet consume reconciliation.')
 _EVIDENCE = ('scored', 'provisional', 'no_evidence', 'blocked')
 _VALIDITY = ('valid', 'vacuous', 'incomplete', 'comparison_invalid')
 
@@ -65,7 +66,7 @@ def _score(summary):
 
 def _evaluation(index, verdict, summary, **extra):
     summary = summary if isinstance(summary, dict) else {}
-    return dict(evaluation_id=f'evaluation-{index}', validity=verdict, evidence=summary.get('evidence'), vacuity=summary.get('vacuity'),
+    return dict(evaluation_id=f'evaluation-{index}' if index is not None else None, validity=verdict, evidence=summary.get('evidence'), vacuity=summary.get('vacuity'),
                 trials=summary.get('trials'), score=_score(summary), **extra,
                 **({'regressed_areas': summary['regressed_areas']} if summary.get('regressed_areas') else {}))
 
@@ -79,6 +80,8 @@ def _paired(guard):
 
 def _projection(events, guards):
     rounds, before, current = [], None, None
+    journaled = bool(events and events[0][1].get('candidate_dispatch_journal') == 'v1')
+    completed = 0
     for kind, payload in events:
         if kind == 'baseline_evaluated':
             before = _evaluation(0, payload.get('value'), payload.get('evaluation'), snapshot=payload.get('snapshot'))
@@ -88,8 +91,12 @@ def _projection(events, guards):
         elif kind == 'candidate_frozen' and current is not None:
             current['candidate'] = payload.get('snapshot')
         elif kind == 'candidate_evaluated' and current is not None:
-            index = len(rounds)
-            current.update(_evaluation(index, payload.get('value'), payload.get('evaluation')), paired=_paired(guards[index] if index < len(guards) else None))
+            if journaled:
+                index = None if payload.get('abandoned') is True else completed + 1
+                if index is not None: completed = index
+            else:
+                index = len(rounds)
+            current.update(_evaluation(index, payload.get('value'), payload.get('evaluation')), paired=_paired(guards[index] if index is not None and index < len(guards) else None))
         elif kind == 'decided' and current is not None:
             current.update(decision=payload.get('value'), disposition=payload.get('disposition'))
             if payload.get('abandoned') is True: current['abandoned'] = True  # an interrupted round: no evaluation completed, so no score
@@ -104,6 +111,8 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
     after = None if before is None else dict(round=best_round, snapshot=best['snapshot'],
                                               **(_evaluation(best_round, 'valid', best['evaluation']) if best_round else
                                                  {key: before[key] for key in ('evaluation_id', 'validity', 'evidence', 'vacuity', 'trials', 'score')}))
+    if after is not None and best_round and events[0][1].get('candidate_dispatch_journal') == 'v1':
+        after['evaluation_id'] = next(item['evaluation_id'] for item in rounds if item['round'] == best_round)
     stop = result['stop']
     return dict(profile=PROFILE, schema_version=1, spec=spec.to_dict(), frozen_inputs_sha256=result['frozen_inputs_sha256'], mode=result['mode'],
                 acceptance_source=result['acceptance_source'], looks=result['looks'], alpha_per_look=result['per_look_alpha'],
@@ -133,6 +142,8 @@ def verify_projection(block, events):
     after = None if before is None else dict(round=best_round, snapshot=best_snapshot,
         **(_evaluation(best_round, 'valid', best_evaluation) if best_round else
            {key: before[key] for key in ('evaluation_id', 'validity', 'evidence', 'vacuity', 'trials', 'score')}))
+    if after is not None and best_round and events[0][1].get('candidate_dispatch_journal') == 'v1':
+        after['evaluation_id'] = next(item['evaluation_id'] for item in rounds if item['round'] == best_round)
     expected = dict(before=before, after=after, rounds=expected_rounds, best_round=best_round,
                     frozen_inputs_sha256=first.get('frozen_inputs_sha256'), mode=first.get('mode'),
                     looks=first.get('looks'), alpha_per_look=first.get('per_look_alpha'),

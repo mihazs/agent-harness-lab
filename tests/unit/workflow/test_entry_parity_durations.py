@@ -101,6 +101,10 @@ def test_measured_durations_may_differ_but_every_other_difference_still_fails():
     compare = lambda a, b, name='workflow.json': entry_parity.document_differences(name, a, b, '/a/run', '/a/run')
     assert compare(first, second) == []
     assert compare(dict(receipt=first), dict(receipt=second), 'recovery.json') == []
+    first_context = {'initial_elapsed': 0.1, 'initial_stage_spent': {'trials': 0.1}, 'manifest_sha256': 'a', 'scoring_sha256': 'a', 'spec': 'same'}
+    second_context = {'initial_elapsed': 0.4, 'initial_stage_spent': {'trials': 0.4}, 'manifest_sha256': 'b', 'scoring_sha256': 'b', 'spec': 'same'}
+    assert compare(first_context, second_context, 'loop-resume-context.json') == []
+    assert compare(first_context, dict(second_context, spec='changed'), 'loop-resume-context.json') == ['spec']
     assert compare(dict(manifest_repairs=first['evaluation_construction_repairs']),
                    dict(manifest_repairs=second['evaluation_construction_repairs']), 'evaluation-construction-0.json') == []
     assert compare(first, receipt(0.4, status='applied')) == ['status']  # a non-duration difference is reported

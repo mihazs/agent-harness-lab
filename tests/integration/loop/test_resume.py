@@ -103,6 +103,22 @@ def test_a_decision_already_recorded_is_finalized_without_asking_a_port_again(tm
     assert (result['stop'], ports.order, ports.settling) == ('acceptance_score_reached', [], [])
 
 
+def test_legacy_ledger_before_baseline_requires_settlement(tmp_path):
+    _, ledger, _ = interrupted(SCRIPT, tmp_path, 1)
+    ports = ScriptedPorts(SCRIPT, Meter(), settled=None)
+    result, _ = resume(SCRIPT, tmp_path, ledger.events(), ports=ports)
+    assert result['stop_reason'] == 'unresolved_request' and ports.order == []
+    assert len(ports.settling) == 1
+
+
+def test_legacy_ledger_after_candidate_freeze_requires_settlement(tmp_path):
+    _, ledger, _ = interrupted(SCRIPT, tmp_path, 4)
+    ports = ScriptedPorts(SCRIPT, Meter(), evaluated=1, proposed=0, settled=None)
+    result, _ = resume(SCRIPT, tmp_path, ledger.events(), ports=ports)
+    assert result['stop_reason'] == 'unresolved_request' and ports.order == []
+    assert len(ports.settling) == 1
+
+
 def test_resume_preserves_area_regression_before_decision(tmp_path):
     script = loop_sim.build('area-regression-on-resume', [loop_sim.score(0.6),
         loop_sim.score(0.9, regressed_areas=('ux-ui',), cause='candidate')])
@@ -163,6 +179,8 @@ def test_an_abandoned_round_is_a_round_without_a_score_in_the_receipt(tmp_path):
     first = block['rounds'][0]
     assert receipt.validate_receipt(block) is block and block['resumed'] == dict(count=1, abandoned_rounds=1)
     assert (first['abandoned'], first['disposition'], first['decision'], first['score'], first['validity']) == (True, 'abandoned', 'inconclusive', None, 'incomplete')
+    assert first['evaluation_id'] == 'evaluation-1'  # legacy ledgers keep their original receipt projection
+    receipt.verify_projection(block, stored_events(tmp_path))
 
 
 @pytest.mark.parametrize('answer', [pytest.param('missing', id='evaluator-has-no-settle'), pytest.param(None, id='settle-says-unknown')])
