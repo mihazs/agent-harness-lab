@@ -247,6 +247,25 @@ On systems with a working user systemd manager, opt into a memory cap with
 `TEST_WORKERS=4 task test:capped MEMORY_MAX=4G PYTHON=.venv/bin/python`. This runs
 the ordinary test task inside a scope; it skips if `systemd-run` is absent, and
 reports an error if the manager cannot create the scope.
+
+One sequential measurement of the full suite used `TEST_WORKERS=N task test
+PYTHON=.venv/bin/python` on Linux x86-64, Python 3.14.9, a Ryzen 9 5900X, 31 GiB
+RAM and 22 available CPUs. Each run used the same test snapshot with the pin
+repair from #1014 applied, and passed 17,620 tests with 300 skipped:
+
+| Workers | Wall time | Direct worker peak RSS (MiB, sorted) |
+| --- | --- | --- |
+| 2 | 1,948.8 s | 683, 2,175 |
+| 4 | 1,349.8 s | 404, 407, 592, 2,334 |
+| 8 | 824.8 s | 249, 276, 320, 332, 336, 403, 566, 2,120 |
+
+Worker peaks were read from Linux `/proc` `VmHWM` at one-second intervals.
+These are individual direct xdist processes, not an aggregate peak: child processes
+are excluded, workers can peak at different times, and very short-lived processes
+can be missed. The runs do not identify memory-heavy tests. Cache state, background
+work, hardware and skipped tests affect these single-run figures; choose a worker
+count and cap appropriate for your own host.
+
 CI tests Python 3.14; package installation still requires Python 3.11 or newer.
 
 Licensed under [MIT](LICENSE).
