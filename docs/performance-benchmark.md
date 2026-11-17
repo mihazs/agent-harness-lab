@@ -71,6 +71,8 @@ sample, so its earlier reported excess remains unverified. A synthetic local-sou
 preview that needs providers measured 124.2 ms before and 124.5 ms after (nine runs;
 observed ranges 120.7–133.4 and 118.9–128.0 ms), with identical output and status.
 These measurements do not establish performance on other hosts or all providers.
+The `sources` startup guard is 12 times the bare interpreter; the post-change median
+in a separate 15-run sample was 44.3 ms against a 17.9 ms interpreter median.
 
 ## Baseline
 
