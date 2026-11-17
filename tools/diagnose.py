@@ -268,7 +268,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         elif order['capture'] or order['timestamp'] or order['source']:
             entry = (activity, number, ref)
             cases[case].append(entry)
-            observation_events[case].append((number, entry, *(event.get(name) for name in OBSERVED[3:])))
+            observation_events[case].append((entry, *(event.get(name) for name in OBSERVED[3:])))
         else:  # Order flags never recover, so the case can no longer be selected.
             cases.pop(case, None); observation_events.pop(case, None)
         if violation:
@@ -289,10 +289,10 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
     if select_methods:
         # Per-case records merge back into capture position order; positions are unique.
         replay = [observation_events[case] for case in observation_events if case in selected_observations]
-        for record in heapq.merge(*replay):
-            activity, _, ref = record[1]
+        for record in heapq.merge(*replay, key=lambda item: item[0][1]):
+            activity, position, ref = record[0]
             identity = (ref['case_id'], ref['event_id']) if isinstance(ref, dict) else ref
-            finding = observations.observe(dict(zip(OBSERVED, (*identity, activity, *record[2:]))), record[0])
+            finding = observations.observe(dict(zip(OBSERVED, (*identity, activity, *record[1:]))), position)
             if finding:
                 findings.append(finding)
         del replay; observation_events.clear()
