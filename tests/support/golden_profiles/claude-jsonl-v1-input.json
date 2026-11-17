@@ -1,0 +1,1 @@
+[{"message":{"content":[{"id":"synthetic-call","input":"synthetic body","name":"read","type":"tool_use"}]},"sessionId":"synthetic-session","uuid":"call"},{"message":{"content":[{"content":"synthetic body","is_error":true,"tool_use_id":"synthetic-call","type":"tool_result"}]},"sessionId":"synthetic-session","uuid":"result"}]
