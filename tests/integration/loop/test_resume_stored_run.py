@@ -59,7 +59,7 @@ def test_resuming_with_other_execution_options_is_still_refused(stack, monkeypat
 
 
 @pytest.mark.parametrize('damage', ['receipt-stop', 'receipt-stop-consistent', 'receipt-status', 'receipt-reason', 'receipt-output',
-                                    'receipt-applied', 'receipt-promotion', 'receipt-publication', 'receipt-events', 'receipt-head-removed', 'receipt-before-score', 'receipt-after-score', 'receipt-frozen-inputs', 'receipt-mechanisms', 'receipt-spec', 'receipt-sources', 'ledger-spec', 'both-spec-rehashed',
+                                    'receipt-applied', 'receipt-promotion', 'receipt-publication', 'receipt-events', 'receipt-head-removed', 'receipt-version-bool', 'receipt-before-score', 'receipt-after-score', 'receipt-frozen-inputs', 'receipt-mechanisms', 'receipt-spec', 'receipt-sources', 'ledger-spec', 'both-spec-rehashed',
                                     'ledger-event', 'ledger-head', 'ledger-removed'])
 def test_a_tampered_receipt_or_ledger_is_not_returned_as_the_run_result(stack, monkeypatch, damage):
     project, _, found = finished(stack, monkeypatch)
@@ -77,6 +77,7 @@ def test_a_tampered_receipt_or_ledger_is_not_returned_as_the_run_result(stack, m
     if damage == 'receipt-publication': document['publication_allowed'] = True
     if damage == 'receipt-events': document['loop']['events'] += 1
     if damage == 'receipt-head-removed': document['loop'].pop('ledger_head_sha256')
+    if damage == 'receipt-version-bool': document['loop']['schema_version'] = True
     if damage in ('receipt-before-score', 'receipt-after-score'):
         document['loop'][damage.split('-')[1]]['score'] = dict(point=0.2, lower=0.1, upper=0.3)
     if damage == 'receipt-frozen-inputs': document['loop']['frozen_inputs_sha256'] = '0'*64

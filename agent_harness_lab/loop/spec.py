@@ -168,7 +168,7 @@ class LoopSpec:
         return self.alpha / self.max_rounds
 
     def validate(self):
-        if self.schema_version != 1 or self.profile != PROFILE: raise LoopError('loop_declaration_invalid', 'profile', 'declared')
+        if type(self.schema_version) is not int or self.schema_version != 1 or self.profile != PROFILE: raise LoopError('loop_declaration_invalid', 'profile', 'declared')
         for name, safe in (('recommendation_only', self.recommendation_only is True),
                            ('automatic_promotion', self.automatic_promotion is False), ('certification', self.certification == 'unverified')):
             if not safe: raise LoopError('loop_authority_refused', name, 'declared')

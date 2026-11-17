@@ -183,7 +183,7 @@ def validate_receipt(value):
     accepted_without_change, which has no improvement), a number with no evaluation id, a vacuous or unscored evaluation behind an accepted stop,
     an authority field other than recommendation only, and a receipt over MAX_BYTES.
     """
-    if not isinstance(value, dict) or value.get('profile') != PROFILE or value.get('schema_version') != 1: _fail('profile')
+    if not isinstance(value, dict) or value.get('profile') != PROFILE or type(value.get('schema_version')) is not int or value.get('schema_version') != 1: _fail('profile')
     stop = value.get('stop_criterion')
     if stop not in CRITERIA: _fail('stop_criterion')
     if (value.get('recommendation_only') is not True or value.get('automatic_promotion') is not False

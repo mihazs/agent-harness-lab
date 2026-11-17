@@ -232,3 +232,8 @@ def test_the_spec_is_a_loop_spec_that_always_recommends_and_never_promotes():
     assert isinstance(spec, LoopSpec)
     assert (spec.recommendation_only, spec.automatic_promotion, spec.certification) == (True, False, 'unverified')
     assert spec.to_dict()['recommendation_only'] is True and spec.to_dict()['automatic_promotion'] is False
+
+
+@pytest.mark.parametrize('version', [True, 1.0])
+def test_non_integer_schema_version_is_rejected(version):
+    assert rejected(lambda: dataclasses.replace(declared(), schema_version=version).validate()).reason == 'loop_declaration_invalid'
