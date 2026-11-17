@@ -126,8 +126,8 @@ class LoopLedger(PrivateJournal):
             elif kind in MACHINE_EVENTS: moves.append((kind, payload.get('value')))
         return replay_machine(spec, moves)
 
-    def verified(self, *, spec=None):
-        """Return event count and head after verification; when supplied, bind the receipt spec to the stored spec and first event."""
+    def verified(self, *, spec=None, stop=None):
+        """Return event count and head after verification, binding supplied receipt values to the ledger."""
         try:
             found = self.case_ids(2)
             if len(found) != 1: raise ValueError('a store holds exactly one case')
@@ -136,6 +136,7 @@ class LoopLedger(PrivateJournal):
             recorded, _ = record(case/'spec.json')
             digest = document_digest(recorded)
             if (not events or events[0][0]['payload'].get('spec_sha256') != digest
+                    or stop is not None and (events[-1][0]['kind'] != 'stopped' or events[-1][0]['payload'].get('value') != stop)
                     or spec is not None and encoded(spec) != encoded(recorded)):
                 raise ValueError('receipt spec differs from ledger')
             held, self.case_dir, self._events = self.case_dir, case, events

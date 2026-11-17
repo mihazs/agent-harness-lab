@@ -58,13 +58,23 @@ def test_resuming_with_other_execution_options_is_still_refused(stack, monkeypat
     assert code != 0 and refused['reason'] == 'usage_conflict' and project.calls() == []
 
 
-@pytest.mark.parametrize('damage', ['receipt-stop', 'receipt-events', 'receipt-spec', 'receipt-sources', 'ledger-spec', 'both-spec-rehashed',
+@pytest.mark.parametrize('damage', ['receipt-stop', 'receipt-stop-consistent', 'receipt-status', 'receipt-reason', 'receipt-output',
+                                    'receipt-applied', 'receipt-promotion', 'receipt-publication', 'receipt-events', 'receipt-spec', 'receipt-sources', 'ledger-spec', 'both-spec-rehashed',
                                     'ledger-event', 'ledger-head', 'ledger-removed'])
 def test_a_tampered_receipt_or_ledger_is_not_returned_as_the_run_result(stack, monkeypatch, damage):
     project, _, found = finished(stack, monkeypatch)
     run = Path(found['output'])
     document = json.loads((run/'workflow.json').read_text())
     if damage == 'receipt-stop': document['loop']['stop_criterion'] = 'acceptance_score_reached'
+    if damage == 'receipt-stop-consistent':
+        document['loop']['stop_criterion'] = 'max_rounds'
+        document.update(status='not_accepted', reason='loop_max_rounds')
+    if damage == 'receipt-status': document['status'] = 'not_accepted'
+    if damage == 'receipt-reason': document['reason'] = 'loop_max_rounds'
+    if damage == 'receipt-output': document['output'] = str(run.parent/'another-run')
+    if damage == 'receipt-applied': document['changed_files'] = ['AGENTS.md']
+    if damage == 'receipt-promotion': document['automatic_promotion'] = True
+    if damage == 'receipt-publication': document['publication_allowed'] = True
     if damage == 'receipt-events': document['loop']['events'] += 1
     if damage == 'receipt-spec': document['loop']['spec']['accept_score'] = 0.99
     if damage == 'receipt-sources':
