@@ -26,6 +26,6 @@ def read(output, project):
             or found.get('changed_files') != [] or found.get('automatic_promotion') is not False or found.get('publication_allowed') is not False):
         raise LoopError('loop_receipt_invalid', 'envelope', 'declared')
     events, head, recorded = LoopLedger(state_root()/'loops'/output.name, project).verified(spec=block['spec'], stop=stop, include_events=True)
-    if events != block.get('events') or head != block.get('ledger_head_sha256', head): raise LoopError('loop_ledger_invalid', 'head', 'declared')
+    if events != block.get('events') or head != block.get('ledger_head_sha256'): raise LoopError('loop_ledger_invalid', 'head', 'declared')
     verify_projection(block, recorded)
     return found
