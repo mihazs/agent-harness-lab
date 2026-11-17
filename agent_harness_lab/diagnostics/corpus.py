@@ -696,6 +696,13 @@ def development_export(value):
 
     The digest detects changed or truncated content; it is not an authenticity signature,
     so the protected-partition, eligibility and provenance checks run independently."""
+    legacy = 'schema_version profile revision_sha256 records publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256'
+    if (isinstance(value, dict) and set(value) == set(legacy.split()) and type(value['schema_version']) is int
+            and value['schema_version'] == 1 and value['profile'] == FORMAT):
+        _sha(value['manifest_sha256'])
+        if value['manifest_sha256'] != _digest({k: v for k, v in value.items() if k != 'manifest_sha256'}):
+            raise ValueError('diagnostic corpus manifest digest differs')
+        raise ValueError('diagnostic_corpus_v1_requires_migration: re-export with duplicate, lineage and review evidence')
     _fields(value,'schema_version profile revision_sha256 records near_duplicate_decisions lineage_groupings publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
     _sha(value['revision_sha256']); _sha(value['manifest_sha256'])
     if value['manifest_sha256']!=_digest({k:v for k,v in value.items() if k!='manifest_sha256'}):
