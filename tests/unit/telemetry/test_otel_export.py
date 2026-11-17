@@ -20,7 +20,7 @@ def rows(document):
 
 
 def test_projection_matches_pinned_synthetic_otlp_fixture():
-    fixture = Path(__file__).resolve().parents[2] / 'fixtures/otel/synthetic-logs-v1.json'
+    fixture = Path(__file__).resolve().parents[2] / 'support/golden_profiles/otel-logs-v1.json'
     expected = json.loads(fixture.read_text())
     source = dict(schema_version=2, case_id='synthetic-case', event_id='usage-1', activity='response_usage',
                   timestamp='2026-01-01T00:00:00.123456789Z', input_tokens=5, output_tokens=3)
