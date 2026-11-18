@@ -27,37 +27,37 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
             requests = []
             tab.on('request', lambda request: requests.append(request.url))
             tab.goto(document.as_uri())
-            group = tab.get_by_role('group', name='Filter task pairs')
+            group = tab.locator('div.pair-filters')
             rows = group.locator('tbody tr')
-            visible = group.locator('tbody tr:visible')
+            visible = group.locator('.pair-group:visible tbody tr')
             total = rows.count()
             decision = tab.locator('body').inner_text().split('Task table', 1)[0]
             assert total > 2 and visible.count() == total
-            group.locator('#pair-filter-all').focus()
-            assert group.locator('#pair-filter-all').evaluate('(element) => getComputedStyle(element).outlineStyle') != 'none'
-            tab.keyboard.press('ArrowRight')
-            assert group.locator('#pair-filter-improved').is_checked()
+            improved = group.get_by_role('link', name='Improved', exact=True)
+            improved.focus()
+            assert improved.evaluate('(element) => getComputedStyle(element).outlineStyle') != 'none'
+            tab.keyboard.press('Enter')
             assert visible.count() > 0
-            assert all(visible.nth(i).get_attribute('data-verdict') == 'improved' for i in range(visible.count()))
-            for verdict in ('improved', 'regressed', 'unknown'):
-                group.locator('#pair-filter-' + verdict).check()
+            classes = lambda row: row.evaluate('(element) => element.closest(".pair-group").className')
+            assert all('verdict-improved' in classes(visible.nth(i)) for i in range(visible.count()))
+            for verdict, label in (('improved', 'Improved'), ('regressed', 'Regressed'), ('unknown', 'Unknown outcome')):
+                group.get_by_role('link', name=label, exact=True).click()
                 assert visible.count() > 0
-                assert all(visible.nth(i).get_attribute('data-verdict') == verdict for i in range(visible.count()))
+                assert all('verdict-' + verdict in classes(visible.nth(i)) for i in range(visible.count()))
                 assert tab.locator('body').inner_text().split('Task table', 1)[0] == decision
-            group.locator('#pair-filter-missing').check()
-            assert any(visible.nth(i).get_attribute('data-verdict') == 'improved' for i in range(visible.count()))
-            assert any(visible.nth(i).get_attribute('data-verdict') == 'unknown' for i in range(visible.count()))
-            assert any(visible.nth(i).get_attribute('data-verdict') == 'regressed'
-                       and visible.nth(i).get_attribute('data-coverage') == 'complete' for i in range(visible.count()))
-            assert all(visible.nth(i).get_attribute('data-verdict') == 'unknown'
-                       or visible.nth(i).get_attribute('data-coverage') == 'gap'
-                       or visible.nth(i).get_attribute('data-assertion-gap') == 'yes' for i in range(visible.count()))
-            group.locator('#pair-filter-assertions').check()
+            group.get_by_role('link', name='Missing evidence', exact=True).click()
+            assert any('verdict-improved' in classes(visible.nth(i)) for i in range(visible.count()))
+            assert any('verdict-unknown' in classes(visible.nth(i)) for i in range(visible.count()))
+            assert any('verdict-regressed' in classes(visible.nth(i))
+                       and 'coverage-complete' in classes(visible.nth(i)) for i in range(visible.count()))
+            assert all(any(name in classes(visible.nth(i)) for name in ('verdict-unknown', 'coverage-gap', 'assertion-gap-yes'))
+                       for i in range(visible.count()))
+            group.get_by_role('link', name='Reported required assertion violations (unverified)', exact=True).click()
             assert visible.count() == 1 and 'candidate: violated' in visible.first.inner_text()
             assert 'Required assertions (unverified)' in group.inner_text()
             assert 'SYNTHETIC_SECRET' not in tab.content()
             assert tab.locator('body').inner_text().split('Task table', 1)[0] == decision
-            group.locator('#pair-filter-all').check()
+            group.get_by_role('link', name='All pairs', exact=True).click()
             assert visible.count() == total
             assert all(url.startswith('file:') for url in requests)
         finally:

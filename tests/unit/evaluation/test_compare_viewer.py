@@ -51,11 +51,11 @@ def test_verdicts_are_text_labels_and_no_color_semantics():
 
 def test_pair_filters_preserve_every_row_and_the_backend_decision():
     document = page(fixture())
-    assert 'id="pair-filter-all" checked' in document
+    assert '<a href="#pair-filter-all">All pairs</a>' in document
     assert 'the backend decision and analysis population stay unchanged' in document
     for verdict in ('improved', 'regressed', 'unknown'):
         assert f'id="pair-filter-{verdict}"' in document
-        assert f'<tr data-verdict="{verdict}" data-coverage=' in document
+        assert f'verdict-{verdict}' in document
     assert 'id="pair-filter-missing"' in document
     assert 'insufficient_independent_roots' in document
     assert '<script' not in document
@@ -72,7 +72,7 @@ def test_imported_required_claims_are_labelled_and_missing_remains_unknown():
     document = page(value)
     assert 'Required assertions (unverified)' in document
     assert 'baseline: unknown (missing or ambiguous join); candidate: violated' in document
-    assert 'data-assertions="reported_violation" data-assertion-gap="yes"' in document
+    assert 'assertion-reported_violation assertion-gap-yes' in document
     assert 'SYNTHETIC_SECRET' not in document
     assert 'insufficient_independent_roots' in document
 

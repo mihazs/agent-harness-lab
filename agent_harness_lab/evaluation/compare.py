@@ -14,14 +14,16 @@ from . import resource_report, side_by_side as sbs
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 32px;max-width:72rem}'
          'table{border-collapse:collapse;width:100%}th,td{border:1px solid;padding:4px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}'
-         '.scroll{overflow-x:auto}a:focus,summary:focus,input:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
+         '.scroll{overflow-x:auto}a:focus,summary:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
 
 PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchanged', 'Unchanged'),
                 ('unknown', 'Unknown outcome'), ('not_comparable', 'Not comparable'))
-STYLE += ''.join(f'#pair-filter-{name}:checked~.scroll tbody tr:not([data-verdict="{name}"]){{display:none}}'
+STYLE += ''.join(f'#pair-filter-{name}:target~.pair-group:not(.verdict-{name}){{display:none}}'
                  for name, _ in PAIR_FILTERS)
-STYLE += ('#pair-filter-missing:checked~.scroll tbody tr:not([data-verdict="unknown"])'
-          ':not([data-coverage="gap"]):not([data-assertion-gap="yes"]){display:none}')
+STYLE += ('#pair-filter-missing:target~.pair-group:not(.verdict-unknown)'
+          ':not(.coverage-gap):not(.assertion-gap-yes){display:none}'
+          '#pair-filter-assertions:target~.pair-group:not(.assertion-reported_violation){display:none}')
+STYLE += ''.join(f'#pair-filter-{name}{{display:none}}' for name, _ in (('all', ''), *PAIR_FILTERS, ('missing', ''), ('assertions', '')))
 
 
 def _e(value):
@@ -38,19 +40,16 @@ def _pair_table(headers, rows, *, assertions=False):
     """Filter presentation only; the supplied analysis and pair data stay unchanged."""
     options = (('all', 'All pairs'), *PAIR_FILTERS, ('missing', 'Missing evidence'))
     if assertions: options += (('assertions', 'Reported required assertion violations (unverified)'),)
-    controls = ''.join(f'<input type="radio" name="pair-filter" id="pair-filter-{name}"'
-                       + (' checked' if name == 'all' else '')
-                       + f'><label for="pair-filter-{name}">{label}</label> ' for name, label in options)
-    head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
-    body = ''.join(f'<tr data-verdict="{_e(verdict)}" data-coverage="{coverage}"'
-                   + (f' data-assertions="{claim}" data-assertion-gap="{gap}"' if assertions else '') + '>'
-                   + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
-                   for verdict, coverage, claim, gap, row in rows)
-    rule = ('<style>#pair-filter-assertions:checked~.scroll tbody tr:not([data-assertions="reported_violation"])'
-            '{display:none}</style>' if assertions else '')
-    return (rule + '<div role="group" aria-label="Filter task pairs">' + controls
-            + '<p>Filters change this table only; the backend decision and analysis population stay unchanged.</p>'
-            + f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div></div>')
+    controls = ' '.join(f'<a href="#pair-filter-{name}">{label}</a>' for name, label in options)
+    markers = ''.join(f'<details id="pair-filter-{name}"><summary>{label}</summary></details>' for name, label in options)
+    groups = {}
+    for verdict, coverage, claim, gap, row in rows:
+        groups.setdefault((verdict, coverage, claim, gap), []).append(row)
+    tables = ''.join(f'<div class="pair-group verdict-{_e(verdict)} coverage-{coverage} assertion-{claim} assertion-gap-{gap}">'
+                     + _table(headers, values) + '</div>' for (verdict, coverage, claim, gap), values in groups.items())
+    return ('<div class="pair-filters"><h3>Filter task pairs</h3><p>' + controls + '</p>'
+            + '<p>Filters change these tables only; the backend decision and analysis population stay unchanged.</p>'
+            + markers + tables + '</div>')
 
 
 def _arm(pair, arm):
