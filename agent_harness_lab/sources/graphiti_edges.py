@@ -1,12 +1,12 @@
 """Offline Graphiti entity-edge declarations; no graph links are verified."""
 from dataclasses import dataclass
 import hashlib
-import json
 
-from agent_harness_lab.evaluation.integrity import read_regular, regular_equal, unique_object
-from .graphiti_episodes import MAX_BYTES, _identity, _invalid_constant
+from agent_harness_lab.evaluation.integrity import regular_equal
+from .graphiti_episodes import GraphitiEpisodes, JSON_BOUNDS, MAX_BYTES, _identity
+from .hardened import load_json
 from .schema import digest, timestamp
-from .snapshot import LocalExport, claim_snapshot
+from .snapshot import claim_snapshot
 
 MAX_EDGES, MAX_EPISODE_REFS = 5000, 10000
 FIELDS = {'uuid', 'group_id', 'source_node_uuid', 'target_node_uuid', 'created_at', 'name', 'fact',
@@ -27,26 +27,16 @@ class EdgeClaim:
     original_at: str | None
 
 
-class GraphitiEdges(LocalExport):
+class GraphitiEdges(GraphitiEpisodes):
     """Project a caller-supplied array of pinned Graphiti EntityEdge JSON objects."""
-
-    def __init__(self, manifest, *, project, group):
-        super().__init__(manifest)
-        self.project, self.group = _identity(project), _identity(group)
 
     def read(self, source):
         return self.read_claims(source)[0]
 
     def read_claims(self, source):
-        project, group = self.project, self.group
-        if ((source.kind, source.provider, source.version) != ('local_file', 'graphiti-entity-edges', 'v0.31.2')
-                or source.project_sha256 != digest(('graphiti.project', project))
-                or source.scope_sha256 != digest(('graphiti.group', group))):
-            raise ValueError('unsupported Graphiti version or selected scope')
-        declaration, path = self._normalized_payload(source)
-        raw = read_regular(path, MAX_BYTES)
+        project, group, declaration, path, raw = self._input(source, 'graphiti-entity-edges')
         try:
-            rows = json.loads(raw, object_pairs_hook=unique_object, parse_constant=_invalid_constant)
+            rows = load_json(raw, JSON_BOUNDS, 'Graphiti edge dump')
         except (UnicodeError, ValueError, RecursionError):
             raise ValueError('invalid Graphiti edge dump') from None
         if not isinstance(rows, list) or len(rows) > MAX_EDGES: raise ValueError('bounded Graphiti edge list required')

@@ -18,7 +18,7 @@ constructs `GraphitiEpisodes(manifest, project=..., group=...)`; its source must
 Each episode must declare that exact group. Graphiti's group is a partition, not account or project
 proof; both the selected project and group are caller declarations, not authenticated identities.
 
-The reader bounds input to 2 MiB and 5,000 episodes, rejects duplicate identities and malformed or
+The reader bounds input to 2 MiB, nesting depth 64 and 5,000 episodes, rejects duplicate identities and malformed or
 foreign rows, and rechecks the input and manifest after reading. Each episode becomes a private
 contextual assertion. Its revision fingerprints the selected response row; Graphiti did not supply a
 native revision. The row hash can expose equality or low-entropy guesses, and journals are not public.
@@ -36,7 +36,7 @@ Graphiti support or verified task outcomes.
 [`EntityEdge` objects](https://github.com/getzep/graphiti/blob/d72407dcedac911e1be9fc15b55e8c05a3efcc36/graphiti_core/edges.py#L263-L288).
 The local-export source uses provider `graphiti-entity-edges`, version `v0.31.2`, and the same
 caller-declared project and exact group fingerprints. The file is an operator-produced projection,
-not an official export or a live database read. It is bounded to 2 MiB, 5,000 edges and 10,000
+not an official export or a live database read. It is bounded to 2 MiB, nesting depth 64, 5,000 edges and 10,000
 source-episode references. Unknown versions, foreign groups, duplicate IDs and malformed fields fail.
 
 `read_claims` returns a snapshot and private in-memory claims containing hashed edge, entity and

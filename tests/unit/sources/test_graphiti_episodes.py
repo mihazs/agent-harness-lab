@@ -104,3 +104,13 @@ def test_read_does_not_open_sockets_and_refuses_oversize(capture, monkeypatch):
     assert len(connector.read(source).records) == 1
     monkeypatch.setattr(graphiti_episodes, 'MAX_BYTES', 16)
     with pytest.raises(ValueError): connector.read(source)
+
+
+def test_deeply_nested_response_is_refused_before_normalization(capture):
+    source, path, row, connector = capture
+    row['content'] = 'synthetic'
+    nested = '0'
+    for _ in range(70): nested = '[' + nested + ']'
+    payload = json.dumps(dict(message='ok', episodes=[row]))[:-1] + ',"extra":' + nested + '}'
+    path.write_text(payload)
+    with pytest.raises(ValueError, match='invalid Graphiti response'): connector.read(source)
