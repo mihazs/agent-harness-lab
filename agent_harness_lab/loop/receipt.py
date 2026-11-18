@@ -181,7 +181,7 @@ def _check_carry(carry):
             or carry.get('automatic_promotion') is not False): _fail('carry_over')
     held, history = carry.get('mechanisms') or {}, carry.get('history') or []
     if (not isinstance(held, dict) or not isinstance(history, list) or len(history) > MAX_HISTORY
-            or any(len(held.get(name) or ()) > MAX_CARRIED for name in ('carried', 'reopened'))): _fail('carry_over.size')
+            or any(len(held.get(name) or ()) > MAX_CARRIED for name in ('carried', 'reopened', 'evidence_unknown'))): _fail('carry_over.size')
     if carry.get('historical') is not None and (not isinstance(carry['historical'], dict) or carry['historical'].get('label') != 'historical_observation'): _fail('carry_over.historical')
     if carry.get('fresh') is not None and (not isinstance(carry['fresh'], dict) or carry['fresh'].get('label') != 'fresh_evaluation'): _fail('carry_over.fresh')
     if carry.get('comparable') is False and 'fresh_baseline_minus_historical_best' in carry: _fail('carry_over.delta')  # no delta across other frozen inputs
@@ -195,6 +195,13 @@ def validate_receipt(value):
     an authority field other than recommendation only, and a receipt over MAX_BYTES.
     """
     if not isinstance(value, dict) or value.get('profile') != PROFILE or type(value.get('schema_version')) is not int or value.get('schema_version') != 1: _fail('profile')
+    evidence = value.get('mechanism_evidence', {})
+    if (not isinstance(evidence, dict) or len(evidence) > MAX_CARRIED or any(
+            not isinstance(name, str) or not name or len(name) > 128 or not isinstance(digests, list)
+            or not 1 <= len(digests) <= 5
+            or any(not isinstance(digest, str) or len(digest) != 64 or any(char not in '0123456789abcdef' for char in digest) for digest in digests)
+            or len(set(digests)) != len(digests)
+            for name, digests in evidence.items())): _fail('mechanism_evidence')
     stop = value.get('stop_criterion')
     if stop not in CRITERIA: _fail('stop_criterion')
     if (value.get('recommendation_only') is not True or value.get('automatic_promotion') is not False
