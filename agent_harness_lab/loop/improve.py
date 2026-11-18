@@ -39,6 +39,8 @@ class PreparationProposer:
     with a closed reason and the controller moves to the next mechanism. A proposal is never trusted for the evaluation: the
     frozen candidate is a copy the agent cannot edit, and its digest is what the evaluator scores.
     """
+    journal_proposal_dispatch = True
+
     def __init__(self, context, evaluator_ref):
         self.ctx, self.evaluator_ref = context, evaluator_ref
         self.baseline, self.mechanisms = context['baseline_digest'], context['queue']
