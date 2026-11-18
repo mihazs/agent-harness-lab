@@ -262,7 +262,7 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     trials = ab('t', False, True)
     source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
-        controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
+        controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, status='violated', assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
             status='violated', valid=True, required=True, arguments='SYNTHETIC_SECRET')])))] )
     value = experiment(trials, trajectory_results=source)
     report = sbs.build(value)
@@ -271,6 +271,12 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     assert claims['baseline']['status'] == 'unknown'
     assert 'SYNTHETIC_SECRET' not in json.dumps(report)
     assert report['automatic_promotion'] is False and report['publication_allowed'] is False
+    source['trials'][0]['controller_grade']['trajectory']['status'] = 'satisfied'
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['trajectory']['status'] = 'violated'
+    source['trials'][0]['controller_grade']['valid'] = False
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['valid'] = True
     source['trials'][0]['controller_grade']['trajectory']['valid'] = False
     assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
     source['trials'][0]['controller_grade']['trajectory']['valid'] = True

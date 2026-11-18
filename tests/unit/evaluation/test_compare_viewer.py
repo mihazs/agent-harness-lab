@@ -66,7 +66,7 @@ def test_imported_required_claims_are_labelled_and_missing_remains_unknown():
     candidate = value['trials'][1]
     value['trajectory_results'] = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=candidate['trial_id'], task=candidate['task'], root=candidate['root'], family=candidate['family'],
-        version='candidate', controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, assertions=[dict(
+        version='candidate', controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, status='violated', assertions=[dict(
             assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', valid=True, required=True,
             arguments='SYNTHETIC_SECRET')])) )])
     document = page(value)
