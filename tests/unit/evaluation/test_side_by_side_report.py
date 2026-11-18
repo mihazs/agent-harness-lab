@@ -272,6 +272,15 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     assert claims['baseline']['status'] == 'unknown'
     assert 'SYNTHETIC_SECRET' not in json.dumps(report)
     assert report['automatic_promotion'] is False and report['publication_allowed'] is False
+    assertion = source['trials'][0]['controller_grade']['trajectory']['assertions'][0]
+    assertion['assertion_sha256'] = 'SYNTHETIC_SECRET'
+    malformed = sbs.build(value)
+    assert pair(malformed, 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    assert 'SYNTHETIC_SECRET' not in json.dumps(malformed)
+    assertion['assertion_sha256'] = 'a' * 64
+    source['trials'][0]['controller_grade']['trajectory']['assertions'].append(copy.deepcopy(assertion))
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['trajectory']['assertions'].pop()
     source['trials'][0]['controller_grade']['trajectory']['trial_id'] = 'different-trial'
     assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
     source['trials'][0]['controller_grade']['trajectory']['trial_id'] = trials[1]['trial_id']
