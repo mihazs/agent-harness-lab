@@ -7,7 +7,7 @@ import pytest
 
 from agent_harness_lab.exit_guidance import REMEDIATION
 from agent_harness_lab.loop.errors import REASONS, LoopError
-from agent_harness_lab.loop.spec import AUTHORITY, DECLARED, DEFAULTS, MAX_ROUNDS_CAP, RELATIVE, LoopSpec, parse_declaration, resolve
+from agent_harness_lab.loop.spec import AUTHORITY, DECLARED, DEFAULTS, MAX_ROUNDS_CAP, RELATIVE, LoopSpec, document_digest, parse_declaration, resolve
 
 LIMITS = dict(seconds=2700, trials=20)
 AUTHORITY_KEYS = ('apply', 'automatic_promotion', 'certification', 'global', 'promotion', 'publication_allowed', 'recommendation_only', 'scope')
@@ -191,6 +191,17 @@ def test_the_source_of_a_value_is_a_label_and_not_part_of_the_identity():
     assert from_cli.digest == from_project.digest and from_cli.to_dict()['sources'] != from_project.to_dict()['sources']
 
 
+def test_stored_spec_document_checks_identity_and_consistent_labels():
+    value = declared(accept_score=0.9).to_dict()
+    assert document_digest(value) == value['digest']
+    for changed in (value | {'recommendation_only': 1}, value | {'looks': 1}, value | {'unexpected': True},
+                    value | {'acceptance_source': 'unknown'}):
+        with pytest.raises(ValueError): document_digest(changed)
+    # Sources are labels outside the digest, so consistency does not authenticate them.
+    sources = value['sources'] | {'accept_score': 'cli'}
+    assert document_digest(value | {'sources': sources, 'acceptance_source': 'cli'}) == value['digest']
+
+
 def test_the_resolved_spec_is_immutable():
     spec = declared()
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -221,3 +232,8 @@ def test_the_spec_is_a_loop_spec_that_always_recommends_and_never_promotes():
     assert isinstance(spec, LoopSpec)
     assert (spec.recommendation_only, spec.automatic_promotion, spec.certification) == (True, False, 'unverified')
     assert spec.to_dict()['recommendation_only'] is True and spec.to_dict()['automatic_promotion'] is False
+
+
+@pytest.mark.parametrize('version', [True, 1.0])
+def test_non_integer_schema_version_is_rejected(version):
+    assert rejected(lambda: dataclasses.replace(declared(), schema_version=version).validate()).reason == 'loop_declaration_invalid'

@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-import agent_harness_lab.sources.cli  # noqa: F401  pytest rewrites the test_results module on first import, which opens its bytecode
+import agent_harness_lab.sources.test_results  # noqa: F401  preload pytest's rewritten module before tests forbid file reads
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources.schema import EvidenceRecord, SourceSpec, digest
 from agent_harness_lab.sources.snapshot import LocalExport

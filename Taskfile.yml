@@ -205,6 +205,15 @@ tasks:
       PYTHONDONTWRITEBYTECODE: '1'
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+  test:capped:
+    desc: Run the test task with explicit memory and CPU limits
+    requires:
+      vars: [MEMORY_MAX]
+    vars:
+      CPU_MAX: '{{default "40%" .CPU_MAX}}'
+      TEST_WORKERS: '{{default "0" .TEST_WORKERS}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/capped_test.py --memory {{.MEMORY_MAX | shellQuote}} --cpu {{.CPU_MAX | shellQuote}} --workers {{.TEST_WORKERS | shellQuote}} --python {{.PYTHON | shellQuote}}'
   setup:test:installed:
     desc: Install test and lint extras for the already installed release without replacing it
     vars:

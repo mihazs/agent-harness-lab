@@ -10,8 +10,10 @@ subprocess, network or real clock, or writes a project file: time comes from the
 
 resume() continues a run from the last durable event of its ledger. Only a completed evaluation is durable: an evaluation that was
 in flight is recorded as an abandoned round, never counted, and its mechanism goes back in the queue; a request the evaluator cannot
-settle is never asked again, and the run ends interrupted. A stopped run is returned as it was recorded, with no port call.
+settle is never asked again, and the run ends interrupted. A possibly dispatched proposal is not retried without explicit
+durable proof that retrying cannot repeat an unresolved or unrecorded proposal. A stopped run is returned as recorded, with no port call.
 """
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 import re
@@ -31,7 +33,7 @@ RESERVE_UNAVAILABLE = 'reserve_for_evaluation_unavailable'
 MID_ROUND = 'budget_exhausted_during_round'  # a port hit the shared budget while preparing or evaluating
 FINAL = dict(accepted='accepted', improved='improved', regressed='rejected', inconclusive='inconclusive')  # outcome -> mechanism disposition
 CARRIED = ('rejected', 'inconclusive', 'deferred')  # the dispositions an earlier run may hand to this one; anything else is asked again
-UNRESOLVED = 'unresolved_request'  # a resume found an evaluation whose provider request the evaluator cannot settle
+UNRESOLVED = 'unresolved_request'  # a provider request may have been dispatched and cannot safely be repeated
 _DIGEST = re.compile('[0-9a-f]{64}')
 
 
@@ -87,6 +89,8 @@ class Proposer(Protocol):
     mechanisms: Sequence[str]  # the mechanism queue, in priority order
 
     def propose(self, best_snapshot: str, mechanism: str) -> Candidate | None: ...
+    # Optional: journal_proposal_dispatch=True only if this port can dispatch proposals solely inside propose().
+    # Optional: proposal_retry_safe(events) -> bool, true only with durable proof that retrying repeats no unresolved or unrecorded request.
 
 
 def _digest(value):
@@ -155,7 +159,8 @@ def _restored(summary):
     found = summary if isinstance(summary, dict) else {}
     return Evaluation(found.get('point', 0.0), found.get('lower', 0.0), found.get('upper', 1.0), evidence=found.get('evidence') or 'blocked',
                       vacuity=found.get('vacuity'), areas=tuple(sorted((found.get('areas') or {}).items())), critical=found.get('critical') is True,
-                      cause=found.get('cause'), trials=found.get('trials'), seconds=found.get('seconds'), inputs=found.get('inputs'),
+                      cause=found.get('cause'), regressed_areas=tuple(found.get('regressed_areas', ())),
+                      trials=found.get('trials'), seconds=found.get('seconds'), inputs=found.get('inputs'),
                       reserve_trials=found.get('reserve_trials'), reserve_seconds=found.get('reserve_seconds'))
 
 
@@ -183,6 +188,10 @@ class _Loop:
 
         if not _number(spent) or spent < 0: raise LoopError('loop_port_invalid', 'spent', 'declared')
         self.spec, self.evaluator, self.proposer, self.ledger, self.now = spec, evaluator, proposer, ledger, now
+        self.journal_proposal = (getattr(proposer, 'journal_proposal_dispatch', False) is True if reopened is None
+                                 else reopened[0][1].get('proposal_dispatch_journal') == 'v1')
+        if self.journal_proposal and getattr(proposer, 'journal_proposal_dispatch', False) is not True:
+            raise LoopError('resume_inputs_changed', 'proposal_journal', 'declared')
         self.frozen, self.started = frozen, now() - spent  # the budget began `spent` seconds before the loop did
         self.stages = Stages(spec.limit_seconds, self.started, clock=now)
         self.position = Run(spec)
@@ -258,6 +267,7 @@ class _Loop:
 
     def next_candidate(self):
         """The first pending mechanism the proposer can stage a candidate for; one that cannot is deferred and not asked again."""
+        if self.journal_proposal: self.record('proposal_started')
         for mechanism in self.pending():
             candidate = self.proposer.propose(self.best, mechanism)
             if candidate is None:
@@ -301,7 +311,8 @@ class _Loop:
     def play(self):
         spec = self.spec
         self.record('spec_frozen', spec_sha256=spec.digest, frozen_inputs_sha256=self.frozen, mode=spec.mode, looks=spec.max_rounds,
-                    per_look_alpha=spec.per_look_alpha, mechanisms=list(self.dispositions), **({'carried': self.carried} if self.carried else {}))
+                    per_look_alpha=spec.per_look_alpha, mechanisms=list(self.dispositions), **({'carried': self.carried} if self.carried else {}),
+                    **({'proposal_dispatch_journal': 'v1'} if self.journal_proposal else {}))
         self.go()
 
     def baseline(self):
@@ -400,6 +411,13 @@ class _Loop:
             settled = settle(running) if callable(settle) else None
             if _count(settled): charged = settled
             else: unresolved = True
+        else:
+            kind, payload = next((kind, payload) for kind, payload in reversed(events) if kind not in ('stopped', 'resumed'))
+            ambiguous = kind in ('baseline_evaluated', 'proposal_started', 'round_started') or kind == 'decided' and payload.get('stop') is None
+            if self.journal_proposal and kind in ('baseline_evaluated', 'decided'): ambiguous = False
+            if ambiguous:
+                proof = getattr(self.proposer, 'proposal_retry_safe', None)
+                unresolved = not callable(proof) or proof(deepcopy(events)) is not True
         self.live = True  # an interrupt before this point leaves the ledger exactly as it was, still resumable
         self.record('resumed', from_events=len(events), previous_head_sha256=self.ledger.head, charged_trials=charged, unresolved=unresolved)
         self.trials, self.resumes = self.trials + charged, self.resumes + 1
@@ -456,7 +474,8 @@ def resume(spec, evaluator, proposer, ledger, clock, *, spent=0.0, dispositions=
     A stopped run is returned as it was recorded, with no port call. Otherwise: before the baseline was evaluated it is evaluated
     again; an evaluation that was running is never counted and the round that held it is recorded abandoned, charging the trials
     evaluator.settle() reports and starting a fresh round; with no settle answer the run ends interrupted with reason
-    unresolved_request and the evaluation is not repeated; after a decision the run goes on to the next round or its stop.
+    unresolved_request and the evaluation is not repeated. An ambiguous proposal is not repeated unless the proposer proves
+    that retrying repeats no unresolved or unrecorded request; a completed decision can go straight to its recorded stop.
     spent is seconds used outside the ledger's clock, such as the time the run was down; the clock continues from the later of
     spent and the last recorded time, so recorded spend is never reset and unrecorded spend is only what the caller reports.
     """

@@ -39,8 +39,8 @@ STEPS = dict(
 # The regression stop has two causes; one that a scored capability area lost paired outcomes (loop.rounds[].regressed_areas, area_gates) names the area evidence.
 AREA_REGRESSION = ('A candidate lost paired outcomes in a scored capability area and was kept out of the result, even if its pooled score did not fall; '
                    'read regressed_areas in loop.rounds and area_gates in the private receipt, revise or discard that mechanism so no named area regresses, then rerun without raising the margin.')
-RECONCILE = ('A provider request of the evaluation that was running has no recorded outcome, so the loop did not repeat it and ended interrupted; '
-             'reconcile that request with the provider\'s usage records and report its trials from the evaluator, then resume the loop from its round ledger.')
+RECONCILE = ('An evaluation or proposal may have an unresolved provider request, so the loop did not repeat it and ended interrupted; '
+             'reconcile the provider records before resuming, and report consumed evaluation trials from the evaluator.')
 _EVIDENCE = ('scored', 'provisional', 'no_evidence', 'blocked')
 _VALIDITY = ('valid', 'vacuous', 'incomplete', 'comparison_invalid')
 
@@ -77,12 +77,7 @@ def _paired(guard):
     return dict(delta=delta['mean'], lower=delta['low'], upper=delta['high'])
 
 
-def build(spec, result, events, guards, *, budget=None, deferrals=()):
-    """The `loop` block from the resolved spec, the controller result, the ledger's events and the paired guard of each evaluation.
-
-    guards[i] is the before_after block of evaluation i (None for the baseline or an unguarded run). budget is the run's
-    budget_stages receipt; deferrals lists each mechanism the proposer could not stage a candidate for and a closed reason. The one remediation step is the stop criterion's entry in STEPS.
-    """
+def _projection(events, guards):
     rounds, before, current = [], None, None
     for kind, payload in events:
         if kind == 'baseline_evaluated':
@@ -98,6 +93,12 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
         elif kind == 'decided' and current is not None:
             current.update(decision=payload.get('value'), disposition=payload.get('disposition'))
             if payload.get('abandoned') is True: current['abandoned'] = True  # an interrupted round: no evaluation completed, so no score
+    return before, rounds
+
+
+def build(spec, result, events, guards, *, budget=None, deferrals=()):
+    """Build the receipt from the controller result, ledger events and paired guards."""
+    before, rounds = _projection(events, guards)
     best = result['best']
     best_round = next((item['round'] for item in rounds if item['candidate'] == best['snapshot'] and item['decision'] in ('accepted', 'improved')), 0)
     after = None if before is None else dict(round=best_round, snapshot=best['snapshot'],
@@ -112,6 +113,32 @@ def build(spec, result, events, guards, *, budget=None, deferrals=()):
                 recommendation_only=True, automatic_promotion=False, certification='unverified',
                 remediation=RECONCILE if result['stop_reason'] == 'unresolved_request' else AREA_REGRESSION if stop == 'regression' and rounds and rounds[-1].get('regressed_areas') else STEPS[stop],
                 **({'resumed': result['resumed']} if 'resumed' in result else {}))
+
+
+def verify_projection(block, events):
+    """Check receipt values that the verified ledger can establish."""
+    from agent_harness_lab.private_journal import encoded
+    before, rounds = _projection(events, ())
+    # Paired statistics are not recorded in the ledger and cannot be checked here.
+    saved_rounds = [{key: value for key, value in item.items() if key != 'paired'} for item in block['rounds']]
+    expected_rounds = [{key: value for key, value in item.items() if key != 'paired'} for item in rounds]
+    first, last = events[0][1], events[-1][1]
+    best_snapshot = last.get('best')
+    best_round = next((item['round'] for item in rounds if item['candidate'] == best_snapshot and item['decision'] in ('accepted', 'improved')), 0)
+    best_evaluation, candidate_evaluation = None, None
+    for kind, payload in events:
+        if kind == 'candidate_evaluated': candidate_evaluation = payload.get('evaluation')
+        elif kind == 'decided' and payload.get('value') in ('accepted', 'improved'):
+            best_evaluation = candidate_evaluation
+    after = None if before is None else dict(round=best_round, snapshot=best_snapshot,
+        **(_evaluation(best_round, 'valid', best_evaluation) if best_round else
+           {key: before[key] for key in ('evaluation_id', 'validity', 'evidence', 'vacuity', 'trials', 'score')}))
+    expected = dict(before=before, after=after, rounds=expected_rounds, best_round=best_round,
+                    frozen_inputs_sha256=first.get('frozen_inputs_sha256'), mode=first.get('mode'),
+                    looks=first.get('looks'), alpha_per_look=first.get('per_look_alpha'),
+                    stop_reason=last.get('reason'), mechanisms=last.get('mechanisms'))
+    actual = {key: saved_rounds if key == 'rounds' else block.get(key) for key in expected}
+    if encoded(actual) != encoded(expected): _fail('ledger_projection')
 
 
 def _fail(field):
@@ -156,7 +183,7 @@ def validate_receipt(value):
     accepted_without_change, which has no improvement), a number with no evaluation id, a vacuous or unscored evaluation behind an accepted stop,
     an authority field other than recommendation only, and a receipt over MAX_BYTES.
     """
-    if not isinstance(value, dict) or value.get('profile') != PROFILE or value.get('schema_version') != 1: _fail('profile')
+    if not isinstance(value, dict) or value.get('profile') != PROFILE or type(value.get('schema_version')) is not int or value.get('schema_version') != 1: _fail('profile')
     stop = value.get('stop_criterion')
     if stop not in CRITERIA: _fail('stop_criterion')
     if (value.get('recommendation_only') is not True or value.get('automatic_promotion') is not False

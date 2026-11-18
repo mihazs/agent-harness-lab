@@ -89,6 +89,10 @@ next step is to edit `ahl.json` or the bank.
 | `areas[].description` | `ahl.json` | Required, 1 to 400 printable characters. |
 | `areas` | bank task | Optional list of one to three distinct declared ids; absent means untagged. |
 
+For a configured evaluation, each manifest task's area tags must match the pinned
+bank export exactly, including whether the field is absent. A manifest cannot
+reassign or remove a tag to change which area receives the task's evidence.
+
 The reasons are `area_registry_invalid` (shape, size or an id or text outside the rules),
 `area_duplicate` (an id listed twice in the registry or in one task), `task_areas_empty`
 (an empty list or an empty id), `task_areas_too_many` (more than three tags),
