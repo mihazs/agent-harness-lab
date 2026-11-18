@@ -92,14 +92,16 @@ def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):
     (workspace / 'config.json').write_text('{"ready": true}')
     (workspace / 'result.json').write_text('{"records": [3, 5]}')
     assert grade().returncode == 1  # Final files alone do not establish a retry.
-    (workspace / 'attempts.jsonl').write_text('{"status": "error"}\n{"status": "success"}\n')
+    valid_attempts = '{"status": "error", "shape": "default"}\n{"status": "success", "shape": "default"}\n'
+    (workspace / 'attempts.jsonl').write_text(valid_attempts)
     complete = grade()
     assert complete.returncode == 0 and json.loads(complete.stdout)['outcome'] is True
-    for attempts in ('{"status": "success"}\n{"status": "error"}\n',
-                     '{"status": "success"}\n', '{"status": "error"}\ninvalid\n'):
+    for attempts in ('{"status": "success", "shape": "default"}\n{"status": "error", "shape": "default"}\n',
+                     '{"status": "success", "shape": "default"}\n', '{"status": "error"}\ninvalid\n',
+                     '{"status": "error", "shape": "default"}\n{"status": "success", "shape": "recover"}\n'):
         (workspace / 'attempts.jsonl').write_text(attempts)
         assert grade().returncode == 1
-    (workspace / 'attempts.jsonl').write_text('{"status": "error"}\n{"status": "success"}\n')
+    (workspace / 'attempts.jsonl').write_text(valid_attempts)
     outside = tmp_path / 'outside.json'
     outside.write_text('{"records": [3, 5]}')
     (workspace / 'result.json').unlink()

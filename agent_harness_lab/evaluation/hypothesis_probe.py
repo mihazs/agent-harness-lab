@@ -67,8 +67,9 @@ import sys
 
 config = json.loads(Path('config.json').read_text())
 ready = %s
+shape = 'default' if not sys.argv[1:] else 'recover' if sys.argv[1:] == ['--recover'] else 'other'
 with Path('attempts.jsonl').open('a') as attempts:
-    attempts.write(json.dumps({'status': 'success' if ready else 'error'}) + '\\n')
+    attempts.write(json.dumps({'status': 'success' if ready else 'error', 'shape': shape}) + '\\n')
 if not ready:
     print(json.dumps({'status': 'error', 'category': %r}))
     raise SystemExit(1)
@@ -113,9 +114,10 @@ try:
     attempts = [json.loads(line) for line in read(root / 'attempts.jsonl').splitlines()]
     outcome = (type(config) is dict and config.get('ready') is reference['config_ready'] and type(result) is dict
                and result.get('records') == [3, 5] and all(type(n) is int for n in result['records'])
-               and len(attempts) >= 2 and attempts[0] == {'status': 'error'}
-               and attempts[-1] == {'status': 'success'}
-               and all(item in ({'status': 'error'}, {'status': 'success'}) for item in attempts)
+               and len(attempts) >= 2 and attempts[0] == {'status': 'error', 'shape': 'default'}
+               and attempts[-1] == {'status': 'success', 'shape': 'default' if reference['config_ready'] else 'recover'}
+               and all(type(item) is dict and set(item) == {'status', 'shape'}
+                       and item['status'] in ('error', 'success') and item['shape'] in ('default', 'recover', 'other') for item in attempts)
                and hashlib.sha256(read(root / 'synthetic_worker.py')).hexdigest() == pin
                and json.loads(read(root / 'ahl-synthetic-probe.json')) == {'profile': 'ahl-synthetic-probe-v1'})
 except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError):
@@ -163,7 +165,8 @@ def materialize(mechanism, output, *, project, harness_paths):
             values['config.json'] = '{"ready": true}\n'
         if state == 'complete':
             values['result.json'] = '{"records": [3, 5]}\n'
-            values['attempts.jsonl'] = '{"status": "error"}\n{"status": "success"}\n'
+            shape = 'default' if structural_pattern(mechanism)['follow_up'] == 'same_call_retry' else 'recover'
+            values['attempts.jsonl'] = '{"status": "error", "shape": "default"}\n' + json.dumps({'status': 'success', 'shape': shape}) + '\n'
         for name, content in values.items(): write_bytes(folder / name, content.encode())
         controls.append(dict(task='hypothesis-probe', state=state, fixture=str(folder.relative_to(output)), digest=digest(folder)))
     manifest = dict(schema_version=1, profile='descriptive_smoke', skills=[], harness_paths=harness_paths,
