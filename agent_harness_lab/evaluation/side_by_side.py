@@ -217,11 +217,15 @@ def _required_claim(index, key, arm, records, duplicate_ids):
     if len(matches) != 1: return unknown
     row = matches[0]
     if (row['task'], row['root'], row['family'], row['version']) != (*key[:3], arm): return unknown
+    if row['grade_valid'] is not True or row['trajectory_valid'] is not True or row['trajectory_closed'] is not True:
+        return dict(status='unknown', authority='imported_unverified', reason='receipt_validity_unavailable')
     assertions = row['assertions']
     if not assertions or any(item.get('required') is None for item in assertions):
         return dict(status='unknown', authority='imported_unverified', reason='required_flags_unavailable')
     required = [item for item in assertions if item['required']]
     if not required: return dict(status='unknown', authority='imported_unverified', reason='no_required_assertions')
+    if any(item.get('valid') is not True for item in required):
+        return dict(status='unknown', authority='imported_unverified', reason='assertion_validity_unavailable')
     statuses = [item['status'] for item in required]
     status = 'violated' if 'violated' in statuses else 'unknown' if 'unknown' in statuses else 'satisfied'
     return dict(status=status, authority='imported_unverified', reason='reported_claim')

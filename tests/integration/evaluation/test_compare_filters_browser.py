@@ -16,8 +16,8 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
     candidate = scenario['trials'][1]
     scenario['trajectory_results'] = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=candidate['trial_id'], task=candidate['task'], root=candidate['root'], family=candidate['family'],
-        version='candidate', controller_grade=dict(trajectory=dict(assertions=[dict(
-            assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', required=True,
+        version='candidate', controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, assertions=[dict(
+            assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', valid=True, required=True,
             arguments='SYNTHETIC_SECRET')])) )])
     document.write_text(page(scenario))
     with sync_playwright() as runtime:

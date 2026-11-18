@@ -262,8 +262,8 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     trials = ab('t', False, True)
     source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
-        controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
-            status='violated', required=True, arguments='SYNTHETIC_SECRET')])))] )
+        controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
+            status='violated', valid=True, required=True, arguments='SYNTHETIC_SECRET')])))] )
     value = experiment(trials, trajectory_results=source)
     report = sbs.build(value)
     claims = pair(report, 't')['trajectory_claims']
@@ -271,6 +271,15 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     assert claims['baseline']['status'] == 'unknown'
     assert 'SYNTHETIC_SECRET' not in json.dumps(report)
     assert report['automatic_promotion'] is False and report['publication_allowed'] is False
+    source['trials'][0]['controller_grade']['trajectory']['valid'] = False
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['trajectory']['valid'] = True
+    del source['trials'][0]['controller_grade']['trajectory']['closed']
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['trajectory']['closed'] = True
+    del source['trials'][0]['controller_grade']['trajectory']['assertions'][0]['valid']
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['controller_grade']['trajectory']['assertions'][0]['valid'] = True
     source['trials'].append(copy.deepcopy(source['trials'][0]))
     assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
     source['trials'].pop()
@@ -288,8 +297,8 @@ def test_unavailable_required_flags_remain_unknown_and_private():
     trials = ab('t', False, True)
     source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
-        controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
-            status='satisfied')])))] )
+        controller_grade=dict(valid=True, trajectory=dict(valid=True, closed=True, assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
+            status='satisfied', valid=True)])))] )
     value = experiment(trials, trajectory_results=source,
                        provenance=dict(source_kind='synthetic', approved_publication=True,
                                        source_ref='synthetic', derived_from_private=False))

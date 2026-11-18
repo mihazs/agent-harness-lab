@@ -53,7 +53,8 @@ only the graded outcome does.
 
 The task table can show all pairs, one verdict, or pairs with missing outcomes,
 capture gaps or unknown supplied assertion claims. This is a visual
-filter only: the full table remains in the report and the supplied backend
+filter only: rows are grouped into tables by status and evidence state, the full
+set remains in the report and the supplied backend
 decision, analysis population and timelines do not change. All pairs are shown
 by default, and browsers that cannot apply the filter still show the full table.
 Resource-policy filters are unavailable because the current per-pair record
@@ -63,7 +64,7 @@ When private `trajectory_results` are supplied, the report can show and filter
 reported required-assertion violations. It joins a claim only when the declared
 experiment identity matches and a unique trial ID, task, root, family, and arm
 agree on both sides. Missing, duplicate or mismatched identities, absent required
-flags, and no required assertions remain unknown. These claims are
+flags, invalid or unclosed receipts, and no required assertions remain unknown. These claims are
 `imported_unverified`: matching labels do not authenticate their origin or grant
 decision authority. The model copies no assertion IDs, argument bodies or result
 bodies from this source, and public export refuses trajectory results.

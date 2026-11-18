@@ -131,6 +131,11 @@ def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=N
         if required is not None and type(required) is not bool:
             raise ValueError('invalid trajectory required flag')
         item['required'] = required
+    if 'valid' in assertion:
+        valid = assertion['valid']
+        if valid is not None and type(valid) is not bool:
+            raise ValueError('invalid trajectory assertion validity')
+        item['valid'] = valid
     if parent_id is not None:
         try: id_size = len(item['assertion_id'].encode('utf-8'))
         except UnicodeEncodeError: raise ValueError('invalid trajectory child identity') from None
@@ -183,6 +188,9 @@ def trajectory_summary(results):
         for assertion in assertions:
             reported_assertions.append(_trajectory_assertion(assertion, 1, [0], include_v2=receipt.get('profile') == RECEIPT_V2_PROFILE))
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
+            grade_valid=grade.get('valid') if type(grade.get('valid')) is bool else None,
+            trajectory_valid=receipt.get('valid') if type(receipt.get('valid')) is bool else None,
+            trajectory_closed=receipt.get('closed') if type(receipt.get('closed')) is bool else None,
             trajectory_status=receipt.get('status') if receipt.get('status') in ('satisfied','violated','unknown') else 'unknown',
             combined_outcome=grade.get('outcome') if type(grade.get('outcome')) is bool else None,
             critical_violation=grade.get('critical_violation') is True,
