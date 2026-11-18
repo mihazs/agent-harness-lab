@@ -258,6 +258,41 @@ def test_reports_are_private_and_rejected_by_public_export():
         sbs.build(experiment(ab('t', False, True)), public=True)
 
 
+def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified():
+    trials = ab('t', False, True)
+    source = dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+        trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
+        controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
+            status='violated', required=True, arguments='SYNTHETIC_SECRET')])))] )
+    value = experiment(trials, trajectory_results=source)
+    report = sbs.build(value)
+    claims = pair(report, 't')['trajectory_claims']
+    assert claims['candidate'] == dict(status='violated', authority='imported_unverified', reason='reported_claim')
+    assert claims['baseline']['status'] == 'unknown'
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report)
+    assert report['automatic_promotion'] is False and report['publication_allowed'] is False
+    source['trials'].append(copy.deepcopy(source['trials'][0]))
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'].pop()
+    source['trials'][0]['root'] = 'different-root'
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+
+
+def test_unavailable_required_flags_remain_unknown_and_private():
+    trials = ab('t', False, True)
+    source = dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+        trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
+        controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
+            status='satisfied')])))] )
+    value = experiment(trials, trajectory_results=source,
+                       provenance=dict(source_kind='synthetic', approved_publication=True,
+                                       source_ref='synthetic', derived_from_private=False))
+    claim = pair(sbs.build(value), 't')['trajectory_claims']['candidate']
+    assert claim['status'] == 'unknown' and claim['reason'] == 'required_flags_unavailable'
+    with pytest.raises(ValueError, match='trajectory claims are private'):
+        sbs.build(value, public=True)
+
+
 @pytest.mark.parametrize('change, message', [
     pytest.param(dict(profile='other'), 'profile', id='profile'),
     pytest.param(dict(execution_kind='guess'), 'execution kind', id='execution-kind'),

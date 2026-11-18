@@ -30,3 +30,5 @@ jobs:
           cp /tmp/candidate-benchmark.py agent_harness_lab/evaluation/benchmark.py
       - run: python -m pytest -q tests/unit/evaluation/test_benchmark_contracts.py
       - run: python -m ruff check agent_harness_lab/evaluation/benchmark.py tests/unit/evaluation/test_benchmark_contracts.py
+      - run: python -m pytest -q tests/unit/evaluation/test_side_by_side_report.py tests/unit/evaluation/test_compare_viewer.py
+      - run: python -m ruff check agent_harness_lab/evaluation/side_by_side.py tests/unit/evaluation/test_side_by_side_report.py

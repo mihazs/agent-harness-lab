@@ -175,6 +175,8 @@ def _public_provenance(declared, execution_kind):
 def _public_inputs(experiment):
     """Refuse a public export of anything that is, or may be, private; return the experiment's provenance declaration."""
     declared = _public_provenance(experiment.get('provenance'), experiment['execution_kind'])
+    if experiment.get('trajectory_results') is not None:
+        raise ValueError('trajectory claims are private and cannot be exported')
     for raw in experiment['trials']:  # one private or mixed trial refuses the whole export
         if isinstance(raw, dict) and 'provenance' in raw: _public_provenance(raw['provenance'], experiment['execution_kind'])
     analysis = experiment.get('analysis')
@@ -185,6 +187,36 @@ def _public_inputs(experiment):
     if experiment.get('precision_preflight') is not None:
         raise ValueError('a precision preflight is private planning material and cannot be exported')
     return declared
+
+
+def _trajectory_claims(source):
+    """Index bounded saved claims; duplicate identities remain ambiguous."""
+    if source is None: return None
+    if not isinstance(source, dict) or not isinstance(source.get('trials'), list) or len(source['trials']) > MAX_TRIALS:
+        raise ValueError('bounded trajectory results required')
+    summary = benchmark.trajectory_summary(source)
+    index = {}
+    for row in summary['trials']:
+        if _text(row['trial_id']): index.setdefault(row['trial_id'], []).append(row)
+    return index
+
+
+def _required_claim(index, key, arm, records, duplicate_ids):
+    unknown = dict(status='unknown', authority='imported_unverified', reason='missing_or_ambiguous_join')
+    if len(records) != 1 or records[0]['problems'] or records[0]['trial_id'] in duplicate_ids:
+        return unknown
+    matches = index.get(records[0]['trial_id'], [])
+    if len(matches) != 1: return unknown
+    row = matches[0]
+    if (row['task'], row['root'], row['family'], row['version']) != (*key[:3], arm): return unknown
+    assertions = row['assertions']
+    if not assertions or any(item.get('required') is None for item in assertions):
+        return dict(status='unknown', authority='imported_unverified', reason='required_flags_unavailable')
+    required = [item for item in assertions if item['required']]
+    if not required: return dict(status='unknown', authority='imported_unverified', reason='no_required_assertions')
+    statuses = [item['status'] for item in required]
+    status = 'violated' if 'violated' in statuses else 'unknown' if 'unknown' in statuses else 'satisfied'
+    return dict(status=status, authority='imported_unverified', reason='reported_claim')
 
 
 def build(experiment, *, public=False):
@@ -211,6 +243,7 @@ def build(experiment, *, public=False):
                                          ('success_cost', 'resource_success_cost', resource_report.success_costs))}
     precision = None if experiment.get('precision_preflight') is None else precision_report.preflight(experiment['precision_preflight'])
     declared = _public_inputs(experiment) if public else None
+    trajectory_claims = _trajectory_claims(experiment.get('trajectory_results'))
     grouped, invalid_records = {key: {arm: [] for arm in ARMS} for key in planned}, []
     for index, raw in enumerate(trials_raw):
         key = _key(raw)
@@ -236,9 +269,12 @@ def build(experiment, *, public=False):
         timeline, rejected = (dict(alignment='omitted', reason='public_export_omits_events', rows=[]), []) if public else _timeline(arms, mappings.get(key, []))
         invalid_mappings += [dict(index=mapping['index'], reason='unresolvable_or_conflicting_mapping') for mapping in rejected]
         capture = {arm: [record['capture'] for record in arms[arm]] or ['unknown'] for arm in ARMS}
-        pairs.append(dict(dict(zip(IDENTITY, key)), planned=key in plan, verdict=verdict, reasons=reasons, arms=arms,
-                          capture=capture, coverage_gap=any(value != 'complete' for values in capture.values() for value in values),
-                          timeline=timeline))
+        pair = dict(dict(zip(IDENTITY, key)), planned=key in plan, verdict=verdict, reasons=reasons, arms=arms,
+                    capture=capture, coverage_gap=any(value != 'complete' for values in capture.values() for value in values),
+                    timeline=timeline)
+        if trajectory_claims is not None:
+            pair['trajectory_claims'] = {arm: _required_claim(trajectory_claims, key, arm, arms[arm], duplicate_ids) for arm in ARMS}
+        pairs.append(pair)
     verdicts = Counter({name: 0 for name in VERDICTS}); verdicts.update(pair['verdict'] for pair in pairs)
     return dict(schema_version=1, profile=REPORT_PROFILE, report_kind='side_by_side_experiment',
         experiment_id=experiment['experiment_id'], execution_kind=experiment['execution_kind'],
