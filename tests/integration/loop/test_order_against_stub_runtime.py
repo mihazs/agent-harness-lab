@@ -91,8 +91,13 @@ def change_runtime(stub):
     stub.runner.binary = str(other)
 
 
-@pytest.mark.parametrize('change, field', [(change_grader, 'grader_sha256'), (change_bank, 'bank_sha256'), (change_runtime, 'runtime_sha256')],
-                         ids=['grader', 'bank', 'runtime'])
+def change_runtime_in_place(stub):
+    stub.binary.write_bytes(stub.binary.read_bytes() + b'\n# synthetic runtime revision\n')
+
+
+@pytest.mark.parametrize('change, field', [(change_grader, 'grader_sha256'), (change_bank, 'bank_sha256'),
+                                         (change_runtime, 'runtime_sha256'), (change_runtime_in_place, 'runtime_sha256')],
+                         ids=['grader', 'bank', 'runtime', 'runtime-in-place'])
 def test_a_change_between_the_evaluations_ends_comparison_invalid_with_no_verdict_and_names_the_pipeline_defect(tmp_path, change, field):
     stub = fb.StubRuntime(tmp_path)
     base, good = stub.snapshot('base', [0, 1]), stub.snapshot('good', range(8))

@@ -6,10 +6,14 @@ PreparationProposer (the existing preparation stage, one mechanism per round, va
 ledger outside the run directory, and returns the workflow result with the validated `loop` block. The loop only recommends:
 nothing is applied, promotion stays off and certification stays unverified.
 """
+import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 import time
+from pathlib import Path
 
 from agent_harness_lab import provider_reported, surfaces
 from agent_harness_lab.evaluation import integrity
@@ -47,6 +51,10 @@ class PreparationProposer:
         self.ctx, self.evaluator_ref = context, evaluator_ref
         self.baseline, self.mechanisms = context['baseline_digest'], context['queue']
         self.attempt, self.deferrals = 0, []
+
+    def recovery_candidate(self, snapshot):
+        frozen = self.ctx['frozen'][snapshot]
+        return dict(attempt=frozen['attempt'], deferrals=list(self.deferrals), model_calls=list(self.ctx['model_calls']))
 
     def defer(self, mechanism, reason):
         self.deferrals.append(dict(mechanism=mechanism, reason=reason if CLOSED.fullmatch(reason) else 'unclassified'))
@@ -153,6 +161,60 @@ class Charged:
     def evaluate(self, snapshot, frozen_inputs):
         with self.stages.charge('trials'): return self.inner.evaluate(snapshot, frozen_inputs)
 
+    def recovery_stage_spent(self):
+        return dict(self.stages.spent)
+
+    def recovery_wall_ns(self):
+        return time.time_ns()
+
+    def baseline_reserve_trials(self):
+        return len(self.inner.tasks)
+
+    def preserve_abandoned(self, round_number, resume_number=None):
+        """Keep a settled partial output outside the next evaluation's directory."""
+        if (type(round_number) is not int or not 0 <= round_number <= self.inner.spec.max_rounds
+                or round_number == 0 and (type(resume_number) is not int or resume_number < 1)):
+            raise ValueError('invalid abandoned round')
+        source = f'evaluation-{len(self.inner.runs)}'
+        root = integrity.open_directory_nofollow(self.inner.work)
+        destination = None
+        try:
+            try: info = os.stat(source, dir_fd=root, follow_symlinks=False)
+            except FileNotFoundError: return
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+                raise ValueError('unsafe partial evaluation')
+            folder = f'abandoned-evaluation-{round_number}' + (f'-{resume_number}' if round_number == 0 else '')
+            try: os.mkdir(folder, 0o700, dir_fd=root)
+            except FileExistsError: pass
+            destination = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root)
+            info = os.fstat(destination)
+            if info.st_uid != os.geteuid() or info.st_mode & 0o077: raise ValueError('unsafe abandoned evaluation directory')
+            try: os.stat(source, dir_fd=destination, follow_symlinks=False)
+            except FileNotFoundError: pass
+            else: raise ValueError('abandoned evaluation already exists')
+            os.rename(source, source, src_dir_fd=root, dst_dir_fd=destination)
+            os.fsync(destination)
+            os.fsync(root)
+        finally:
+            if destination is not None: os.close(destination)
+            os.close(root)
+
+    def recovery_evaluation(self):
+        from agent_harness_lab.private_journal import atomic_json, record
+        run = self.inner.runs[-1]
+        value = {name: run[name] for name in ('index', 'snapshot', 'against', 'guard', 'pairs', 'investigation', 'area_gate')}
+        path = self.inner.work / f'loop-evaluation-{run["index"]}.json'
+        if path.exists() or path.is_symlink(): raise ValueError('evaluation recovery artifact already exists')
+        atomic_json(path, value)
+        return dict(index=run['index'], snapshot=run['snapshot'], against=run['against'],
+                    artifact_sha256=record(path, 8*1024*1024)[1])
+
+    def bind_recovered_loop(self, loop):
+        if loop.round and 'found' in loop.round and self.inner.runs:
+            self.inner.runs[-1]['evaluation'] = loop.round['found']
+        if getattr(self, 'abandoned_to_preserve', None) is not None and loop.position.stop is None:
+            self.preserve_abandoned(self.abandoned_to_preserve)
+
 
 def blocked(args, output, reason, **extra):
     """A typed blocked result: a loop declaration is never run as a silent single pass."""
@@ -163,6 +225,42 @@ def blocked(args, output, reason, **extra):
     workflow.construction_receipt(result, args)
     workflow.write_json(output/'workflow.json', result)
     return result
+
+
+def _freeze_resume_context(args, context, spec, evaluator, queue, carried):
+    """Bind the private inputs needed to reconstruct a loop to its first ledger event."""
+    from agent_harness_lab.private_journal import atomic_json, record
+    from .cold_resume import OPTIONS
+    def plain(value):
+        if isinstance(value, Path): return str(value)
+        if isinstance(value, dict): return {key: plain(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)): return [plain(item) for item in value]
+        return value
+    output = context['output']
+    brief = output / 'analysis-brief.json'
+    payload = dict(schema_version=1, project=str(args.project), selected_agent=context['agent'], binary=context['binary'],
+                   options=plain({name: getattr(args, name, None) for name in OPTIONS}),
+                   explicit=sorted(args._configuration_explicit), invocation=plain(args._configuration_invocation),
+                   scope_source=getattr(args, '_scope_source', 'default'),
+                   receipt_context=plain({name: getattr(args, name) for name in ('_evaluation_repairs', '_authored_digest_ignored',
+                       '_construction_seconds', '_evaluation_reuse', '_reuse', '_observed', '_runtime_selection', '_cost_preview')
+                       if hasattr(args, name)}),
+                   spec=spec.to_dict(), loop_layers=plain(args._loop), frozen_inputs_sha256=evaluator.frozen_inputs, queue=queue,
+                   carried=plain(carried), original=plain(context['original']), allowed=plain(context['allowed']),
+                   baseline_sha256=integrity.digest(context['baseline']), baseline_runner_sha256=context['baseline_hash'],
+                   runner_program_sha256=hashlib.sha256(integrity.read_regular(Path(context['runner'].__file__).resolve(), 8*1024*1024)).hexdigest(),
+                   runtime_binary_sha256=evaluator.runner.runtime_executable_sha256(),
+                   plugin_sha256=integrity.digest(context['plugin']),
+                   brief_sha256=hashlib.sha256(integrity.read_regular(brief, 8*1024*1024)).hexdigest(),
+                   manifest_sha256=hashlib.sha256(integrity.read_regular(context['manifest_path'], 8*1024*1024)).hexdigest(),
+                   scoring_sha256=hashlib.sha256(integrity.read_regular(evaluator.scoring, 8*1024*1024)).hexdigest(),
+                   analysis=plain(context['data']['execution']),
+                   incremental=plain(getattr(args, '_incremental', None)),
+                   grading=plain(context['grading']), initial_elapsed=max(0.0, context['stages'].clock()-context['stages'].started),
+                   initial_stage_spent=plain(context['stages'].spent))
+    path = output / 'loop-resume-context.json'
+    atomic_json(path, payload)
+    return record(path, 8*1024*1024)[1]
 
 
 def run(args, context):
@@ -192,9 +290,24 @@ def run(args, context):
     proposer = PreparationProposer(state, lambda: evaluator)
     from agent_harness_lab.workflow import state_root
     ledger = LoopLedger(state_root()/'loops'/output.name, args.project)
-    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs)  # what an earlier run hands over: dispositions, never a score or a trial
+    evidence = carryover.evidence_versions(getattr(args, '_analysis_brief', None))
+    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs, evidence)  # dispositions, never a score or a trial
+    proposer.resume_context_sha256 = _freeze_resume_context(args, context, spec, evaluator, state['queue'], carried)
     result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started), dispositions=carried and carried['dispositions'])
+    return _result(args, context, state, evaluator, proposer, ledger, spec, result, carried)
+
+
+def _result(args, context, state, evaluator, proposer, ledger, spec, result, carried):
+    output, stages = context['output'], context['stages']
     block = receipt.build(spec, result, ledger.events(), [item['guard'] for item in evaluator.runs], budget=stages.receipt(), deferrals=proposer.deferrals)
+    block['mechanism_evidence'] = carryover.evidence_versions(getattr(args, '_analysis_brief', None))
+    if carried is not None:
+        for name, prior in carried.get('evidence', {}).items():
+            if name in carried['dispositions']:
+                if name not in block['mechanism_evidence'] and len(block['mechanism_evidence']) >= carryover.MAX_MECHANISMS: continue
+                combined = sorted(set(prior) | set(block['mechanism_evidence'].get(name, [])))
+                if len(combined) <= 5: block['mechanism_evidence'][name] = combined
+                else: block['mechanism_evidence'].pop(name, None)
     if carried is not None: block['carry_over'] = carryover.finish(carried['block'], block)
     receipt.validate_receipt(block)
     stop = block['stop_criterion']

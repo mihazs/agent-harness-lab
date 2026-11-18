@@ -16,21 +16,22 @@ from .machine import replay as replay_machine
 from .spec import LoopSpec, document_digest
 
 FORMAT = 'ahl-loop-ledger-v1'
-# kind -> ledger state; proposal_started, candidate_frozen and resumed do not move the controller machine.
+# kind -> ledger state; dispatch markers, candidate_frozen and resumed do not move the controller machine.
 # resumed follows anything, a stop that was only an interruption included; ledger.replay() is what refuses it after any other stop.
-STATE = dict(spec_frozen='declared', baseline_evaluated='baseline_evaluated', proposal_started='proposing', round_started='improving', candidate_frozen='improving',
-             candidate_evaluated='candidate_evaluated', decided='decided', stopped='stopped', resumed='resumed')
-NEXT = {None: ('spec_frozen',), 'spec_frozen': ('baseline_evaluated', 'stopped', 'resumed'), 'baseline_evaluated': ('proposal_started', 'round_started', 'stopped', 'resumed'),
-        'proposal_started': ('round_started', 'stopped', 'resumed'), 'round_started': ('candidate_frozen', 'stopped', 'resumed'), 'candidate_frozen': ('candidate_evaluated', 'stopped', 'resumed'),
+STATE = dict(spec_frozen='declared', baseline_started='declared', baseline_evaluated='baseline_evaluated', proposal_started='proposing', round_started='improving', candidate_frozen='improving',
+             candidate_started='improving', candidate_evaluated='candidate_evaluated', decided='decided', stopped='stopped', resumed='resumed')
+NEXT = {None: ('spec_frozen',), 'spec_frozen': ('baseline_started', 'baseline_evaluated', 'stopped', 'resumed'), 'baseline_started': ('baseline_evaluated', 'stopped', 'resumed'), 'baseline_evaluated': ('proposal_started', 'round_started', 'stopped', 'resumed'),
+        'proposal_started': ('round_started', 'stopped', 'resumed'), 'round_started': ('candidate_frozen', 'stopped', 'resumed'), 'candidate_frozen': ('candidate_started', 'candidate_evaluated', 'stopped', 'resumed'),
+        'candidate_started': ('candidate_evaluated', 'stopped', 'resumed'),
         'candidate_evaluated': ('decided', 'stopped', 'resumed'), 'decided': ('proposal_started', 'round_started', 'stopped', 'resumed'), 'stopped': ('resumed',),
-        'resumed': ('baseline_evaluated', 'proposal_started', 'round_started', 'candidate_frozen', 'candidate_evaluated', 'decided', 'stopped', 'resumed')}
+        'resumed': ('baseline_started', 'baseline_evaluated', 'proposal_started', 'round_started', 'candidate_frozen', 'candidate_started', 'candidate_evaluated', 'decided', 'stopped', 'resumed')}
 MACHINE_EVENTS = ('baseline_evaluated', 'round_started', 'candidate_evaluated', 'decided', 'stopped')
 MAX_RESUMES = 10  # a resume may add an interruption, a resumption and a proposal marker
 
 
 def event_cap(spec):
-    """Five events per round plus the freeze, baseline, final proposal and stop, with spare capacity."""
-    return 5*spec.max_rounds + 9
+    """Six events per round plus the freeze, baseline, final proposal and stop, with spare capacity."""
+    return 6*spec.max_rounds + 9
 
 
 def _transition(_previous_state, kind, state, previous_kind):

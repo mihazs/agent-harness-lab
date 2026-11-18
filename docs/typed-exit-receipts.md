@@ -53,7 +53,7 @@ error.
 | `protected_destination` | `invalid_input` (2) | `usage` | Choose an output or state location outside the project and its history, then rerun. |
 | `unsupported_instruction_layout` | `invalid_input` (2) | `harness_discovery` | Make each instruction file a regular file inside the project instead of a symbolic link, then rerun. |
 | `run_input_rejected` | `invalid_input` (2) | `run` | Read the rejected input named on stderr, correct it, then rerun; the private receipt of the run records the stage. |
-| `workspace_busy` | `conflict` (1) | `workspace` | Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock. |
+| `workspace_busy` | `conflict` (1) | `workspace` | Wait for the active run on this project to finish, or resume it, then rerun; before removing a stale lock, reconcile the recorded PID, any surviving children and pending requests. |
 | `run_conflict` | `conflict` (1) | `run` | Read the conflict recorded in the private receipt of the run, resolve it, then rerun. |
 | `budget_exhausted` | `budget_exhausted` (1) | `run` | Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun. |
 | `execution_failed` | `execution_error` (1) | `run` | Inspect the private run output and stage stderr logs for the cause. Reconcile any unresolved provider request before retrying. |

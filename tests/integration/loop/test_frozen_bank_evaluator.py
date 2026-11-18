@@ -5,6 +5,7 @@ Every bank, snapshot and outcome is synthetic.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,63 @@ def kinds(ledger):
 
 def values(ledger, kind):
     return [payload['value'] for event, payload in ledger.events() if event == kind]
+
+
+def test_runtime_identity_reuses_hash_until_the_executable_changes(tmp_path, monkeypatch):
+    from agent_harness_lab.loop import cold_resume
+    binary = tmp_path / 'agent'
+    binary.write_text('first')
+    binary.chmod(0o700)
+    hashed = []
+    real = cold_resume.runtime_sha256
+    def capture(path):
+        hashed.append(path)
+        return real(path)
+    monkeypatch.setattr(cold_resume, 'runtime_sha256', capture)
+    runner = adapters.ExecutorRunner(None, 'codex', str(binary))
+    first = runner.runtime_sha256()
+    assert runner.runtime_sha256() == first and len(hashed) == 1
+    assert runner.runtime_executable_sha256() == hashlib.sha256(b'first').hexdigest() and len(hashed) == 1
+    before = binary.stat()
+    binary.write_text('other')
+    os.utime(binary, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert runner.runtime_sha256() != first and len(hashed) == 2
+    binary.unlink()
+    with pytest.raises(ValueError, match='runtime executable unavailable'):
+        runner.runtime_sha256()
+
+
+def test_runtime_identity_refuses_an_executable_changed_while_hashing(tmp_path, monkeypatch):
+    from agent_harness_lab.loop import cold_resume
+    binary = tmp_path / 'agent'
+    binary.write_text('first')
+    binary.chmod(0o700)
+    real = cold_resume.runtime_sha256
+    def change_during_hash(path):
+        result = real(path)
+        path.write_text('changed')
+        return result
+    monkeypatch.setattr(cold_resume, 'runtime_sha256', change_during_hash)
+    with pytest.raises(ValueError, match='changed while hashing'):
+        adapters.ExecutorRunner(None, 'codex', str(binary)).runtime_sha256()
+
+
+def test_runtime_changed_and_restored_during_evaluation_leaves_inputs_unknown(tmp_path, monkeypatch):
+    stub = fb.StubRuntime(tmp_path)
+    base, good = stub.snapshot('base', [0, 1]), stub.snapshot('good', range(8))
+    evaluator = stub.evaluator(fb.declare())
+    evaluator.evaluate(base, evaluator.frozen_inputs)
+    real = stub.runner.run
+    def change_and_restore(*args, **kwargs):
+        original = stub.binary.read_bytes()
+        stub.binary.write_bytes(original + b'\n# synthetic runtime revision\n')
+        try: return real(*args, **kwargs)
+        finally: stub.binary.write_bytes(original)
+    monkeypatch.setattr(stub.runner, 'run', change_and_restore)
+    evaluator.bases[good] = base
+    result = evaluator.evaluate(good, evaluator.frozen_inputs)
+    assert result.trials > 0 and result.inputs is None
+    assert evaluator.runs[-1]['guard']['frozen_inputs']['comparison']['status'] == 'unverified'
 
 
 def test_the_baseline_is_scored_from_one_arm_and_a_later_evaluation_is_a_fresh_paired_run(tmp_path):

@@ -94,9 +94,11 @@ That run changed nothing and spent no preparation.
 A later `ahl improve .` starts from the harness on disk, evaluates its baseline fresh and
 carries over the mechanisms an earlier run rejected or found inconclusive (the `carry_over`
 block); an earlier score is never this run's baseline. `ahl improve . --resume RUN_ID`
-returns the verified receipt of a finished loop run without a model call. An interrupted
-run ends `interrupted`: rerun the command, or resume it from its round ledger with the
-controller ([resuming a loop](loop-reference.md#resuming-a-loop)).
+returns the verified receipt of a finished loop run without a model call. For a new
+interrupted loop with a frozen recovery context, it validates the ledger and inputs before
+continuing. It never repeats an unresolved request. The built-in CLI evaluator cannot yet
+consume a settlement result, so those runs remain interrupted even after external
+reconciliation ([resuming a loop](loop-reference.md#resuming-a-loop)).
 
 ```sh
 ahl improve . --resume RUN_ID

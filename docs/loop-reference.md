@@ -315,16 +315,18 @@ candidate or captured text.
 | Event | Follows | Payload |
 | --- | --- | --- |
 | `spec_frozen` | none | declaration digest, frozen inputs, mode, looks, per-look alpha, mechanism queue, and `carried` dispositions when an earlier run handed any on |
-| `baseline_evaluated` | `spec_frozen` | verdict, snapshot, evaluation summary |
+| `baseline_started` | `spec_frozen`, `resumed` | durable marker and snapshot before dispatching a journaled baseline |
+| `baseline_evaluated` | `spec_frozen`, `baseline_started` | verdict, snapshot, evaluation summary |
 | `proposal_started` | `baseline_evaluated`, `decided`, `resumed` | durable marker before invoking a journaled proposer |
 | `round_started` | `baseline_evaluated`, `decided`, `proposal_started` | round, mechanism, base snapshot, every mechanism's disposition |
 | `candidate_frozen` | `round_started` | round, candidate snapshot, mechanism |
-| `candidate_evaluated` | `candidate_frozen` | verdict, snapshot, evaluation summary |
+| `candidate_started` | `candidate_frozen`, `resumed` | durable marker and snapshot before dispatching a journaled candidate evaluation |
+| `candidate_evaluated` | `candidate_frozen`, `candidate_started` | verdict, snapshot, evaluation summary |
 | `decided` | `candidate_evaluated` | outcome, mechanism, its disposition, best, every disposition, acceptance, regression, improvement and the `stop` the decision reached (or `null` to go on); `abandoned: true` for a round no evaluation completed |
 | `stopped` | any other event | stop criterion, reason, rounds, best, dispositions, last outcome |
 | `resumed` | any event, `stopped` only when it was `interrupted` | events held, previous head, trials charged for the evaluation that was running, and whether it was `unresolved` |
 
-A ledger holds at most `5 * max_rounds + 9` events, above anything a run within
+A ledger holds at most `6 * max_rounds + 9` events, above anything a run within
 `max_rounds` writes; one more is `loop_ledger_full` and writes nothing. A ledger that is
 reopened for a resume allows three more events for each of at most ten resumes. Beside the
 events, `head.json` keeps the count and SHA-256 of the newest event, because no later
@@ -349,10 +351,13 @@ request reconciliation checks below, goes on:
 | Last durable event | A resume |
 | --- | --- |
 | a `stopped` that is final | returns the recorded result, with no port call and no new event |
-| `spec_frozen` | evaluates the baseline again: no evaluation of it was recorded |
+| `spec_frozen` | starts the baseline when the dispatch journal proves it did not start; otherwise requires settlement |
+| `baseline_started` | requires settlement before any retry |
 | `baseline_evaluated` | takes the decision on the baseline and goes on |
 | `proposal_started` | requires reconciliation before any retry |
-| `round_started`, `candidate_frozen` | records the round `abandoned` and starts a fresh round |
+| `round_started` | requires proposal reconciliation when dispatch may have happened |
+| `candidate_frozen` | evaluates the frozen candidate when the dispatch journal proves evaluation did not start; otherwise requires settlement |
+| `candidate_started` | requires settlement before abandoning the incomplete round and starting a fresh one |
 | `candidate_evaluated` | takes the decision on the recorded evaluation |
 | `decided` | goes on to the next round or records the stop the decision reached |
 | `stopped` with `interrupted`, or none | continues from the event before it |
@@ -386,8 +391,12 @@ recorded time, and the trials `evaluator.settle(snapshot)` reports are charged i
 evaluation consumed when every request it sent has an outcome, `0` when none started,
 and `None` when one may not have. With no `settle`, or `None`, the evaluation is not
 repeated by itself: the run ends `interrupted` with `stop_reason: unresolved_request`
-and the receipt's remediation names the reconcile step. A later resume asks again, so
-reconciling the request is what lets the run go on. A proposal may also have been
+and the receipt's remediation names the reconcile step. A later controller resume asks
+the evaluator again; it can continue only if the evaluator supplies a settled result.
+The built-in CLI evaluator currently has no settlement port, so external reconciliation
+alone does not let `ahl improve --resume` continue an unresolved evaluation. The built-in
+proposer likewise has no reconciliation port for an already-dispatched proposal.
+A proposal may also have been
 dispatched after the last durable baseline or non-final decision. The controller does
 not ask again unless the optional proposer port `proposal_retry_safe(events)` verifies
 from durable evidence that retrying cannot repeat an unresolved or unrecorded request.
@@ -397,8 +406,28 @@ frozen is also ambiguous. New runs using the built-in proposer freeze the journa
 before entering it. If a verified new ledger stops at a baseline or non-final decision
 without that marker, no proposal was dispatched in that phase. A marker still requires
 reconciliation; legacy ledgers with no protocol cannot treat its absence as proof.
-The command-line cold-resume path remains unsupported, and the marker is neither a
-completed proposal nor a trial.
+The command-line path can reconstruct new cooperative loop runs from their frozen context;
+the marker is neither a completed proposal nor a trial. Older runs without a context are
+not automatically reconstructed.
+
+New cold-resumable runs also record `baseline_started` and `candidate_started` before
+invoking each evaluator. A checkpoint before the relevant marker can start that
+evaluation; after it, an unsettled evaluation remains interrupted. Older ledgers
+cannot use the absence of these markers as proof that no request was sent.
+
+`ahl improve PROJECT --resume RUN_ID` verifies the private context against the ledger,
+the current project, frozen bank, scoring manifests, runtime executable and toolkit.
+It restores completed observations and stage spend, and charges time since the last
+durable event against the time limit. A missing or changed input blocks before a new
+request. A resumed baseline needs enough remaining trials and a positive time balance; a frozen candidate
+also needs its recorded round reserve. It does not authenticate a writer who can rewrite
+the whole private ledger. The executable and evaluation-runner checks hash those files;
+they do not freeze an executable's interpreter, shared libraries, environment or provider model.
+
+A project lock recorded on a previous Linux boot can be reclaimed after a reboot;
+an older lock without a boot identity or a lock from the current boot remains busy.
+A same-boot child may outlive its parent, so verify and reconcile it before removing
+a stale lock. Other platforms retain manual stale-lock recovery.
 
 When request reconciliation permits continuation, a resumed run reaches the stop
 criterion the uninterrupted run reaches and charges the same trials and seconds,
@@ -441,11 +470,17 @@ written once; a bank that would freeze to other bytes is refused.
 
 `frozen_inputs` is the identity of five facts: the bank (the task content and the
 digest of every fixture), the grader (`grader_fingerprint`), the seed schedule, the
-per-arm budget share (the number of scoring tasks) and the runtime (the launch
-identity of the agent and executable). The evaluator observes them again before and
+per-arm budget share (the number of scoring tasks) and the runtime (the agent's launch
+configuration and executable content). The evaluator reuses the executable hash while
+its file identity, size and change timestamps are unchanged; an observed change during
+an evaluation leaves that evaluation's inputs unknown even if the original bytes return.
+The recovery checkpoint and reconstructed evaluator reuse that checked hash while the
+file metadata remains unchanged, instead of reading the executable again.
+Older launch-only runtime
+identities are not comparable with this version. The evaluator observes the facts before and
 after every run and reports the digest it observed as `Evaluation.inputs`, so a
 difference from the frozen digest is `comparison_invalid` in the controller, and a
-fact that cannot be read, or an input that moved during the run, leaves `inputs`
+fact that cannot be read, or an input observed to move during the run, leaves `inputs`
 unknown, which is `incomplete`. When the inputs already differ before a run, no trial
 is spent: the evaluation reports no trials and the evidence `blocked`.
 
@@ -665,7 +700,7 @@ adds the loop's own state, in the `carry_over` block of the receipt
 | Key | Meaning |
 | --- | --- |
 | `status` | `carried`, `reopened` (the earlier dispositions no longer apply) or `unavailable` (the previous run was not a valid loop run, or could not be read) |
-| `relation`, `comparable`, `reason` | The harness relation since the previous run, whether its frozen inputs equal this run's, and why the dispositions were reopened: `frozen_inputs_changed`, `harness_edited` or `harness_relation_unknown` |
+| `relation`, `comparable`, `reason` | The harness relation since the previous run, whether its frozen inputs equal this run's, and why dispositions reopened: `frozen_inputs_changed`, `harness_edited`, `harness_relation_unknown` or `mechanism_evidence_changed` |
 | `historical` | The previous run's `before` and best scores, labelled `historical_observation`, with `comparison` `comparable` or `not_comparable` |
 | `fresh`, `fresh_baseline_minus_historical_best` | This run's own scores, labelled `fresh_evaluation`, and their difference from the historical best, shown only for identical frozen inputs; otherwise `delta: omitted` with its reason |
 | `mechanisms` | `carried` (the `rejected`, `inconclusive` and `deferred` mechanisms that are not offered again) and `reopened` (the ones a changed component or changed inputs released) |
@@ -676,8 +711,17 @@ baseline evaluation, never a fresh trial and never an input to a decision: a bas
 that an earlier run accepted is evaluated again, and `usage.trials` counts only this
 run's trials. A mechanism an earlier run kept (`accepted` or `improved`) is not carried,
 since its candidate was the result. Dispositions are reopened, never silently kept, when
-the frozen inputs differ or the harness was edited outside the earlier candidate, and
-anything unknown reopens too. A pruned entry is forgotten and evaluated again; it never
+the frozen inputs differ or the harness was edited outside the earlier candidate. A
+mechanism also reopens when it has a newly observed evidence reference. Removing a
+reference alone does not reopen it. When evidence
+cannot be matched against the previous receipt, including receipts created before
+evidence fingerprints existed, `evidence_unknown` lists the affected mechanisms and
+their prior dispositions remain in force until relevant new evidence is established.
+Only uncapped, unambiguous brief entries with complete capture and a distinct reference
+for each reported error get fingerprints. These digests
+are private and do not establish that the source capture was complete. Unknown harness
+relations reopen dispositions; unknown evidence does not by itself authorize a retry.
+A pruned entry is forgotten and evaluated again; it never
 becomes a success or an independence label.
 
 ### The receipt
@@ -698,7 +742,7 @@ captured text.
 | `stop_criterion`, `stop_reason` | The one criterion that stopped the run, and why when the criterion has a reason: `reserve_for_evaluation_unavailable` or `budget_exhausted_during_round` for `budget_exhausted`, `unresolved_request` for an `interrupted` resume that might repeat an unresolved evaluation or proposal request. |
 | `mechanisms`, `deferrals` | Each mechanism's disposition, and each deferred mechanism with its closed reason (`preparation_failed`, `invalid_proposal`, `no_change`, `candidate_identical_to_best`, `instruction_validation_*`, `instruction_removal_*` or the review reason). |
 | `usage`, `events`, `ledger_head_sha256`, `budget_stages` | Trials and seconds spent, the number of ledger events and the SHA-256 of the last one, and the [stage budget](budget-stages.md). |
-| `resumed` | Only for a run that was resumed: `count` and `abandoned_rounds`. An abandoned round has `abandoned: true`, `validity: incomplete`, no score and the disposition `abandoned`. |
+| `resumed` | Only for a run that was resumed: `count` and `abandoned_rounds`. An abandoned round has `abandoned: true`, `validity: incomplete`, no score and the disposition `abandoned`. In new journaled runs its `evaluation_id` is `null`; later completed evaluations use their actual artifact IDs. Legacy receipts retain their original IDs. |
 | `carry_over` | Only for a later run: what the [previous loop run handed on](#later-runs). |
 | `recommendation_only`, `automatic_promotion`, `certification` | Always `true`, `false` and `unverified`. |
 | `remediation` | One content-free next step for the stop criterion. |
@@ -731,7 +775,7 @@ existing statuses and exit codes are unchanged.
 | `accepted_without_change` | `accepted` | 0 | The baseline meets the bar on the frozen development and regression evidence; nothing changed and this is not certification. |
 | `acceptance_score_reached` | `accepted` | 0 | A candidate meets the bar on that evidence; nothing was applied and this is not certification. |
 | `budget_exhausted` | `requires_intervention` | 1 | Raise `--timeout` or `limits.trials`, then rerun. |
-| `interrupted` | `requires_intervention` | 1 | Resume the loop from its round ledger, or rerun the command, which starts from the harness on disk and carries over the recorded dispositions. With `stop_reason: unresolved_request`, reconcile the provider request first. |
+| `interrupted` | `requires_intervention` | 1 | Resume the loop from its round ledger when safe. With `stop_reason: unresolved_request`, the built-in CLI cannot yet consume provider reconciliation and will not repeat the request. |
 | `comparison_invalid` | `requires_intervention` | 1 | A frozen input differed between evaluations, an AHL defect: read the investigation, fix the cause, add a regression test, rerun. |
 | `max_rounds` | `not_accepted` | 3 | The cap ended the loop with the bar unmet; raise `--max-rounds` or lower the bar. |
 | `plateau` | `not_accepted` | 3 | Consecutive rounds produced no supported improvement; add evidence or `--focus`. |
@@ -759,7 +803,7 @@ the loop's modules as it does for the rest of the receipt.
 ### Not in this release
 
 A per-area `accept_score` map resolves but is not decided (it stops
-`evidence_insufficient`), `ahl improve --resume RUN_ID` returns a finished loop run's receipt but does not continue an interrupted one (the real evaluator and proposer hold in-process state a cold start cannot rebuild; the controller's `resume()` and a rerun's carry-over are the two ways on), a first-use bank is not
+`evidence_insufficient`), a first-use bank is not
 constructed for the loop and an `--experiment-request` bank is not driven by it (both keep their labelled single pass), and a recommended
 candidate has no change plan; each belongs to a later slice of the loop epic.
 
@@ -851,7 +895,7 @@ Each reason has one remediation in the [exit reason table](analysis.md#exit-reas
 | `loop_order_violation` | an event the table does not allow |
 | `loop_port_invalid` | an evaluator, proposer, candidate, evaluation or clock outside its port contract; a bank that cannot be frozen as a scoring bank (`bank`) or whose frozen inputs cannot be read (`frozen_inputs`) |
 | `loop_ledger_invalid` | a ledger root inside the project or on a link, an event out of order, a reused ledger, or a tampered or incomplete ledger read back |
-| `loop_ledger_full` | a ledger event beyond `5 * max_rounds + 9`, or beyond that plus two for each of ten resumes in a reopened ledger |
+| `loop_ledger_full` | a ledger event beyond `6 * max_rounds + 9`, or beyond that plus three for each of ten resumes in a reopened ledger |
 | `resume_spec_changed` | a resume under a declaration other than the one the run was frozen with; nothing ran |
 | `resume_inputs_changed` | a resume under other frozen inputs, baseline, mechanism queue or carried dispositions than the run was frozen with; nothing ran |
 | `resume_busy` | a resume while a run or another resume holds the case; nothing ran |
