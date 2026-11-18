@@ -55,8 +55,8 @@ class GenericMemoryExport(LocalExport):
             text = raw.decode('utf-8')
             parse = lambda value: json.loads(value, object_pairs_hook=unique_object, parse_constant=_reject_constant)
             rows = parse(text) if format == 'json' else [parse(line) for line in text.splitlines() if line.strip()]
-        except (UnicodeError, ValueError, RecursionError) as exc:
-            raise ValueError('invalid memory export') from exc
+        except (UnicodeError, ValueError, RecursionError):
+            raise ValueError('invalid memory export') from None
         if not isinstance(rows, list) or len(rows) > MAX_RECORDS:
             raise ValueError('bounded memory record list required')
         now = datetime.now(timezone.utc).isoformat()
