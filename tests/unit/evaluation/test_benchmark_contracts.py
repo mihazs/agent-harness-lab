@@ -25,6 +25,7 @@ def test_trajectory_reports_keep_all_trials_assertions_and_long_identifiers():
     assert len(report['trials'][0]['assertions']) == 33
     assert report['trials'][0]['assertions'][-1]['assertion_id'] == assertions[-1]['assertion_id']
     assert 'required' not in report['trials'][0]['assertions'][0]
+    assert report['trials'][0]['receipt_identity_matches'] is None
     assert report['analysis']['status'] == 'unverified'
     assert not report['publication_allowed']
 
