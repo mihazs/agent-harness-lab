@@ -47,8 +47,11 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
             group.locator('#pair-filter-missing').check()
             assert any(visible.nth(i).get_attribute('data-verdict') == 'improved' for i in range(visible.count()))
             assert any(visible.nth(i).get_attribute('data-verdict') == 'unknown' for i in range(visible.count()))
+            assert any(visible.nth(i).get_attribute('data-verdict') == 'regressed'
+                       and visible.nth(i).get_attribute('data-coverage') == 'complete' for i in range(visible.count()))
             assert all(visible.nth(i).get_attribute('data-verdict') == 'unknown'
-                       or visible.nth(i).get_attribute('data-coverage') == 'gap' for i in range(visible.count()))
+                       or visible.nth(i).get_attribute('data-coverage') == 'gap'
+                       or visible.nth(i).get_attribute('data-assertion-gap') == 'yes' for i in range(visible.count()))
             group.locator('#pair-filter-assertions').check()
             assert visible.count() == 1 and 'candidate: violated' in visible.first.inner_text()
             assert 'Required assertions (unverified)' in group.inner_text()

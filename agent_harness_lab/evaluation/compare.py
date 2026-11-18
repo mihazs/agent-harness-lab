@@ -21,7 +21,7 @@ PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchange
 STYLE += ''.join(f'#pair-filter-{name}:checked~.scroll tbody tr:not([data-verdict="{name}"]){{display:none}}'
                  for name, _ in PAIR_FILTERS)
 STYLE += ('#pair-filter-missing:checked~.scroll tbody tr:not([data-verdict="unknown"])'
-          ':not([data-coverage="gap"]){display:none}')
+          ':not([data-coverage="gap"]):not([data-assertion-gap="yes"]){display:none}')
 
 
 def _e(value):
@@ -43,9 +43,9 @@ def _pair_table(headers, rows, *, assertions=False):
                        + f'><label for="pair-filter-{name}">{label}</label> ' for name, label in options)
     head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
     body = ''.join(f'<tr data-verdict="{_e(verdict)}" data-coverage="{coverage}"'
-                   + (f' data-assertions="{claim}"' if assertions else '') + '>'
+                   + (f' data-assertions="{claim}" data-assertion-gap="{gap}"' if assertions else '') + '>'
                    + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
-                   for verdict, coverage, claim, row in rows)
+                   for verdict, coverage, claim, gap, row in rows)
     rule = ('<style>#pair-filter-assertions:checked~.scroll tbody tr:not([data-assertions="reported_violation"])'
             '{display:none}</style>' if assertions else '')
     return (rule + '<div role="group" aria-label="Filter task pairs">' + controls
@@ -320,7 +320,8 @@ def render(report):
         row = (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
                _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons, coverage)
         if assertions: row += ('; '.join(f'{arm}: {status}' for arm, status in zip(sbs.ARMS, statuses)),)
-        rows.append((pair['verdict'], coverage, claim, row))
+        gap = 'yes' if 'unknown' in statuses else 'no'
+        rows.append((pair['verdict'], coverage, claim, gap, row))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
         truncated = [f"{arm}: {record['events_total']} events, first {len(record['events'])} + {record['invalid_events']} invalid shown"
