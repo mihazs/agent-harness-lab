@@ -29,3 +29,20 @@ nodes, edges, episode links, source changes and provider lifecycle details remai
 The projection is experimental: its fixture mirrors the pinned public response construction, but no
 real deployment or independently captured provider response has been checked. It does not imply full
 Graphiti support or verified task outcomes.
+
+## Entity-edge declarations
+
+`GraphitiEdges` reads an explicitly supplied JSON array shaped like pinned Graphiti
+[`EntityEdge` objects](https://github.com/getzep/graphiti/blob/d72407dcedac911e1be9fc15b55e8c05a3efcc36/graphiti_core/edges.py#L263-L288).
+The local-export source uses provider `graphiti-entity-edges`, version `v0.31.2`, and the same
+caller-declared project and exact group fingerprints. The file is an operator-produced projection,
+not an official export or a live database read. It is bounded to 2 MiB, 5,000 edges and 10,000
+source-episode references. Unknown versions, foreign groups, duplicate IDs and malformed fields fail.
+
+The reader keeps hashed edge, entity and source-episode identities and source-declared validity times
+in private in-memory claims. An endpoint or source episode need not be in the selected file; its hash
+is not proof that it exists or that the relationship is true. Journal records fingerprint claims but
+do not persist those reference fields as graph receipts. Content, names, embeddings and attributes
+are not retained as text; row hashes still have equality and guessing risks. Empty or partial files
+never prove complete capture. No actual Graphiti deployment or independently captured edge dump has
+been tested, and the projection is not full provider support.
