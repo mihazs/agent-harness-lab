@@ -700,7 +700,7 @@ adds the loop's own state, in the `carry_over` block of the receipt
 | Key | Meaning |
 | --- | --- |
 | `status` | `carried`, `reopened` (the earlier dispositions no longer apply) or `unavailable` (the previous run was not a valid loop run, or could not be read) |
-| `relation`, `comparable`, `reason` | The harness relation since the previous run, whether its frozen inputs equal this run's, and why the dispositions were reopened: `frozen_inputs_changed`, `harness_edited` or `harness_relation_unknown` |
+| `relation`, `comparable`, `reason` | The harness relation since the previous run, whether its frozen inputs equal this run's, and why dispositions reopened: `frozen_inputs_changed`, `harness_edited`, `harness_relation_unknown` or `mechanism_evidence_changed` |
 | `historical` | The previous run's `before` and best scores, labelled `historical_observation`, with `comparison` `comparable` or `not_comparable` |
 | `fresh`, `fresh_baseline_minus_historical_best` | This run's own scores, labelled `fresh_evaluation`, and their difference from the historical best, shown only for identical frozen inputs; otherwise `delta: omitted` with its reason |
 | `mechanisms` | `carried` (the `rejected`, `inconclusive` and `deferred` mechanisms that are not offered again) and `reopened` (the ones a changed component or changed inputs released) |
@@ -711,8 +711,17 @@ baseline evaluation, never a fresh trial and never an input to a decision: a bas
 that an earlier run accepted is evaluated again, and `usage.trials` counts only this
 run's trials. A mechanism an earlier run kept (`accepted` or `improved`) is not carried,
 since its candidate was the result. Dispositions are reopened, never silently kept, when
-the frozen inputs differ or the harness was edited outside the earlier candidate, and
-anything unknown reopens too. A pruned entry is forgotten and evaluated again; it never
+the frozen inputs differ or the harness was edited outside the earlier candidate. A
+mechanism also reopens when it has a newly observed evidence reference. Removing a
+reference alone does not reopen it. When evidence
+cannot be matched against the previous receipt, including receipts created before
+evidence fingerprints existed, `evidence_unknown` lists the affected mechanisms and
+their prior dispositions remain in force until relevant new evidence is established.
+Only uncapped, unambiguous brief entries with complete capture and a distinct reference
+for each reported error get fingerprints. These digests
+are private and do not establish that the source capture was complete. Unknown harness
+relations reopen dispositions; unknown evidence does not by itself authorize a retry.
+A pruned entry is forgotten and evaluated again; it never
 becomes a success or an independence label.
 
 ### The receipt
