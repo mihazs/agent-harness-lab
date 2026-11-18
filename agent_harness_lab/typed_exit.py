@@ -24,7 +24,7 @@ REASONS = {
     'workspace_busy': ('conflict', 'workspace', 'Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock.'),
     'run_conflict': ('conflict', 'run', 'Read the conflict recorded in the private receipt of the run, resolve it, then rerun.'),
     'budget_exhausted': ('budget_exhausted', 'run', 'Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun.'),
-    'execution_failed': ('execution_error', 'run', 'Read the stage error recorded in the private receipt, fix the runtime or environment problem it names, then rerun.'),
+    'execution_failed': ('execution_error', 'run', 'Inspect the private run output and stage stderr logs for the cause. Reconcile any unresolved provider request before retrying.'),
     'system_error': ('setup_error', 'run', 'Fix the filesystem or operating-system condition reported on stderr, then rerun.'),
     'interrupted': ('interrupted', 'run', 'Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID'),
     'proposal_invalid': ('invalid_proposal', 'preparation', 'Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal.'),

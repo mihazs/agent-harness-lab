@@ -56,7 +56,7 @@ error.
 | `workspace_busy` | `conflict` (1) | `workspace` | Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock. |
 | `run_conflict` | `conflict` (1) | `run` | Read the conflict recorded in the private receipt of the run, resolve it, then rerun. |
 | `budget_exhausted` | `budget_exhausted` (1) | `run` | Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun. |
-| `execution_failed` | `execution_error` (1) | `run` | Read the stage error recorded in the private receipt, fix the runtime or environment problem it names, then rerun. |
+| `execution_failed` | `execution_error` (1) | `run` | Inspect the private run output and stage stderr logs for the cause. Reconcile any unresolved provider request before retrying. |
 | `system_error` | `setup_error` (2) | `run` | Fix the filesystem or operating-system condition reported on stderr, then rerun. |
 | `interrupted` | `interrupted` (1) | `run` | Rerun the command, or finish a completed proposal without a model call with: ahl improve PROJECT --resume RUN_ID |
 | `proposal_invalid` | `invalid_proposal` (1) | `preparation` | Read the proposal validation recorded in the private receipt, then rerun so preparation writes a valid proposal. |
