@@ -130,3 +130,12 @@ def test_transient_mapping_change_does_not_redirect_later_rows(export, monkeypat
     snapshot = connector.read(source)
     assert {record.native_id_sha256 for record in snapshot.records} == {
         digest(('namespace', 'one')), digest(('namespace', 'two'))}
+
+
+def test_invalid_utf8_does_not_expose_input_through_a_chained_exception(export):
+    source, path, connector = export
+    path.write_bytes(b'SECRET_CANARY\xff')
+    with pytest.raises(ValueError, match='invalid memory export') as error:
+        connector().read(source)
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
