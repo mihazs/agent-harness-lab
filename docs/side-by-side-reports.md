@@ -50,7 +50,8 @@ Records without a valid identity, and records with an unknown arm, are listed in
 reported as `null` with its problem code, never copied. A recorded tool error does not change a verdict;
 only the graded outcome does.
 
-The task table can show all pairs or one verdict at a time. This is a visual
+The task table can show all pairs, one verdict, or pairs with missing outcomes
+or capture gaps. This is a visual
 filter only: the full table remains in the report and the supplied backend
 decision, analysis population and timelines do not change. All pairs are shown
 by default, and browsers that cannot apply the filter still show the full table.
