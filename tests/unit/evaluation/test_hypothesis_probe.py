@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from agent_harness_lab.evaluation.hypothesis_probe import _paired_result, fixture_files, grader_files, is_probe, materialize, structural_pattern
+from agent_harness_lab.evaluation.hypothesis_probe import TASK_PROMPT, _paired_result, fixture_files, grader_files, is_probe, materialize, structural_pattern
 from agent_harness_lab.evaluation.integrity import digest
 
 
@@ -72,8 +72,9 @@ def test_fixture_refuses_a_follow_up_it_does_not_reproduce():
 def test_probe_prompt_does_not_disclose_the_repair(follow_up):
     mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
                      next_action={follow_up: 2})
-    prompt = json.loads(fixture_files(mechanism)['task.json'])['prompt']
-    assert '--recover' not in prompt and 'correct' not in prompt and 'retry' not in prompt
+    files = fixture_files(mechanism)
+    assert '--recover' not in TASK_PROMPT and 'correct' not in TASK_PROMPT and 'retry' not in TASK_PROMPT
+    assert 'task.json' not in files and follow_up not in json.dumps(files)
 
 
 def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):

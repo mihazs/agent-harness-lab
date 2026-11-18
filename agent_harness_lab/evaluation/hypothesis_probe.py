@@ -12,6 +12,8 @@ from agent_harness_lab.diagnostics.brief import BUILT_IN, ERROR_CATEGORIES, NEXT
 
 PROBE_MARKER = 'ahl-synthetic-probe.json'
 PROBE_PROFILE = 'ahl-synthetic-probe-v1'
+TASK_PROMPT = ('Run python3 synthetic_worker.py to produce result.json. '
+               'Leave config.json and result.json as the final artifacts.')
 
 
 def is_probe(fixture):
@@ -59,8 +61,6 @@ def fixture_files(mechanism):
             or pattern['error_category'] not in ('tool_reported_error', 'exit_code')):
         raise ValueError('no synthetic fixture for this pattern')
     retry = pattern['follow_up'] == 'same_call_retry'
-    task = dict(prompt=('Run python3 synthetic_worker.py to produce result.json. '
-                        'Leave config.json and result.json as the final artifacts.'), pattern=pattern)
     worker = '''import json
 from pathlib import Path
 import sys
@@ -75,7 +75,7 @@ if not ready:
 Path('result.json').write_text(json.dumps({'records': [3, 5]}) + '\\n')
 ''' % ("config.get('ready') is True" if retry else "sys.argv[1:] == ['--recover']", pattern['error_category'])
     encode = lambda value: json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n'
-    return {'task.json': encode(task), 'config.json': encode({'ready': False}), 'synthetic_worker.py': worker,
+    return {'config.json': encode({'ready': False}), 'synthetic_worker.py': worker,
             PROBE_MARKER: encode({'profile': PROBE_PROFILE})}
 
 
@@ -166,9 +166,8 @@ def materialize(mechanism, output, *, project, harness_paths):
             values['attempts.jsonl'] = '{"status": "error"}\n{"status": "success"}\n'
         for name, content in values.items(): write_bytes(folder / name, content.encode())
         controls.append(dict(task='hypothesis-probe', state=state, fixture=str(folder.relative_to(output)), digest=digest(folder)))
-    task = json.loads(fixture['task.json'])
     manifest = dict(schema_version=1, profile='descriptive_smoke', skills=[], harness_paths=harness_paths,
-        tasks=[dict(id='hypothesis-probe', root='hypothesis-probe', split='development', fixture='fixture', prompt=task['prompt'],
+        tasks=[dict(id='hypothesis-probe', root='hypothesis-probe', split='development', fixture='fixture', prompt=TASK_PROMPT,
                     artifacts=['config.json', 'result.json', 'attempts.jsonl', 'synthetic_worker.py', PROBE_MARKER],
                     grader=[sys.executable, str(grader_dir / 'grade.py.txt'), '{workspace}', str(grader_dir / 'expected.json')])],
         grader_self_tests=controls, grader_bundles={'hypothesis-probe': dict(path='grader', digest=digest(grader_dir))},
