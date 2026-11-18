@@ -47,3 +47,18 @@ do not persist those reference fields as graph receipts. Content, names, embeddi
 are not retained as text; row hashes still have equality and guessing risks. Empty or partial files
 never prove complete capture. No actual Graphiti deployment or independently captured edge dump has
 been tested, and the projection is not full provider support.
+
+## Entity-node declarations
+
+`GraphitiEntities` reads an operator-supplied JSON array shaped like pinned Graphiti
+[`EntityNode` objects](https://github.com/getzep/graphiti/blob/d72407dcedac911e1be9fc15b55e8c05a3efcc36/graphiti_core/nodes.py#L499-L505).
+The local-export source uses provider `graphiti-entity-nodes`, version `v0.31.2`, and the same
+caller-declared project and exact group fingerprints. Input is capped at 2 MiB and 5,000 entities;
+foreign groups, duplicate identities, malformed fields and timezone-free creation times are rejected.
+
+Each selected node becomes a private contextual assertion. Its scoped identity fingerprint uses the
+same domain as the endpoint claims described above, allowing a caller to compare explicit IDs in the
+same selected group. Equality alone does not authenticate the project, prove a relationship, establish
+independence or make the claim true. Node names, summaries, attributes and embeddings are not retained
+as text; row hashes retain equality and guessing risks. Empty files do not prove complete capture. No
+live provider or independently captured entity dump has been exercised.
