@@ -39,3 +39,13 @@ is an observed empty declaration. The reader retains each target's scoped finger
 target is missing, and reports presence only when its record is in the same snapshot. It makes no
 network requests, establishes no truth or independence, and does not persist these private in-memory
 claims as graph receipts. Target fingerprints retain the same guessing and equality risks as other hashes.
+
+## Inspect declared validity
+
+`generic_memory_temporal.facets` binds all supplied rows to the same exact captured revisions before
+reading explicitly mapped `valid_from`, `valid_until` and `open_ended` fields. It produces the existing
+`TemporalFacet` objects for `temporal.resolve`; an absent end is unknown unless `open_ended` is explicitly
+true. Invalid or timezone-free time text remains unresolved by the temporal resolver. The capture time is
+when this snapshot was collected, not proof of the earliest observation of a record. These are private
+in-memory declarations; no validity is verified, no historical completeness is claimed, and no provider
+or source is contacted.
