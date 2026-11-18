@@ -57,6 +57,7 @@ filter only: rows are grouped into tables by status and evidence state, the full
 set remains in the report and the supplied backend
 decision, analysis population and timelines do not change. All pairs are shown
 by default, and browsers that cannot apply the filter still show the full table.
+Each row links to its timeline, which explicitly says when no events are available.
 Resource-policy filters are unavailable because the current per-pair record
 does not carry those classifications.
 

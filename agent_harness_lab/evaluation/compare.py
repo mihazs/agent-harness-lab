@@ -43,10 +43,15 @@ def _pair_table(headers, rows, *, assertions=False):
     controls = ' '.join(f'<a href="#pair-filter-{name}">{label}</a>' for name, label in options)
     markers = ''.join(f'<details id="pair-filter-{name}"><summary>{label}</summary></details>' for name, label in options)
     groups = {}
-    for verdict, coverage, claim, gap, row in rows:
-        groups.setdefault((verdict, coverage, claim, gap), []).append(row)
+    for verdict, coverage, claim, gap, number, row in rows:
+        groups.setdefault((verdict, coverage, claim, gap), []).append((number, row))
+    head = ''.join(f'<th scope="col">{_e(header)}</th>' for header in (*headers, 'Timeline'))
+    def table(values):
+        body = ''.join('<tr>' + ''.join(f'<td>{_e(cell)}</td>' for cell in row)
+                       + f'<td><a href="#pair-{number}">View timeline</a></td></tr>' for number, row in values)
+        return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
     tables = ''.join(f'<div class="pair-group verdict-{_e(verdict)} coverage-{coverage} assertion-{claim} assertion-gap-{gap}">'
-                     + _table(headers, values) + '</div>' for (verdict, coverage, claim, gap), values in groups.items())
+                     + table(values) + '</div>' for (verdict, coverage, claim, gap), values in groups.items())
     return ('<div class="pair-filters"><h3>Filter task pairs</h3><p>' + controls + '</p>'
             + '<p>Filters change these tables only; the backend decision and analysis population stay unchanged.</p>'
             + markers + tables + '</div>')
@@ -324,7 +329,7 @@ def render(report):
                _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons, coverage)
         if assertions: row += ('; '.join(claim_text(claims, arm, status) for arm, status in zip(sbs.ARMS, statuses)),)
         gap = 'yes' if 'unknown' in statuses else 'no'
-        rows.append((pair['verdict'], coverage, claim, gap, row))
+        rows.append((pair['verdict'], coverage, claim, gap, number, row))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
         truncated = [f"{arm}: {record['events_total']} events, first {len(record['events'])} + {record['invalid_events']} invalid shown"
