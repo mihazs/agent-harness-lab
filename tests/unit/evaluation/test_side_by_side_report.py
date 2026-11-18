@@ -260,7 +260,7 @@ def test_reports_are_private_and_rejected_by_public_export():
 
 def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified():
     trials = ab('t', False, True)
-    source = dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+    source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
         controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
             status='violated', required=True, arguments='SYNTHETIC_SECRET')])))] )
@@ -276,11 +276,17 @@ def test_trajectory_claims_join_only_matching_unique_trials_and_stay_unverified(
     source['trials'].pop()
     source['trials'][0]['root'] = 'different-root'
     assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['trials'][0]['root'] = 'root-t'
+    source['experiment_id'] = 'different-experiment'
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
+    source['experiment_id'] = 'exp-1'
+    value['trials'].append(dict(trial_id=trials[1]['trial_id'], root=None))
+    assert pair(sbs.build(value), 't')['trajectory_claims']['candidate']['status'] == 'unknown'
 
 
 def test_unavailable_required_flags_remain_unknown_and_private():
     trials = ab('t', False, True)
-    source = dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+    source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
         trial_id=trials[1]['trial_id'], task='t', root='root-t', family='synthetic', version='candidate',
         controller_grade=dict(trajectory=dict(assertions=[dict(assertion_id='synthetic', assertion_sha256='a' * 64,
             status='satisfied')])))] )

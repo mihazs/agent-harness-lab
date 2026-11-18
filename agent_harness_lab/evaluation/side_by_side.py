@@ -189,13 +189,14 @@ def _public_inputs(experiment):
     return declared
 
 
-def _trajectory_claims(source):
+def _trajectory_claims(source, experiment_id):
     """Index bounded saved claims; duplicate identities remain ambiguous."""
     if source is None: return None
     if not isinstance(source, dict) or not isinstance(source.get('trials'), list) or len(source['trials']) > MAX_TRIALS:
         raise ValueError('bounded trajectory results required')
     summary = benchmark.trajectory_summary(source)
     index = {}
+    if source.get('experiment_id') != experiment_id: return index
     for row in summary['trials']:
         if _text(row['trial_id']): index.setdefault(row['trial_id'], []).append(row)
     return index
@@ -243,7 +244,7 @@ def build(experiment, *, public=False):
                                          ('success_cost', 'resource_success_cost', resource_report.success_costs))}
     precision = None if experiment.get('precision_preflight') is None else precision_report.preflight(experiment['precision_preflight'])
     declared = _public_inputs(experiment) if public else None
-    trajectory_claims = _trajectory_claims(experiment.get('trajectory_results'))
+    trajectory_claims = _trajectory_claims(experiment.get('trajectory_results'), experiment['experiment_id'])
     grouped, invalid_records = {key: {arm: [] for arm in ARMS} for key in planned}, []
     for index, raw in enumerate(trials_raw):
         key = _key(raw)
@@ -256,6 +257,10 @@ def build(experiment, *, public=False):
         grouped.setdefault(key, {name: [] for name in ARMS}).setdefault(arm, []).append(record)
     counts = Counter(record['trial_id'] for arms in grouped.values() for records in arms.values() for record in records if record['trial_id'])
     duplicate_ids = {value for value, count in counts.items() if count > 1}
+    claim_duplicates = duplicate_ids
+    if trajectory_claims is not None:
+        claim_counts = Counter(raw['trial_id'] for raw in trials_raw if isinstance(raw, dict) and _text(raw.get('trial_id')))
+        claim_duplicates = duplicate_ids | {value for value, count in claim_counts.items() if count > 1}
     mappings, invalid_mappings = {}, []
     for index, raw in enumerate([] if public else mappings_raw):  # a public export reads no event mappings
         key = _key(raw)
@@ -273,7 +278,7 @@ def build(experiment, *, public=False):
                     capture=capture, coverage_gap=any(value != 'complete' for values in capture.values() for value in values),
                     timeline=timeline)
         if trajectory_claims is not None:
-            pair['trajectory_claims'] = {arm: _required_claim(trajectory_claims, key, arm, arms[arm], duplicate_ids) for arm in ARMS}
+            pair['trajectory_claims'] = {arm: _required_claim(trajectory_claims, key, arm, arms[arm], claim_duplicates) for arm in ARMS}
         pairs.append(pair)
     verdicts = Counter({name: 0 for name in VERDICTS}); verdicts.update(pair['verdict'] for pair in pairs)
     return dict(schema_version=1, profile=REPORT_PROFILE, report_kind='side_by_side_experiment',
