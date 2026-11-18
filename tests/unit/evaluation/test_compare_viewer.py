@@ -61,6 +61,22 @@ def test_pair_filters_preserve_every_row_and_the_backend_decision():
     assert '<script' not in document
 
 
+def test_imported_required_claims_are_labelled_and_missing_remains_unknown():
+    value = fixture()
+    candidate = value['trials'][1]
+    value['trajectory_results'] = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
+        trial_id=candidate['trial_id'], task=candidate['task'], root=candidate['root'], family=candidate['family'],
+        version='candidate', controller_grade=dict(trajectory=dict(assertions=[dict(
+            assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', required=True,
+            arguments='SYNTHETIC_SECRET')])) )])
+    document = page(value)
+    assert 'Required assertions (unverified)' in document
+    assert 'baseline: unknown (missing or ambiguous join); candidate: violated' in document
+    assert 'data-assertions="reported_violation" data-assertion-gap="yes"' in document
+    assert 'SYNTHETIC_SECRET' not in document
+    assert 'insufficient_independent_roots' in document
+
+
 def test_event_bodies_never_render():
     value = fixture()
     value['trials'][0]['events'][0]['arguments'] = 'SECRET-BODY'

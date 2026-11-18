@@ -13,6 +13,12 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
     document = tmp_path / 'report.html'
     scenario = fixture()
     scenario['trials'][0]['capture'] = 'partial'
+    candidate = scenario['trials'][1]
+    scenario['trajectory_results'] = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
+        trial_id=candidate['trial_id'], task=candidate['task'], root=candidate['root'], family=candidate['family'],
+        version='candidate', controller_grade=dict(trajectory=dict(assertions=[dict(
+            assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', required=True,
+            arguments='SYNTHETIC_SECRET')])) )])
     document.write_text(page(scenario))
     with sync_playwright() as runtime:
         browser = runtime.chromium.launch(headless=True)
@@ -41,8 +47,16 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
             group.locator('#pair-filter-missing').check()
             assert any(visible.nth(i).get_attribute('data-verdict') == 'improved' for i in range(visible.count()))
             assert any(visible.nth(i).get_attribute('data-verdict') == 'unknown' for i in range(visible.count()))
+            assert any(visible.nth(i).get_attribute('data-verdict') == 'regressed'
+                       and visible.nth(i).get_attribute('data-coverage') == 'complete' for i in range(visible.count()))
             assert all(visible.nth(i).get_attribute('data-verdict') == 'unknown'
-                       or visible.nth(i).get_attribute('data-coverage') == 'gap' for i in range(visible.count()))
+                       or visible.nth(i).get_attribute('data-coverage') == 'gap'
+                       or visible.nth(i).get_attribute('data-assertion-gap') == 'yes' for i in range(visible.count()))
+            group.locator('#pair-filter-assertions').check()
+            assert visible.count() == 1 and 'candidate: violated' in visible.first.inner_text()
+            assert 'Required assertions (unverified)' in group.inner_text()
+            assert 'SYNTHETIC_SECRET' not in tab.content()
+            assert tab.locator('body').inner_text().split('Task table', 1)[0] == decision
             group.locator('#pair-filter-all').check()
             assert visible.count() == total
             assert all(url.startswith('file:') for url in requests)
