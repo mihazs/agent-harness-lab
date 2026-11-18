@@ -255,7 +255,8 @@ def evaluation_settings(path, manifest_path, manifest, versions, agent, binary):
         approved = {t['id']: t for t in pristine['tasks']}
         for task in manifest['tasks']:
             reference = approved.get(task['id'])
-            if reference is None or any(task.get(k) != reference[k] for k in ('root', 'family', 'split', 'prompt', 'artifacts')):
+            if (reference is None or any(task.get(k) != reference[k] for k in ('root', 'family', 'split', 'prompt', 'artifacts'))
+                    or ('areas' in task) != ('areas' in reference) or task.get('areas') != reference.get('areas')):
                 raise ValueError('task differs from configured bank')
             fixture = contained(manifest_path.parent, task['fixture'])
             bundle = manifest.get('grader_bundles', {}).get(task['id'], {})
