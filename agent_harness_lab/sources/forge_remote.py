@@ -53,6 +53,10 @@ def detect(project, remote='origin', *, endpoint=None):
         parsed = urlsplit(endpoint)
         if parsed.username is None and parsed.password is None and not parsed.query and not parsed.fragment:
             origin = 'https://' + parsed.netloc + parsed.path.rstrip('/')
+    return _probe(origin)
+
+
+def _probe(origin):
     opener = build_opener(ProxyHandler({}), _NoRedirect())
     found = []
     for provider, suffix in (('gitea', '/api/v1/version'), ('gitlab', '/api/v4/version')):
@@ -64,7 +68,17 @@ def detect(project, remote='origin', *, endpoint=None):
                 value = json.loads(raw)
                 if isinstance(value, dict) and isinstance(value.get('version'), str) and value['version']:
                     found.append(provider)
-        except (HTTPError, URLError, HTTPException, OSError, ValueError, UnicodeError, RecursionError):
+        except HTTPError as error:
+            if provider == 'gitlab' and error.code in (401, 403):
+                try:
+                    header = error.headers.get('X-Gitlab-Meta', '')
+                    metadata = json.loads(header) if len(header) <= 1024 else None
+                    if (isinstance(metadata, dict) and metadata.get('version') == '1'
+                            and isinstance(metadata.get('correlation_id'), str) and metadata['correlation_id']):
+                        found.append(provider)
+                except (ValueError, RecursionError):
+                    pass
+        except (URLError, HTTPException, OSError, ValueError, UnicodeError, RecursionError):
             continue
     return dict(provider=found[0] if len(found) == 1 else None,
                 basis='https_capability' if len(found) == 1 else 'unknown', network_used=True)

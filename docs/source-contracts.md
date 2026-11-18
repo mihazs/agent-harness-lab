@@ -5,7 +5,9 @@
 `ahl sources detect CHECKOUT` is available for discovery. GitHub and GitLab
 public hosts are recognized directly. Other hosts receive bounded,
 unauthenticated HTTPS version probes; an unavailable or ambiguous response
-leaves the provider unknown. SSH Git remotes use their host for HTTPS discovery;
+leaves the provider unknown. A GitLab authentication error with its metadata
+header also identifies GitLab; instances that suppress it may remain unknown.
+SSH Git remotes use their host for HTTPS discovery;
 custom SSH aliases may require explicit configuration. When a matching manifest
 names an HTTPS port or path prefix, the probe uses that endpoint; discovery
 without a manifest probes the host root. Credentials

@@ -5,7 +5,7 @@ import os
 import pytest
 
 from agent_harness_lab.cli import main
-from agent_harness_lab.sources.forge_remote import detect
+from agent_harness_lab.sources.forge_remote import _probe, detect
 
 
 def test_real_checkout_forge(capsys):
@@ -17,6 +17,12 @@ def test_real_checkout_forge(capsys):
     assert detect(project)['provider'] == expected
     assert main(['sources', '--project', project]) == 0
     assert json.loads(capsys.readouterr().out)['provider'] == expected
+
+
+def test_real_gitlab_capability_probe():
+    if os.environ.get('AHL_REAL_FORGE_PROVIDER') != 'gitlab' or not os.environ.get('AHL_REAL_FORGE_PROJECT'):
+        pytest.skip('requires an explicitly selected real GitLab checkout')
+    assert _probe('https://gitlab.com')['provider'] == 'gitlab'
 
 
 def test_real_checkout_routes_scoped_manifest(capsys):
