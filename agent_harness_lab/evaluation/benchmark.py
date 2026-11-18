@@ -126,6 +126,11 @@ def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=N
     if (any(not isinstance(v,str) or not v for v in item.values())
             or item['status'] not in ('satisfied','violated','unknown')):
         raise ValueError('trajectory assertion identity/status required')
+    if 'required' in assertion:
+        required = assertion['required']
+        if required is not None and type(required) is not bool:
+            raise ValueError('invalid trajectory required flag')
+        item['required'] = required
     if parent_id is not None:
         try: id_size = len(item['assertion_id'].encode('utf-8'))
         except UnicodeEncodeError: raise ValueError('invalid trajectory child identity') from None

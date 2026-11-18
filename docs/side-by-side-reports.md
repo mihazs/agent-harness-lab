@@ -22,6 +22,7 @@ The input is one JSON object with profile `ahl-side-by-side-experiment-v1`:
 | `resource_decision` | Optional [`resource_decision.decide`](resource-decisions.md) result, shown as supplied |
 | `resource_success_cost` | Optional list of 1 to 64 [`resource_decision.success_cost`](resource-decisions.md#descriptive-cost-per-success) views |
 | `precision_preflight` | Optional [precision preflight](experiment-precision.md) result (`fixed-root-precision-v1`), shown as supplied |
+| `trajectory_results` | Optional private saved trajectory results, with the caller-declared `experiment_id`; claims remain unverified |
 | `provenance` | Read only by an explicit [public export](#public-export): `source_kind`, `approved_publication`, `source_ref` and `derived_from_private` |
 
 A malformed profile, execution kind, hash, plan or analysis object refuses the
@@ -49,6 +50,15 @@ Records without a valid identity, and records with an unknown arm, are listed in
 `invalid_records` by input index. A rejected arm, hash or runtime stratum is
 reported as `null` with its problem code, never copied. A recorded tool error does not change a verdict;
 only the graded outcome does.
+
+When private `trajectory_results` are supplied, a required-assertion claim is
+shown in the review model only after the declared experiment identity matches
+and a unique trial ID, task, root, family, and arm agree on both sides. Missing,
+duplicate or mismatched identities, absent required flags, and no required
+assertions remain unknown. The saved claims are `imported_unverified`: matching
+labels do not authenticate their origin or grant decision authority. The model
+copies no assertion IDs, argument bodies or result bodies from this source.
+Public export refuses an input containing trajectory results.
 
 ## Timelines
 
