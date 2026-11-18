@@ -24,8 +24,25 @@ def test_trajectory_reports_keep_all_trials_assertions_and_long_identifiers():
     assert report['trials'][0]['task'] == first['task']
     assert len(report['trials'][0]['assertions']) == 33
     assert report['trials'][0]['assertions'][-1]['assertion_id'] == assertions[-1]['assertion_id']
+    assert 'required' not in report['trials'][0]['assertions'][0]
     assert report['analysis']['status'] == 'unverified'
     assert not report['publication_allowed']
+
+
+@pytest.mark.parametrize('required', [True, False, None])
+def test_trajectory_summary_preserves_only_a_typed_required_claim(required):
+    assertion = dict(assertion_id='synthetic', assertion_sha256='a' * 64, status='unknown', required=required)
+    report = summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+        task='synthetic', controller_grade=dict(trajectory=dict(assertions=[assertion])))]))
+    assert report['trials'][0]['assertions'][0]['required'] is required
+    assert report['report_authority'] == 'imported_unverified' and not report['publication_allowed']
+
+
+def test_trajectory_required_flag_refuses_non_boolean_claims():
+    assertion = dict(assertion_id='synthetic', assertion_sha256='a' * 64, status='unknown', required='SYNTHETIC_SECRET')
+    with pytest.raises(ValueError, match='invalid trajectory required flag'):
+        summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(
+            task='synthetic', controller_grade=dict(trajectory=dict(assertions=[assertion])))]))
 
 
 def test_trajectory_summary_retains_nested_claims_without_private_arguments():

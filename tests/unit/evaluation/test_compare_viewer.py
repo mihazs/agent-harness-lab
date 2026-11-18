@@ -49,6 +49,34 @@ def test_verdicts_are_text_labels_and_no_color_semantics():
     assert not re.search(r'color|#[0-9a-f]{3,6}', style, re.I) and 'style=' not in document
 
 
+def test_pair_filters_preserve_every_row_and_the_backend_decision():
+    document = page(fixture())
+    assert 'id="pair-filter-all" checked' in document
+    assert 'the backend decision and analysis population stay unchanged' in document
+    for verdict in ('improved', 'regressed', 'unknown'):
+        assert f'id="pair-filter-{verdict}"' in document
+        assert f'<tr data-verdict="{verdict}" data-coverage=' in document
+    assert 'id="pair-filter-missing"' in document
+    assert 'insufficient_independent_roots' in document
+    assert '<script' not in document
+
+
+def test_imported_required_claims_are_labelled_and_missing_remains_unknown():
+    value = fixture()
+    candidate = value['trials'][1]
+    value['trajectory_results'] = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
+        trial_id=candidate['trial_id'], task=candidate['task'], root=candidate['root'], family=candidate['family'],
+        version='candidate', controller_grade=dict(trajectory=dict(assertions=[dict(
+            assertion_id='synthetic', assertion_sha256='a' * 64, status='violated', required=True,
+            arguments='SYNTHETIC_SECRET')])) )])
+    document = page(value)
+    assert 'Required assertions (unverified)' in document
+    assert 'baseline: unknown; candidate: violated' in document
+    assert 'data-assertions="reported_violation"' in document
+    assert 'SYNTHETIC_SECRET' not in document
+    assert 'insufficient_independent_roots' in document
+
+
 def test_event_bodies_never_render():
     value = fixture()
     value['trials'][0]['events'][0]['arguments'] = 'SECRET-BODY'

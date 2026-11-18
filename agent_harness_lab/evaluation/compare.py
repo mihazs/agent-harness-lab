@@ -14,7 +14,14 @@ from . import resource_report, side_by_side as sbs
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 32px;max-width:72rem}'
          'table{border-collapse:collapse;width:100%}th,td{border:1px solid;padding:4px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}'
-         '.scroll{overflow-x:auto}a:focus,summary:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
+         '.scroll{overflow-x:auto}a:focus,summary:focus,input:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
+
+PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchanged', 'Unchanged'),
+                ('unknown', 'Unknown outcome'), ('not_comparable', 'Not comparable'))
+STYLE += ''.join(f'#pair-filter-{name}:checked~.scroll tbody tr:not([data-verdict="{name}"]){{display:none}}'
+                 for name, _ in PAIR_FILTERS)
+STYLE += ('#pair-filter-missing:checked~.scroll tbody tr:not([data-verdict="unknown"])'
+          ':not([data-coverage="gap"]){display:none}')
 
 
 def _e(value):
@@ -25,6 +32,25 @@ def _table(headers, rows):
     head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
     body = ''.join('<tr>' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>' for row in rows)
     return f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+def _pair_table(headers, rows, *, assertions=False):
+    """Filter presentation only; the supplied analysis and pair data stay unchanged."""
+    options = (('all', 'All pairs'), *PAIR_FILTERS, ('missing', 'Missing evidence'))
+    if assertions: options += (('assertions', 'Reported required assertion violations (unverified)'),)
+    controls = ''.join(f'<input type="radio" name="pair-filter" id="pair-filter-{name}"'
+                       + (' checked' if name == 'all' else '')
+                       + f'><label for="pair-filter-{name}">{label}</label> ' for name, label in options)
+    head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
+    body = ''.join(f'<tr data-verdict="{_e(verdict)}" data-coverage="{coverage}"'
+                   + (f' data-assertions="{claim}"' if assertions else '') + '>'
+                   + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
+                   for verdict, coverage, claim, row in rows)
+    rule = ('<style>#pair-filter-assertions:checked~.scroll tbody tr:not([data-assertions="reported_violation"])'
+            '{display:none}</style>' if assertions else '')
+    return (rule + '<div role="group" aria-label="Filter task pairs">' + controls
+            + '<p>Filters change this table only; the backend decision and analysis population stay unchanged.</p>'
+            + f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div></div>')
 
 
 def _arm(pair, arm):
@@ -284,11 +310,17 @@ def render(report):
     usage = [(arm, name, value['known_total'], value['unknown_records'], 'unknown' if value['total'] is None else value['total'])
              for arm, fields in summary['usage'].items() for name, value in fields.items()]
     rows, details = [], []
+    assertions = any('trajectory_claims' in pair for pair in pairs)
     for number, pair in enumerate(pairs):
         reasons = ', '.join(pair['reasons']) or 'none'
-        rows.append((pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
-                     _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons,
-                     'gap' if pair['coverage_gap'] else 'complete'))
+        coverage = 'gap' if pair['coverage_gap'] else 'complete'
+        claims = pair.get('trajectory_claims', {})
+        statuses = [claims.get(arm, {}).get('status', 'unknown') for arm in sbs.ARMS]
+        claim = 'reported_violation' if 'violated' in statuses else 'other'
+        row = (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
+               _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons, coverage)
+        if assertions: row += ('; '.join(f'{arm}: {status}' for arm, status in zip(sbs.ARMS, statuses)),)
+        rows.append((pair['verdict'], coverage, claim, row))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
         truncated = [f"{arm}: {record['events_total']} events, first {len(record['events'])} + {record['invalid_events']} invalid shown"
@@ -319,7 +351,7 @@ def render(report):
             f'<h3>Measured usage (unknown is not zero)</h3>{_table(("Arm", "Field", "Known sum", "Unknown records", "Total"), usage)}'
             + _resource(report) +
             f'<h3>Hashes</h3>{_table(("Identity", "SHA-256"), sorted(report["hashes"].items()))}'
-            f'<h2 id="pairs">Task table</h2>{_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture"), rows)}'
+            f'<h2 id="pairs">Task table</h2>{_pair_table(("Task", "Root", "Family", "Repeat", "Planned", "Baseline", "Candidate", "Status", "Reasons", "Capture") + (("Required assertions (unverified)",) if assertions else ()), rows, assertions=assertions)}'
             f'<h2>Timelines</h2>{"".join(details)}'
             + (f'<h2>Invalid records and mappings</h2>{_table(("Index", "Reason"), invalid)}' if invalid else '')
             + f'<h2>Limitations</h2><ul>{"".join(f"<li>{_e(item)}</li>" for item in limitations)}</ul></body></html>')
