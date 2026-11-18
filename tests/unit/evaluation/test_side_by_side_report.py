@@ -299,6 +299,14 @@ def test_unavailable_required_flags_remain_unknown_and_private():
         sbs.build(value, public=True)
 
 
+def test_trajectory_claim_count_is_bounded_before_projection(monkeypatch):
+    monkeypatch.setattr(sbs, 'MAX_TRIALS', 2)
+    source = dict(trajectory_profile='controller-trajectory-v1', experiment_id='exp-1', trials=[dict(
+        task='t', controller_grade=dict(trajectory=dict(assertions=[{}, {}, {}])))])
+    with pytest.raises(ValueError, match='bounded trajectory assertions'):
+        sbs.build(experiment(ab('t', False, True), trajectory_results=source))
+
+
 @pytest.mark.parametrize('change, message', [
     pytest.param(dict(profile='other'), 'profile', id='profile'),
     pytest.param(dict(execution_kind='guess'), 'execution kind', id='execution-kind'),

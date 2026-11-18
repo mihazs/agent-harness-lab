@@ -194,6 +194,13 @@ def _trajectory_claims(source, experiment_id):
     if source is None: return None
     if not isinstance(source, dict) or not isinstance(source.get('trials'), list) or len(source['trials']) > MAX_TRIALS:
         raise ValueError('bounded trajectory results required')
+    total = 0
+    for trial in source['trials']:
+        grade = trial.get('controller_grade') if isinstance(trial, dict) else None
+        trajectory = grade.get('trajectory') if isinstance(grade, dict) else None
+        assertions = trajectory.get('assertions') if isinstance(trajectory, dict) else None
+        if isinstance(assertions, list): total += len(assertions)
+        if total > MAX_TRIALS: raise ValueError('bounded trajectory assertions required')
     summary = benchmark.trajectory_summary(source)
     index = {}
     if source.get('experiment_id') != experiment_id: return index
