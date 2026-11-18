@@ -30,7 +30,7 @@ def _instant(value):
 def capture(source, *, project_id, start, end, pages, collected_at):
     """Project pages `(request_cursor, status, bytes)` into private evidence and candidate parent links.
 
-    A failed or unfinished sequence is returned as incomplete and cannot advance a checkpoint.
+    A failed or unfinished sequence sets checkpoint_ready false; callers must honor it.
     """
     _id(project_id); timestamp(collected_at)
     lower, upper = _instant(start), _instant(end)
