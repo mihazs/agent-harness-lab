@@ -195,6 +195,11 @@ def validate_receipt(value):
     an authority field other than recommendation only, and a receipt over MAX_BYTES.
     """
     if not isinstance(value, dict) or value.get('profile') != PROFILE or type(value.get('schema_version')) is not int or value.get('schema_version') != 1: _fail('profile')
+    evidence = value.get('mechanism_evidence', {})
+    if (not isinstance(evidence, dict) or len(evidence) > MAX_CARRIED or any(
+            not isinstance(name, str) or not name or len(name) > 128 or not isinstance(digest, str)
+            or len(digest) != 64 or any(char not in '0123456789abcdef' for char in digest)
+            for name, digest in evidence.items())): _fail('mechanism_evidence')
     stop = value.get('stop_criterion')
     if stop not in CRITERIA: _fail('stop_criterion')
     if (value.get('recommendation_only') is not True or value.get('automatic_promotion') is not False
