@@ -37,8 +37,7 @@ def test_synthetic_fixture_reproduces_an_error_and_recovery_without_copying_sour
     for name, content in files.items(): (tmp_path / name).write_text(content)
     run = lambda: subprocess.run([sys.executable, 'synthetic_worker.py'], cwd=tmp_path, capture_output=True, text=True, check=False)
     first = run()
-    assert first.returncode != 0 and json.loads(first.stdout) == {
-        'status': 'error', 'category': 'tool_reported_error', 'hint': 'check configuration'}
+    assert first.returncode != 0 and json.loads(first.stdout) == {'status': 'error', 'category': 'tool_reported_error'}
     assert not (tmp_path / 'result.json').exists()
     (tmp_path / 'config.json').write_text('{"ready": true}')
     assert run().returncode == 0 and json.loads((tmp_path / 'result.json').read_text()) == {'records': [3, 5]}
@@ -53,7 +52,7 @@ def test_changed_input_probe_retries_with_an_option_and_preserves_configuration(
     for name, content in grader_files(mechanism).items(): (oracle / name).write_text(content)
     command = [sys.executable, 'synthetic_worker.py']
     first = subprocess.run(command, cwd=workspace, capture_output=True, text=True, check=False)
-    assert first.returncode != 0 and json.loads(first.stdout)['hint'] == 'use --recover'
+    assert first.returncode != 0 and json.loads(first.stdout)['category'] == 'exit_code'
     assert subprocess.run(command + ['--recover'], cwd=workspace, capture_output=True, check=False).returncode == 0
     grader = [sys.executable, str(oracle / 'grade.py.txt'), str(workspace), str(oracle / 'expected.json')]
     assert subprocess.run(grader, capture_output=True, check=False).returncode == 0
@@ -67,6 +66,14 @@ def test_fixture_refuses_a_follow_up_it_does_not_reproduce():
     with pytest.raises(ValueError, match='no synthetic fixture'): fixture_files(mechanism)
     mechanism.update(error_category='network', next_action={'same_call_retry': 2})
     with pytest.raises(ValueError, match='no synthetic fixture'): fixture_files(mechanism)
+
+
+@pytest.mark.parametrize('follow_up', ['same_call_retry', 'same_tool_changed_input'])
+def test_probe_prompt_does_not_disclose_the_repair(follow_up):
+    mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
+                     next_action={follow_up: 2})
+    prompt = json.loads(fixture_files(mechanism)['task.json'])['prompt']
+    assert '--recover' not in prompt and 'correct' not in prompt and 'retry' not in prompt
 
 
 def test_frozen_grader_requires_recovered_state_and_original_worker(tmp_path):

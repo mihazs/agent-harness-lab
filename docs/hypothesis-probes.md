@@ -53,7 +53,7 @@ ahl hypothesis-probe --brief /private/brief.json --mechanism 0 \
 
 The output directory must be new and separate from the project and snapshots.
 The command runs a cooperative agent twice; the agent's own permissions still apply.
-The development task records a failed synthetic worker attempt and a later successful
+The task asks for the output without prescribing a repair. The development task records a failed synthetic worker attempt and a later successful
 attempt, and the grader checks those records and the final files. This log is written
 inside the agent workspace: it is not an independent or tamper-proof tool trace, and
 does not prove which tool was used. The result describes one synthetic pair only.

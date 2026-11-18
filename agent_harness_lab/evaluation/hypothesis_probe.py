@@ -59,10 +59,8 @@ def fixture_files(mechanism):
             or pattern['error_category'] not in ('tool_reported_error', 'exit_code')):
         raise ValueError('no synthetic fixture for this pattern')
     retry = pattern['follow_up'] == 'same_call_retry'
-    prompt = ('Run python3 synthetic_worker.py. If it fails, inspect the synthetic configuration, '
-              'correct it and run it again.' if retry else
-              'Run python3 synthetic_worker.py. If it fails, read the error and retry with the indicated option.')
-    task = dict(prompt=prompt + ' Leave config.json and result.json as the final artifacts.', pattern=pattern)
+    task = dict(prompt=('Run python3 synthetic_worker.py to produce result.json. '
+                        'Leave config.json and result.json as the final artifacts.'), pattern=pattern)
     worker = '''import json
 from pathlib import Path
 import sys
@@ -72,11 +70,10 @@ ready = %s
 with Path('attempts.jsonl').open('a') as attempts:
     attempts.write(json.dumps({'status': 'success' if ready else 'error'}) + '\\n')
 if not ready:
-    print(json.dumps({'status': 'error', 'category': %r, 'hint': %r}))
+    print(json.dumps({'status': 'error', 'category': %r}))
     raise SystemExit(1)
 Path('result.json').write_text(json.dumps({'records': [3, 5]}) + '\\n')
-''' % ("config.get('ready') is True" if retry else "sys.argv[1:] == ['--recover']",
-       pattern['error_category'], 'check configuration' if retry else 'use --recover')
+''' % ("config.get('ready') is True" if retry else "sys.argv[1:] == ['--recover']", pattern['error_category'])
     encode = lambda value: json.dumps(value, sort_keys=True, separators=(',', ':')) + '\n'
     return {'task.json': encode(task), 'config.json': encode({'ready': False}), 'synthetic_worker.py': worker,
             PROBE_MARKER: encode({'profile': PROBE_PROFILE})}
