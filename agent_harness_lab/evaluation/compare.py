@@ -309,6 +309,10 @@ def render(report):
     counts += [(f'Pairs {name}'.replace('_', ' '), count) for name, count in summary['verdicts'].items()]
     usage = [(arm, name, value['known_total'], value['unknown_records'], 'unknown' if value['total'] is None else value['total'])
              for arm, fields in summary['usage'].items() for name, value in fields.items()]
+    def claim_text(claims, arm, status):
+        reason = claims.get(arm, {}).get('reason')
+        return f'{arm}: {status}' + (f' ({reason.replace("_", " ")})' if status == 'unknown' and isinstance(reason, str) else '')
+
     rows, details = [], []
     assertions = any('trajectory_claims' in pair for pair in pairs)
     for number, pair in enumerate(pairs):
@@ -319,7 +323,7 @@ def render(report):
         claim = 'reported_violation' if 'violated' in statuses else 'other'
         row = (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
                _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons, coverage)
-        if assertions: row += ('; '.join(f'{arm}: {status}' for arm, status in zip(sbs.ARMS, statuses)),)
+        if assertions: row += ('; '.join(claim_text(claims, arm, status) for arm, status in zip(sbs.ARMS, statuses)),)
         gap = 'yes' if 'unknown' in statuses else 'no'
         rows.append((pair['verdict'], coverage, claim, gap, row))
         timeline = pair['timeline']
