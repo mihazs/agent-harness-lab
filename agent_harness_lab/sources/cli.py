@@ -3,46 +3,6 @@ import argparse
 import json
 import sys
 import subprocess
-from .registry import Capability, Registry
-from .schema import PLANES
-from .snapshot import LocalExport
-from .okf import MissingOKFDependency, OKFExport
-from .store import SourceStore
-from .git import GitExport
-from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
-from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
-from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
-from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
-from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
-from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
-from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
-from .mem0 import PROVIDER as MEM0, PLATFORM_PROVIDER as MEM0_PLATFORM, SOURCE_VERSION as MEM0_VERSION, Mem0Export, Mem0PlatformExport
-from .hindsight_model_refs import PROVIDER as HINDSIGHT_REFS, SOURCE_VERSION as HINDSIGHT_REFS_VERSION, HindsightModelReferences
-from .hindsight_models import PROVIDER as HINDSIGHT_MODELS, SOURCE_VERSION as HINDSIGHT_MODELS_VERSION, HindsightModels
-from .hindsight_knowledge import PROVIDER as HINDSIGHT_KNOWLEDGE, SOURCE_VERSION as HINDSIGHT_KNOWLEDGE_VERSION, HindsightKnowledge
-from .hindsight_zip import PROVIDER as HINDSIGHT_ZIP, SOURCE_VERSION as HINDSIGHT_ZIP_VERSION, HindsightZipArchive
-from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
-from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
-from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
-from .opencode_backup import PROVIDER as OPENCODE_BACKUP, SOURCE_VERSION as OPENCODE_BACKUP_VERSION, OpenCodeBackup
-from .execution import capture_snapshot
-from .github_config import GitHubConfigured
-from .gitea import PROVIDER as GITEA, GiteaConfigured
-from .gitlab import PROVIDER as GITLAB, GitLabConfigured
-from .claude_mem_api import PROVIDER as CLAUDE_MEM_WORKER, ClaudeMemWorkerConfigured
-from .hindsight_api import PROVIDER as HINDSIGHT_REST, HindsightRestConfigured
-from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
-from .remote_config import ConfiguredAPI
-from .native import NativeCapture
-from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
-from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
-from agent_harness_lab.config import read_json
-
-# Selected-resource forge readers: connector and the preview summary key each prints.
-FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
-    MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary'),
-    CLAUDE_MEM_WORKER: (ClaudeMemWorkerConfigured, 'claude_mem_summary'),
-    HINDSIGHT_REST: (HindsightRestConfigured, 'hindsight_summary')}
 
 
 def main(argv):
@@ -126,6 +86,47 @@ def main(argv):
     if args.manifest is None and args.remote != 'origin':
         print('a project is required to select a remote', file=sys.stderr)
         return 2
+
+    from .registry import Capability, Registry
+    from .schema import PLANES
+    from .snapshot import LocalExport
+    from .okf import MissingOKFDependency, OKFExport
+    from .store import SourceStore
+    from .git import GitExport
+    from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
+    from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
+    from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
+    from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
+    from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
+    from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
+    from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
+    from .mem0 import PROVIDER as MEM0, PLATFORM_PROVIDER as MEM0_PLATFORM, SOURCE_VERSION as MEM0_VERSION, Mem0Export, Mem0PlatformExport
+    from .hindsight_model_refs import PROVIDER as HINDSIGHT_REFS, SOURCE_VERSION as HINDSIGHT_REFS_VERSION, HindsightModelReferences
+    from .hindsight_models import PROVIDER as HINDSIGHT_MODELS, SOURCE_VERSION as HINDSIGHT_MODELS_VERSION, HindsightModels
+    from .hindsight_knowledge import PROVIDER as HINDSIGHT_KNOWLEDGE, SOURCE_VERSION as HINDSIGHT_KNOWLEDGE_VERSION, HindsightKnowledge
+    from .hindsight_zip import PROVIDER as HINDSIGHT_ZIP, SOURCE_VERSION as HINDSIGHT_ZIP_VERSION, HindsightZipArchive
+    from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
+    from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
+    from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
+    from .opencode_backup import PROVIDER as OPENCODE_BACKUP, SOURCE_VERSION as OPENCODE_BACKUP_VERSION, OpenCodeBackup
+    from .execution import capture_snapshot
+    from .github_config import GitHubConfigured
+    from .gitea import PROVIDER as GITEA, GiteaConfigured
+    from .gitlab import PROVIDER as GITLAB, GitLabConfigured
+    from .claude_mem_api import PROVIDER as CLAUDE_MEM_WORKER, ClaudeMemWorkerConfigured
+    from .hindsight_api import PROVIDER as HINDSIGHT_REST, HindsightRestConfigured
+    from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
+    from .remote_config import ConfiguredAPI
+    from .native import NativeCapture
+    from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
+    from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
+    from agent_harness_lab.config import read_json
+
+    # Selected-resource forge readers: connector and the preview summary key each prints.
+    FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
+        MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary'),
+        CLAUDE_MEM_WORKER: (ClaudeMemWorkerConfigured, 'claude_mem_summary'),
+        HINDSIGHT_REST: (HindsightRestConfigured, 'hindsight_summary')}
 
     connector = None
     discovery = None
