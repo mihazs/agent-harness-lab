@@ -5,7 +5,9 @@ from unittest.mock import patch
 import pytest
 
 from agent_harness_lab.sources.langfuse import MAX_PAGE_BYTES, VERSION, capture
+from agent_harness_lab.sources.registry import Capability, Registry
 from agent_harness_lab.sources.schema import SourceSpec, digest
+from agent_harness_lab.sources.store import SourceStore
 
 PROJECT = 'synthetic-project'
 START, END = '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'
@@ -65,6 +67,30 @@ def test_repeated_capture_with_a_different_collection_time_has_the_same_snapshot
     later = capture_(pages, collected_at='2026-01-04T00:00:00Z')
     assert first.records[0].collected_at != later.records[0].collected_at
     assert first.sha256 == later.sha256
+
+
+def test_registry_rejects_incomplete_pages_and_deduplicates_a_repeated_capture(tmp_path):
+    class SuppliedPages:
+        pages = [(None, 200, page([row('one')]))]
+        collected = COLLECTED
+
+        def read(self, selected):
+            return capture(selected, project_id=PROJECT, start=START, end=END, collected_at=self.collected, pages=self.pages)
+
+    selected, connector = source(), SuppliedPages()
+    scope = dict(project_sha256=selected.project_sha256, scope_sha256=selected.scope_sha256)
+    store = SourceStore(tmp_path / 'journal.json', **scope)
+    registry = Registry()
+    registry.register(Capability('api', 'langfuse', VERSION, ('behavioral_event',)), connector)
+    first = registry.ingest(selected, store, **scope)
+    connector.collected = '2026-01-04T00:00:00Z'
+    second = registry.ingest(selected, store, **scope)
+    assert first.imported == 1 and second.imported == 0 and second.skipped == 1
+    assert first.cursor_after_sha256 == second.cursor_after_sha256
+    before = store.path.read_bytes()
+    connector.pages = [(None, 429, b'private error')]
+    with pytest.raises(ValueError, match='not ready'): registry.ingest(selected, store, **scope)
+    assert store.path.read_bytes() == before and SECRET.encode() not in before
 
 
 @pytest.mark.parametrize('pages', [[], [(None, 200, page([], 'next'))], [(None, 429, b'private error')]])
