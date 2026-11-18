@@ -1,7 +1,7 @@
 """Map the declared lifecycle and validity fields of knowledge pages to temporal facets; never authority.
 
-facets() reads `status`, `valid_from`, `valid_until`, `stale_after`, `open_ended`, `supersedes` and `superseded_by`
-from the metadata of pages an authorized caller already holds, such as `knowledge_bundle.read(...).pages`, and
+facets() reads `status`, `valid_from`, `valid_until`, `stale_after`, `open_ended`, `scope`, `supersedes` and
+`superseded_by` from the metadata of pages an authorized caller already holds, such as `knowledge_bundle.read(...).pages`, and
 returns one `TemporalFacet` per usable page for `temporal.resolve`. Knowledge time comes only from the caller's `recorded_at`,
 never from a timestamp the page declares about itself. A page whose declared field cannot be read is left out and
 reported as a finding instead of being guessed, so it is never reported in force. A reference to a page the
@@ -22,6 +22,8 @@ MAX_PAGES = 10_000
 MAX_REFS = 100
 MAX_REF_CHARS = 2048
 MAX_TIME_CHARS = 64
+MAX_SCOPES = 32
+MAX_SCOPE_CHARS = 128
 # Author-declared words to the resolver's decision statuses; any other word is not guessed.
 DECISION = dict(proposed='proposed', draft='proposed', accepted='accepted', stable='accepted',
                 rejected='rejected', deprecated='deprecated', superseded='superseded')
@@ -43,6 +45,19 @@ class Facets:
 def ref(source_sha256, page):
     """The exact record reference of one page revision, as `OKFExport.read` keys the stored record."""
     return RecordRef(source_sha256, digest(page.path), page.sha256)
+
+
+def scope_ref(name):
+    """The fingerprint a resolver query passes for one declared scope text; the text itself is never kept."""
+    return digest(dict(scope=name))
+
+
+def _scopes(value):
+    items = [value] if isinstance(value, str) else value
+    if not isinstance(items, list) or not 0 < len(items) <= MAX_SCOPES or not all(
+            isinstance(i, str) and 0 < len(i) <= MAX_SCOPE_CHARS and not any(ord(c) < 32 for c in i) for i in items):
+        raise ValueError('unreadable declared scope')
+    return tuple(dict.fromkeys(scope_ref(i) for i in items))
 
 
 def _time(value):
@@ -90,6 +105,9 @@ def facets(pages, source_sha256, recorded_at=None):
         flag = page.metadata.get('open_ended', False)
         if type(flag) is bool: values['open_ended'] = flag
         else: bad.append('open_ended_unreadable')
+        if page.metadata.get('scope') is not None:
+            try: values['scopes'] = _scopes(page.metadata['scope'])
+            except ValueError: bad.append('scope_unreadable')
         status = page.metadata.get('status')
         if status is None: values['decision_status'] = 'unspecified'
         elif isinstance(status, str) and status in DECISION: values['decision_status'] = DECISION[status]

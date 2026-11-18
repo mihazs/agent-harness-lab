@@ -8,6 +8,8 @@ unparseable or timezone-less times, supersession cycles, ambiguous revisions and
 successors stay unknown with reasons. Declared validity is an author claim, not verified truth.
 A declared `stale_after` is reported as a separate freshness per row (`current`, `stale` or `unknown`); it
 never changes the validity status, and an absent or unreadable one is never reported current.
+A facet may declare the scopes it applies to; a query names one scope, and a record that declares other
+scopes is left out of that view while one that declares none stays unknown, never "applies everywhere".
 """
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ STATUSES = ('in_force', 'superseded', 'not_yet_valid', 'expired', 'not_adopted',
 DECISIONS = ('unspecified', 'proposed', 'accepted', 'rejected', 'deprecated', 'superseded')
 KNOWLEDGE = ('historical', 'as_known_now')
 TIMES = ('recorded_at', 'valid_from', 'valid_until', 'stale_after')
+MAX_SCOPES = 32
 
 
 def declared_time(value):
@@ -35,7 +38,7 @@ def declared_time(value):
 
 @dataclass(frozen=True)
 class TemporalFacet(Contract):
-    """Declared knowledge time, effective interval, decision status, supersession and staleness date of one revision."""
+    """Declared knowledge time, effective interval, decision status, supersession, staleness date and scopes of one revision."""
     record: RecordRef
     recorded_at: str | None = None
     valid_from: str | None = None
@@ -45,6 +48,7 @@ class TemporalFacet(Contract):
     supersedes: tuple = ()
     superseded_by: tuple = ()
     stale_after: str | None = None
+    scopes: tuple = ()
     schema_version: int = 1
 
     def __post_init__(self):
@@ -60,11 +64,16 @@ class TemporalFacet(Contract):
             frozen(getattr(self, name), RecordRef)
             if len({r.key for r in getattr(self, name)}) != len(getattr(self, name)):
                 raise ValueError('duplicate supersession declaration')
+        if type(self.scopes) is not tuple or len(self.scopes) > MAX_SCOPES or len(set(self.scopes)) != len(self.scopes):
+            raise ValueError('scopes must be at most %d distinct fingerprints' % MAX_SCOPES)
+        for scope in self.scopes: fingerprint(scope)
 
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value); value['record'] = RecordRef.parse(value['record'])
         for name in ('supersedes', 'superseded_by'): value[name] = objects(value[name], RecordRef)
+        if not isinstance(value['scopes'], (list, tuple)): raise ValueError('scopes must be a list')
+        value['scopes'] = tuple(value['scopes'])
         return cls(**value)
 
 
@@ -139,6 +148,13 @@ def freshness(facet, instant):
     return ('stale', 'at_or_after_declared_stale_after') if due <= instant else ('current', 'before_declared_stale_after')
 
 
+def applies(facet, scope):
+    """(True|False|None, reason): whether the record's declared scopes cover the queried scope; None when that is unknown."""
+    if scope is None: return (None, 'scope_not_requested') if facet.scopes else (True, None)
+    if not facet.scopes: return None, 'scope_undeclared'
+    return scope in facet.scopes, None
+
+
 def effective(facet, instant):
     """Whether an adopted successor's declared start has been reached; None when it is unknown."""
     if facet.decision_status in ('proposed', 'rejected'): return False
@@ -146,14 +162,16 @@ def effective(facet, instant):
     return None if problem else start <= instant
 
 
-def resolve(facets, at, *, revisions=(), knowledge='historical'):
-    """Resolve declared validity at instant `at`.
+def resolve(facets, at, *, revisions=(), knowledge='historical', scope=None):
+    """Resolve declared validity at instant `at`, for the one scope fingerprint `scope` when given.
 
     `revisions` are store revision edges `[source, native_id, before, after]`; a later revision
     supersedes an earlier one with the same rules as a declared successor. Ties between
     revisions or successors are resolved only by explicit declarations, never by arrival order.
+    A record whose declared scopes exclude `scope` is listed under `out_of_scope`, and its supersessions do not apply.
     """
     timestamp(at); instant = datetime.fromisoformat(at)
+    if scope is not None: fingerprint(scope)
     if knowledge not in KNOWLEDGE: raise ValueError('unsupported knowledge view')
     facets, revisions = tuple(facets), tuple(revisions); frozen(facets, TemporalFacet)
     index = {}
@@ -169,15 +187,19 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
     for key, facet in index.items():
         edges.extend((r.key, key, key, 'declared') for r in facet.supersedes)
         edges.extend((key, r.key, key, 'declared') for r in facet.superseded_by)
-    recorded, future, structural = {}, set(), {}
+    recorded, future, out, structural = {}, set(), set(), {}
     for key, facet in index.items():
         when, problem = declared_time(facet.recorded_at); recorded[key] = when
         if knowledge == 'historical':
             if problem: structural.setdefault(key, set()).add('recorded_at_'+problem)
             elif when > instant: future.add(key)
+        fits, why = applies(facet, scope)
+        if fits is None: structural.setdefault(key, set()).add(why)
+        elif not fits and key not in future: out.add(key)
     adjacency, blocked, dangling = {}, {}, set()
     for before, after, declarer, kind in edges:
-        if declarer in future or before in future: continue
+        if declarer in future or before in future or before in out: continue
+        if kind == 'declared' and declarer in out: continue
         if before not in index:
             if kind == 'declared': dangling.add((before, after, 'missing_predecessor'))
             continue
@@ -186,17 +208,28 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
             blocked.setdefault(before, set()).add('successor_without_temporal_facet'); continue
         if after in future:
             blocked.setdefault(before, set()).add('successor_not_known_at_instant'); continue
+        if after in out:
+            # A declared successor for another scope does not apply here; an edit that leaves the scope is not a no-op.
+            if kind == 'revision': blocked.setdefault(before, set()).add('revision_scope_changed')
+            continue
         adjacency.setdefault(before, set()).add(after)
+    # Ordering only: a revision edge through an out-of-scope revision still orders its record's revisions;
+    # supersession (adjacency) does not apply across the scope change.
+    order = {k: set(v) for k, v in adjacency.items()}
+    for before, after, _, kind in edges:
+        if kind == 'revision' and (before in out or after in out) and before in index and after in index \
+                and not {before, after} & future:
+            order.setdefault(before, set()).add(after)
     conflicts = []
     for members in cyclic(adjacency):
         conflicts.append(dict(kind='supersession_cycle', members=[ref(k) for k in members]))
         for key in members: structural.setdefault(key, set()).add('supersession_cycle')
     groups = {}
-    for key in sorted(index.keys()-future): groups.setdefault(key[:2], []).append(key)
+    for key in sorted(index.keys()-future-out): groups.setdefault(key[:2], []).append(key)
     for _, members in sorted(groups.items()):
         # A revision is a leaf of its record unless another revision of the same record is reachable from it;
         # edges to other records do not order revisions of this record.
-        leaves = [k for k in members if not any(o != k and reaches(adjacency, k, o) for o in members)]
+        leaves = [k for k in members if not any(o != k and reaches(order, k, o) for o in members)]
         if len(leaves) > 1:
             conflicts.append(dict(kind='ambiguous_revisions', members=[ref(k) for k in leaves]))
             for key in leaves: structural.setdefault(key, set()).add('ambiguous_revisions')
@@ -210,7 +243,7 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
             conflicts.append(dict(kind='competing_successors', predecessor=ref(before), members=[ref(k) for k in rivals]))
     conflicts.sort(key=lambda row: json.dumps(row, sort_keys=True))
     rows = []
-    for key in sorted(index.keys()-future):
+    for key in sorted(index.keys()-future-out):
         successors = sorted(adjacency.get(key, ()))
         if key in structural: status, reasons = 'unknown', sorted(structural[key])
         elif key in competing: status, reasons = 'unknown', ['competing_successors']
@@ -226,11 +259,11 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
         fresh, why = freshness(index[key], instant)
         rows.append(dict(record=ref(key), status=status, reasons=reasons, successors=[ref(s) for s in successors],
                          freshness=fresh, freshness_reason=why))
-    inputs = dict(at=at, knowledge=knowledge, facets=sorted((f.to_dict() for f in facets), key=digest),
+    inputs = dict(at=at, knowledge=knowledge, scope=scope, facets=sorted((f.to_dict() for f in facets), key=digest),
                   revisions=sorted(list(e) for e in revisions))
     return dict(schema_version=1, profile=PROFILE, as_of=at, knowledge=knowledge,
-        retrospective=knowledge == 'as_known_now', inputs_sha256=digest(inputs), records=rows,
-        not_known_at_instant=[ref(k) for k in sorted(future)],
+        retrospective=knowledge == 'as_known_now', scope_requested=scope is not None, inputs_sha256=digest(inputs),
+        records=rows, not_known_at_instant=[ref(k) for k in sorted(future)], out_of_scope=[ref(k) for k in sorted(out)],
         dangling=[dict(predecessor=ref(b), successor=ref(a), reason=r) for b, a, r in sorted(dangling)],
         conflicts=conflicts, counts={s: n for s, n in sorted(Counter(r['status'] for r in rows).items())},
         freshness_counts={s: n for s, n in sorted(Counter(r['freshness'] for r in rows).items())},
@@ -238,7 +271,7 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
         task_outcomes_verified=False, execution_authorized=False, publication_allowed=False)
 
 
-def resolve_store(store, facets, at, *, knowledge='historical'):
+def resolve_store(store, facets, at, *, knowledge='historical', scope=None):
     """Resolve facets bound to present revisions of one validated SourceStore journal snapshot."""
     state, raw = store.read_snapshot()
     present = {(r['source_sha256'], r['native_id_sha256'], r['revision_sha256']): r['state']
@@ -246,6 +279,6 @@ def resolve_store(store, facets, at, *, knowledge='historical'):
     facets = tuple(facets); frozen(facets, TemporalFacet)
     if any(present.get(f.record.key) != 'present' for f in facets):
         raise ValueError('temporal facets must describe present revisions in the selected journal')
-    result = resolve(facets, at, revisions=state['supersessions'], knowledge=knowledge)
+    result = resolve(facets, at, revisions=state['supersessions'], knowledge=knowledge, scope=scope)
     result['cache_sha256'] = hashlib.sha256(raw).hexdigest()
     return result

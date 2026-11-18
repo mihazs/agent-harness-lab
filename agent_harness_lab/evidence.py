@@ -367,10 +367,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     seen_cases.add(case)
                     if 'source_order_profile' in event: ordered_cases.add(case)
                     if event['activity'] in ('tool_call', 'tool_result'): tool_events[0] += 1; tool_events[1] += 'tool_name' not in event
-                if not pinned: event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
+                if not pinned: event['case_id'] = hashlib.sha256((source_id + ':' + case).encode('utf-8', 'surrogatepass')).hexdigest()
                 if not pinned and fmt in ('codex', 'claude'):
                     root = event.get('root_case_id', case)
-                    event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
+                    event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode('utf-8', 'surrogatepass')).hexdigest()
                 tool_error = event.get('execution_status') == 'error'
                 # The pinned Claude adapter derives source order from capture_order, the hashed block index and the
                 # file read, so it stays out of that fingerprint. Caller-supplied ledgers declare it, so it is hashed.

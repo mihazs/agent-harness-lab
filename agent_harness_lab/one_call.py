@@ -53,6 +53,8 @@ def preflight(args):
     if args.agent == 'responses' and getattr(args, 'inherit_env', False):
         return 'responses_inherit_env_unsupported'
     settings = getattr(args, 'project_settings', None)
+    if getattr(args, 'area', None) and (not settings or pinned_bank(args) is None):
+        return 'area_selection_requires_pinned_bank'
     if settings:
         from .evaluation.manifest_contract import ContractError
         from .evaluation.task_bank import validate
@@ -77,11 +79,19 @@ def preflight(args):
                 return 'configured_bank_cannot_combine_with_managed_experiment'
             if reviewed.get('admission') is not None:
                 return 'configured_managed_bank_requires_controlled_workflow'
-            partitions = reviewed['partitions']
+            partitions, tasks, selected = reviewed['partitions'], reviewed['tasks'], tuple(getattr(args, 'area', None) or ())
             if not ((partitions['development'] or partitions['construction']) and partitions['calibration']
                     and (partitions['certification'] or partitions['transfer'])):
                 return 'configured_bank_requires_development_regression_and_heldout'
-            if args.trial_limit < 1 + 2 * reviewed['tasks']:
+            if selected:  # --area runs only the bank tasks that carry a selected area, in the budget and partitions of their own (#798)
+                from .evaluation.areas import check_selection, select_tasks
+                declared = [entry['id'] for entry in settings.get('areas', [])]
+                check_selection(selected, declared, stage='improve_selection')
+                args._area_tasks, kept = select_tasks(json.loads(config.bank_path(args.project, settings).read_text())['tasks'], declared, selected)
+                tasks = len(args._area_tasks)
+                if not ((kept.get('development') or kept.get('construction')) and kept.get('calibration') and (kept.get('certification') or kept.get('transfer'))):
+                    return 'area_selection_requires_development_regression_and_heldout'
+            if args.trial_limit < 1 + 2 * tasks:
                 return 'configured_bank_shared_trial_budget_exhausted'
     if args.agent == 'auto':
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]

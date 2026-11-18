@@ -7,8 +7,8 @@ import pytest
 
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.sources.execution import RecordRef
-from agent_harness_lab.sources.knowledge_facets import (DECISION, MAX_PAGES, MAX_REFS, PROFILE, FacetLimit, facets, ref,
-    summary)
+from agent_harness_lab.sources.knowledge_facets import (DECISION, MAX_PAGES, MAX_REFS, MAX_SCOPE_CHARS, MAX_SCOPES, PROFILE,
+    FacetLimit, facets, ref, scope_ref, summary)
 from agent_harness_lab.sources.okf import Page
 from agent_harness_lab.sources.schema import digest
 from agent_harness_lab.sources.temporal import DECISIONS
@@ -65,11 +65,42 @@ def test_every_mapped_decision_is_a_resolver_decision_status():
     pytest.param('supersedes', 'supersedes_unreadable', ['b.md', 3], id='supersedes-non-text-item'),
     pytest.param('superseded_by', 'superseded_by_unreadable', ['b%d.md' % n for n in range(MAX_REFS+1)], id='superseded-by-oversized'),
     pytest.param('superseded_by', 'superseded_by_unreadable', 7, id='superseded-by-number'),
+    pytest.param('scope', 'scope_unreadable', '', id='scope-empty'),
+    pytest.param('scope', 'scope_unreadable', 3, id='scope-number'),
+    pytest.param('scope', 'scope_unreadable', {'version': '2'}, id='scope-mapping'),
+    pytest.param('scope', 'scope_unreadable', ['v1', 4], id='scope-non-text-item'),
+    pytest.param('scope', 'scope_unreadable', ['v1', ''], id='scope-empty-item'),
+    pytest.param('scope', 'scope_unreadable', 'x'*(MAX_SCOPE_CHARS+1), id='scope-oversized'),
+    pytest.param('scope', 'scope_unreadable', 'v1\nv2', id='scope-control-character'),
+    pytest.param('scope', 'scope_unreadable', ['v%d' % n for n in range(MAX_SCOPES+1)], id='scope-too-many'),
+    pytest.param('scope', 'scope_unreadable', [], id='scope-empty-list'),
 ])
 def test_a_field_that_cannot_be_read_withholds_the_page_instead_of_guessing(field, reason, value):
     result = facets([page('bad.md', **{field: value}), page('good.md', status='accepted')], SOURCE)
     assert [f.record for f in result.facets] == [ref(SOURCE, page('good.md'))]
     assert result.withheld == ('bad.md',) and ('bad.md', reason) in result.findings
+
+
+@pytest.mark.parametrize('declared, names', [
+    pytest.param('version-2', ['version-2'], id='one-text'),
+    pytest.param(['version-1', 'version-2'], ['version-1', 'version-2'], id='list-keeps-the-declared-order'),
+    pytest.param(['version-1', 'version-1'], ['version-1'], id='duplicates-collapse'),
+    pytest.param('x'*MAX_SCOPE_CHARS, ['x'*MAX_SCOPE_CHARS], id='at-the-length-bound'),
+    pytest.param(['v%d' % n for n in range(MAX_SCOPES)], ['v%d' % n for n in range(MAX_SCOPES)], id='at-the-count-bound'),
+])
+def test_a_declared_scope_maps_to_fingerprints_and_never_keeps_its_text(declared, names):
+    facet, result = one(scope=declared)
+    assert facet.scopes == tuple(scope_ref(n) for n in names) and result.findings == ()
+    assert all(n not in json.dumps(facet.to_dict()) for n in names)
+
+
+def test_a_page_without_a_scope_declares_none():
+    facet, _ = one(project='synthetic-project', workspace='synthetic-workspace')
+    assert facet.scopes == ()
+
+
+def test_the_scope_fingerprint_is_the_one_a_caller_queries_with():
+    assert scope_ref('version-2') == digest(dict(scope='version-2')) != scope_ref('Version-2')
 
 
 def test_one_page_with_several_unreadable_fields_reports_each_reason():

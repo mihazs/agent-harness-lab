@@ -5,14 +5,14 @@ aligns timelines by stable event IDs or explicit mappings only. Events are
 projected onto an allowlist of metadata fields, so message bodies, tool
 arguments/results and reasoning never reach the report. Missing data is unknown,
 not failure; a supplied backend analysis is copied verbatim, never recomputed. A supplied resource
-decision or cost-per-success view is validated, then copied the same way (#124). A public export is a separate,
+decision, cost-per-success view or precision preflight is validated, then copied the same way (#124, #9). A public export is a separate,
 explicit mode: it needs the #16 provenance declaration and drops events and event mappings.
 """
 from collections import Counter
 import json
 import math
 
-from . import benchmark, resource_report
+from . import benchmark, precision_report, resource_report
 from .regressions import sha256
 
 PROFILE = 'ahl-side-by-side-experiment-v1'
@@ -182,6 +182,8 @@ def _public_inputs(experiment):
         raise ValueError('the supplied analysis is labelled private; public export refuses private-derived aggregates')
     if experiment.get('resource_decision') is not None or experiment.get('resource_success_cost') is not None:
         raise ValueError('resource decisions and cost views are private resource material and cannot be exported')
+    if experiment.get('precision_preflight') is not None:
+        raise ValueError('a precision preflight is private planning material and cannot be exported')
     return declared
 
 
@@ -207,6 +209,7 @@ def build(experiment, *, public=False):
     resource = {name: None if experiment.get(key) is None else check(experiment[key])
                 for name, key, check in (('decision', 'resource_decision', resource_report.decision),
                                          ('success_cost', 'resource_success_cost', resource_report.success_costs))}
+    precision = None if experiment.get('precision_preflight') is None else precision_report.preflight(experiment['precision_preflight'])
     declared = _public_inputs(experiment) if public else None
     grouped, invalid_records = {key: {arm: [] for arm in ARMS} for key in planned}, []
     for index, raw in enumerate(trials_raw):
@@ -250,6 +253,7 @@ def build(experiment, *, public=False):
         analysis=analysis, analysis_source='supplied_verbatim' if analysis is not None else 'not_supplied',
         resource_decision=resource['decision'], resource_success_cost=resource['success_cost'],
         resource_source='supplied_verbatim' if any(value is not None for value in resource.values()) else 'not_supplied',
+        precision_preflight=precision, precision_source='supplied_verbatim' if precision is not None else 'not_supplied',
         pooled_treatment_effect=None, causal_attribution='none', publication='explicit_public_export' if public else 'private',
         publication_allowed=False, automatic_promotion=False, trace_bodies='omitted_metadata_only',
         bounds=dict(max_trials=MAX_TRIALS, max_events_per_trial=MAX_EVENTS, max_mappings=MAX_MAPPINGS, max_text=MAX_TEXT),

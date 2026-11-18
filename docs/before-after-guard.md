@@ -9,6 +9,10 @@ frozen inputs, and for what it records when the candidate is worse. The same
 instead of the bare `evaluation_failed` (default lane) or the `candidate_not_supported`
 recommendation (fixed lane) it ended with before.
 
+A project that declares capability areas also gets a per-area gate beside this verdict: a candidate whose pooled
+delta is above the margin but that regressed a scored area ends `blocked` with reason `area_regressed` in a
+`--single-pass` run, and stops the default loop with `loop_regression`; see the [area gate reference](area-gate-reference.md#where-it-applies).
+
 Everything here is an observed pattern. No verdict grants recommendation, adoption,
 promotion or publication authority; `adoption_authority`, `automatic_promotion` and
 `publication_allowed` are always `false`, and the block is private like every receipt.

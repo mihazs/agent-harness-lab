@@ -741,7 +741,8 @@ def _improve(args):
     if bank is not None:
         from .evaluation.bank_tools import export_manifest
         from .evaluation.task_bank import validate as validate_bank
-        bank_manifest = export_manifest(bank, prepare/'evaluation-0', max_trials=2*validate_bank(bank)['tasks'])
+        chosen = getattr(args, '_area_tasks', None)  # the --area selection, or None for the whole bank
+        bank_manifest = export_manifest(bank, prepare/'evaluation-0', max_trials=2*(validate_bank(bank)['tasks'] if chosen is None else len(chosen)), task_ids=chosen)
         if bank_manifest['bank_digest'] != args.project_settings['bank']['sha256']:
             raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
@@ -1247,6 +1248,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 grader_sha256=grader_fingerprint(manifest_path, portable=True), seed_schedule_sha256=before_after.schedule_sha256(manifest['tasks']),
                 budget_share=dict(trials=len(manifest['tasks'])), runtime_sha256=runtime_sha256),
             vacuity=labels,
+            areas=dict(declared=[entry['id'] for entry in args.project_settings['areas']], selected=list(getattr(args, 'area', None) or ()))
+                if bank is not None and args.project_settings.get('areas') else None,
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
