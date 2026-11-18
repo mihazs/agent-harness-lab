@@ -32,10 +32,15 @@ def run(root, python, test_filter=''):
     root = Path(root)
     test_file = root / 'tests/integration/sandbox/test_sandbox_kernel.py'
     pytest = [python, '-m', 'pytest', '-c', str(root / 'pyproject.toml')]
+    def scoped(args):
+        return ['systemd-run', '--user', '--scope', '--collect', '--quiet', '--expand-environment=no',
+                f'--unit=ahl-sandbox-test-{uuid.uuid4()}', '--property=Delegate=cpu memory pids',
+                '--property=TasksMax=64', '--property=MemoryMax=512M', '--property=RuntimeMaxSec=90',
+                '--', *pytest, *args]
     if test_filter:
         groups = [[str(test_file), '-k', test_filter]]
     else:
-        collected = subprocess.run([*pytest, str(test_file), '--collect-only', '-q'], text=True, capture_output=True, check=False)
+        collected = subprocess.run(scoped([str(test_file), '--collect-only', '-q']), text=True, capture_output=True, check=False)
         if collected.returncode:
             print(collected.stdout + collected.stderr, file=sys.stderr)
             return collected.returncode
@@ -45,10 +50,7 @@ def run(root, python, test_filter=''):
             print(str(error), file=sys.stderr)
             return 2
     for group in groups:
-        command = ['systemd-run', '--user', '--scope', '--collect', '--quiet', '--expand-environment=no',
-                   f'--unit=ahl-sandbox-test-{uuid.uuid4()}', '--property=Delegate=cpu memory pids',
-                   '--property=TasksMax=64', '--property=MemoryMax=512M', '--property=RuntimeMaxSec=90',
-                   '--', *pytest, *group, '-v']
+        command = scoped([*group, '-v'])
         result = subprocess.run(command, check=False)
         if result.returncode:
             return result.returncode

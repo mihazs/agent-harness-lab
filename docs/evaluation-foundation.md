@@ -161,7 +161,7 @@ These controls follow the [kernel cgroup v2 interface](https://docs.kernel.org/a
 Native synthetic control-file tests validate setup, pre-exec failure, accounting
 and cleanup failure handling; they do not establish kernel enforcement. Separate
 real kernel canaries are opt-in. On a Linux host with a systemd user manager, run
-`task test:sandbox:kernel`: it collects every canary and creates disposable foreground
+`task test:sandbox:kernel`: it collects every canary in a bounded disposable scope and creates disposable foreground
 user scopes with memory/process/runtime ceilings, delegating cpu/memory/pids only
 for each scope. It groups tests by class and splits the longer regression-draft
 class by test; each scope retains the 90-second limit. A filtered invocation keeps

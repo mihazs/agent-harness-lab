@@ -41,10 +41,12 @@ def test_unfiltered_run_uses_bounded_scopes_and_stops_on_failure(monkeypatch, tm
     monkeypatch.setattr(run_kernel_scopes.subprocess, 'run', fake)
     assert run_kernel_scopes.run(tmp_path, '/python') == 143
     assert len(commands) == 3
-    for command in commands[1:]:
+    for command in commands:
         assert '--property=RuntimeMaxSec=90' in command
         assert '--property=MemoryMax=512M' in command and '--property=TasksMax=64' in command
-        assert '--expand-environment=no' in command and command[-1] == '-v'
+        assert '--expand-environment=no' in command
+    assert commands[0][-2:] == ['--collect-only', '-q']
+    assert all(command[-1] == '-v' for command in commands[1:])
     assert any('TestNamespaceKernel' in value for value in commands[1])
     assert any('TestRegressionDraftKernel::test_two' in value for value in commands[2])
 
