@@ -42,7 +42,7 @@ def test_unfiltered_run_uses_bounded_scopes_and_stops_on_failure(monkeypatch, tm
     assert run_kernel_scopes.run(tmp_path, '/python') == 143
     assert len(commands) == 3
     for command in commands:
-        assert '--property=RuntimeMaxSec=90' in command
+        assert '--property=RuntimeMaxSec=300' in command and '--property=CPUQuota=40%' in command
         assert '--property=MemoryMax=512M' in command and '--property=TasksMax=64' in command
         assert '--expand-environment=no' in command
     assert commands[0][-2:] == ['--collect-only', '-q']

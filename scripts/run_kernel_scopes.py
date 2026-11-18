@@ -18,7 +18,7 @@ def selections(output, test_file):
         if len(parts) != 3 or not re.fullmatch(r'Test\w+', parts[1]) or not re.match(r'^test_\w+(?:\[|$)', parts[2]):
             raise ValueError('unsupported kernel test collection')
         selection = f'{test_file}::{parts[1]}'
-        # The regression-draft class exceeds the 90-second cap as a group.
+        # The regression-draft class exceeds the original 90-second cap as a group.
         if parts[1] == 'TestRegressionDraftKernel':
             selection += '::' + parts[2].split('[', 1)[0]
         if selection not in groups:
@@ -35,7 +35,7 @@ def run(root, python, test_filter=''):
     def scoped(args):
         return ['systemd-run', '--user', '--scope', '--collect', '--quiet', '--expand-environment=no',
                 f'--unit=ahl-sandbox-test-{uuid.uuid4()}', '--property=Delegate=cpu memory pids',
-                '--property=TasksMax=64', '--property=MemoryMax=512M', '--property=RuntimeMaxSec=90',
+                '--property=TasksMax=64', '--property=MemoryMax=512M', '--property=CPUQuota=40%', '--property=RuntimeMaxSec=300',
                 '--', *pytest, *args]
     if test_filter:
         groups = [[str(test_file), '-k', test_filter]]
