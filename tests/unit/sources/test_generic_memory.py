@@ -108,3 +108,25 @@ def test_mapping_mutated_after_construction_fails_closed(export):
     connector.fields['revision'] = connector.fields['id']
     with pytest.raises(ValueError, match='identity mapping'):
         connector.read(source)
+
+
+def test_transient_mapping_change_does_not_redirect_later_rows(export, monkeypatch):
+    from agent_harness_lab.sources import generic_memory
+
+    source, path, factory = export
+    rows = [dict(id='one', other='wrong-one', rev='r1', project='project', namespace='namespace'),
+            dict(id='two', other='wrong-two', rev='r2', project='project', namespace='namespace')]
+    path.write_text(json.dumps(rows))
+    connector = factory()
+    original_digest = generic_memory.digest
+    count = 0
+    def mutate(value):
+        nonlocal count
+        if isinstance(value, dict) and 'id' in value:
+            count += 1
+            connector.fields['id'] = 'other' if count == 1 else 'id'
+        return original_digest(value)
+    monkeypatch.setattr(generic_memory, 'digest', mutate)
+    snapshot = connector.read(source)
+    assert {record.native_id_sha256 for record in snapshot.records} == {
+        digest(('namespace', 'one')), digest(('namespace', 'two'))}

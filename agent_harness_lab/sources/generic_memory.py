@@ -40,19 +40,21 @@ class GenericMemoryExport(LocalExport):
             raise ValueError('mapped identity fields must be distinct')
 
     def read(self, source):
-        if (self.format not in ('json', 'jsonl') or not isinstance(self.fields, dict) or set(self.fields) != {'id', 'revision', 'project', 'namespace'}
-                or len({_text(value) for value in self.fields.values()}) != 4):
+        if not isinstance(self.fields, dict): raise ValueError('identity mapping changed or is invalid')
+        format, project, namespace, fields = self.format, self.project, self.namespace, dict(self.fields)
+        if (format not in ('json', 'jsonl') or set(fields) != {'id', 'revision', 'project', 'namespace'}
+                or len({_text(value) for value in fields.values()}) != 4):
             raise ValueError('identity mapping changed or is invalid')
         if ((source.kind, source.provider, source.version) != ('local_file', 'generic-memory', 'v1')
-                or source.project_sha256 != digest(self.project) or source.scope_sha256 != digest(self.namespace)):
+                or source.project_sha256 != digest(project) or source.scope_sha256 != digest(namespace)):
             raise ValueError('unsupported source version or scope')
-        config = (self.format, self.project, self.namespace, dict(self.fields))
+        config = (format, project, namespace, fields)
         declaration, path = self._normalized_payload(source)
         raw = read_regular(path, MAX_BYTES)
         try:
             text = raw.decode('utf-8')
             parse = lambda value: json.loads(value, object_pairs_hook=unique_object, parse_constant=_reject_constant)
-            rows = parse(text) if self.format == 'json' else [parse(line) for line in text.splitlines() if line.strip()]
+            rows = parse(text) if format == 'json' else [parse(line) for line in text.splitlines() if line.strip()]
         except (UnicodeError, ValueError, RecursionError) as exc:
             raise ValueError('invalid memory export') from exc
         if not isinstance(rows, list) or len(rows) > MAX_RECORDS:
@@ -61,8 +63,8 @@ class GenericMemoryExport(LocalExport):
         records, seen = [], set()
         for row in rows:
             if not isinstance(row, dict): raise ValueError('memory record must be an object')
-            native, revision, project, namespace = (_text(row.get(self.fields[name])) for name in ('id', 'revision', 'project', 'namespace'))
-            if (project, namespace) != (self.project, self.namespace): raise ValueError('memory project or namespace mismatch')
+            native, revision, row_project, row_namespace = (_text(row.get(fields[name])) for name in ('id', 'revision', 'project', 'namespace'))
+            if (row_project, row_namespace) != (project, namespace): raise ValueError('memory project or namespace mismatch')
             identity = digest((namespace, native))
             if identity in seen: raise ValueError('duplicate memory identity')
             seen.add(identity)
