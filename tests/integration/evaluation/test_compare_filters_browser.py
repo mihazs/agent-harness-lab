@@ -11,7 +11,9 @@ pytestmark = pytest.mark.skipif(os.environ.get('AHL_COMPARE_BROWSER') != '1', re
 def test_filter_changes_only_the_visible_table_rows(tmp_path):
     from playwright.sync_api import sync_playwright
     document = tmp_path / 'report.html'
-    document.write_text(page(fixture()))
+    scenario = fixture()
+    scenario['trials'][0]['capture'] = 'partial'
+    document.write_text(page(scenario))
     with sync_playwright() as runtime:
         browser = runtime.chromium.launch(headless=True)
         try:
@@ -36,6 +38,11 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
                 assert visible.count() > 0
                 assert all(visible.nth(i).get_attribute('data-verdict') == verdict for i in range(visible.count()))
                 assert tab.locator('body').inner_text().split('Task table', 1)[0] == decision
+            group.locator('#pair-filter-missing').check()
+            assert any(visible.nth(i).get_attribute('data-verdict') == 'improved' for i in range(visible.count()))
+            assert any(visible.nth(i).get_attribute('data-verdict') == 'unknown' for i in range(visible.count()))
+            assert all(visible.nth(i).get_attribute('data-verdict') == 'unknown'
+                       or visible.nth(i).get_attribute('data-coverage') == 'gap' for i in range(visible.count()))
             group.locator('#pair-filter-all').check()
             assert visible.count() == total
             assert all(url.startswith('file:') for url in requests)

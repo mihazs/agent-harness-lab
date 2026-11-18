@@ -17,9 +17,11 @@ STYLE = ('body{font:16px/1.5 system-ui,sans-serif;margin:0 auto;padding:0 16px 3
          '.scroll{overflow-x:auto}a:focus,summary:focus,input:focus{outline:3px solid;outline-offset:2px}pre{white-space:pre-wrap;overflow-wrap:anywhere}')
 
 PAIR_FILTERS = (('improved', 'Improved'), ('regressed', 'Regressed'), ('unchanged', 'Unchanged'),
-                ('unknown', 'Missing or unknown'), ('not_comparable', 'Not comparable'))
+                ('unknown', 'Unknown outcome'), ('not_comparable', 'Not comparable'))
 STYLE += ''.join(f'#pair-filter-{name}:checked~.scroll tbody tr:not([data-verdict="{name}"]){{display:none}}'
                  for name, _ in PAIR_FILTERS)
+STYLE += ('#pair-filter-missing:checked~.scroll tbody tr:not([data-verdict="unknown"])'
+          ':not([data-coverage="gap"]){display:none}')
 
 
 def _e(value):
@@ -34,13 +36,14 @@ def _table(headers, rows):
 
 def _pair_table(headers, rows):
     """Filter presentation only; the supplied analysis and pair data stay unchanged."""
-    options = (('all', 'All pairs'), *PAIR_FILTERS)
+    options = (('all', 'All pairs'), *PAIR_FILTERS, ('missing', 'Missing evidence'))
     controls = ''.join(f'<input type="radio" name="pair-filter" id="pair-filter-{name}"'
                        + (' checked' if name == 'all' else '')
                        + f'><label for="pair-filter-{name}">{label}</label> ' for name, label in options)
     head = ''.join(f'<th scope="col">{_e(h)}</th>' for h in headers)
-    body = ''.join(f'<tr data-verdict="{_e(verdict)}">' + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
-                   for verdict, row in rows)
+    body = ''.join(f'<tr data-verdict="{_e(verdict)}" data-coverage="{coverage}">'
+                   + ''.join(f'<td>{_e(cell)}</td>' for cell in row) + '</tr>'
+                   for verdict, coverage, row in rows)
     return ('<div role="group" aria-label="Filter task pairs">' + controls
             + '<p>Filters change this table only; the backend decision and analysis population stay unchanged.</p>'
             + f'<div class="scroll"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div></div>')
@@ -305,9 +308,10 @@ def render(report):
     rows, details = [], []
     for number, pair in enumerate(pairs):
         reasons = ', '.join(pair['reasons']) or 'none'
-        rows.append((pair['verdict'], (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
+        coverage = 'gap' if pair['coverage_gap'] else 'complete'
+        rows.append((pair['verdict'], coverage, (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
                      _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons,
-                     'gap' if pair['coverage_gap'] else 'complete')))
+                     coverage)))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
         truncated = [f"{arm}: {record['events_total']} events, first {len(record['events'])} + {record['invalid_events']} invalid shown"

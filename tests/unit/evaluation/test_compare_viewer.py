@@ -55,7 +55,8 @@ def test_pair_filters_preserve_every_row_and_the_backend_decision():
     assert 'the backend decision and analysis population stay unchanged' in document
     for verdict in ('improved', 'regressed', 'unknown'):
         assert f'id="pair-filter-{verdict}"' in document
-        assert f'<tr data-verdict="{verdict}">' in document
+        assert f'<tr data-verdict="{verdict}" data-coverage=' in document
+    assert 'id="pair-filter-missing"' in document
     assert 'insufficient_independent_roots' in document
     assert '<script' not in document
 
