@@ -252,5 +252,6 @@ def run(mechanism, *, project, baseline, candidate, output, agent, binary, harne
     try: unchanged = frozen() == before
     except (OSError, ValueError): unchanged = False
     summary = _paired_result(result, inputs_unchanged=unchanged)
+    summary['pattern'] = structural_pattern(mechanism)
     write_bytes(output / 'probe-result.json', encoded(summary))
     return summary

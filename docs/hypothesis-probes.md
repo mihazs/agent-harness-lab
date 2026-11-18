@@ -56,7 +56,8 @@ The command runs a cooperative agent twice; the agent's own permissions still ap
 The task asks for the output without prescribing a repair. The development task records a failed synthetic worker attempt and a later successful
 attempt, and the grader checks their content-free call shapes and the final files. This log is written
 inside the agent workspace: it is not an independent or tamper-proof tool trace, and
-does not prove which tool was used. The result describes one synthetic pair only.
+does not prove which tool was used. The result identifies the selected structural
+labels and describes one synthetic pair only; it contains no captured source text.
 
 The generated fixture is marked as a probe. Final-bank and held-out validation reject
 the marker and an unchanged generated worker even if the marker is removed. These

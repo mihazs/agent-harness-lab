@@ -37,7 +37,7 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
     agent.chmod(agent.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex-home'))
     mechanism = dict(status='observed_pattern', tool_class='exec_command', error_category='tool_reported_error',
-                     next_action={follow_up: 2})
+                     next_action={follow_up: 2}, captured_text='synthetic private canary')
     brief = tmp_path / 'brief.json'
     brief.write_text(json.dumps({'mechanisms': [mechanism]}))
     output = tmp_path / 'probe'
@@ -47,6 +47,8 @@ print(json.dumps({'type': 'turn.completed', 'usage': {'output_tokens': 1}}))
     assert code == 0
     result = json.loads(capsys.readouterr().out)
     assert result['verdict'] == 'supported_hypothesis'
+    assert result['pattern'] == dict(tool_class='exec_command', error_category='tool_reported_error', follow_up=follow_up)
+    assert 'synthetic private canary' not in json.dumps(result)
     assert result['scope'] == 'one_synthetic_pair' and result['source_session_outcome'] == 'unknown'
     assert result['independence'] == 'unverified' and result['automatic_promotion'] is False
     recorded = json.loads((output / 'evaluation/results.json').read_text())
