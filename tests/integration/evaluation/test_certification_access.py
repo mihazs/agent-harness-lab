@@ -370,16 +370,23 @@ def _controller_child(f, ident, queue, ready=None, release=None):
             ready.set()
             if not release.wait(15): raise ValueError('synthetic lock barrier expired')
         return original(path,state,**kwargs)
-    calls=0; workers=None
+    import sys
+    calls=0; workers=None; diagnostics=[]
+    original_append=type(f.store).append
+    def capture(store,case,events,kind,target,payload,**kwargs):
+        error=sys.exception()
+        if kind=='run_finished' and target=='incomplete' and error is not None:
+            diagnostics.append(dict(error_type=type(error).__name__, reason=str(error)[:240]))
+        return original_append(store,case,events,kind,target,payload,**kwargs)
     try:
-        with patch.object(access,'atomic_json',side_effect=gate), \
+        with patch.object(type(f.store),'append',new=capture), patch.object(access,'atomic_json',side_effect=gate), \
                 patch.object(SandboxBackend,'capability',return_value={'status':'available'}), \
                 patch.object(SandboxBackend,'run',side_effect=f.execute) as workers:
             result=f.store.run(f.args.manifest,f.args.baseline,f.args.candidate,cgroup_root=f.root/'delegation',
                 image_root=f.root/'image',image_sha256=f.image_hash,disk_bytes=64*1024*1024,budget_seconds=60,
                 access_reservation=ident)
             calls=workers.call_count
-        queue.put(dict(state=result['state'],calls=calls))
+        queue.put(dict(state=result['state'],calls=calls,diagnostics=diagnostics))
     except (ValueError,OSError) as exc:
         calls=workers.call_count if workers is not None else calls
         queue.put(dict(state='blocked',calls=calls,error_type=type(exc).__name__,reason=str(exc)[:240]))
