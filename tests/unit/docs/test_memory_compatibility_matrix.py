@@ -46,10 +46,10 @@ def test_summary_lists_each_named_system_once():
 
 
 @pytest.mark.parametrize('system', SYSTEMS)
-def test_summary_pins_a_full_commit_and_reports_no_adapter(system):
+def test_summary_pins_a_full_commit_and_reports_adapter_scope(system):
     row = SUMMARY[system]
     assert re.fullmatch(r'[0-9a-f]{40}', bare(row[3]))
-    assert row[6] == 'none'
+    assert row[6] == ('experimental offline episodes' if system == 'graphiti' else 'none')
 
 
 @pytest.mark.parametrize('system', SYSTEMS)
