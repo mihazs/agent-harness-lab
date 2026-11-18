@@ -48,7 +48,7 @@ def capture(source, *, project_id, start, end, pages, collected_at):
         if type(status) is not int or status != 200: break
         if type(body) is not bytes or len(body) > MAX_PAGE_BYTES: raise ValueError('bounded page bytes required')
         try: page = json.loads(body.decode('utf-8'), object_pairs_hook=unique_object)
-        except (ValueError, UnicodeError, RecursionError) as exc: raise ValueError('invalid observation page') from exc
+        except (ValueError, UnicodeError, RecursionError): raise ValueError('invalid observation page') from None
         if (not isinstance(page, dict) or not isinstance(page.get('data'), list) or not isinstance(page.get('meta'), dict)):
             raise ValueError('unsupported page envelope')
         if len(rows) + len(page['data']) > MAX_ROWS: raise ValueError('observation limit exceeded')
