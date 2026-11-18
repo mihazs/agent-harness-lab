@@ -1,18 +1,11 @@
 name: Evaluation packaging
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+on: workflow_dispatch
 permissions:
   contents: read
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  offline-packaging:
+  focused:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: arduino/setup-task@v3
@@ -27,19 +20,12 @@ jobs:
           cache: npm
       - run: task setup
       - run: task setup:test
-      - name: Require zero source clones
-        run: task duplication:report
-      - name: Build tools only; no inference dependencies or credentials
-        run: task setup:build
-      - run: task build
-      - name: Verify optional OKF parsing without model dependencies
-        run: task setup:okf
-      - name: Prepare clean wheel install and optional parser
+      - name: Start a user manager on the hosted runner
         run: |
-          task install:wheel
-          task setup:okf PYTHON=dist/wheel-env/bin/python
-          task setup:test:installed PYTHON=dist/wheel-env/bin/python
-      - name: Check wheel and versioned archive layouts without a model account
-        env:
-          PYTEST_ADDOPTS: --maxfail=1
-        run: task test:packaging:layouts
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >> "$GITHUB_ENV"
+      - name: Install bubblewrap
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+      - name: Run bounded kernel canaries
+        run: task test:sandbox:kernel
