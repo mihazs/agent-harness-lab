@@ -179,6 +179,25 @@ def test_probe_pair_does_not_treat_heldout_or_missing_trials_as_evidence():
     assert _paired_result(dict(inputs_unchanged=True, trials=[trial, candidate]), inputs_unchanged=True)['verdict'] == 'inconclusive'
 
 
+def test_running_probe_freezes_its_pattern_before_the_caller_can_mutate_it(tmp_path, monkeypatch):
+    from agent_harness_lab.evaluation.hypothesis_probe import run
+    from agent_harness_lab.loop.adapters import ExecutorRunner
+    project, baseline, candidate = (tmp_path / name for name in ('project', 'baseline', 'candidate'))
+    for folder in (project, baseline, candidate): folder.mkdir()
+    (baseline / 'AGENTS.md').write_text('baseline')
+    (candidate / 'AGENTS.md').write_text('candidate')
+    mechanism = dict(status='observed_pattern', tool_class='Bash', error_category='tool_reported_error',
+                     next_action={'same_call_retry': 2})
+    def mutate_and_return(*args):
+        mechanism.update(tool_class='exec_command', next_action={'same_tool_changed_input': 2})
+        return dict(inputs_unchanged=True, trials=[])
+    monkeypatch.setattr(ExecutorRunner, 'run', mutate_and_return)
+    result = run(mechanism, project=project, baseline=baseline, candidate=candidate, output=tmp_path / 'probe',
+                 agent='codex', binary=sys.executable, harness_paths=['AGENTS.md'])
+    assert result['verdict'] == 'inconclusive'
+    assert result['pattern'] == dict(tool_class='Bash', error_category='tool_reported_error', follow_up='same_call_retry')
+
+
 def test_probe_cli_selects_one_mechanism_and_reports_only_the_result(tmp_path, monkeypatch, capsys):
     from agent_harness_lab.evaluation import hypothesis_probe, probe_cli
     brief = tmp_path / 'brief.json'

@@ -53,6 +53,13 @@ def structural_pattern(mechanism):
     return dict(tool_class=tool, error_category=category, follow_up=selected[0])
 
 
+def _freeze_mechanism(mechanism):
+    pattern = structural_pattern(mechanism)
+    frozen = dict(status='observed_pattern', tool_class=pattern['tool_class'], error_category=pattern['error_category'],
+                  next_action={pattern['follow_up']: 1})
+    return pattern, frozen
+
+
 def fixture_files(mechanism):
     """Build a deterministic synthetic recovery task; no source-session content enters it."""
     pattern = structural_pattern(mechanism)
@@ -142,6 +149,7 @@ def materialize(mechanism, output, *, project, harness_paths):
     from agent_harness_lab.private_journal import encoded, write_bytes
     from agent_harness_lab.read_only import require_writable
 
+    _, mechanism = _freeze_mechanism(mechanism)
     fixture, grader = fixture_files(mechanism), grader_files(mechanism)
     if not isinstance(harness_paths, list) or list(names(harness_paths)) != harness_paths:
         raise ValueError('safe harness paths required')
@@ -228,6 +236,7 @@ def run(mechanism, *, project, baseline, candidate, output, agent, binary, harne
     from agent_harness_lab.loop.adapters import ExecutorRunner
     from agent_harness_lab.private_journal import encoded, write_bytes
 
+    pattern, mechanism = _freeze_mechanism(mechanism)
     if agent not in ('codex', 'claude') or not isinstance(binary, str) or not binary:
         raise ValueError('explicit cooperative agent and executable required')
     executable = shutil.which(binary)
@@ -252,6 +261,6 @@ def run(mechanism, *, project, baseline, candidate, output, agent, binary, harne
     try: unchanged = frozen() == before
     except (OSError, ValueError): unchanged = False
     summary = _paired_result(result, inputs_unchanged=unchanged)
-    summary['pattern'] = structural_pattern(mechanism)
+    summary['pattern'] = pattern
     write_bytes(output / 'probe-result.json', encoded(summary))
     return summary
