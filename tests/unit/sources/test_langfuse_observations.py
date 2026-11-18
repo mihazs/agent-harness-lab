@@ -127,3 +127,10 @@ def test_disabled_source_and_oversized_page_are_rejected():
 ])
 def test_conflicting_or_unscoped_pages_are_rejected(pages):
     with pytest.raises(ValueError): capture_(pages)
+
+
+def test_invalid_utf8_does_not_expose_input_through_a_chained_exception():
+    with pytest.raises(ValueError, match='invalid observation page') as error:
+        capture_([(None, 200, b'SECRET_CANARY\xff')])
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__
