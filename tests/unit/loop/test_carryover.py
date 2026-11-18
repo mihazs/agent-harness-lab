@@ -67,9 +67,9 @@ def test_the_earlier_scores_are_a_labelled_historical_observation_never_a_fresh_
 
 
 def test_the_earlier_scores_are_never_an_input_to_the_controller_only_the_dispositions_are(previous):
-    state = state_of(Record({'AGENTS.md': STATE}), dict(loop=dict(previous, mechanisms=dict(a='rejected', b='improved'))))
-    found = carryover.read(state, {'AGENTS.md': tuple(STATE)}, FROZEN)
-    assert set(found) == {'block', 'dispositions'} and found['dispositions'] == dict(a='rejected') and set(found['dispositions'].values()) <= set(controller.CARRIED)
+    state = state_of(Record({'AGENTS.md': STATE}), dict(loop=dict(previous, mechanisms=dict(a='rejected', b='improved'), mechanism_evidence={'a': [FROZEN]})))
+    found = carryover.read(state, {'AGENTS.md': tuple(STATE)}, FROZEN, {'a': [FROZEN]})
+    assert set(found) == {'block', 'dispositions', 'evidence'} and found['dispositions'] == dict(a='rejected') and set(found['dispositions'].values()) <= set(controller.CARRIED)
     assert controller._carried(found['dispositions'], ['a', 'b']) == dict(a='rejected')
 
 
@@ -165,8 +165,39 @@ def test_a_previous_single_pass_run_is_stated_and_carries_nothing():
     pytest.param({'AGENTS.md': ('1'*64, 0o644)}, 'edited', 'reopened', id='edited-with-no-candidate'),
 ])
 def test_the_relation_comes_from_the_incremental_detection_and_an_outside_edit_reopens(previous, now, relation, status):
-    found = carryover.read(state_of(Record({'AGENTS.md': STATE}), dict(loop=dict(previous, mechanisms=dict(a='rejected')))), now, FROZEN)
+    found = carryover.read(state_of(Record({'AGENTS.md': STATE}), dict(loop=dict(previous, mechanisms=dict(a='rejected'), mechanism_evidence={'a': [FROZEN]}))), now, FROZEN, {'a': [FROZEN]})
     assert (found['block']['relation'], found['block']['status']) == (relation, status) and found['dispositions'] == ({'a': 'rejected'} if status == 'carried' else {})
+
+
+@pytest.mark.parametrize('old,current', [(FROZEN, OTHER), (FROZEN, None), (None, FROZEN)])
+def test_only_known_changed_mechanism_evidence_reopens_a_rejection(previous, old, current):
+    prior = dict(previous, mechanisms={'a': 'rejected'}, mechanism_evidence={'a': [old]} if old else {})
+    found = carryover.read(state_of(Record({'AGENTS.md': STATE}), dict(loop=prior)), {'AGENTS.md': tuple(STATE)}, FROZEN,
+                           {'a': [current]} if current else {})
+    if old and current:
+        assert found['dispositions'] == {}
+        assert found['block']['mechanisms']['reopened'] == ['a']
+        assert found['block']['reason'] == 'mechanism_evidence_changed'
+    else:
+        assert found['dispositions'] == {'a': 'rejected'}
+        assert found['block']['mechanisms']['evidence_unknown'] == ['a']
+
+
+def test_evidence_versions_refuse_ambiguous_or_unreferenced_rows():
+    row = dict(mechanism_id='a', errors=1, evidence_refs=[dict(case_id='synthetic', event_id='one')], counts_are_lower_bounds=False)
+    brief = lambda rows: dict(coverage=dict(incomplete=False), mechanisms=rows)
+    assert carryover.evidence_versions(brief([row]))['a'] != carryover.evidence_versions(brief([dict(row, evidence_refs=[dict(case_id='synthetic', event_id='two')])]))['a']
+    assert carryover.evidence_versions(brief([row, row])) == {}
+    assert carryover.evidence_versions(brief([dict(row, evidence_refs=[])])) == {}
+    assert carryover.evidence_versions(brief([dict(row, errors=2)])) == {}
+    assert carryover.evidence_versions(brief([dict(row, mechanism_id='untrusted name')])) == {}
+    assert carryover.evidence_versions(dict(coverage=dict(incomplete=True), mechanisms=[row])) == {}
+
+
+def test_removing_an_evidence_reference_does_not_authorize_retry(previous):
+    prior = dict(previous, mechanisms={'a': 'rejected'}, mechanism_evidence={'a': [FROZEN, OTHER]})
+    found = carryover.read(state_of(Record({'AGENTS.md': STATE}), dict(loop=prior)), {'AGENTS.md': tuple(STATE)}, FROZEN, {'a': [FROZEN]})
+    assert found['dispositions'] == {'a': 'rejected'}
 
 
 def test_an_edit_next_to_an_applied_candidate_still_reopens(previous):
