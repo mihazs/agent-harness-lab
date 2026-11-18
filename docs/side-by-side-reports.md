@@ -63,7 +63,7 @@ does not carry those classifications.
 When private `trajectory_results` are supplied, the report can show and filter
 reported required-assertion violations. It joins a claim only when the declared
 experiment identity matches and a unique trial ID, task, root, family, and arm
-agree on both sides. Missing, duplicate or mismatched identities, absent required
+agree on both sides, including the nested receipt. Missing, duplicate or mismatched identities, absent required
 flags, invalid or unclosed receipts, inconsistent statuses, and no required assertions remain unknown. These claims are
 `imported_unverified`: matching labels do not authenticate their origin or grant
 decision authority. The model copies no assertion IDs, argument bodies or result

@@ -187,10 +187,15 @@ def trajectory_summary(results):
         reported_assertions = []
         for assertion in assertions:
             reported_assertions.append(_trajectory_assertion(assertion, 1, [0], include_v2=receipt.get('profile') == RECEIPT_V2_PROFILE))
+        identities = [(row[name], receipt.get(receipt_name)) for name, receipt_name in
+                      (('trial_id', 'trial_id'), ('task', 'task_id'), ('root', 'root_id'), ('family', 'family'))]
+        identity_matches = (all(left == right for left, right in identities)
+                            if all(isinstance(value, str) and value for pair in identities for value in pair) else None)
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
             grade_valid=grade.get('valid') if type(grade.get('valid')) is bool else None,
             trajectory_valid=receipt.get('valid') if type(receipt.get('valid')) is bool else None,
             trajectory_closed=receipt.get('closed') if type(receipt.get('closed')) is bool else None,
+            receipt_identity_matches=identity_matches,
             trajectory_status=receipt.get('status') if receipt.get('status') in ('satisfied','violated','unknown') else 'unknown',
             combined_outcome=grade.get('outcome') if type(grade.get('outcome')) is bool else None,
             critical_violation=grade.get('critical_violation') is True,
