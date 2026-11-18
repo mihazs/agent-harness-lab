@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Let the as-of resolver select a knowledge statement only for the scope it declares. A rule declared for versions A and B and superseded by a correction declared for B alone was reported `superseded` for every query, and a page's declared scope was not read at all. `TemporalFacet` now carries `scopes` (SHA-256 fingerprints, at most 32, never names), `temporal.resolve` and `resolve_store` take `scope=`, and `knowledge_facets.facets` maps a page's `scope` text or list through `scope_ref`. For the requested scope a record that declares other scopes is listed under `out_of_scope` and its supersessions do not apply, a record that declares none is `unknown` (`scope_undeclared`), a scoped record read without a requested scope is `unknown` (`scope_not_requested`), and an edit that leaves the scope makes the earlier revision `unknown` (`revision_scope_changed`). Knowledge time still wins: a scoped correction first known after the instant never reaches a historical replay. Adding the field changes `inputs_sha256` for the same facets. Part of #47.
