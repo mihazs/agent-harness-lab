@@ -57,6 +57,7 @@ def test_pair_filters_preserve_every_row_and_the_backend_decision():
         assert f'id="pair-filter-{verdict}"' in document
         assert f'verdict-{verdict}' in document
     assert 'id="pair-filter-missing"' in document
+    assert '<a href="#pair-0">View timeline</a>' in document and '<details id="pair-0">' in document
     assert 'insufficient_independent_roots' in document
     assert '<script' not in document
 

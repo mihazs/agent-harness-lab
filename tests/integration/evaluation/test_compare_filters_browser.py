@@ -58,6 +58,10 @@ def test_filter_changes_only_the_visible_table_rows(tmp_path):
             assert 'Required assertions (unverified)' in group.inner_text()
             assert 'SYNTHETIC_SECRET' not in tab.content()
             assert tab.locator('body').inner_text().split('Task table', 1)[0] == decision
+            timeline_link = visible.first.get_by_role('link', name='View timeline', exact=True)
+            target = timeline_link.get_attribute('href')
+            timeline_link.click()
+            assert target and tab.url.endswith(target) and tab.locator(target).count() == 1
             group.get_by_role('link', name='All pairs', exact=True).click()
             assert visible.count() == total
             assert all(url.startswith('file:') for url in requests)
