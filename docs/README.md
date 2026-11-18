@@ -53,6 +53,8 @@ reader purpose.
 - [Comparability engine](comparability-engine.md): the gates, verdicts and strata that decide whether two evaluations may be compared.
 - [Evidence reuse contract matrix](memory-reuse-contract-matrix.md): which stores are reusable, replayable or historical-only, with synthetic reuse fixtures.
 - [Generic offline memory exports](generic-memory-export.md): explicit mappings for scoped JSON and JSONL memory claims.
+- [Offline LangGraph item projection](langgraph-item-import.md): experimental reading of an exact-namespace row dump.
+- [Offline Graphiti episode projection](graphiti-episode-import.md): experimental reading of a pinned response shape.
 - [Second-wave memory compatibility matrix](memory-compatibility-matrix.md): what the pinned source of Graphiti and Zep, Supermemory, Letta, LangMem with the LangGraph store, and Basic Memory shows about reading them read-only, with a closed status vocabulary.
 - [Harness snapshots and baselines](harness-snapshots.md): name the harness of a checkout, diff two snapshots, and declare a baseline before outcomes exist.
 
