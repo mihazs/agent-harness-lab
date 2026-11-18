@@ -22,7 +22,8 @@ def begun(tmp_path, spec=None, events=()):
     (tmp_path/'project').mkdir(exist_ok=True)
     spec = spec or spec_for()
     ledger = LoopLedger(tmp_path/'store', tmp_path/'project').begin(spec)
-    for index, (kind, payload) in enumerate(events): ledger.write(kind, payload, elapsed=float(index))
+    for index, (kind, payload) in enumerate(events):
+        ledger.write(kind, {'spec_sha256': spec.digest, **payload} if kind == 'spec_frozen' else payload, elapsed=float(index))
     ledger.unclaim()
     return spec
 
@@ -90,7 +91,7 @@ def test_a_run_that_is_alive_holds_its_case_so_a_resume_is_busy(tmp_path):
     (tmp_path/'project').mkdir()
     spec = spec_for()
     alive = LoopLedger(tmp_path/'store', tmp_path/'project').begin(spec)
-    alive.write('spec_frozen', {}, elapsed=0.0)
+    alive.write('spec_frozen', {'spec_sha256': spec.digest}, elapsed=0.0)
     with pytest.raises(LoopError) as caught:
         reopened(tmp_path, spec)
     assert caught.value.reason == 'resume_busy'
@@ -153,7 +154,7 @@ def test_a_ledger_that_was_never_begun_cannot_be_reopened(tmp_path):
 def test_a_reopened_ledger_allows_two_more_events_for_each_resume_a_run_may_make_and_no_more(tmp_path):
     spec = begun(tmp_path, events=BASELINE)
     ledger = reopened(tmp_path, spec)
-    assert (ledger.max_events, event_cap(spec)) == (event_cap(spec) + 2*MAX_RESUMES, 4*spec.max_rounds + 8)
+    assert (ledger.max_events, event_cap(spec)) == (event_cap(spec) + 3*MAX_RESUMES, 5*spec.max_rounds + 9)
 
 
 def test_the_kept_head_follows_every_event_the_ledger_writes(tmp_path):
