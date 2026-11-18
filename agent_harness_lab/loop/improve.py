@@ -286,7 +286,8 @@ def run(args, context):
     proposer = PreparationProposer(state, lambda: evaluator)
     from agent_harness_lab.workflow import state_root
     ledger = LoopLedger(state_root()/'loops'/output.name, args.project)
-    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs)  # what an earlier run hands over: dispositions, never a score or a trial
+    evidence = carryover.evidence_versions(getattr(args, '_analysis_brief', None))
+    carried = carryover.read(args._incremental, context['original'], evaluator.frozen_inputs, evidence)  # dispositions, never a score or a trial
     proposer.resume_context_sha256 = _freeze_resume_context(args, context, spec, evaluator, state['queue'], carried)
     result = controller.run(spec, charged, proposer, ledger, stages.clock, spent=max(0.0, stages.clock() - stages.started), dispositions=carried and carried['dispositions'])
     return _result(args, context, state, evaluator, proposer, ledger, spec, result, carried)
@@ -295,6 +296,7 @@ def run(args, context):
 def _result(args, context, state, evaluator, proposer, ledger, spec, result, carried):
     output, stages = context['output'], context['stages']
     block = receipt.build(spec, result, ledger.events(), [item['guard'] for item in evaluator.runs], budget=stages.receipt(), deferrals=proposer.deferrals)
+    block['mechanism_evidence'] = carryover.evidence_versions(getattr(args, '_analysis_brief', None))
     if carried is not None: block['carry_over'] = carryover.finish(carried['block'], block)
     receipt.validate_receipt(block)
     stop = block['stop_criterion']
