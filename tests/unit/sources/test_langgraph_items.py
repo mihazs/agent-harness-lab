@@ -113,3 +113,12 @@ def test_unsupported_version_and_naive_time_are_rejected(capture):
     path.write_text(json.dumps([row]))
     with pytest.raises(ValueError, match='timezone-aware'):
         connector.read(source)
+
+
+def test_deeply_nested_item_is_refused_before_normalization(capture):
+    source, path, row, connector = capture
+    nested = '0'
+    for _ in range(70): nested = '[' + nested + ']'
+    prefix = json.dumps(row)[:-1]
+    path.write_text('[' + prefix + ',"extra":' + nested + '}]')
+    with pytest.raises(ValueError, match='invalid LangGraph item dump'): connector.read(source)

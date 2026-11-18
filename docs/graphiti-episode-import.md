@@ -18,7 +18,7 @@ constructs `GraphitiEpisodes(manifest, project=..., group=...)`; its source must
 Each episode must declare that exact group. Graphiti's group is a partition, not account or project
 proof; both the selected project and group are caller declarations, not authenticated identities.
 
-The reader bounds input to 2 MiB and 5,000 episodes, rejects duplicate identities and malformed or
+The reader bounds input to 2 MiB, nesting depth 64 and 5,000 episodes, rejects duplicate identities and malformed or
 foreign rows, and rechecks the input and manifest after reading. Each episode becomes a private
 contextual assertion. Its revision fingerprints the selected response row; Graphiti did not supply a
 native revision. The row hash can expose equality or low-entropy guesses, and journals are not public.

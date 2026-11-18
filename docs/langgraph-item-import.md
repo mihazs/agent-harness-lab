@@ -17,7 +17,7 @@ and its scope fingerprint must equal `digest(('langgraph.namespace', namespace))
 match the entire namespace, not merely its prefix. The selected project is a caller declaration: a
 LangGraph item has no project or account field that authenticates it.
 
-The reader caps the file at 2 MiB and 5,000 items, rejects duplicate keys, unknown fields, foreign
+The reader caps the file at 2 MiB, nesting depth 64 and 5,000 items, rejects duplicate keys, unknown fields, foreign
 namespaces, invalid timestamps and updates older than creation, and rechecks the file and manifest.
 Timestamps must include a timezone. Each item becomes a private contextual assertion. A fingerprint
 of the complete row supplies a derived revision; the provider did not report a revision chain. Values
