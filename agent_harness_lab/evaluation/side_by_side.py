@@ -224,6 +224,12 @@ def _required_claim(index, key, arm, records, duplicate_ids):
     assertions = row['assertions']
     if not assertions or any(item.get('required') is None for item in assertions):
         return dict(status='unknown', authority='imported_unverified', reason='required_flags_unavailable')
+    try:
+        for item in assertions: sha256(item['assertion_sha256'])
+    except ValueError:
+        return dict(status='unknown', authority='imported_unverified', reason='assertion_identity_invalid')
+    if len({item['assertion_id'] for item in assertions}) != len(assertions):
+        return dict(status='unknown', authority='imported_unverified', reason='duplicate_assertion_identity')
     required = [item for item in assertions if item['required']]
     if not required: return dict(status='unknown', authority='imported_unverified', reason='no_required_assertions')
     if any(item.get('valid') is not True for item in required):
