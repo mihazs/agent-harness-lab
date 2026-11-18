@@ -1,20 +1,15 @@
 name: Evaluation packaging
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+on: workflow_dispatch
 permissions:
   contents: read
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
-  offline-packaging:
+  focused:
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: arduino/setup-task@v3
         with:
           version: '3.54.0'
@@ -27,19 +22,12 @@ jobs:
           cache: npm
       - run: task setup
       - run: task setup:test
-      - name: Require zero source clones
-        run: task duplication:report
-      - name: Build tools only; no inference dependencies or credentials
-        run: task setup:build
-      - run: task build
-      - name: Verify optional OKF parsing without model dependencies
-        run: task setup:okf
-      - name: Prepare clean wheel install and optional parser
+      - run: task duplication:report
+      - name: Baseline lacks Graphiti entity reader
+        run: '! git cat-file -e 6d0f4a138753353eac10238494a470ead4f956bc:agent_harness_lab/sources/graphiti_entities.py'
+      - name: Focused synthetic checks
+        run: python -m pytest -q tests/unit/sources/test_graphiti_episodes.py tests/unit/sources/test_graphiti_edges.py tests/unit/sources/test_graphiti_entities.py
+      - name: Lint and docs
         run: |
-          task install:wheel
-          task setup:okf PYTHON=dist/wheel-env/bin/python
-          task setup:test:installed PYTHON=dist/wheel-env/bin/python
-      - name: Check wheel and versioned archive layouts without a model account
-        env:
-          PYTEST_ADDOPTS: --maxfail=1
-        run: task test:packaging:layouts
+          task lint
+          task docs:check

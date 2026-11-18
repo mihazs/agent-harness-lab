@@ -24,8 +24,8 @@ def _identity(value):
     return value
 
 
-class GraphitiEpisodes(LocalExport):
-    """One operator-selected response from the pinned Graphiti MCP `get_episodes` shape."""
+class _GraphitiLocalExport(LocalExport):
+    """Shared selected-group and local-file boundary for pinned Graphiti data."""
 
     def __init__(self, manifest, *, project, group):
         super().__init__(manifest)
@@ -39,6 +39,10 @@ class GraphitiEpisodes(LocalExport):
             raise ValueError('unsupported Graphiti version or selected scope')
         declaration, path = self._normalized_payload(source)
         return project, group, declaration, path, read_regular(path, MAX_BYTES)
+
+
+class GraphitiEpisodes(_GraphitiLocalExport):
+    """One operator-selected response from the pinned Graphiti MCP `get_episodes` shape."""
 
     def read(self, source):
         project, group, declaration, path, raw = self._input(source, 'graphiti-mcp-episodes')
