@@ -111,6 +111,18 @@ def test_a_passing_ask_reply_act_episode_is_observed_as_complete_and_correct(tmp
     assert observed['valid_non_action_success'] is False and observed['correct_deliberate_stop'] is False
 
 
+def test_read_boundary_remains_unknown_in_a_saved_grader_observation_without_complete_capture(tmp_path):
+    spec = contract(permitted_reads=['source.py'])
+    binding = captured(tmp_path, spec)
+    evidence = episode(('read', 'path', 'source.py'), EDIT)
+    evidence['capture']['reads'] = 'partial'
+    observed = interaction_report.observation(binding, execution(spec, evidence))
+    assert observed['passed'] is None and 'read_capture_incomplete' in observed['unknowns']
+    evidence['events'][0]['path'] = 'secret.txt'
+    observed = interaction_report.observation(binding, execution(spec, evidence))
+    assert observed['passed'] is False and 'prohibited_read' in observed['violations']
+
+
 def test_a_correct_no_change_episode_is_a_valid_non_action_and_deliberate_stop(tmp_path):
     binding = captured(tmp_path, NO_CHANGE)
     observed = run(NO_CHANGE, binding, STOP, final=ORIGINAL, termination='stopped')
