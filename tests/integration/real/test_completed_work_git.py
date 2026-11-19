@@ -74,33 +74,49 @@ def test_real_forge_collection_matches_forge_cli(checkout):
         pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
     with tempfile.TemporaryFile() as content:
         result = completed_work.capture(checkout, seconds=600, content=content)
-    assert result.get('enumeration_complete'), result.get('problems')
-    provider = result['provider']
-    assert provider in ('github', 'gitlab')
-    host, port, parts = completed_work._repository(checkout)
-    cutoff = datetime.fromisoformat(result['captured_at'])
-    for kind, resource in (('merged_pull_requests', 'pulls' if provider == 'github' else 'merge_requests'),
-                           ('closed_issues', 'issues')):
-        state = 'closed' if provider == 'github' or kind == 'closed_issues' else 'merged'
-        if provider == 'github':
-            target = '/repos/' + '/'.join(parts) + f'/{resource}?state={state}&per_page=100'
-            args = ['gh', 'api', '--paginate', '--slurp', target]
-            pages = json.loads(subprocess.check_output(args, cwd=checkout))
-            rows = [row for page in pages for row in page]
-        else:
-            target = 'projects/' + quote('/'.join(parts), safe='') + f'/{resource}?state={state}&per_page=100'
-            authority = f'[{host}]' if ':' in host else host
-            if port is not None:
-                authority += f':{port}'
-            args = ['glab', 'api', '--hostname', authority, '--paginate', '--output', 'ndjson', target]
-            rows = [json.loads(line) for line in subprocess.check_output(args, cwd=checkout).splitlines()]
-        expected = set()
-        for row in rows:
-            if provider == 'github' and (kind == 'merged_pull_requests' and not row.get('merged_at')
-                    or kind == 'closed_issues' and row.get('pull_request')):
-                continue
-            stamp = row.get('merged_at' if kind == 'merged_pull_requests' else 'closed_at')
-            if stamp and datetime.fromisoformat(stamp.replace('Z', '+00:00')) > cutoff:
-                continue
-            expected.add(row['number' if provider == 'github' else 'iid'])
-        assert {row['number'] for row in result[kind]} == expected
+        assert result.get('enumeration_complete'), result.get('problems')
+        provider = result['provider']
+        assert provider in ('github', 'gitlab')
+        host, port, parts = completed_work._repository(checkout)
+        cutoff = datetime.fromisoformat(result['captured_at'])
+
+        def captured_text(value):
+            if isinstance(value, str):
+                return value.encode('utf-8', 'surrogatepass')
+            assert value['file'] == 'history.bin' and value['encoding'] == 'utf-8-surrogatepass'
+            content.seek(value['offset'])
+            data = content.read(value['length'])
+            assert len(data) == value['length']
+            return data
+
+        for kind, resource in (('merged_pull_requests', 'pulls' if provider == 'github' else 'merge_requests'),
+                               ('closed_issues', 'issues')):
+            state = 'closed' if provider == 'github' or kind == 'closed_issues' else 'merged'
+            if provider == 'github':
+                target = '/repos/' + '/'.join(parts) + f'/{resource}?state={state}&per_page=100'
+                args = ['gh', 'api', '--paginate', '--slurp', target]
+                pages = json.loads(subprocess.check_output(args, cwd=checkout))
+                rows = [row for page in pages for row in page]
+            else:
+                target = 'projects/' + quote('/'.join(parts), safe='') + f'/{resource}?state={state}&per_page=100'
+                authority = f'[{host}]' if ':' in host else host
+                if port is not None:
+                    authority += f':{port}'
+                args = ['glab', 'api', '--hostname', authority, '--paginate', '--output', 'ndjson', target]
+                rows = [json.loads(line) for line in subprocess.check_output(args, cwd=checkout).splitlines()]
+            expected = {}
+            for row in rows:
+                if provider == 'github' and (kind == 'merged_pull_requests' and not row.get('merged_at')
+                        or kind == 'closed_issues' and row.get('pull_request')):
+                    continue
+                stamp = row.get('merged_at' if kind == 'merged_pull_requests' else 'closed_at')
+                if stamp and datetime.fromisoformat(stamp.replace('Z', '+00:00')) > cutoff:
+                    continue
+                expected[row['number' if provider == 'github' else 'iid']] = row
+            captured = {row['number']: row for row in result[kind]}
+            assert captured.keys() == expected.keys()
+            for number, row in expected.items():
+                for field, source in (('title', 'title'), ('body', 'description' if provider == 'gitlab' else 'body')):
+                    actual_hash = hashlib.sha256(captured_text(captured[number][field])).digest()
+                    expected_hash = hashlib.sha256((row.get(source) or '').encode('utf-8', 'surrogatepass')).digest()
+                    assert actual_hash == expected_hash
