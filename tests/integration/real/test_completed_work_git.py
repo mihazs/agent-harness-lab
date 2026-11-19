@@ -8,6 +8,8 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import tempfile
 import time
@@ -69,6 +71,45 @@ def test_real_git_history_and_patches_cover_every_reachable_commit(checkout):
                     patches.add(chunk[7:-1].decode('ascii'))
         assert (length, digest.hexdigest()) == (result['decoded_length'], result['decoded_sha256'])
         assert patches == expected
+
+
+def test_real_untracked_work_is_captured_without_modifying_source(checkout, request):
+    project = Path(request.node.callspec.params['checkout']).resolve(strict=True)
+    output = subprocess.check_output(['git', '-c', 'core.fsmonitor=false', '-C', str(project),
+                                      'status', '--porcelain=v1', '-z', '--untracked-files=all'])
+    source = None
+    for entry in output.split(b'\0'):
+        if not entry.startswith(b'?? '):
+            continue
+        relative = Path(os.fsdecode(entry[3:]))
+        if relative.is_absolute() or '..' in relative.parts or relative.suffix.lower() != '.svg':
+            continue
+        candidate = project/relative
+        if any(path.is_symlink() for path in (candidate, *candidate.parents) if path.is_relative_to(project)):
+            continue
+        info = candidate.lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size <= 65536:
+            source = candidate
+            break
+    if source is None:
+        pytest.skip('no bounded existing untracked SVG file')
+    target = checkout/source.relative_to(project)
+    assert not any(path.is_symlink() for path in (target, *target.parents) if path.is_relative_to(checkout))
+    assert not target.exists() and not target.is_symlink()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    expected = hashlib.sha256(source.read_bytes()).digest()
+    problems = set()
+    entries = completed_work._git_status(checkout, problems, time.monotonic()+30)
+    with tempfile.TemporaryFile() as content:
+        records = completed_work._untracked(checkout, entries, content, problems, time.monotonic()+30)
+        match = [row for row in records if row['path'] == str(target.relative_to(checkout))]
+        assert not problems and len(match) == 1
+        content.seek(match[0]['offset'])
+        actual = content.read(match[0]['length'])
+        assert hashlib.sha256(actual).digest() == expected
+        assert match[0]['sha256'] == expected.hex()
+    assert hashlib.sha256(source.read_bytes()).digest() == expected
 
 
 def test_real_forge_collection_matches_forge_cli(checkout):
