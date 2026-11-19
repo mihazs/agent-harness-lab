@@ -78,7 +78,13 @@ def test_every_session_is_counted_once_in_an_area_or_as_unclassified():
     section = areas.advisory(REGISTRY, signals.sessions(*signals.BY_AREA.values(), signals.AMBIGUOUS, signals.EMPTY))
     assert {row['id']: row['sessions'] for row in section['areas']} == dict(coding=1, **{'ux-ui': 1}, docs=1, review=1)
     assert (section['unclassified']['sessions'], section['unclassified']['reasons'], section['recorded']) == (
-        2, dict(no_signal=1, below_minimum_signal=0, ambiguous=1, area_not_declared=0), 6)
+        2, dict(no_signal=1, input_unavailable=0, below_minimum_signal=0, ambiguous=1, area_not_declared=0), 6)
+
+
+def test_missing_capture_input_never_becomes_a_placement():
+    assert place(dict(session='s', extensions={'py': 3}, unknown_input=True)) == (None, 'input_unavailable')
+    section = areas.advisory(REGISTRY, [dict(session='s', extensions={'py': 3}, unknown_input=True)])
+    assert 'input_unavailable 1' in areas.markdown(section)
 
 
 def test_no_recorded_session_reports_zero_sessions_and_no_row():

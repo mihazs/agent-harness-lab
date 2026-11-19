@@ -1,6 +1,7 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
 from pathlib import Path
 from .schema import event, input_fingerprint, message_fingerprint
+from .session_signals import extract as session_signals, input_missing
 from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded  # noqa: F401 - re-exported for existing importers
 from ..sources.schema import digest
 
@@ -19,8 +20,9 @@ ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_abo
 
 
 class Projection:
-    def __init__(self, project):
+    def __init__(self, project, include_session_signals=False):
         self.project, self.meta = Path(project), None
+        self.include_session_signals = include_session_signals
         self.rows, self.claims, self.ordinals, self.responses = [], [], {}, {}
         self.skipped, self.duplicates, self.unsupported = 0, 0, 0
         self.last_ordinal = -1
@@ -96,6 +98,9 @@ class Projection:
                     record['tool_name'] = name if name in KNOWN_TOOLS and namespace in (None, 'functions') else 'tool:'+digest((namespace, name))
                     arguments = payload.get(INPUT_FIELDS[item])
                     if arguments is not None and (fingerprint := input_fingerprint(arguments, record['case_id'])) is not None: record['input_fingerprint'] = fingerprint
+                    if self.include_session_signals:
+                        record['signal_input_missing'] = input_missing(name, arguments)
+                        if namespace in (None, 'functions'): record.update(session_signals(name, arguments))
             elif item in ('message', 'reasoning'):
                 record['activity'] = item
             else: self.unsupported += 1; record['missing_reason'] = 'unsupported_native_item'
@@ -137,8 +142,8 @@ class Projection:
         if not suppressed: self.rows.append(observed)
 
 
-def decode(folder, name, project, max_records, *, revisions=None, claims=None, **limits):
-    projection = Projection(project)
+def decode(folder, name, project, max_records, *, revisions=None, claims=None, include_session_signals=False, **limits):
+    projection = Projection(project, include_session_signals)
     def consume(row, position):
         before = len(projection.claims)
         projection.add(row, position)

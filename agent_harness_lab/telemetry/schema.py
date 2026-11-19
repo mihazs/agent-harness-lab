@@ -5,6 +5,7 @@ import math
 import re
 
 from .error_catalog import VOCABULARY as TOOL_ERROR_CLASSES
+from ..evaluation.session_areas import COMMAND_AREA, EXTENSION_AREA
 
 # Content-free state fingerprints of one native file edit: the target, the state before (optional) and the state after.
 EDIT_FIELDS = ('edit_target_fingerprint', 'edit_before_fingerprint', 'edit_after_fingerprint')
@@ -18,10 +19,10 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
         'reported_model_fingerprint', 'native_stop_reason_fingerprint',
-        'message_fingerprint', 'tool_error_class', *EDIT_FIELDS, 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
+        'message_fingerprint', 'tool_error_class', 'command_family', *EDIT_FIELDS, 'cwd_class', 'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 # Where a row's working directory sat relative to the project that attributed the session; never a path or name.
 CWD_CLASSES = ('project_root', 'project_subdirectory', 'registered_worktree_of_project', 'other_location')
-BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
+BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete', 'signal_input_missing'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
 # A declared within-record subordinal: (segment, capture_order, suborder) under a pinned profile.
 # It never enters event identity, revisions or fingerprints; see docs/analysis.md.
@@ -29,12 +30,12 @@ SOURCE_ORDER = ('source_order_profile', 'source_order_segment', 'source_suborder
 # Each profile belongs to one pinned producer; other source formats cannot carry it.
 SOURCE_ORDER_PRODUCERS = {'claude-native-order-v1': ('claude', 'claude-jsonl-2.1.316')}
 SOURCE_ORDER_PROFILES = frozenset(SOURCE_ORDER_PRODUCERS)
-FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', *SOURCE_ORDER}
+FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', 'file_extensions', *SOURCE_ORDER}
 PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model_hypothesis', 'unknown'}
 
 
 # Derived from private tool-call and tool-result bodies: kept out of duplicate checks and the body-insensitive metadata fingerprint of native captures.
-BODY_DERIVED = frozenset(('input_fingerprint', 'tool_error_class', *EDIT_FIELDS))
+BODY_DERIVED = frozenset(('input_fingerprint', 'tool_error_class', 'file_extensions', 'command_family', 'signal_input_missing', *EDIT_FIELDS))
 FINGERPRINT = re.compile(r'[0-9a-f]{16}\Z')
 MIN_FINGERPRINT_WORDS = 4
 
@@ -114,6 +115,15 @@ def event(value):
             raise ValueError('invalid capture order')
     if 'cwd_class' in result and result['cwd_class'] not in CWD_CLASSES:
         raise ValueError('invalid working-directory class')
+    if 'command_family' in result and (result['activity'] != 'tool_call' or result['command_family'] not in COMMAND_AREA):
+        raise ValueError('invalid session signal: command_family')
+    if 'signal_input_missing' in result and result['activity'] != 'tool_call':
+        raise ValueError('invalid session signal: signal_input_missing')
+    if 'file_extensions' in result:
+        extensions = result['file_extensions']
+        if (result['activity'] != 'tool_call' or not isinstance(extensions, list) or not 0 < len(extensions) <= 64
+                or any(not isinstance(value, str) or value not in EXTENSION_AREA for value in extensions)):
+            raise ValueError('invalid session signal: file_extensions')
     if 'tool_error_class' in result and (result['activity'] != 'tool_result' or result.get('execution_status') != 'error'
             or result['tool_error_class'] not in TOOL_ERROR_CLASSES):
         raise ValueError('invalid tool error class')
