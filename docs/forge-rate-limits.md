@@ -18,6 +18,19 @@ process backs off from that file. Check the current allowance without spending a
 ahl sources github quota --authorization-env GITHUB_AUTHORIZATION
 ```
 
+Cooperating requests using the same state file and opaque identity tag serialize
+their reserve check, request and response update for the predicted bucket. A
+reserve can only be enforced from available, current quota signals. The
+locks use at most 64 private shard files; collisions only serialize unrelated
+requests. Waiting is limited to 30 seconds or the capture deadline, whichever
+comes first. Unsafe or unavailable coordination halts the read rather than
+sending it; a killed process releases its lock. Locking requires POSIX `flock`.
+Keep the state directory and lock files intact while captures are running.
+Separate credentials for the same account have different tags, and the `gh` CLI
+identity is not linked to a token identity. Other tools do not use these locks, so
+their concurrent spend can still exhaust the shared server quota. The route's
+predicted bucket may differ from the response's reported bucket.
+
 The command calls the free `/rate_limit` endpoint, prints every bucket (limit, used,
 remaining, reset) as JSON, and records it in the shared file. It never spends core quota.
 
@@ -56,7 +69,8 @@ incomplete, never a checkpoint and never evidence of absence.
   `primary_limit` or `secondary_limit` and the reset time. GraphQL POSTs are never retried.
 - Before sending, a request halts with `reserve_floor` at the reserve, `request_budget` at the
   per-run budget, or `secondary_limit` during a shared cooldown; a shorter wait is taken
-  within `max_wait`. Waits use an injectable clock and can be cancelled.
+  within `max_wait`. Backoff and spacing waits use the injectable clock; slot
+  waits use monotonic wall time. Both can be cancelled and appear in the receipt.
 - The state file is owner-only (`0600`, directory `0700`), updated atomically under a
   lock, holds at most 64 numeric entries, drops entries after their reset, and a corrupt,
   oversized or malformed file is ignored and rebuilt. It never holds a token, header,
@@ -94,8 +108,7 @@ reviews), so a capture still halts when REST is at its reserve.
 ## Not yet implemented (issue #665)
 
 Bucket-aware routing of the other logical reads (pull requests, reviews, commits, check
-runs, release metadata), resuming paginated reads from a stored cursor and serializing
-in-flight requests across processes are not implemented. A halted read is incomplete and
+runs, release metadata) and resuming paginated reads from a stored cursor are not implemented. A halted read is incomplete and
 restarts from the first page.
 
 ## Choose the `gh` command family

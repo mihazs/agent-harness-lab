@@ -128,11 +128,20 @@ changes nothing; it prints `update available, run: ahl update` or `up to date` a
 
 ## Platform evidence
 
-The source quickstart and both test suites were exercised on Linux with Python
-3.12.14 for this onboarding change. The existing CI matrix targets Ubuntu with
-Python 3.11–3.13; check the exact commit's Actions results before treating it as passed.
-macOS, Windows and WSL were not exercised in this onboarding work. Do not infer
-installer support merely from Python availability; symlink and shell behavior matter.
+The package requires Python 3.11 or later. The test, release and evaluation-packaging
+workflows use the following platform; check the exact commit's Actions results before
+treating a run as passed.
+
+| Evidence | Platform | Python |
+| --- | --- | --- |
+| CI tested | `ubuntu-24.04-arm` | `3.14` |
+| Version eligible, not tested by these workflows | Other Linux configurations | 3.11 or later |
+| Version eligible, not tested by these workflows | Linux ARM64 | 3.11–3.13 |
+| Not tested by these workflows | macOS, Windows, WSL | Any |
+
+The source quickstart and both test suites were also exercised on Linux with Python
+3.12.14 for the onboarding change. Python availability alone does not establish
+installer support: shell and symlink behavior matter.
 
 The installer checks archive SHA-256 against the release's checksum file. This
 checks integrity relative to that file, not independent publisher authentication.
