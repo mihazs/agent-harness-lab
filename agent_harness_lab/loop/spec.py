@@ -15,12 +15,34 @@ DECLARED = ('accept_score', 'accept_basis', 'regression_margin', 'noise_margin',
 DEFAULTS = dict(accept_score=None, accept_basis='lower_bound', regression_margin=0.0, noise_margin=0.0, max_rounds=3,
                 plateau_rounds=2, on_regression='stop', alpha=0.05)
 MAX_ROUNDS_CAP = 10
+_IDENTITY_KEYS = ('profile', 'schema_version', *DECLARED, 'limits', 'mode', 'per_look_alpha',
+                  'recommendation_only', 'automatic_promotion', 'certification')
 # A loop declaration sets a bar, never authority: these keys are refused in every source, even with a safe value.
 AUTHORITY = frozenset({'recommendation_only', 'automatic_promotion', 'apply', 'global', 'scope', 'promotion',
                        'publication_allowed', 'certification'})
 
 
 _PLAIN_NAME = re.compile(r'[A-Za-z0-9_.-]{1,64}')
+
+
+def document_digest(value):
+    """Verify a serialized spec's identity and internal labels; source labels are not authenticated by the digest."""
+    extras = {'digest', 'sources', 'acceptance_source', 'looks'}
+    if not isinstance(value, dict) or set(value) != set(_IDENTITY_KEYS) | extras:
+        raise ValueError('invalid loop spec document')
+    sources = value['sources']
+    if (not isinstance(sources, dict) or set(sources) != set((*DECLARED, 'limits'))
+            or any(source not in (*SOURCES, 'default') for source in sources.values())
+            or value['acceptance_source'] != sources['accept_score']
+            or type(value['looks']) is not int or value['looks'] != value['max_rounds']):
+        raise ValueError('invalid loop spec labels')
+    identity = {key: value[key] for key in _IDENTITY_KEYS}
+    try:
+        digest = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError('invalid loop spec identity') from None
+    if value['digest'] != digest: raise ValueError('loop spec digest differs')
+    return digest
 
 
 def _name(key):
@@ -146,7 +168,7 @@ class LoopSpec:
         return self.alpha / self.max_rounds
 
     def validate(self):
-        if self.schema_version != 1 or self.profile != PROFILE: raise LoopError('loop_declaration_invalid', 'profile', 'declared')
+        if type(self.schema_version) is not int or self.schema_version != 1 or self.profile != PROFILE: raise LoopError('loop_declaration_invalid', 'profile', 'declared')
         for name, safe in (('recommendation_only', self.recommendation_only is True),
                            ('automatic_promotion', self.automatic_promotion is False), ('certification', self.certification == 'unverified')):
             if not safe: raise LoopError('loop_authority_refused', name, 'declared')

@@ -71,7 +71,7 @@ def test_every_key_of_a_controller_result_is_named_in_the_result_table(tmp_path)
     result, _, _ = loop_sim.drive(loop_sim.converges_in_k_rounds(2), tmp_path)
     table = section('Loop controller').split('### Result')[1].split('###')[0]
     assert [key for key in result if f'`{key}`' not in table] == []
-    assert controller.PROFILE in table and '4 * max_rounds + 8' in section('Loop controller')
+    assert controller.PROFILE in table and '5 * max_rounds + 9' in section('Loop controller')
 
 
 def test_the_documented_event_cap_exceeds_what_a_run_with_the_most_events_writes(tmp_path):

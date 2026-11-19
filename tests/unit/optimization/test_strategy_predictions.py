@@ -1,5 +1,5 @@
 """Strategy proposals must arrive with a prediction frozen before the candidate is scored (#12, #10)."""
-# fixed-in: e5331826
+# fixed-in: 0c6f6e40
 from dataclasses import replace
 
 import pytest
