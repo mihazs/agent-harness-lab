@@ -1,5 +1,38 @@
 # Source evidence contracts
 
+## Keyed local memory identities
+
+Local `ai-memory-okf/0.2` sources can opt in to source schema 2 with
+`identity_scheme: hmac-sha256-v1` and an `identity_key_id`. Create a new
+owner-only 32-byte key with `ahl sources identity-key create --output FILE`;
+the command refuses to overwrite an existing file and prints only its key ID.
+If creation reports an error, inspect the destination before retrying; a key may
+have been written before a durability check failed. Do not use a hand-chosen key.
+Prepare a separate schema-2 declaration using
+`ahl sources identity-key prepare-okf --manifest LEGACY --scope-file JSON --key-file FILE --output NEW`.
+The scope file holds the exact original scope as a JSON value; the command checks
+it against the legacy declaration and checks the project against the export.
+The output must share the legacy declaration's directory and cannot overwrite an
+existing file. It prints the new source, project and scope fingerprints, not the
+scope. Use those project and scope fingerprints and `--identity-key-file FILE`
+for source operations. `ahl sources identity-key fingerprint --key-file FILE
+--value-file JSON` fingerprints one JSON value without printing it.
+The key file must be owned by the current user, private, a regular
+single-link file, and reached without symlinks. A missing or different key is
+rejected when a keyed source is opened. The key is not encryption or access
+control: operations that do not open the source journal, such as
+`sources lineage show`, do not validate it. Keep a private backup: losing it
+prevents reconstructing the same identities.
+
+Capture into a new journal; existing schema-1 journals remain readable and are
+not silently rewritten or linked to the new identity. Re-capture is required
+because old hashes do not reveal their original values. This protects the
+keyed identity fields against guessing without the key; content and revision
+hashes remain unkeyed integrity checks, and existing journals remain exposed to
+the old guessing risk. `sources lineage` accepts the same `--identity-key-file`
+before its action. Other source providers do not yet support keyed identities;
+cross-source reports can therefore still contain their unkeyed fingerprints.
+
 `ahl sources --project CHECKOUT` identifies the forge behind the checkout's
 `origin`; `--remote NAME` selects a different Git remote. The equivalent
 `ahl sources detect CHECKOUT` is available for discovery. GitHub and GitLab
