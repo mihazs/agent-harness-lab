@@ -4,12 +4,14 @@ Standard library only. The state file holds numbers keyed by (host, resource, op
 never a token, header, login or URL. A corrupt or oversized file is ignored, never trusted.
 """
 from datetime import datetime, timezone
+from contextlib import contextmanager
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import random
+import stat
 import threading
 import time
 from .transport import RateLimited
@@ -131,12 +133,68 @@ class Limiter:
         self.max_wait, self.min_interval, self.max_retries = max_wait, min_interval, max_retries
         self.secondary_base, self.clock, self.jitter = secondary_base, clock, jitter
         self.cancel = threading.Event()
+        self._local_slot = threading.Lock()
+        self._slot_context = threading.local()
         self.sleep = sleep or self.cancel.wait
         self._memory = {}
         self.begin_run()
 
     def begin_run(self):
         self.run = dict(requests=0, conditional=0, waits=0, waited=0, halt=None, reset=None, resource=None, buckets={}, routes=[], routes_omitted=0)
+
+    def _wait_slot(self, deadline, resource, counted):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0: raise self._halt('coordination_busy', None, resource)
+        started = time.monotonic()
+        cancelled = self.cancel.wait(min(0.05, remaining))
+        if not counted: self.run['waits'] += 1
+        self.run['waited'] += max(0.0, time.monotonic() - started)
+        if cancelled: raise self._halt('cancelled', None, resource)
+
+    @contextmanager
+    def slot(self, host, resource, identity, *, patience=None):
+        """Serialize one shared bucket's check, request and observation; refuse unsafe or long waits."""
+        if self.path is None:
+            deadline = time.monotonic() + max(0.0, min(30.0, patience if patience is not None else 30.0))
+            counted = False
+            while not self._local_slot.acquire(blocking=False):
+                self._wait_slot(deadline, resource, counted)
+                counted = True
+            try: yield
+            finally: self._local_slot.release()
+            return
+        if fcntl is None:
+            raise self._halt('coordination_unavailable', None, resource)
+        key = self.key(host, resource, identity).encode()
+        shard = int.from_bytes(hashlib.sha256(key).digest()[:2], 'big') % MAX_BUCKETS
+        descriptor = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            name = self.path.with_name(self.path.name + f'.request-{shard:02d}.lock')
+            descriptor = os.open(name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+                raise OSError('unsafe request lock')
+        except OSError:
+            if descriptor is not None: os.close(descriptor)
+            raise self._halt('coordination_unavailable', None, resource) from None
+        try:
+            deadline = time.monotonic() + max(0.0, min(30.0, patience if patience is not None else 30.0))
+            counted = False
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    self._wait_slot(deadline, resource, counted)
+                    counted = True
+                except OSError:
+                    raise self._halt('coordination_unavailable', None, resource) from None
+            self._slot_context.resource = resource
+            try: yield
+            finally: del self._slot_context.resource
+        finally:
+            os.close(descriptor)
 
     # -- shared state ------------------------------------------------------------------------------------------
     def _update(self, change):
@@ -153,9 +211,11 @@ class Limiter:
             buckets = self._load()
             before = json.dumps(buckets, sort_keys=True)
             result = change(buckets); self._prune(buckets, now)
-            if json.dumps(buckets, sort_keys=True) != before: self._save(buckets)
+            if json.dumps(buckets, sort_keys=True) != before or hasattr(self._slot_context, 'resource'): self._save(buckets)
             return result
         except OSError:
+            if hasattr(self._slot_context, 'resource'):
+                raise self._halt('coordination_unavailable', None, self._slot_context.resource) from None
             # An unusable state directory degrades to this process's own view; it never blocks the read.
             result = change(self._memory); self._prune(self._memory, now); return result
         finally:
@@ -167,7 +227,10 @@ class Limiter:
             with os.fdopen(descriptor, 'rb') as stream:
                 data = stream.read(MAX_STATE_BYTES+1)
             return _clean(json.loads(data), self.clock()) if len(data) <= MAX_STATE_BYTES else {}
-        except (OSError, ValueError, RecursionError, OverflowError):
+        except OSError as error:
+            if hasattr(self._slot_context, 'resource') and not isinstance(error, FileNotFoundError): raise
+            return {}
+        except (ValueError, RecursionError, OverflowError):
             return {}
 
     def _save(self, buckets):

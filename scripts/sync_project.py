@@ -38,29 +38,35 @@ def graphql(query, variables):
     """One GraphQL call that stops at the reserve floor and reports rate limits as such (never as permission)."""
     quota, who = limiter(), identity_digest('gh-cli')
     try:
-        # Project items exist only in GraphQL: the read is recorded as such and never borrows the REST bucket.
-        choose(quota, 'api.github.com', who, 'project_items', ('graphql',))
-        quota.before('api.github.com', 'graphql', who)
+        with quota.slot('api.github.com', 'graphql', who):
+            # Project items exist only in GraphQL and never borrow the REST bucket.
+            choose(quota, 'api.github.com', who, 'project_items', ('graphql',))
+            quota.before('api.github.com', 'graphql', who)
+            result = subprocess.run(['gh', 'api', 'graphql', '-i', '--input', '-'],
+                                    input=json.dumps({'query': query, 'variables': variables}),
+                                    text=True, capture_output=True)
+            if not result.stdout:
+                raise RuntimeError('GitHub CLI failed; check gh auth status and network access')
+            status, headers, body = split_http(result.stdout)
+            found = signals(headers)
+            quota.observe('api.github.com', who, 'graphql', status, found)
+            kind = classify(status, found, 'rate limit' in body.lower()[:2048])
+            if kind:
+                try: quota.retry_delay('api.github.com', who, 'graphql', kind, found, 0, retry=False)
+                except RateLimited as halt:
+                    if halt.reason not in ('primary_limit', 'secondary_limit'): raise
+                raise RuntimeError('GitHub rate limit reached; not a permission problem. Wait for the quota reset '
+                    'or the retry-after interval and rerun; see ahl sources github quota')
+            data = json.loads(body)
+            if result.returncode or data.get('errors'):
+                raise ValueError(data.get('errors', 'GitHub CLI request failed'))
+            spent = graphql_cost(data)
+            if spent is not None: quota.charge('api.github.com', who, 'graphql', spent)
+            return data['data']
     except RateLimited as halt:
         raise RuntimeError(f'GitHub GraphQL quota halted ({halt.reason}); resets at '
             f'{datetime.fromtimestamp(halt.reset, timezone.utc).isoformat() if halt.reset else "an unknown time"}') from None
-    result = subprocess.run(['gh', 'api', 'graphql', '-i', '--input', '-'],
-                            input=json.dumps({'query': query, 'variables': variables}),
-                            text=True, capture_output=True)
-    if not result.stdout:
-        raise RuntimeError('GitHub CLI failed; check gh auth status and network access')
-    status, headers, body = split_http(result.stdout)
-    found = signals(headers)
-    quota.observe('api.github.com', who, 'graphql', status, found)
-    if classify(status, found, 'rate limit' in body.lower()[:2048]):
-        raise RuntimeError('GitHub rate limit reached; not a permission problem. Wait for the quota reset '
-            'or the retry-after interval and rerun; see ahl sources github quota')
-    data = json.loads(body)
-    if result.returncode or data.get('errors'):
-        raise ValueError(data.get('errors', 'GitHub CLI request failed'))
-    spent = graphql_cost(data)
-    if spent is not None: quota.charge('api.github.com', who, 'graphql', spent)
-    return data['data']
+
 
 
 def mirrored_values(labels):
