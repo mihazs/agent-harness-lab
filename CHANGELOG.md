@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.225.1
+
+### Patch Changes
+
+- c3ff25f: Point execution-error guidance to private stage logs and reconciliation before retrying.
+- cd4fd5c: Document verified observability API boundaries and unimplemented ingestion capabilities.
+
 ## 0.225.0
 
 ### Minor Changes
