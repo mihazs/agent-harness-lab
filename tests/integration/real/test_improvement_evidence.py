@@ -176,22 +176,22 @@ def test_real_native_and_memory_session_with_missing_scope_stays_unlinked(real_r
     import secrets
     import tomllib
     from agent_harness_lab.sources.okf import concept
-    from agent_harness_lab.evaluation.integrity import contained
+    from agent_harness_lab.evaluation.integrity import contained, read_regular
 
     selected = os.environ.get('REAL_SOURCE_JOURNAL')
     if not selected: pytest.skip('set REAL_SOURCE_JOURNAL to an existing private source journal')
     journal = Path(selected)
     scope_file = real_run.project/'.ai-memory.toml'
     if not scope_file.is_file(): pytest.skip('selected project has no explicit memory scope')
-    scope = tomllib.loads(scope_file.read_text())
+    scope = tomllib.loads(read_regular(scope_file, 65536).decode('utf-8'))
     from agent_harness_lab.sources.schema import digest
-    if json.loads(journal.read_text())['project_sha256'] != digest(scope['project']):
+    if json.loads(read_regular(journal, 4*1024*1024))['project_sha256'] != digest(scope['project']):
         pytest.skip('journal project differs from the selected run')
-    declaration = json.loads((journal.parent/'manifest.json').read_text())
+    declaration = json.loads(read_regular(journal.parent/'manifest.json', 1024*1024))
     export = contained(journal.parent, declaration['data'])
     ids = set()
     for path in export.rglob('*.md'):
-        metadata, _ = concept(path.read_bytes())
+        metadata, _ = concept(read_regular(path, 1024*1024))
         if metadata.get('type') == 'Session Summary' and metadata.get('project') is None:
             if isinstance(metadata.get('session_id'), str): ids.add(metadata['session_id'])
     capture = None
@@ -201,7 +201,7 @@ def test_real_native_and_memory_session_with_missing_scope_stays_unlinked(real_r
             candidate = Path(directory)/name
             if candidate.stat().st_size > 16*1024*1024: continue
             with candidate.open('rb') as stream:
-                header = json.loads(stream.readline()).get('payload', {})
+                header = json.loads(stream.readline(1024*1024)).get('payload', {})
                 if (header.get('id') not in ids or header.get('cwd') != str(real_run.project)
                         or header.get('cli_version') != '0.166.0'): continue
                 if 1+sum(1 for _ in stream) <= 10000:
