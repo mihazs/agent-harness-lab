@@ -1,5 +1,30 @@
 # Source evidence contracts
 
+`ahl sources --project CHECKOUT` identifies the forge behind the checkout's
+`origin`; `--remote NAME` selects a different Git remote. The equivalent
+`ahl sources detect CHECKOUT` is available for discovery. GitHub and GitLab
+public hosts are recognized directly. Other hosts receive bounded,
+unauthenticated HTTPS version probes; an unavailable or ambiguous response
+leaves the provider unknown. A GitLab authentication error with its metadata
+header also identifies GitLab; instances that suppress it may remain unknown.
+SSH Git remotes use their host for HTTPS discovery;
+custom SSH aliases may require explicit configuration. When a matching manifest
+names an HTTPS port or path prefix, the probe uses that endpoint; discovery
+without a manifest probes the host root. Credentials
+in HTTPS Git URLs are refused and never printed.
+
+With a forge `--manifest` on the current checkout's remote host, AHL uses the
+detected provider to select the reader and requires the manifest provider to
+match. An explicitly selected `--project` always requires detection. If no
+checkout is present or the manifest targets another host, the explicit manifest
+continues to select the reader. The manifest still defines
+the authorized endpoint, selection and credential source; detection does not
+verify repository identity or grant permission to collect. Detection sends no
+credentials and follows no redirects. Its result and configured remote are local
+metadata.
+The receipt reports the discovery result and whether it used the network; a
+self-hosted discovery request counts as network use even for `probe` or `status`.
+
 [Documentation index](README.md)
 
 The standard-library `agent_harness_lab.sources` package defines the initial
@@ -3214,8 +3239,9 @@ the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
 `identity_provenance="source_declared_id"`, and explicit enablement. Register the
 reader with `Capability("api", "github", SOURCE_VERSION,
 ("contextual_assertion", "development_artifact"))` to use the shared Registry and
-atomic journal. The explicit CLI configuration below provides the same reader;
-installation and probes perform no automatic network discovery.
+atomic journal. The explicit CLI configuration below provides the same reader.
+Recognizing the public GitHub host requires no network request; self-hosted
+forge detection uses the bounded HTTPS probes described above.
 
 The endpoint must be exactly `https://api.github.com/repos/OWNER/REPO`. Public reads
 may use `auth_mode="none"`; configured/private reads require authorization explicitly

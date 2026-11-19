@@ -48,6 +48,8 @@ def resume(script, base, ledger_events, **options):
     """Resume with fresh ports that continue the script where the ledger left off; returns (result, ports)."""
     evaluated, proposed = offsets(ledger_events)
     ports = options.pop('ports', None) or ScriptedPorts(script, Meter(), evaluated=evaluated, proposed=proposed)
+    # The synthetic proposer sends no external requests, so a retry cannot duplicate one.
+    ports.proposal_retry_safe = lambda events: True
     result = controller.resume(script.spec, ports, ports, ledger_for(base), lambda: ports.meter.seconds, **options)
     return result, ports
 
@@ -99,6 +101,18 @@ def test_a_decision_already_recorded_is_finalized_without_asking_a_port_again(tm
     _, ledger, _ = interrupted(SCRIPT, tmp_path, 10)  # every round is decided; only the stop was not recorded
     result, ports = resume(SCRIPT, tmp_path, ledger.events())
     assert (result['stop'], ports.order, ports.settling) == ('acceptance_score_reached', [], [])
+
+
+def test_resume_preserves_area_regression_before_decision(tmp_path):
+    script = loop_sim.build('area-regression-on-resume', [loop_sim.score(0.6),
+        loop_sim.score(0.9, regressed_areas=('ux-ui',), cause='candidate')])
+    reference, _, _ = loop_sim.drive(script, tmp_path/'reference')
+    first, ledger, _ = interrupted(script, tmp_path/'interrupted', 5)
+    assert first['stop'] == 'interrupted'
+    result, ports = resume(script, tmp_path/'interrupted', ledger.events())
+    assert (reference['stop'], reference['outcome']) == ('regression', 'regressed')
+    assert (result['stop'], result['outcome'], result['best']) == (reference['stop'], reference['outcome'], reference['best'])
+    assert ports.order == []
 
 
 def test_a_baseline_that_was_never_recorded_is_evaluated_again_when_the_evaluator_confirms_nothing_is_in_flight(tmp_path, nominal):
@@ -262,7 +276,7 @@ def test_other_inputs_than_the_run_was_frozen_with_are_resume_inputs_changed_and
     assert (caught.value.reason, ports.order, ports.settling) == ('resume_inputs_changed', [], []) and stored_events(tmp_path) == before
 
 
-@pytest.mark.parametrize('damage', ['edit-middle', 'edit-newest', 'delete-event'])
+@pytest.mark.parametrize('damage', ['edit-middle', 'edit-newest', 'delete-event', 'edit-spec'])
 def test_a_tampered_ledger_fails_verification_and_runs_nothing(tmp_path, damage):
     _, ledger, _ = interrupted(SCRIPT, tmp_path, 5)
     case = next((tmp_path/'store'/'cases').iterdir())/'events'
@@ -270,10 +284,27 @@ def test_a_tampered_ledger_fails_verification_and_runs_nothing(tmp_path, damage)
     if damage == 'edit-middle': (case/'0001.json').write_text((case/'0001.json').read_text().replace('"valid"', '"vacuous"'))
     if damage == 'edit-newest': newest.write_text(newest.read_text().replace('"interrupted"', '"budget_exhausted"'))
     if damage == 'delete-event': (case/'0003.json').unlink()
+    if damage == 'edit-spec':
+        path = case.parent/'spec.json'
+        spec = json.loads(path.read_text())
+        spec['accept_score'] = 0.99
+        path.write_text(json.dumps(spec))
     ports = ScriptedPorts(SCRIPT, Meter(), evaluated=1, proposed=0)
     with pytest.raises(LoopError) as caught:
         controller.resume(SCRIPT.spec, ports, ports, ledger_for(tmp_path), lambda: ports.meter.seconds)
-    assert (caught.value.reason, ports.order) == ('loop_ledger_invalid', [])
+    assert (caught.value.reason, ports.order, ports.settling, ports.asked) == ('loop_ledger_invalid', [], [], [])
+
+
+@pytest.mark.parametrize('caller', ['original', 'changed'])
+def test_rehashed_stored_spec_cannot_override_the_frozen_event(tmp_path, caller):
+    _, ledger, _ = interrupted(SCRIPT, tmp_path, 5)
+    case = next((tmp_path/'store'/'cases').iterdir())
+    changed = replace(SCRIPT.spec, accept_score=0.99)
+    (case/'spec.json').write_text(json.dumps(changed.to_dict()))
+    ports = ScriptedPorts(SCRIPT, Meter(), evaluated=1, proposed=0)
+    with pytest.raises(LoopError) as caught:
+        controller.resume(changed if caller == 'changed' else SCRIPT.spec, ports, ports, ledger_for(tmp_path), lambda: ports.meter.seconds)
+    assert caught.value.reason == 'loop_ledger_invalid' and ports.order == ports.settling == ports.asked == [] and ledger.events()
 
 
 def test_two_concurrent_resumes_give_one_busy_and_the_other_finishes_the_run(tmp_path, nominal):

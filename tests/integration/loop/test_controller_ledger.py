@@ -121,10 +121,10 @@ def started(tmp_path, max_rounds=1):
 
 
 @pytest.mark.parametrize('max_rounds', [1, 2, 10])
-def test_the_ledger_accepts_exactly_four_times_max_rounds_plus_eight_events_and_then_rejects_with_a_typed_error(tmp_path, max_rounds):
+def test_the_ledger_accepts_its_bounded_events_and_then_rejects_with_a_typed_error(tmp_path, max_rounds):
     ledger, spec = started(tmp_path, max_rounds)
-    cap = 4*max_rounds + 8
-    sequence = (['spec_frozen', 'baseline_evaluated'] + ['round_started', 'candidate_frozen', 'candidate_evaluated', 'decided']*(max_rounds + 2))[:cap]
+    cap = 5*max_rounds + 9
+    sequence = (['spec_frozen', 'baseline_evaluated'] + ['proposal_started', 'round_started', 'candidate_frozen', 'candidate_evaluated', 'decided']*(max_rounds + 2))[:cap]
     for kind in sequence: ledger.write(kind, {}, elapsed=0.0)
     assert (event_cap(spec), len(sequence), ledger.count) == (cap, cap, cap)
     before = (ledger.head, sorted(path.name for path in (ledger.case_dir/'events').iterdir()))
@@ -153,7 +153,7 @@ def test_the_ledger_refuses_an_event_out_of_order_with_a_typed_error_and_writes_
 
 def test_an_append_that_crashes_before_it_is_published_leaves_no_event_and_the_next_append_continues_the_chain(tmp_path):
     ledger, spec = started(tmp_path)
-    ledger.write('spec_frozen', {}, elapsed=0.0)
+    ledger.write('spec_frozen', {'spec_sha256': spec.digest}, elapsed=0.0)
     head = ledger.head
 
     def crash(): raise OSError('power loss')

@@ -3,49 +3,12 @@ import argparse
 import json
 import sys
 import subprocess
-from .registry import Capability, Registry
-from .schema import PLANES
-from .snapshot import LocalExport
-from .okf import MissingOKFDependency, OKFExport
-from .store import SourceStore
-from .git import GitExport
-from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
-from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
-from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
-from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
-from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
-from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
-from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
-from .mem0 import PROVIDER as MEM0, PLATFORM_PROVIDER as MEM0_PLATFORM, SOURCE_VERSION as MEM0_VERSION, Mem0Export, Mem0PlatformExport
-from .hindsight_model_refs import PROVIDER as HINDSIGHT_REFS, SOURCE_VERSION as HINDSIGHT_REFS_VERSION, HindsightModelReferences
-from .hindsight_models import PROVIDER as HINDSIGHT_MODELS, SOURCE_VERSION as HINDSIGHT_MODELS_VERSION, HindsightModels
-from .hindsight_knowledge import PROVIDER as HINDSIGHT_KNOWLEDGE, SOURCE_VERSION as HINDSIGHT_KNOWLEDGE_VERSION, HindsightKnowledge
-from .hindsight_zip import PROVIDER as HINDSIGHT_ZIP, SOURCE_VERSION as HINDSIGHT_ZIP_VERSION, HindsightZipArchive
-from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
-from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
-from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
-from .opencode_backup import PROVIDER as OPENCODE_BACKUP, SOURCE_VERSION as OPENCODE_BACKUP_VERSION, OpenCodeBackup
-from .execution import capture_snapshot
-from .github_config import GitHubConfigured
-from .gitea import PROVIDER as GITEA, GiteaConfigured
-from .gitlab import PROVIDER as GITLAB, GitLabConfigured
-from .claude_mem_api import PROVIDER as CLAUDE_MEM_WORKER, ClaudeMemWorkerConfigured
-from .hindsight_api import PROVIDER as HINDSIGHT_REST, HindsightRestConfigured
-from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
-from .remote_config import ConfiguredAPI
-from .native import NativeCapture
-from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
-from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
-from agent_harness_lab.config import read_json
-
-# Selected-resource forge readers: connector and the preview summary key each prints.
-FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
-    MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary'),
-    CLAUDE_MEM_WORKER: (ClaudeMemWorkerConfigured, 'claude_mem_summary'),
-    HINDSIGHT_REST: (HindsightRestConfigured, 'hindsight_summary')}
 
 
 def main(argv):
+    if argv and argv[0] == 'detect':
+        from .forge_remote import main as detect_main
+        return detect_main(argv[1:])
     if argv and argv[0] == 'lineage':
         from .lineage import main as lineage_main
         return lineage_main(argv[1:])
@@ -73,7 +36,7 @@ def main(argv):
     parser = argparse.ArgumentParser(prog='ahl sources',
         description='Inspect explicitly configured sources and maintain a private metadata cache; no source is enabled by default.',
         epilog='Without --manifest, only the default probe is valid and reports zero enabled sources. '
-        'For a manifest, supply both expected SHA-256 scope identities. Probe checks the declaration; '
+        'For a manifest, supply both expected SHA-256 scope identities. Matching forge manifests identify the Git remote before checking the declaration; '
         'preview reads selected data without importing it; import writes a cache checkpoint; status reads cache metadata; '
         'recheck compares the selected source with its cache. Preview/import/recheck can contact a provider when the manifest selects an API source. '
         'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
@@ -98,9 +61,11 @@ def main(argv):
         'use ahl sources claude pin-check --help. To check a saved Claude-Mem MCP tool listing against the pinned release without contacting a worker, '
         'use ahl sources claude-mem tool-check --help. For the offline MemPalace capability report and a names-only check of a saved '
         'tools/list result, use ahl sources mempalace capabilities --help.')
-    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory'),
-        help='Requested source operation (default: %(default)s); lineage and inventory have their own options and help')
-    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')
+    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory', 'detect'),
+        help='Requested source operation (default: %(default)s); lineage, inventory and detect have their own options and help')
+    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration')
+    parser.add_argument('--project',help='Git checkout used for forge detection (default: current directory)')
+    parser.add_argument('--remote',default='origin',help='Git remote name used for forge detection (default: origin)')
     parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
@@ -108,7 +73,63 @@ def main(argv):
     parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete credential for a configured Gitea, GitLab, Mem0, Claude-Mem worker or Hindsight source (an Authorization header value; for Mem0 OSS the X-API-Key value); '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
+    if args.manifest is None and args.operation == 'probe' and args.project is None and args.remote == 'origin' and not any((args.project_sha256, args.scope_sha256, args.cache,
+                                                                        args.authorization_file, args.authorization_env)):
+        print(json.dumps(dict(schema_version=1, enabled_sources=0, source_read=False, network_used=False), sort_keys=True))
+        return 0
+    if args.manifest is None and args.project is not None:
+        if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
+            print('a manifest is required for source operations', file=sys.stderr)
+            return 2
+        from .forge_remote import main as detect_main
+        return detect_main([args.project, '--remote', args.remote])
+    if args.manifest is None and args.remote != 'origin':
+        print('a project is required to select a remote', file=sys.stderr)
+        return 2
+
+    from .registry import Capability, Registry
+    from .schema import PLANES
+    from .snapshot import LocalExport
+    from .okf import MissingOKFDependency, OKFExport
+    from .store import SourceStore
+    from .git import GitExport
+    from .quality_reports import PROVIDER as QUALITY_REPORTS, SOURCE_VERSION as QUALITY_REPORTS_VERSION, QualityReportsExport
+    from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
+    from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
+    from .mempalace_kg import PROVIDER as MEMPALACE_KG, SOURCE_VERSION as MEMPALACE_KG_VERSION, MemPalaceKnowledgeGraph
+    from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
+    from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
+    from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
+    from .mem0 import PROVIDER as MEM0, PLATFORM_PROVIDER as MEM0_PLATFORM, SOURCE_VERSION as MEM0_VERSION, Mem0Export, Mem0PlatformExport
+    from .hindsight_model_refs import PROVIDER as HINDSIGHT_REFS, SOURCE_VERSION as HINDSIGHT_REFS_VERSION, HindsightModelReferences
+    from .hindsight_models import PROVIDER as HINDSIGHT_MODELS, SOURCE_VERSION as HINDSIGHT_MODELS_VERSION, HindsightModels
+    from .hindsight_knowledge import PROVIDER as HINDSIGHT_KNOWLEDGE, SOURCE_VERSION as HINDSIGHT_KNOWLEDGE_VERSION, HindsightKnowledge
+    from .hindsight_zip import PROVIDER as HINDSIGHT_ZIP, SOURCE_VERSION as HINDSIGHT_ZIP_VERSION, HindsightZipArchive
+    from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
+    from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
+    from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
+    from .opencode_backup import PROVIDER as OPENCODE_BACKUP, SOURCE_VERSION as OPENCODE_BACKUP_VERSION, OpenCodeBackup
+    from .execution import capture_snapshot
+    from .github_config import GitHubConfigured
+    from .gitea import PROVIDER as GITEA, GiteaConfigured
+    from .gitlab import PROVIDER as GITLAB, GitLabConfigured
+    from .claude_mem_api import PROVIDER as CLAUDE_MEM_WORKER, ClaudeMemWorkerConfigured
+    from .hindsight_api import PROVIDER as HINDSIGHT_REST, HindsightRestConfigured
+    from .mem0_api import REST_PROVIDER as MEM0_REST, PLATFORM_API_PROVIDER as MEM0_PLATFORM_API, Mem0PlatformConfigured, Mem0RestConfigured
+    from .remote_config import ConfiguredAPI
+    from .native import NativeCapture
+    from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
+    from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
+    from agent_harness_lab.config import read_json
+
+    # Selected-resource forge readers: connector and the preview summary key each prints.
+    FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary'),
+        MEM0_REST: (Mem0RestConfigured, 'mem0_summary'), MEM0_PLATFORM_API: (Mem0PlatformConfigured, 'mem0_summary'),
+        CLAUDE_MEM_WORKER: (ClaudeMemWorkerConfigured, 'claude_mem_summary'),
+        HINDSIGHT_REST: (HindsightRestConfigured, 'hindsight_summary')}
+
     connector = None
+    discovery = None
     try:
         if args.manifest is None:
             if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
@@ -118,8 +139,23 @@ def main(argv):
             scope = dict(project_sha256=args.project_sha256, scope_sha256=args.scope_sha256)
             declaration = read_json(args.manifest)
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
+            provider = declaration['source'].get('provider') if remote else None
+            if provider in ('github', GITEA, GITLAB):
+                from .forge_remote import RemoteUnavailable, detect, matches_endpoint
+                if args.project is not None or args.remote != 'origin':
+                    matched = True
+                else:
+                    try: matched = matches_endpoint('.', args.remote, declaration.get('endpoint'))
+                    except RemoteUnavailable: matched = False
+                if matched:
+                    discovery = detect(args.project or '.', args.remote, endpoint=declaration.get('endpoint'))
+                    provider = discovery['provider']
+                    if provider not in ('github', GITEA, GITLAB) or declaration['source'].get('provider') != provider:
+                        raise ValueError('Git remote provider is unknown or differs from the manifest')
+            elif args.project is not None or args.remote != 'origin':
+                raise ValueError('Git remote selection requires a forge API manifest')
             if args.authorization_file is not None and not remote: raise ValueError('authorization file requires an API configuration')
-            forge = FORGES.get(declaration['source'].get('provider')) if remote else None
+            forge = FORGES.get(provider) if remote else None
             if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea, GitLab, Mem0, Claude-Mem worker or Hindsight configuration')
             connector = (forge[0](args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if forge
                 else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
@@ -204,6 +240,9 @@ def main(argv):
                 registry.register(Capability('api', connector.provider, source.version, connector.planes), connector)
             result = registry.probe(source, **scope)
             if result['status'] != 'recognized':
+                if discovery is not None:
+                    result['forge_detection'] = discovery
+                    result['network_used'] = discovery['network_used']
                 print(json.dumps(result)); return 3
             if args.operation == 'preview':
                 snapshot = registry.preview(source, **scope)
@@ -274,6 +313,9 @@ def main(argv):
                 else:
                     result = registry.status(source, store, **scope)
                     if remote: result['network_used'] = False
+        if discovery is not None:
+            result['forge_detection'] = discovery
+            result['network_used'] = bool(result.get('network_used') or discovery['network_used'])
         if getattr(connector, 'limiter', None) is not None: result['rate_limit'] = connector.limiter.receipt()
         print(json.dumps(result, sort_keys=True))
         return 0
