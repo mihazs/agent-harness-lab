@@ -71,7 +71,8 @@ The trial replaces `CODEX_HOME` with a temporary one. On Linux, when no API key
 is set and a private saved subscription login is available, a trial can use an
 ephemeral snapshot inside a separate namespace. The launcher checks that Codex
 recognizes the login and that its workspace sandbox cannot read the staged or
-host login before starting the trial. Unsupported runtimes, failed checks and
+host login before starting the trial. In that namespace, `CODEX_HOME` is a
+read-only temporary home and `TMPDIR` is a private `/tmp`. Unsupported runtimes, failed checks and
 expired credentials may still block the run; this is not a full isolation or
 successful model-request claim. The snapshot cannot refresh the host login.
 Claude receives `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`

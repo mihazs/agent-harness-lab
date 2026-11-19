@@ -854,7 +854,9 @@ def _evaluate(args):
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
-            record['environment'] = environment_receipt(environment, inherit_env, output)
+            effective_environment = (dict(environment, CODEX_HOME='/tmp/ahl-codex-home', TMPDIR='/tmp')
+                                     if agent == 'codex' and authentication == 'subscription_unverified' else environment)
+            record['environment'] = environment_receipt(effective_environment, inherit_env, output)
             try:
                 run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
             finally:

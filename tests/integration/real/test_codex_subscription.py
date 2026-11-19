@@ -34,6 +34,7 @@ def test_saved_subscription_is_hidden_from_real_codex_workspace():
         try:
             trial_environment = trial_surfaces.codex_environment(root, workspace, {}, environment)
             command = ('git -c index.threads=1 status --porcelain >/dev/null || exit 10; '
+                       '[ "$CODEX_HOME" = /tmp/ahl-codex-home ] && [ "$TMPDIR" = /tmp ] || exit 14; '
                        'printf ok > .ahl-subscription-probe && rm .ahl-subscription-probe || exit 11; '
                        'if [ -w "$CODEX_HOME" ] || chmod u+w "$CODEX_HOME" 2>/dev/null; then exit 13; fi; '
                        'for p in "$CODEX_HOME/auth.json" "$HOME/.codex/auth.json" '
