@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.229.0
+
+### Minor Changes
+
+- d2ea97e: Allow local memory sources to opt in to keyed identity fingerprints while retaining access to legacy journals.
+
 ## 0.228.0
 
 ### Minor Changes
