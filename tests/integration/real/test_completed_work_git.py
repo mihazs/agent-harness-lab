@@ -122,7 +122,8 @@ def test_real_forge_collection_matches_forge_cli(checkout):
                     assert actual_hash == expected_hash
 
 
-def test_real_forge_discussions_match_rest(checkout):
+@pytest.mark.parametrize('kind', ['closed_issues', 'merged_pull_requests'])
+def test_real_forge_discussions_match_rest(checkout, kind):
     if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
         pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
     from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection
@@ -137,9 +138,10 @@ def test_real_forge_discussions_match_rest(checkout):
         base = '/repos/' + '/'.join(parts)
         repo_id = int(subprocess.check_output(['gh', 'api', base, '--jq', '.id'], cwd=checkout))
         listing = json.loads(subprocess.check_output(['gh', 'api', base+'/issues?state=closed&per_page=100'], cwd=checkout))
-        choices = [row['number'] for row in listing if not row.get('pull_request') and 0 < row.get('comments', 0) <= 20]
+        choices = [row['number'] for row in listing if 0 < row.get('comments', 0) <= 20 and
+                   (not row.get('pull_request') if kind == 'closed_issues' else (row.get('pull_request') or {}).get('merged_at'))]
         if not choices:
-            pytest.skip('no suitable closed issue with discussions in the first page')
+            pytest.skip('no suitable completed item with discussions in the first page')
         number = choices[0]
         pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
             base+f'/issues/{number}/comments?per_page=100'], cwd=checkout))
@@ -154,17 +156,19 @@ def test_real_forge_discussions_match_rest(checkout):
         prefix = 'projects/' + quote('/'.join(parts), safe='')
         cli = ['glab', 'api', '--hostname', authority]
         repo = json.loads(subprocess.check_output([*cli, prefix], cwd=checkout))
-        listing = json.loads(subprocess.check_output([*cli, prefix+'/issues?state=closed&per_page=100'], cwd=checkout))
+        resource = 'issues' if kind == 'closed_issues' else 'merge_requests'
+        state = 'closed' if kind == 'closed_issues' else 'merged'
+        listing = json.loads(subprocess.check_output([*cli, prefix+f'/{resource}?state={state}&per_page=100'], cwd=checkout))
         choices = [row['iid'] for row in listing if 0 < row.get('user_notes_count', 0) <= 20]
         if not choices:
-            pytest.skip('no suitable closed issue with discussions in the first page')
+            pytest.skip('no suitable completed item with discussions in the first page')
         number = choices[0]
         raw = subprocess.check_output([*cli, '--paginate', '--output', 'ndjson',
-                                       prefix+f'/issues/{number}/discussions?per_page=100'], cwd=checkout)
+                                       prefix+f'/{resource}/{number}/discussions?per_page=100'], cwd=checkout)
         expected = [note for line in raw.splitlines() for note in json.loads(line)['notes']]
         api = JsonAPI('https://'+authority+'/api', max_pages=30, max_bytes=8*1024*1024, timeout=5, seconds=60)
         api._work_authorization = 'Bearer '+token
-        found = completed_work._gitlab_discussions(api, capture_state(api), parts, 'closed_issues',
+        found = completed_work._gitlab_discussions(api, capture_state(api), parts, kind,
                                                     [dict(number=number)], repo['id']).get(number)
     if found is None:
         pytest.skip('forge response requires the collector REST fallback')
