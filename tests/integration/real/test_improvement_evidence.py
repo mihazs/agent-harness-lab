@@ -125,6 +125,10 @@ def test_real_no_change_receipt_resumes_as_inconclusive(real_run, entry):
     assert completed.returncode == 3
     assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     assert result['changed_files'] == [] and result['exit_receipt']
+    original = json.loads((run/'recovery.json').read_text())['receipt']
+    assert original['spend_label'] == 'spent_without_evaluation'
+    for field in ('spend_label', 'spent_without_evaluation', 'findings_not_candidates'):
+        assert result[field] == original[field]
 
 
 def test_real_remote_selects_the_review_forge(real_run):
