@@ -35,7 +35,7 @@ def test_refused_sensor_link_keeps_coverage_unknown(tmp_path):
     assert result['coverage']=='unknown' and result['candidates']==[]
 
 
-def test_hosted_ci_paths_are_not_sensor_candidates(tmp_path):
+def test_hosted_ci_paths_are_metadata_only_sensor_candidates(tmp_path):
     workflow=tmp_path/'.github'/'workflows';workflow.mkdir(parents=True)
     (workflow/'ci.yml').write_text('SYNTHETIC_CONTENT')
     (workflow/'test_job.py').write_text('SYNTHETIC_CONTENT')
@@ -47,7 +47,9 @@ def test_hosted_ci_paths_are_not_sensor_candidates(tmp_path):
         (directory/'package.json').write_text('SYNTHETIC_CONTENT')
         (directory/'tests').mkdir()
     (tmp_path/'.gitlab-ci.yml').write_text('SYNTHETIC_CONTENT')
-    assert feedback_sensors.capture(tmp_path)['candidates']==[]
+    rows=feedback_sensors.capture(tmp_path)['candidates']
+    assert {(row['path'],row['category'],row['stage'],row['content']) for row in rows} == {
+        ('.github/workflows/ci.yml','ci','ci','not_read'),('.gitlab-ci.yml','ci','ci','not_read')}
 
 
 def test_a_git_ignored_directory_is_not_walked_while_coverage_stays_walked(tmp_path):
