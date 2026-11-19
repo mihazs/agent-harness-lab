@@ -347,9 +347,18 @@ def test_real_keyed_source_capture_and_provenance(real_run):
             assert subprocess.run([*status, '--identity-key-file', str(key_file)], env=environment, cwd=real_run.base,
                                   capture_output=True, timeout=20).returncode != 0
         if version == 2:
-            serialized = json.dumps(state)
-            assert all(digest(value) not in serialized for value in
-                       (config['project'], config['workspace'], str(source_dir.resolve()), pages[0].path))
+            serialized = json.dumps((state, report, sessions))
+            private_identities = [config['project'], config['workspace'], str(source_dir.resolve()),
+                                  *(page.path for page in pages)]
+            for page in pages:
+                metadata = page.metadata
+                for field, kind in (('handoff_id', 'handoff'), ('workstream_id', 'workstream'),
+                                    ('session_id', 'session'), ('from_session', 'session')):
+                    if isinstance(metadata.get(field), str): private_identities.append((kind, metadata[field]))
+                for field, kind in (('linked_sessions', 'session'), ('linked_pages', 'page')):
+                    if isinstance(metadata.get(field), list):
+                        private_identities.extend((kind, value) for value in metadata[field] if isinstance(value, str))
+            assert all(digest(value) not in serialized for value in private_identities)
             with pytest.raises(ValueError): OKFExport(manifest).read(source)
             with pytest.raises(ValueError): SourceStore(source_dir/f'journal-{version}.json', **scope_args).status(source)
             with pytest.raises(ValueError): OKFExport(manifest, identity_key=load_identity_key(wrong_file)).read(source)
