@@ -32,6 +32,9 @@ version-1 adapter contracts for #42. It registers and reads no sources by defaul
 It does not replace the existing [v2 event ledger](telemetry.md), native capture
 collector, ATIF/OTel adapters or executable grader contracts.
 
+For the proposed observability sources and their verified API boundaries, see the
+[observability capability matrix](observability-capabilities.md).
+
 `SourceSpec` records connector kind/provider/version, fingerprints of the root,
 project and scope, identity provenance, authentication mode, read-only capability
 and explicit enablement. Fingerprints are lowercase SHA-256 values, not raw paths
