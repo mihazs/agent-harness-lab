@@ -272,6 +272,17 @@ class GitHubAPI:
         routed = state.get('graphql_comments', {}).get(number)
         return routed if routed is not None else self._list(f'/issues/{number}/comments', state)
 
+    def _cached_comments(self, number, state):
+        """Only a validator for every page makes this conversation a cached refresh."""
+        suffix, page = f'/issues/{number}/comments', 1
+        while page is not None:
+            target, query = self.transport._target(self.transport.base+suffix+f'?per_page=100&page={page}')
+            key = digest(('github-conditional-v1', target+'?'+query, text_hash(self.authorization)))
+            cached = state['validators'][key] if key in state['validators'] else self._validators.get(key)
+            if cached is None: return False
+            page = self._next(cached[2].get('link'), suffix, page)
+        return True
+
     def _route_comments(self, numbers, state):
         """Choose REST or one GraphQL batch for the comments of every selected number; REST stays the default routing."""
         state['graphql_comments'] = {}
@@ -279,7 +290,7 @@ class GitHubAPI:
         limiter = self.transport.limiter
         route = choose(limiter, self.transport.origin[0], identity_digest(self.authorization), 'issue_comments',
             ('rest', 'graphql') if self.authorization is not None else ('rest',),
-            cached=self.conditional and bool(self._validators), rest_requests=len(numbers),
+            cached=self.conditional and all(self._cached_comments(n, state) for n in numbers), rest_requests=len(numbers),
             graphql_cost=math.ceil(len(numbers)/MAX_ALIASES))
         if route['transport'] != 'graphql': return
         state['graphql_comments'] = self._graphql_comments(numbers, state)
