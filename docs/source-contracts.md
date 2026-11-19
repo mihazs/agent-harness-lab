@@ -1,5 +1,30 @@
 # Source evidence contracts
 
+## Keyed local memory identities
+
+Local `ai-memory-okf/0.2` sources can opt in to source schema 2 with
+`identity_scheme: hmac-sha256-v1` and an `identity_key_id`. Create a new
+owner-only 32-byte key with `ahl sources identity-key create --output FILE`;
+the command refuses to overwrite an existing file and prints only its key ID.
+If creation reports an error, inspect the destination before retrying; a key may
+have been written before a durability check failed. Do not use a hand-chosen key.
+Use `ahl sources identity-key fingerprint --key-file FILE --value-file JSON`
+to fingerprint a JSON value without printing the value. Set the schema-2
+manifest's root, project and scope fingerprints to keyed fingerprints of the
+same values used by schema 1, and pass `--identity-key-file FILE` to source
+operations. The key file must be owned by the current user, private, a regular
+single-link file, and reached without symlinks. A missing or different key is
+rejected. Keep a private backup: losing it prevents reconstructing the same
+identities.
+
+Capture into a new journal; existing schema-1 journals remain readable and are
+not silently rewritten or linked to the new identity. Re-capture is required
+because old hashes do not reveal their original values. This protects the
+keyed identity fields against guessing without the key; content and revision
+hashes remain unkeyed integrity checks, and existing journals remain exposed to
+the old guessing risk. Other source providers and `sources lineage` do not yet
+support keyed identities.
+
 `ahl sources --project CHECKOUT` identifies the forge behind the checkout's
 `origin`; `--remote NAME` selects a different Git remote. The equivalent
 `ahl sources detect CHECKOUT` is available for discovery. GitHub and GitLab

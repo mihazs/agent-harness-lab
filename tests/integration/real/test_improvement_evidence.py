@@ -174,10 +174,10 @@ def test_real_legacy_source_journal_remains_readable(real_run):
 
 def test_real_keyed_source_capture_and_provenance(real_run):
     import hmac
-    import secrets
     import tomllib
     from agent_harness_lab.evaluation.integrity import contained, read_regular
     from agent_harness_lab.sources.memory_provenance import bind_provenance
+    from agent_harness_lab.sources.identity_key import load as load_identity_key
     from agent_harness_lab.sources.okf import OKFExport
     from agent_harness_lab.sources.registry import Capability, Registry
     from agent_harness_lab.sources.schema import SourceSpec, digest
@@ -196,10 +196,39 @@ def test_real_keyed_source_capture_and_provenance(real_run):
     source_dir = real_run.checkout/'private-keyed-evidence'
     source_dir.mkdir(mode=0o700)
     shutil.copytree(contained(original.parent, declaration['data']), source_dir/'export', symlinks=True)
-    key = secrets.token_bytes(32)
+    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=str(CODE_ROOT))
+    cli = [sys.executable, '-m', 'agent_harness_lab', 'sources']
+    key_file = source_dir/'identity.key'
+    create = [*cli, 'identity-key', 'create', '--output', str(key_file)]
+    created = subprocess.run(create, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=20)
+    assert created.returncode == 0
+    key = load_identity_key(key_file)
+    assert json.loads(created.stdout)['identity_key_id'] == hashlib.sha256(key).hexdigest()
+    assert key_file.stat().st_mode & 0o077 == 0
+    assert subprocess.run(create, env=environment, cwd=real_run.base, capture_output=True, timeout=20).returncode != 0
+    assert load_identity_key(key_file) == key
+    key_file.chmod(0o644)
+    with pytest.raises(ValueError): load_identity_key(key_file)
+    key_file.chmod(0o600)
+    linked = source_dir/'linked.key'
+    os.link(key_file, linked)
+    try:
+        with pytest.raises(ValueError): load_identity_key(key_file)
+    finally:
+        linked.unlink()
+    assert load_identity_key(key_file) == key
+    wrong_file = source_dir/'wrong.key'
+    assert subprocess.run([*cli, 'identity-key', 'create', '--output', str(wrong_file)],
+                          env=environment, cwd=real_run.base, capture_output=True, timeout=20).returncode == 0
     def keyed(value):
         raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
         return hmac.new(key, raw, hashlib.sha256).hexdigest()
+    value_file = source_dir/'identity-value.json'
+    value_file.write_text(json.dumps(config['project'])); value_file.chmod(0o600)
+    fingerprinted = subprocess.run([*cli, 'identity-key', 'fingerprint', '--key-file', str(key_file),
+                                   '--value-file', str(value_file)], env=environment, cwd=real_run.base,
+                                  capture_output=True, text=True, timeout=20)
+    assert fingerprinted.returncode == 0 and json.loads(fingerprinted.stdout)['fingerprint'] == keyed(config['project'])
     results = []
     for version in (1, 2):
         fingerprint = digest if version == 1 else keyed
@@ -217,17 +246,37 @@ def test_real_keyed_source_capture_and_provenance(real_run):
         store = SourceStore(source_dir/f'journal-{version}.json', identity_key=identity_key, **scope_args)
         registry = Registry()
         registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
-        assert registry.ingest(source, store, **scope_args).source_sha256 == source.source_key
+        if version == 1:
+            assert registry.ingest(source, store, **scope_args).source_sha256 == source.source_key
+        else:
+            command = [*cli, 'import', '--manifest', str(manifest), '--project-sha256', source.project_sha256,
+                       '--scope-sha256', source.scope_sha256, '--cache', str(source_dir/f'journal-{version}.json'),
+                       '--identity-key-file', str(key_file)]
+            imported = subprocess.run(command, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=30)
+            assert imported.returncode == 0 and json.loads(imported.stdout)['source_sha256'] == source.source_key
         report = bind_provenance(connector, source, store)
         state, _ = store.read_snapshot()
         pages = connector.pages(source)
         assert state['records'] and pages
+        status = [*cli, 'status', '--manifest', str(manifest), '--project-sha256', source.project_sha256,
+                  '--scope-sha256', source.scope_sha256, '--cache', str(source_dir/f'journal-{version}.json')]
+        if version == 1:
+            checked = subprocess.run(status, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=20)
+            assert checked.returncode == 0 and json.loads(checked.stdout)['source_sha256'] == source.source_key
+            assert subprocess.run([*status, '--identity-key-file', str(key_file)], env=environment, cwd=real_run.base,
+                                  capture_output=True, timeout=20).returncode != 0
         if version == 2:
             serialized = json.dumps(state)
             assert all(digest(value) not in serialized for value in
                        (config['project'], config['workspace'], str(source_dir.resolve()), pages[0].path))
             with pytest.raises(ValueError): OKFExport(manifest).read(source)
             with pytest.raises(ValueError): SourceStore(source_dir/f'journal-{version}.json', **scope_args).status(source)
-            with pytest.raises(ValueError): OKFExport(manifest, identity_key=secrets.token_bytes(32)).read(source)
+            with pytest.raises(ValueError): OKFExport(manifest, identity_key=load_identity_key(wrong_file)).read(source)
+            checked = subprocess.run([*status, '--identity-key-file', str(key_file)], env=environment, cwd=real_run.base,
+                                     capture_output=True, text=True, timeout=20)
+            assert checked.returncode == 0 and json.loads(checked.stdout)['source_sha256'] == source.source_key
+            assert subprocess.run(status, env=environment, cwd=real_run.base, capture_output=True, timeout=20).returncode != 0
+            assert subprocess.run([*status, '--identity-key-file', str(wrong_file)], env=environment, cwd=real_run.base,
+                                  capture_output=True, timeout=20).returncode != 0
         results.append((len(state['records']), report['status'], report['reason'], report['counts']))
     assert results[0] == results[1] and read_regular(original, 4*1024*1024) == original_raw

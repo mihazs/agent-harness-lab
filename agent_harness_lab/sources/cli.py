@@ -6,6 +6,9 @@ import subprocess
 
 
 def main(argv):
+    if argv and argv[0] == 'identity-key':
+        from .identity_key import main as identity_key_main
+        return identity_key_main(argv[1:])
     if argv and argv[0] == 'detect':
         from .forge_remote import main as detect_main
         return detect_main(argv[1:])
@@ -48,6 +51,7 @@ def main(argv):
         'cognee-export (one selected Cognee v1.6.5 graph JSON export, COGX archive directory or saved recall result list of one dataset; never runs recall, inference or a store). '
         'opencode-export (one selected pinned-shape JSON session export; metadata only). '
         'opencode-sqlite-backup (one selected caller-supplied backup; metadata only). '
+        'For private keyed identities, use ahl sources identity-key --help. '
         'Rate limits: forge reads share a reserve, budget and quota state; see ahl sources github quota --help. '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration), mem0-oss-rest / mem0-platform-api (one scoped, '
@@ -69,16 +73,17 @@ def main(argv):
     parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
+    parser.add_argument('--identity-key-file',help='Owner-only key file for a keyed local memory source')
     parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
     parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete credential for a configured Gitea, GitLab, Mem0, Claude-Mem worker or Hindsight source (an Authorization header value; for Mem0 OSS the X-API-Key value); '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
-    if args.manifest is None and args.operation == 'probe' and args.project is None and args.remote == 'origin' and not any((args.project_sha256, args.scope_sha256, args.cache,
+    if args.manifest is None and args.operation == 'probe' and args.project is None and args.remote == 'origin' and not any((args.project_sha256, args.scope_sha256, args.cache, args.identity_key_file,
                                                                         args.authorization_file, args.authorization_env)):
         print(json.dumps(dict(schema_version=1, enabled_sources=0, source_read=False, network_used=False), sort_keys=True))
         return 0
     if args.manifest is None and args.project is not None:
-        if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
+        if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.identity_key_file, args.authorization_file, args.authorization_env)):
             print('a manifest is required for source operations', file=sys.stderr)
             return 2
         from .forge_remote import main as detect_main
@@ -132,13 +137,19 @@ def main(argv):
     discovery = None
     try:
         if args.manifest is None:
-            if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
+            if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.identity_key_file, args.authorization_file, args.authorization_env)):
                 raise ValueError()
             result = dict(schema_version=1, enabled_sources=0, source_read=False, network_used=False)
         else:
             scope = dict(project_sha256=args.project_sha256, scope_sha256=args.scope_sha256)
             declaration = read_json(args.manifest)
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
+            if args.identity_key_file is not None:
+                from .identity_key import load as load_identity_key
+                identity_key = load_identity_key(args.identity_key_file)
+                if remote: raise ValueError('identity key requires a keyed local memory source')
+            else:
+                identity_key = None
             provider = declaration['source'].get('provider') if remote else None
             if provider in ('github', GITEA, GITLAB):
                 from .forge_remote import RemoteUnavailable, detect, matches_endpoint
@@ -158,10 +169,10 @@ def main(argv):
             forge = FORGES.get(provider) if remote else None
             if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea, GitLab, Mem0, Claude-Mem worker or Hindsight configuration')
             connector = (forge[0](args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if forge
-                else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
+                else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest, identity_key=identity_key))
             source, _ = connector.declaration(**scope)
             if source.provider == 'ai-memory-okf':
-                connector = OKFExport(args.manifest)
+                connector = OKFExport(args.manifest, identity_key=identity_key)
             elif source.provider == 'git':
                 connector = GitExport(args.manifest)
             elif source.provider == TEST_RESULTS:
@@ -298,7 +309,7 @@ def main(argv):
             elif args.operation in ('import', 'status', 'recheck'):
                 if not args.cache:
                     raise ValueError()
-                store = SourceStore(args.cache, **scope)
+                store = SourceStore(args.cache, identity_key=identity_key, **scope)
                 if args.operation == 'recheck': result = registry.recheck(source, store, **scope)
                 elif args.operation == 'import':
                     try:

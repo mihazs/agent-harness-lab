@@ -71,8 +71,8 @@ class LocalExport:
             return digest(value)
         if self._identity_key is None or not hmac.compare_digest(hashlib.sha256(self._identity_key).hexdigest(), source.identity_key_id):
             raise ValueError('source identity key unavailable or mismatched')
-        raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
-        return hmac.new(self._identity_key, raw, hashlib.sha256).hexdigest()
+        from .identity_key import fingerprint as keyed_fingerprint
+        return keyed_fingerprint(self._identity_key, value)
 
     def declaration(self, *, project_sha256, scope_sha256):
         fingerprint(project_sha256); fingerprint(scope_sha256)
