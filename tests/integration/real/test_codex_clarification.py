@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
-from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, load_sessions
+from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, analyze, load_sessions
 
 
 @pytest.mark.parametrize('name', ['request_user_input', 'request_user_input_async'])
@@ -74,5 +74,8 @@ def test_real_codex_input_reply_reaches_adherence():
                 if _question(between[-1]): continue
                 assert _asked(turns, position, reply + 1) is None
                 assert all(item['restated'] != reply and reply not in item['signals'].values() for item in _user_items(normalized))
+                report = analyze([normalized], [])
+                assert report['status'] == 'completed' and report['redaction'] == 'digest_only'
+                assert report['sessions']['partial'] == 1 and report['publication_allowed'] is False
                 return
     pytest.fail('no usable real request and reply in the bounded session set')
