@@ -17,6 +17,7 @@ from agent_harness_lab.sources.schema import digest
 
 WORKTREES = Path.home()/'dev/.worktrees'
 CODE_ROOT = Path(__file__).resolve().parents[3]
+MAX_SESSION_FILES = 400
 
 
 def selected_project(meta):
@@ -57,7 +58,7 @@ def test_real_codex_question_call_is_recognized(name):
     if not root:
         pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
-        if index >= 150: break
+        if index >= MAX_SESSION_FILES: break
         if path.stat().st_size > 8 * 1024 * 1024: continue
         with path.open() as stream:
             try: meta = json.loads(next(stream))['payload']
@@ -87,7 +88,7 @@ def test_real_codex_input_reply_reaches_adherence():
     projects = json.loads(os.environ.get('REAL_CODEX_PROJECTS', '[]'))
     start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
-        if index >= 150: break
+        if index >= MAX_SESSION_FILES: break
         if path.stat().st_size > 8 * 1024 * 1024: continue
         answers, reply_ids = [], []
         with path.open() as stream:
@@ -140,7 +141,7 @@ def test_real_async_input_tool_is_preserved_in_telemetry():
     root = os.environ.get('REAL_CODEX_SESSION_ROOT')
     if not root: pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
-        if index >= 150: break
+        if index >= MAX_SESSION_FILES: break
         if path.stat().st_size > 8 * 1024 * 1024: continue
         with path.open() as stream:
             try: meta = json.loads(next(stream))['payload']
