@@ -1,0 +1,8 @@
+{
+  "flag": null,
+  "forbidden_phrases": [],
+  "profile": "ahl-text-case-bank-v1",
+  "required_names": [],
+  "required_phrases": ["hello"],
+  "schema_version": 1
+}

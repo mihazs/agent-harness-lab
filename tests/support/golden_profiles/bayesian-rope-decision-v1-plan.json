@@ -1,0 +1,74 @@
+{
+  "alpha": 0.05,
+  "baseline_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "bayes_decision": {
+    "allow_bound_resolved_verdict": false,
+    "cross_check_alpha": 0.01,
+    "p_cut": 0.99,
+    "posterior_draws": 20000,
+    "prior": {
+      "anchor": 0,
+      "concentration": 1,
+      "kind": "dirichlet_pseudo_root"
+    },
+    "profile": "bayesian-rope-decision-v1",
+    "regression_margin": 0.05,
+    "rope_epsilon": 0.1,
+    "schema_version": 1
+  },
+  "candidate_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "effect_margin": 0.1,
+  "experiment_id": "synthetic-golden",
+  "family_margin": 0.05,
+  "family_weights": [
+    [
+      "alpha",
+      0.5
+    ],
+    [
+      "beta",
+      0.5
+    ]
+  ],
+  "grader_hash": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+  "max_trials": 40,
+  "min_roots": 2,
+  "partition": "development",
+  "precision_half_width": 0.2,
+  "profile": "descriptive_smoke",
+  "repeats": 2,
+  "runtime_hash": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+  "seed": 7,
+  "tasks": [
+    [
+      "alpha-t0",
+      "alpha-r0",
+      "alpha"
+    ],
+    [
+      "alpha-t1",
+      "alpha-r1",
+      "alpha"
+    ],
+    [
+      "alpha-t2",
+      "alpha-r2",
+      "alpha"
+    ],
+    [
+      "beta-t0",
+      "beta-r0",
+      "beta"
+    ],
+    [
+      "beta-t1",
+      "beta-r1",
+      "beta"
+    ],
+    [
+      "beta-t2",
+      "beta-r2",
+      "beta"
+    ]
+  ]
+}

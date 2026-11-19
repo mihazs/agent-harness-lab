@@ -1,0 +1,1 @@
+[{"id":"call","payload":{"arguments":"synthetic body","call_id":"synthetic-call","name":"read","type":"function_call"},"session_id":"synthetic-session"},{"id":"result","payload":{"call_id":"synthetic-call","output":{"body":"synthetic body","exit_code":1},"type":"function_call_output"},"session_id":"synthetic-session"}]

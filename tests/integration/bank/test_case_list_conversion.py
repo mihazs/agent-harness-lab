@@ -348,3 +348,27 @@ def test_an_arm_without_output_for_a_case_is_unknown_and_never_a_pass(cases, tmp
     result = guard(cases, manifest, arm_pairs(manifest, tmp_path / 'gap', GOOD, {k: v for k, v in GOOD.items() if k != 'route-ticket'}))
     assert result['pairs']['unknown'] == 1 and result['pairs']['eligible'] == 2 and 'unknown_outcomes' in result['reasons']
     assert result['verdict'] != 'improved'
+
+
+@pytest.mark.parametrize('damage', ['unknown_profile', 'missing_profile', 'boolean_version'])
+def test_frozen_text_grader_rejects_unknown_reference_contract(tmp_path, damage):
+    import sys
+    from pathlib import Path
+    from agent_harness_lab.evaluation.case_list_bank import PROGRAM
+    golden = Path(__file__).resolve().parents[2]/'support/golden_profiles/ahl-text-case-bank-v1.json'
+    reference = json.loads(golden.read_text())
+    program, spec, workspace = tmp_path/'grade.py', tmp_path/'expected.json', tmp_path/'workspace'
+    program.write_text(PROGRAM)
+    workspace.mkdir()
+    (workspace/'result.json').write_text(json.dumps({'response': 'hello'}))
+    def run():
+        return subprocess.run([sys.executable, str(program), str(workspace), str(spec)], capture_output=True, text=True, timeout=10)
+    spec.write_text(json.dumps(reference))
+    valid = run()
+    assert valid.returncode == 0 and json.loads(valid.stdout)['outcome'] is True
+    if damage == 'unknown_profile': reference['profile'] = 'ahl-text-case-bank-v999'
+    if damage == 'missing_profile': reference.pop('profile')
+    if damage == 'boolean_version': reference['schema_version'] = True
+    spec.write_text(json.dumps(reference))
+    invalid = run()
+    assert invalid.returncode == 2 and json.loads(invalid.stdout)['error'] == 'reference_invalid'

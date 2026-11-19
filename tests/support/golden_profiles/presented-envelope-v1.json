@@ -1,0 +1,1 @@
+{"adapter_id":"structured-error-v1","authorization_digest":"7b6c2913028001090ef19eda6e7b0ddaa2e72a2bb420c8908c0d3c03a2ff13a1","error_metadata":{"code":"synthetic-not-found","retry_authorized":false,"status":"error"},"original":{"call_id":"synthetic-call","payload":{"code":"synthetic-not-found"},"status":"error","tool":"read"}}

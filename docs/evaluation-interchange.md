@@ -136,7 +136,11 @@ A missing, malformed, oversized or duplicate-key `result.json`, or a `response` 
 not text, fails the case; it never passes. Each list holds at most 32 single-line
 phrases of at most 512 bytes. The grader is one frozen program shared by every task
 plus a per-case `expected.json`, and a malformed reference is an invalid receipt, not a
-pass. Each task also carries `broken`, `partial`, `complete` and `alternative_valid`
+pass. Newly generated graders require the `ahl-text-case-bank-v1` reference profile and
+an integer schema version of 1; unsupported references return `reference_invalid`.
+Previously frozen grader bundles retain their original code; reconvert the source into
+a new bank to get this check, and treat the new bank as a distinct frozen artifact.
+Each task also carries `broken`, `partial`, `complete` and `alternative_valid`
 control fixtures, so `ahl bank --audit --cooperative-controls` can show that the grader
 rejects an empty workspace and the first two controls and accepts the last two. The
 `superficial` control some qualification profiles require is not generated.

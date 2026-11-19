@@ -1,0 +1,115 @@
+{
+  "classifier_selection_allowed": false,
+  "limitations": [
+    "Local reviewer identities are unauthenticated; annotations are not executable task oracles.",
+    "Near-duplicate adjudication, verified lineage binding and held-out classifier evaluation are not implemented."
+  ],
+  "manifest_sha256": "70060971b1dbc7af355e9a6c251b95e0128b7073b226556b5f9ff407b101a19f",
+  "profile": "diagnostic-corpus-v1",
+  "publication_allowed": false,
+  "records": [
+    {
+      "annotation": {
+        "evidence_refs": [
+          "terminal"
+        ],
+        "mechanisms": [],
+        "outcome": "task_failure",
+        "reason": "Synthetic declared observation review",
+        "recovery": "unrecovered",
+        "symptoms": [
+          "synthetic-symptom"
+        ],
+        "verification": "reviewed_observation"
+      },
+      "case_id": "0345be3fadb18e3e98fa9a21f174f896399652c460da6356ec3e1d34cc1ad7ba",
+      "gold_label": false,
+      "label_provenance": "operator_attested_adjudication",
+      "partition": "fitting",
+      "record": {
+        "ambiguity": false,
+        "author": "synthetic-author",
+        "capture_complete": true,
+        "evidence": [
+          {
+            "content": "A synthetic artifact check failed; the terminal record is available.",
+            "id": "terminal",
+            "sha256": "0b75a2f42758e3968762b32cb52bfb1f14af703edea12937cd0242a6f9953417"
+          }
+        ],
+        "family": "synthetic-family",
+        "incident_id": "fit",
+        "license": "CC0-1.0",
+        "partition": "fitting",
+        "permission": "approved",
+        "predicted_summary": "SUGGESTED_LABEL_MUST_STAY_HIDDEN",
+        "project_id": "synthetic-project",
+        "root_id": "fit-root",
+        "rubric_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "schema_version": 1,
+        "selection_reason": "manual",
+        "source_kind": "synthetic",
+        "source_ref": "synthetic:offline-fixture",
+        "source_revision_sha256": "da4270e3735a3418c9d462af2e17d045132dede43df058e85b1f0399fcf96f1b",
+        "summary": "Synthetic fit terminal record for an offline corpus control.",
+        "supersedes": null,
+        "time_group": "synthetic-window"
+      },
+      "retirement": null,
+      "review_event_sha256": "df9462b41b45733cce6fa3aaaee1600943b4f9e56916d82b40348cbe34d9a767"
+    },
+    {
+      "annotation": {
+        "evidence_refs": [
+          "terminal"
+        ],
+        "mechanisms": [],
+        "outcome": "successful",
+        "reason": "Synthetic declared observation review",
+        "recovery": "not_applicable",
+        "symptoms": [
+          "synthetic-symptom"
+        ],
+        "verification": "reviewed_observation"
+      },
+      "case_id": "c327ae28f17fc109c546e4e6af68728f5d383123edf8d41b28a363e339fa1fd1",
+      "gold_label": false,
+      "label_provenance": "operator_attested_adjudication",
+      "partition": "development",
+      "record": {
+        "ambiguity": false,
+        "author": "synthetic-author",
+        "capture_complete": true,
+        "evidence": [
+          {
+            "content": "A synthetic artifact check failed; the terminal record is available.",
+            "id": "terminal",
+            "sha256": "0b75a2f42758e3968762b32cb52bfb1f14af703edea12937cd0242a6f9953417"
+          }
+        ],
+        "family": "synthetic-family",
+        "incident_id": "dev",
+        "license": "CC0-1.0",
+        "partition": "development",
+        "permission": "approved",
+        "predicted_summary": "SUGGESTED_LABEL_MUST_STAY_HIDDEN",
+        "project_id": "synthetic-project",
+        "root_id": "dev-root",
+        "rubric_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "schema_version": 1,
+        "selection_reason": "manual",
+        "source_kind": "synthetic",
+        "source_ref": "synthetic:offline-fixture",
+        "source_revision_sha256": "ef260e9aa3c673af240d17a2660480361a8e081d1ffeca2a5ed0e3219fc18567",
+        "summary": "Synthetic dev terminal record for an offline corpus control.",
+        "supersedes": null,
+        "time_group": "synthetic-window"
+      },
+      "retirement": null,
+      "review_event_sha256": "97a17429c6b4bed9aa2077db69cb3d99a546a42d3078878f10db5bf425e761a7"
+    }
+  ],
+  "revision_sha256": "d20963eef8768253ad22ff8cf2153dc9d1309867f291eff33b49795c1562a13f",
+  "root_independence": "unverified",
+  "schema_version": 1
+}
