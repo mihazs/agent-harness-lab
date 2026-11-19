@@ -176,7 +176,9 @@ def _hit(call, match, project):
 
 def _asked(turns, lo, hi):
     """Whether a question to the user, then a user reply, both fall in turns[lo:hi]."""
-    question = next((i for i in range(lo, hi) if _question(turns[i])), None)
+    # A general input request does not establish that an approval was sought.
+    question = next((i for i in range(lo, hi) if _question(turns[i]) and turns[i].get('tool') not in
+                     ('request_user_input', 'request_user_input_async')), None)
     return question is not None and any(turns[i]['role'] == 'user' for i in range(question + 1, hi))
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab.diagnostics.adherence_native import _Codex
-from agent_harness_lab.diagnostics.instruction_adherence import _question
+from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question
 
 
 @pytest.mark.parametrize('name', ['request_user_input', 'request_user_input_async'])
@@ -31,5 +31,6 @@ def test_real_codex_question_call_is_recognized(name):
                 reader = _Codex(Path.cwd(), ())
                 reader.tool(payload)
                 assert len(reader.turns) == 1 and _question(reader.turns[0])
+                assert not _asked(reader.turns, 0, len(reader.turns))
                 return
     pytest.skip('no matching real tool call in the bounded session set')
