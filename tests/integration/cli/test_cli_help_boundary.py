@@ -48,7 +48,7 @@ OPTIONS = {
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',
                'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'campaign',
-               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'apply', 'annotation-plan', 'instruction-adherence', 'instruction-repair', 'compare', 'score', 'score-sessions', 'trace-import', 'trace-export', 'adapters', 'benchmark-report', 'doctor', 'audit', 'init',
+               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'apply', 'annotation-plan', 'instruction-adherence', 'instruction-repair', 'compare', 'score', 'score-sessions', 'trace-import', 'trace-export', 'adapters', 'hypothesis-probe', 'benchmark-report', 'doctor', 'audit', 'init',
                'sources', 'memory', 'config', 'analyze', 'analysis', 'improve', 'watch')
 # Wording that would imply behavioral auto-adoption or continuous self-modification.
 FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automatic improvement', 'automatically apply',

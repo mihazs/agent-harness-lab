@@ -191,6 +191,9 @@ def main(argv=None):
     if argv and argv[0] == 'adapters':
         from agent_harness_lab.evaluation.adapter_cli import main as adapters_main
         return adapters_main(argv[1:])
+    if argv and argv[0] == 'hypothesis-probe':
+        from agent_harness_lab.evaluation.probe_cli import main as probe_main
+        return probe_main(argv[1:])
     if argv and argv[0] == 'annotation-plan':
         from agent_harness_lab.diagnostics.annotation_plan import main as plan_main
         return plan_main(argv[1:])
@@ -263,6 +266,7 @@ def main(argv=None):
         'trace-import':'Convert one named external trajectory (ATIF-v1.8) into private AHL metadata events and a loss report; offline, outcome and lineage stay unknown',
         'trace-export':'Export selected metadata as private local OTLP JSON logs; offline, outcome and lineage stay unknown',
         'adapters':'Stage one reviewed presentation adapter version under a controller-owned manifest, or roll it back; offline, no hook or runtime',
+        'hypothesis-probe':'Run a bounded synthetic baseline/candidate probe; does not establish original session outcomes or authorize promotion',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
         'audit':'Inspect static harness conventions without execution, network or a model',
