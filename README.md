@@ -140,6 +140,8 @@ the inventory may still read and hash it.
 Change plans list the surfaces they leave for later as deferred.
 `ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` prints this
 matrix for the declared runtime, and none for a version other than the pin.
+The [offline compatibility report](docs/runtime-compatibility.md) lists which
+classifier and capture fixtures were exercised at each pin and what remains untested.
 See the [surface reference](skills/harness-self-improvement/references/surfaces.md)
 for paths, version pins and unverified items, and [trial isolation](skills/harness-self-improvement/references/isolation.md)
 for what an evaluation trial still inherits.

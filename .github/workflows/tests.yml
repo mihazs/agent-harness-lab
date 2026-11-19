@@ -36,6 +36,8 @@ jobs:
       - run: task setup:test
       - name: Lint with ruff
         run: task lint
+      - name: Report pinned runtime fixture coverage
+        run: python3 -m agent_harness_lab.runtime_compatibility
       - name: Run the suite and stop at the first failure
         env:
           PYTEST_ADDOPTS: --maxfail=1
