@@ -22,8 +22,8 @@ not silently rewritten or linked to the new identity. Re-capture is required
 because old hashes do not reveal their original values. This protects the
 keyed identity fields against guessing without the key; content and revision
 hashes remain unkeyed integrity checks, and existing journals remain exposed to
-the old guessing risk. Other source providers and `sources lineage` do not yet
-support keyed identities.
+the old guessing risk. `sources lineage` accepts the same `--identity-key-file`
+before its action. Other source providers do not yet support keyed identities.
 
 `ahl sources --project CHECKOUT` identifies the forge behind the checkout's
 `origin`; `--remote NAME` selects a different Git remote. The equivalent

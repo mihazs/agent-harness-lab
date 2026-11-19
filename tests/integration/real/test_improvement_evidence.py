@@ -178,6 +178,7 @@ def test_real_keyed_source_capture_and_provenance(real_run):
     from agent_harness_lab.evaluation.integrity import contained, read_regular
     from agent_harness_lab.sources.memory_provenance import bind_provenance
     from agent_harness_lab.sources.identity_key import load as load_identity_key
+    from agent_harness_lab.sources.lineage import LineageStore
     from agent_harness_lab.sources.okf import OKFExport
     from agent_harness_lab.sources.registry import Capability, Registry
     from agent_harness_lab.sources.schema import SourceSpec, digest
@@ -278,5 +279,19 @@ def test_real_keyed_source_capture_and_provenance(real_run):
             assert subprocess.run(status, env=environment, cwd=real_run.base, capture_output=True, timeout=20).returncode != 0
             assert subprocess.run([*status, '--identity-key-file', str(wrong_file)], env=environment, cwd=real_run.base,
                                   capture_output=True, timeout=20).returncode != 0
+            lineage_dir = source_dir/'lineage'
+            lineage = LineageStore(lineage_dir, identity_key=key, **scope_args)
+            with lineage.locked(create=True): pass
+            coverage = lineage.coverage(source_dir/f'journal-{version}.json')
+            lineage_cli = [*cli, 'lineage', '--store', str(lineage_dir), '--project-sha256', source.project_sha256,
+                           '--scope-sha256', source.scope_sha256]
+            action = ['coverage', '--cache', str(source_dir/f'journal-{version}.json')]
+            checked = subprocess.run([*lineage_cli, '--identity-key-file', str(key_file), *action], env=environment,
+                                     cwd=real_run.base, capture_output=True, text=True, timeout=30)
+            assert checked.returncode == 0 and json.loads(checked.stdout)['record_types'] == coverage['record_types']
+            assert subprocess.run([*lineage_cli, *action], env=environment, cwd=real_run.base,
+                                  capture_output=True, timeout=30).returncode != 0
+            assert subprocess.run([*lineage_cli, '--identity-key-file', str(wrong_file), *action], env=environment,
+                                  cwd=real_run.base, capture_output=True, timeout=30).returncode != 0
         results.append((len(state['records']), report['status'], report['reason'], report['counts']))
     assert results[0] == results[1] and read_regular(original, 4*1024*1024) == original_raw

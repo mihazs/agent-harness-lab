@@ -113,9 +113,10 @@ def representative(parent, key):
 
 
 class LineageStore(PrivateJournal):
-    def __init__(self, root, *, project_sha256, scope_sha256):
+    def __init__(self, root, *, project_sha256, scope_sha256, identity_key=None):
         fingerprint(project_sha256); fingerprint(scope_sha256)
         self.project, self.scope = project_sha256, scope_sha256
+        self._identity_key = identity_key
         super().__init__(root, 'lineage-v1:'+digest((self.project, self.scope)), transition,
             max_events=None, max_metadata=None, max_entries=None)
 
@@ -123,7 +124,7 @@ class LineageStore(PrivateJournal):
         path = Path(path).absolute()
         if '..' in path.parts or path.is_relative_to(self.root) or self.root.is_relative_to(path):
             raise ValueError('source cache and lineage store must not overlap')
-        store = SourceStore(path, project_sha256=self.project, scope_sha256=self.scope)
+        store = SourceStore(path, project_sha256=self.project, scope_sha256=self.scope, identity_key=self._identity_key)
         state, raw = store.read_snapshot()
         return path, state, raw, hashlib.sha256(raw).hexdigest()
 
@@ -132,7 +133,7 @@ class LineageStore(PrivateJournal):
 
         Matching bytes were already validated, so only a mismatch or read failure needs the full
         read_snapshot path to raise exactly what it always raised."""
-        store = SourceStore(path, project_sha256=self.project, scope_sha256=self.scope)
+        store = SourceStore(path, project_sha256=self.project, scope_sha256=self.scope, identity_key=self._identity_key)
         try:
             store._safe_path()
             if regular_sha256(store.path, store.path.stat().st_size) == cache_sha256: return True
@@ -320,7 +321,7 @@ class LineageStore(PrivateJournal):
         """Bounded evidence-coverage report: what the cache holds, what is missing, which joins were tried and what stays unproven."""
         result = self.query(cache_path)
         origin, state, _, cache_hash = self.cache(cache_path)
-        inventory = SourceStore(origin, project_sha256=self.project, scope_sha256=self.scope).inventory()
+        inventory = SourceStore(origin, project_sha256=self.project, scope_sha256=self.scope, identity_key=self._identity_key).inventory()
         if cache_hash != result['cache_sha256'] or self.cache(origin)[3] != cache_hash: raise ValueError('source cache changed during coverage report')
         superseded = {tuple(edge[:3]) for edge in state['supersessions']}
         types = Counter(e['record']['record_type'] for e in state['records']
@@ -363,6 +364,7 @@ def main(argv=None):
     parser.add_argument('--store', type=Path, required=True,help='Private lineage journal directory, separate from the source cache')
     parser.add_argument('--project-sha256', required=True,help='Expected 64-hex project identity of the selected source cache')
     parser.add_argument('--scope-sha256', required=True,help='Expected 64-hex selection/scope identity of the selected source cache')
+    parser.add_argument('--identity-key-file', help='Owner-only identity key for a keyed local memory source')
     commands = parser.add_subparsers(dest='action', required=True,help='Choose one explicit claim, review or read-only query operation')
     for name in ('propose', 'review', 'show', 'query', 'coverage', 'near-duplicates'):
         purpose={'propose':'Record an unsigned claim and freeze its exact source-cache snapshot',
@@ -383,7 +385,12 @@ def main(argv=None):
             help='LineageReview schema-1 JSON binding case/event/cache hashes, decision, reviewer, provenance, basis, evidence and reason')
     args = parser.parse_args(argv)
     try:
-        store = LineageStore(args.store, project_sha256=args.project_sha256, scope_sha256=args.scope_sha256)
+        if args.identity_key_file is not None:
+            from .identity_key import load as load_identity_key
+            identity_key = load_identity_key(args.identity_key_file)
+        else:
+            identity_key = None
+        store = LineageStore(args.store, project_sha256=args.project_sha256, scope_sha256=args.scope_sha256, identity_key=identity_key)
         if args.action == 'propose': result = store.propose(args.cache, args.claim)
         elif args.action == 'review': result = store.review(args.case, args.cache, args.record)
         elif args.action == 'show': result = store.show(args.case)
