@@ -181,7 +181,7 @@ def _asked(turns, lo, hi):
 
 
 def _question(turn):
-    return turn.get('tool') == 'AskUserQuestion' or turn['role'] == 'agent' and turn['text'].rstrip().endswith('?')
+    return turn.get('tool') in ('AskUserQuestion', 'request_user_input', 'request_user_input_async') or turn['role'] == 'agent' and turn['text'].rstrip().endswith('?')
 
 
 def _verdict(rule, session, lo, hi):
