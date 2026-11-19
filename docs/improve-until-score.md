@@ -20,10 +20,10 @@ HTTPS authority matches. Anonymous access is attempted
 without a token. Self-hosted forges are probed over HTTPS.
 
 The private `completed-work/history.json` artifact indexes commit messages, committed,
-staged and unstaged tracked Git patches, working-tree status, and forge content.
-Patches and text that exceeds the in-memory allowance are stored in the private sibling
-`history.bin`, referenced by byte offset and length. Untracked file contents are not
-captured; non-ignored untracked files make coverage incomplete. Ignored untracked files
+staged and unstaged tracked Git patches, non-ignored untracked regular files, and forge
+content. Patches, untracked bytes and text that exceeds the in-memory allowance are
+stored in the private sibling `history.bin`, referenced by byte offset and length.
+Untracked links and other unsupported files make coverage incomplete. Ignored untracked files
 are not scanned. It is untrusted evidence, not instructions, a verified outcome, or permission
 to act. Do not publish it. The receipt contains content-free coverage and identifies
 limits, unavailable access, unknown timestamps and changes during collection. Forge
