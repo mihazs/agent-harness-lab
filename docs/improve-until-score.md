@@ -29,6 +29,8 @@ to act. Do not publish it. The receipt contains content-free coverage and identi
 limits, unavailable access, unknown timestamps and changes during collection. Forge
 pagination is not an atomic snapshot. Batched GitLab discussion timestamps have second
 precision; a timestamp within one second of the cutoff is treated as an uncertain change.
+Native-history discovery and event collection check the remaining improvement budget at
+their progress boundaries; an individual analysis operation can finish after that budget.
 Incomplete enumeration blocks improvement rather
 than treating missing history as a clean result. A selected session, date, source or
 single-worktree history does not narrow forge collection; the receipt labels native

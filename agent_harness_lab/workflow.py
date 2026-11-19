@@ -127,6 +127,13 @@ def evidence(args, output, source_context=None, *, progress=None):
     incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
+    stages = getattr(args, '_stages', None)
+    if stages is not None:
+        report_progress = progress
+        def progress(stage, **counts):
+            if stages.remaining() <= 0:
+                raise TimeoutError('improvement budget exhausted during evidence collection')
+            report_progress(stage, **counts)
     paired_history = None
     if getattr(args, 'history_store', None) is not None:
         reject_history_overlap(args)
@@ -164,6 +171,8 @@ def evidence(args, output, source_context=None, *, progress=None):
             history_runtime=args.history_source if getattr(args, 'history', False) and args.history_source in ('codex', 'claude') else None,
             history_from=getattr(args, 'history_from', None),
             reused_process_mining=None if reuse is None else reuse.cached, **source_identity)
+        if stages is not None and stages.remaining() <= 0:
+            raise TimeoutError('improvement budget exhausted during evidence analysis')
         if reuse is not None:
             args._reuse = reuse.finish(data, time.monotonic()-started)
         events.seek(0)
