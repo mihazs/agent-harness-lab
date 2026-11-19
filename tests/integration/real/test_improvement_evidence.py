@@ -141,3 +141,32 @@ def test_real_remote_selects_the_review_forge(real_run):
     completed = subprocess.run([sys.executable, '-m', 'agent_harness_lab', 'sources', 'detect', str(real_run.checkout)],
                                env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=20)
     assert completed.returncode == 0 and json.loads(completed.stdout)['provider'] == expected
+
+
+def test_real_legacy_source_journal_remains_readable(real_run):
+    import tomllib
+    from agent_harness_lab.evaluation.integrity import read_regular
+    from agent_harness_lab.sources.schema import SourceSpec, digest
+    from agent_harness_lab.sources.store import SourceStore
+    selected = os.environ.get('REAL_SOURCE_JOURNAL')
+    if not selected:
+        pytest.skip('set REAL_SOURCE_JOURNAL to an existing private source journal')
+    original = Path(selected)
+    raw = read_regular(original, 4*1024*1024)
+    data = json.loads(raw)
+    scope = real_run.project/'.ai-memory.toml'
+    if not scope.is_file():
+        pytest.skip('selected project has no explicit memory scope')
+    config = tomllib.loads(read_regular(scope, 65536).decode('utf-8'))
+    if data['project_sha256'] != digest(config['project']):
+        pytest.skip('journal project differs from the selected run')
+    target = real_run.checkout/'private-source-journal.json'
+    descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, 'wb') as stream:
+        stream.write(raw)
+    store = SourceStore(target, project_sha256=data['project_sha256'], scope_sha256=data['scope_sha256'], max_bytes=4*1024*1024)
+    state, observed = store.read_snapshot()
+    assert observed == raw
+    sources = [SourceSpec.parse(value) for value in state['sources'].values()]
+    assert sources and all(store.status(source)['source_sha256'] == source.source_key for source in sources)
+    assert target.read_bytes() == raw and read_regular(original, 4*1024*1024) == raw
