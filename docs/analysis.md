@@ -547,6 +547,10 @@ provider-reported usage per request) are not covered.
 | `run_input_rejected` | Read the rejected input named on stderr, correct it, then rerun; the private receipt of the run records the stage. |
 | `workspace_busy` | Wait for the active run on this project to finish, or resume it, then rerun; if none is active, check the recorded PID before removing the stale lock. |
 | `run_conflict` | Read the conflict recorded in the private receipt of the run, resolve it, then rerun. |
+| `completed_work_incomplete` | Inspect completed-work coverage, fix forge access or the reported limit, then rerun. |
+| `completed_work_closed_input` | Collect completed work outside the sealed evaluation and explicitly bind its inputs. |
+| `completed_work_controlled_too_large` | A safely bounded larger controlled proposer input is required for the complete history. |
+| `completed_work_unresolved` | Review incomplete historical coverage and findings, then evaluate a supported candidate before concluding no change. |
 | `budget_exhausted` | Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun. |
 | `execution_failed` | Inspect the private run output and stage stderr logs for the cause. Reconcile any unresolved provider request before retrying. |
 | `system_error` | Fix the filesystem or operating-system condition reported on stderr, then rerun. |

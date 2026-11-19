@@ -10,10 +10,10 @@ from weakref import WeakKeyDictionary, ref
 
 from agent_harness_lab.private_journal import encoded, record, sync_directory, write_bytes
 from . import certification_access as ledger
-from .derivations import _check_role_custody, _hash, _tree_pin, _snapshot_pin, _rebased_output
+from .derivations import _analysis_pin, _check_role_custody, _hash, _tree_pin, _snapshot_pin, _rebased_output
 from .decision_receipts import engine
 from .integrity import contained, copy_frozen, digest
-from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .working_state import WorkingState, check_deadline
 from .analysis_inputs import UNLIMITED
 
 PROFILE=ledger.CONSTRUCTION_PROFILE
@@ -22,7 +22,7 @@ _STAGES=WeakKeyDictionary()
 
 
 def _input_pin(path,deadline,analysis=False):
-    return _snapshot_pin(analysis_snapshot(path,deadline)) if analysis else _tree_pin(path,deadline)
+    return _analysis_pin(path,deadline) if analysis else _tree_pin(path,deadline)
 
 
 class _Stage:

@@ -5,6 +5,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -19,12 +20,12 @@ class RemoteUnavailable(ValueError):
     """No usable Git checkout or named remote was available."""
 
 
-def _remote(project, remote):
+def _remote(project, remote, *, timeout=5):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', remote):
         raise ValueError('invalid Git remote name')
     try:
         found = subprocess.run(['git', '-C', str(project), 'remote', 'get-url', remote], check=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=5)
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
         raise RemoteUnavailable('Git remote unavailable') from error
     if len(found.stdout) > 4096: raise ValueError('Git remote too long')
@@ -42,9 +43,13 @@ def _remote(project, remote):
     return parsed.hostname.lower(), port
 
 
-def detect(project, remote='origin', *, endpoint=None):
+def detect(project, remote='origin', *, endpoint=None, deadline=None):
     """Use an explicit remote and bounded unauthenticated HTTPS probes; unknown is never a provider."""
-    host, port = _remote(project, remote)
+    remaining = 5 if deadline is None else min(5, deadline - time.monotonic())
+    if remaining <= 0:
+        raise RemoteUnavailable('Git remote discovery timed out')
+    host, port = (_remote(project, remote) if deadline is None else
+                  _remote(project, remote, timeout=remaining))
     if host in ('github.com', 'gitlab.com'):
         return dict(provider=host.split('.')[0], basis='public_host', network_used=False)
     if ':' in host: host = '[' + host + ']'
@@ -53,15 +58,18 @@ def detect(project, remote='origin', *, endpoint=None):
         parsed = urlsplit(endpoint)
         if parsed.username is None and parsed.password is None and not parsed.query and not parsed.fragment:
             origin = 'https://' + parsed.netloc + parsed.path.rstrip('/')
-    return _probe(origin)
+    return _probe(origin) if deadline is None else _probe(origin, deadline=deadline)
 
 
-def _probe(origin):
+def _probe(origin, *, deadline=None):
     opener = build_opener(ProxyHandler({}), _NoRedirect())
     found = []
     for provider, suffix in (('gitea', '/api/v1/version'), ('gitlab', '/api/v4/version')):
+        remaining = 3 if deadline is None else min(3, deadline - time.monotonic())
+        if remaining <= 0:
+            return dict(provider=None, basis='unknown', network_used=True)
         try:
-            with opener.open(Request(origin + suffix, headers={'Accept': 'application/json'}), timeout=3) as response:
+            with opener.open(Request(origin + suffix, headers={'Accept': 'application/json'}), timeout=remaining) as response:
                 if response.status != 200 or response.headers.get_content_type() != 'application/json': continue
                 raw = response.read(16385)
                 if len(raw) > 16384: continue
@@ -80,6 +88,8 @@ def _probe(origin):
                     pass
         except (URLError, HTTPException, OSError, ValueError, UnicodeError, RecursionError):
             continue
+    if deadline is not None and time.monotonic() >= deadline:
+        return dict(provider=None, basis='unknown', network_used=True)
     return dict(provider=found[0] if len(found) == 1 else None,
                 basis='https_capability' if len(found) == 1 else 'unknown', network_used=True)
 

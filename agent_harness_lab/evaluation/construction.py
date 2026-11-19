@@ -1,14 +1,16 @@
 """Controller-selected preparation views and bounded authored-tree publication."""
 import hashlib
 import json
+import os
 import re
 from dataclasses import replace
 from pathlib import Path
 import shutil
+import stat
 import time
-from .integrity import contained, read_regular, relative, unique_object
+from .integrity import contained, open_nofollow, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
-from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .working_state import WorkingState, check_deadline
 from .manifest_contract import ContractError, check_authored, contract_text, strip_authored_digests
 from .analysis_inputs import AnalysisInputs
 from .. import preparation, refinement_reuse, surfaces
@@ -39,7 +41,7 @@ def withheld_activities(summary, analysis):
     return result
 
 
-def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mechanisms=None):
+def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mechanisms=None, completed_work=None):
     analysis = data['analysis']
     summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining','method_inputs','method_execution')}
     summary['profile'] = 'ahl-analysis-execution-v1'
@@ -64,10 +66,31 @@ def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mecha
             target = folder/'mechanism-summaries.json'
             target.write_text(json.dumps(mechanisms, allow_nan=False))
             target.chmod(0o600)
+        if role == 'proposer' and completed_work is not None:
+            (folder/'completed-work.json').write_bytes(read_regular(completed_work, 8*1024*1024))
+            content = Path(completed_work).parent/'history.bin'
+            if os.path.lexists(content):
+                from ..sources.completed_work import MAX_STORED_TEXT
+                descriptor = open_nofollow(content)
+                with os.fdopen(descriptor, 'rb') as source:
+                    info = os.fstat(source.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_STORED_TEXT:
+                        raise ValueError('completed-work content exceeds its bounds')
+                    with (folder/'history.bin').open('xb') as target:
+                        remaining = info.st_size
+                        while remaining:
+                            chunk = source.read(min(remaining, 1024*1024))
+                            if not chunk:
+                                raise ValueError('completed-work content changed during copy')
+                            target.write(chunk)
+                            remaining -= len(chunk)
+                        if source.read(1):
+                            raise ValueError('completed-work content changed during copy')
         check_deadline(deadline)
         shutil.copytree(Path(assets)/'skills/harness-self-improvement',folder/'methodology/harness-self-improvement',symlinks=True,
             ignore=shutil.ignore_patterns('__pycache__','*.pyc',*hidden))
-        analysis_snapshot(folder,deadline)
+        from .derivations import _analysis_pin
+        _analysis_pin(folder,deadline)
         result[role] = folder
     if closed_domain is not None:
         from .closed_inputs import bind_views
@@ -105,6 +128,9 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     if analysis and (Path(context)/'mechanism-summaries.json').is_file():
         instructions += ('\nInspect /inputs/fixture/mechanism-summaries.json for ranked observed patterns and evidence references. '
                          'They are not diagnoses or verified outcomes; formulate falsifiable candidates for separate evaluation.')
+    if analysis and (Path(context)/'completed-work.json').is_file():
+        from ..sources.completed_work import guidance
+        instructions += '\n' + guidance('/inputs/fixture/completed-work.json')
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
