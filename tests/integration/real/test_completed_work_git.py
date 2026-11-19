@@ -406,6 +406,27 @@ def test_real_gitea_api_documents_collector_routes(checkout):
         assert set(fields) <= api['definitions'][name]['properties'].keys()
 
 
+def test_real_local_work_survives_forge_access_failure(checkout, request):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')
+    project = Path(request.node.callspec.params['checkout']).resolve(strict=True)
+    source_git = ['git', '-c', 'core.fsmonitor=false', '-c', 'index.threads=1', '-C', str(project)]
+    before = subprocess.check_output([*source_git, 'status', '--porcelain', '--untracked-files=no'])
+    with tempfile.TemporaryFile() as content:
+        result = completed_work.capture(checkout, seconds=120, content=content)
+        retained = content.tell()
+    if 'forge_repository_unavailable_or_mismatched' not in result['problems']:
+        pytest.skip('selected real forge did not fail repository access')
+    head = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True).strip()
+    assert result['git_detail'] == 'commit_messages_patches_and_worktree_content'
+    assert any(row['commit'] == head for row in result['commits'])
+    assert result['git_patches']['length'] > 0 and retained >= result['git_patches']['length']
+    assert result['complete'] is False
+    assert not subprocess.check_output(['git', '-c', 'index.threads=1', '-C', str(checkout),
+                                        'status', '--porcelain', '--untracked-files=all'])
+    assert subprocess.check_output([*source_git, 'status', '--porcelain', '--untracked-files=no']) == before
+
+
 def test_real_private_gitea_without_credentials_is_incomplete(checkout):
     if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
         pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')

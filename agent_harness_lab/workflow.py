@@ -656,6 +656,30 @@ def static_convention_stage(args, data, progress):
     args._static_audit = dict(findings=audited['findings'], checked=audited['checked'], unsettled=audited['unsettled'], **cause)
 
 
+def _record_early_incremental(args, output, result):
+    """Record the observed harness when collection stops before candidate preparation."""
+    from . import incremental
+    from .one_call import allowed_paths
+    try:
+        paths = allowed_paths(args)
+        with tempfile.TemporaryDirectory(prefix='early-baseline-', dir=output) as folder:
+            baseline = Path(folder) / 'baseline'
+            states = snapshot(args.project, baseline, allowed_paths=paths)
+            candidate_states(baseline, states)
+        state = incremental.begin(args, output, states, None if paths is None else sorted(paths))
+        incremental.attach(result, state, states)
+        block = result.get('incremental')
+        if isinstance(block, dict) and isinstance(block.get('stages'), dict):
+            for stage in ('candidate_preparation', 'evaluation_construction', 'trials'):
+                block['stages'][stage] = dict(action='skipped', reason=result['reason'])
+    except (OSError, ValueError) as exc:
+        result['incremental'] = dict(profile=incremental.PROFILE, status='unavailable',
+            reason='baseline_snapshot_unavailable', error_type=type(exc).__name__,
+            adoption_authority=False, automatic_promotion=False, publication_allowed=False)
+    write_json(output / 'workflow.json', result)
+    return result
+
+
 def _prepare_completed_work(args, output, remaining, runner, progress, *, controlled=False):
     """Bind private completed-work coverage before any improvement path can act."""
     if getattr(args, '_closed_input_domain', None) is not None:
@@ -760,7 +784,7 @@ def _improve(args):
     progress = getattr(args, '_progress', None) or _progress_reporter()
     blocked = _prepare_completed_work(args, output, remaining, runner, progress, controlled=controlled)
     if blocked is not None:
-        return blocked
+        return _record_early_incremental(args, output, blocked)
     data = evidence(args, output, progress=progress)
     _note_native_history(args, data)
     if getattr(args, 'history', False) and not data['analysis']['events']:
@@ -1521,7 +1545,7 @@ def _run_improvement(args, *, parent_started=None):
             progress = getattr(args, '_progress', None) or _progress_reporter()
             blocked = _prepare_completed_work(args, output, args._stages.remaining, evaluator(), progress)
             if blocked is not None:
-                return blocked
+                return _record_early_incremental(args, output, blocked)
             data = evidence(args, output, progress=progress)
             _note_native_history(args, data)
             if (not args._completed_work_summary['complete']

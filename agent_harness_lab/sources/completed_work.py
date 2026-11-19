@@ -636,6 +636,17 @@ def capture(project, *, seconds=30, content=None):
         if shallow == 'true':
             result['problems'] = ['shallow_git_history']
             return result
+        try:
+            result['git_refs_sha256'] = _git_refs(project, problems, deadline)
+            result['commits'] = _git_history(project, head, problems, deadline)
+            result['git_patches'] = _git_patches(project, head, content, problems, deadline)
+            result['working_tree'] = _git_status(project, problems, deadline)
+            result['staged_patch'] = _working_patch(project, head, content, problems, deadline, staged=True)
+            result['unstaged_patch'] = _working_patch(project, head, content, problems, deadline, staged=False)
+            result['untracked_files'] = _untracked(project, result['working_tree'], content, problems, deadline)
+            result['git_detail'] = 'commit_messages_patches_and_worktree_content'
+        except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+            problems.add('git_history_unavailable')
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('completed-work budget exhausted')
@@ -696,17 +707,6 @@ def capture(project, *, seconds=30, content=None):
         problems.add('forge_repository_unavailable_or_mismatched')
         result['problems'] = sorted(problems)
         return result
-    try:
-        result['git_refs_sha256'] = _git_refs(project, problems, deadline)
-        result['commits'] = _git_history(project, head, problems, deadline)
-        result['git_patches'] = _git_patches(project, head, content, problems, deadline)
-        result['working_tree'] = _git_status(project, problems, deadline)
-        result['staged_patch'] = _working_patch(project, head, content, problems, deadline, staged=True)
-        result['unstaged_patch'] = _working_patch(project, head, content, problems, deadline, staged=False)
-        result['untracked_files'] = _untracked(project, result['working_tree'], content, problems, deadline)
-        result['git_detail'] = 'commit_messages_patches_and_worktree_content'
-    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
-        problems.add('git_history_unavailable')
     if problems:
         result['problems'] = sorted(problems)
         return result
