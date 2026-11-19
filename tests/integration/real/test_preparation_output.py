@@ -65,6 +65,9 @@ def test_real_tracked_text_streams_through_stdin(checkout):
         expected = subprocess.check_output(['git', '-C', str(checkout), 'hash-object', '--no-filters', str(path)], text=True)
         result = runner.execute(['git', '-C', str(checkout), 'hash-object', '--stdin'], checkout, 20, source)
         assert result['exit_code'] == 0 and result['stdout'] == expected
+        head = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True)
+        early_close = runner.execute(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], checkout, 20, source)
+        assert early_close['exit_code'] == 0 and early_close['stdout'] == head
         return
     pytest.skip('no suitable real tracked text file in the selected checkout')
 

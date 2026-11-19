@@ -75,7 +75,7 @@ def execute(argv, cwd, timeout, stdin=None,*,env=None):
                                    start_new_session=True,**({} if env is None else dict(env=env)))
         buffers, reason = [bytearray(), bytearray()], None
         try:
-            pending = memoryview(stdin.encode(encoding) if stdin is not None else b'')
+            pending = memoryview(stdin.encode(encoding, 'replace') if stdin is not None else b'')
             with selectors.DefaultSelector() as poll:
                 for index, pipe in enumerate((process.stdout, process.stderr)):
                     os.set_blocking(pipe.fileno(), False)
