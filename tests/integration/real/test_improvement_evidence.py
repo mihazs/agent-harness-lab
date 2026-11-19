@@ -182,6 +182,7 @@ def test_real_keyed_source_capture_and_provenance(real_run):
     from agent_harness_lab.sources.okf import OKFExport
     from agent_harness_lab.sources.registry import Capability, Registry
     from agent_harness_lab.sources.schema import SourceSpec, digest
+    from agent_harness_lab.sources.session_correlation import correlate_sessions
     from agent_harness_lab.sources.store import SourceStore
     selected = os.environ.get('REAL_SOURCE_JOURNAL')
     if not selected:
@@ -272,9 +273,11 @@ def test_real_keyed_source_capture_and_provenance(real_run):
             imported = subprocess.run(command, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=30)
             assert imported.returncode == 0 and json.loads(imported.stdout)['source_sha256'] == source.source_key
         report = bind_provenance(connector, source, store)
+        sessions = correlate_sessions(connector, source, store, [])
         state, _ = store.read_snapshot()
         pages = connector.pages(source)
-        assert state['records'] and pages
+        assert state['records'] and pages and sessions['status'] == 'evaluated'
+        assert sessions['counts']['memory_sessions'] > 0
         status = [*cli, 'status', '--manifest', str(manifest), '--project-sha256', source.project_sha256,
                   '--scope-sha256', source.scope_sha256, '--cache', str(source_dir/f'journal-{version}.json')]
         if version == 1:
@@ -309,5 +312,5 @@ def test_real_keyed_source_capture_and_provenance(real_run):
                                   capture_output=True, timeout=30).returncode != 0
             assert subprocess.run([*lineage_cli, '--identity-key-file', str(wrong_file), *action], env=environment,
                                   cwd=real_run.base, capture_output=True, timeout=30).returncode != 0
-        results.append((len(state['records']), report['status'], report['reason'], report['counts']))
+        results.append((len(state['records']), report['status'], report['reason'], report['counts'], sessions['counts']))
     assert results[0] == results[1] and read_regular(original, 4*1024*1024) == original_raw

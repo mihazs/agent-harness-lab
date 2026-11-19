@@ -28,7 +28,8 @@ because old hashes do not reveal their original values. This protects the
 keyed identity fields against guessing without the key; content and revision
 hashes remain unkeyed integrity checks, and existing journals remain exposed to
 the old guessing risk. `sources lineage` accepts the same `--identity-key-file`
-before its action. Other source providers do not yet support keyed identities.
+before its action. Other source providers do not yet support keyed identities;
+cross-source reports can therefore still contain their unkeyed fingerprints.
 
 `ahl sources --project CHECKOUT` identifies the forge behind the checkout's
 `origin`; `--remote NAME` selects a different Git remote. The equivalent

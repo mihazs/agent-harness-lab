@@ -68,21 +68,22 @@ def correlate_sessions(connector, source, store, natives):
     provenance = bind_provenance(connector, source, store)
     if provenance['status'] != 'evaluated': return _report(source, 'unknown', provenance['reason'])
     key = source.source_key
+    identity = lambda value: connector.identity(source, value)
     present = {(e['record']['native_id_sha256'], e['record']['revision_sha256']) for e in store._read()['records']
                if e['record']['source_sha256'] == key and e['record']['state'] == 'present'}
     pages = [p for p in connector.pages(source) if p.metadata.get('type') == SESSION_TYPE and _identifier(p.metadata.get('session_id'))]
     ids = Counter(p.metadata['session_id'] for p in pages)
     clusters, owner, receipts, bound = {}, {}, {}, set()
     def cluster(cid): return clusters.setdefault(cid, dict(memory_sessions=[], native_sessions=[], handoffs=[], reasons=set()))
-    for page in sorted(pages, key=lambda p: digest(p.path)):
-        ref = RecordRef(key, digest(page.path), page.sha256)
+    for page in sorted(pages, key=lambda p: identity(p.path)):
+        ref = RecordRef(key, identity(page.path), page.sha256)
         if (ref.native_id_sha256, ref.revision_sha256) not in present: continue
         sid = page.metadata['session_id']
         hits = {(rt, fn(p, sid)) for _, p, rt, fn, sessions in observed if fn(p, sid) in sessions}
-        reason = (_scope(page.metadata, source) or ('duplicate_session_id' if ids[sid] > 1 else None)
+        reason = (_scope(page.metadata, source, identity) or ('duplicate_session_id' if ids[sid] > 1 else None)
                   or ('ambiguous_native_runtime' if len(hits) > 1 else 'no_native_match' if not hits else None))
-        cid = digest(('native', *next(iter(hits)))) if reason is None else digest(('memory', ref.native_id_sha256))
-        if ids[sid] == 1: owner[digest(('session', sid))] = cid
+        cid = identity(('native', *next(iter(hits)))) if reason is None else identity(('memory', ref.native_id_sha256))
+        if ids[sid] == 1: owner[identity(('session', sid))] = cid
         entry = cluster(cid); entry['memory_sessions'].append(ref.to_dict())
         if reason is not None: entry['reasons'].add(reason); continue
         bound |= hits
@@ -97,7 +98,7 @@ def correlate_sessions(connector, source, store, natives):
     for native, _, runtime, _, sessions in observed:  # a native session no clean page binds is its own cluster
         for fingerprint, ref in sorted(sessions.items()):
             if (runtime, fingerprint) not in bound:
-                cluster(digest(('native', runtime, fingerprint)))['native_sessions'].append(
+                cluster(identity(('native', runtime, fingerprint)))['native_sessions'].append(
                     dict(source_sha256=native.source_key, record=ref.to_dict(), receipt_sha256=None))
     spanning = 0
     for row in provenance['records']:
