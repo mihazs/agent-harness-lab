@@ -12,6 +12,8 @@ from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read
 from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, analyze, load_sessions
 from agent_harness_lab.telemetry import codex_rollout
 from agent_harness_lab.telemetry.session_signals import summarize
+from agent_harness_lab.telemetry.schema import message_fingerprint
+from agent_harness_lab.sources.schema import digest
 
 WORKTREES = Path.home()/'dev/.worktrees'
 CODE_ROOT = Path(__file__).resolve().parents[3]
@@ -78,12 +80,12 @@ def test_real_codex_input_reply_reaches_adherence():
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
         if index >= 150: break
         if path.stat().st_size > 8 * 1024 * 1024: continue
-        answers = []
+        answers, reply_ids = [], []
         with path.open() as stream:
-            try: project = json.loads(next(stream))['payload']['cwd']
+            try: meta = json.loads(next(stream))['payload']; project = meta['cwd']
             except (ValueError, StopIteration, KeyError, TypeError): continue
             if projects and not any(Path(project) == base or base in Path(project).parents for base in projects): continue
-            for line in stream:
+            for line_number, line in enumerate(stream, 1):
                 if start not in line: continue
                 try: row = json.loads(line)
                 except ValueError: continue
@@ -96,6 +98,8 @@ def test_real_codex_input_reply_reaches_adherence():
                     except ValueError: continue
                     if isinstance(values, list):
                         answers.extend(x['answer'] for x in values if isinstance(x, dict) and isinstance(x.get('answer'), str))
+                        ordinal = row.get('ordinal')
+                        reply_ids.append(digest((meta['id'], ('ordinal', ordinal) if ordinal is not None else ('line', line_number))))
         if not answers: continue
         try: session = read_session(path, 'codex', project)
         except Skipped: continue
@@ -113,6 +117,11 @@ def test_real_codex_input_reply_reaches_adherence():
                 report = analyze([normalized], [])
                 assert report['status'] == 'completed' and report['redaction'] == 'digest_only'
                 assert report['sessions']['partial'] == 1 and report['publication_allowed'] is False
+                try: events, _, _ = codex_rollout.read(path, project)
+                except (OSError, ValueError): continue
+                assert any(event['event_id'] in reply_ids and event['activity'] == 'user_message'
+                           and event.get('message_fingerprint') == message_fingerprint(later['text'], event['case_id'])
+                           for event in events)
                 if projects: check_cli_in_worktree(path, project)
                 return
     pytest.fail('no usable real request and reply in the bounded session set')

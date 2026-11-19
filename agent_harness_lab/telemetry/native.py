@@ -42,6 +42,26 @@ def capture_counts(parsed, reasons, declared_range=0):
 def invalid_constant(_): raise ValueError('nonfinite native JSON is unsupported')
 
 
+def question_reply(payload):
+    """Read bounded Codex input replies; None means no supported reply was observed."""
+    start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
+    content = payload.get('content')
+    if not isinstance(content, list) or len(content) > 200: return None
+    values, size = [], 0
+    for item in content:
+        text = item.get('text') if isinstance(item, dict) and item.get('type') == 'input_text' else None
+        if not isinstance(text, str) or len(text) > 65536 or not text.startswith(start) or not text.endswith(end): continue
+        try: answers = json.loads(text[len(start):-len(end)], object_pairs_hook=unique_object, parse_constant=invalid_constant)
+        except (ValueError, RecursionError): continue
+        if not isinstance(answers, list) or len(answers) > 200: continue
+        for answer in answers:
+            if isinstance(answer, dict) and isinstance(answer.get('answer'), str):
+                size += len(answer['answer']) + 1
+                if size > 65536: return None
+                values.append(answer['answer'])
+    return '\n'.join(values) if values else None
+
+
 
 def timestamp(value):
     value = text(value)
