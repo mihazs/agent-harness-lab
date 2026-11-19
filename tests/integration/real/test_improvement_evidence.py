@@ -388,3 +388,27 @@ def test_real_keyed_source_capture_and_provenance(real_run):
                                   cwd=real_run.base, capture_output=True, timeout=30).returncode != 0
         results.append((len(state['records']), report['status'], report['reason'], report['counts'], sessions['counts']))
     assert results[0] == results[1] and read_regular(original, 4*1024*1024) == original_raw
+def test_real_history_and_mechanisms_share_only_the_proposer_view(real_run):
+    from agent_harness_lab.sources import completed_work
+    run, base, checkout = real_run.run, real_run.base, real_run.checkout
+    data = json.loads((run/'analysis.json').read_text())
+    brief = json.loads((run/'analysis-brief.json').read_text())
+    summaries = json.loads((run/'mechanism-summaries.json').read_text())
+    head = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'], text=True).strip()
+    problems = set()
+    commits = completed_work._git_history(checkout, head, problems, time.monotonic()+120)
+    assert commits and not problems
+    source = base/'completed-work'
+    source.mkdir(mode=0o700)
+    with (source/'history.bin').open('wb') as content:
+        patch = completed_work._working_patch(checkout, head, content, problems, time.monotonic()+120, staged=False)
+    assert not problems
+    history = source/'history.json'
+    history.write_text(json.dumps(dict(commits=commits, unstaged_patch=patch)))
+    roles = views(data, CODE_ROOT, base/'roles', time.monotonic()+120,
+                  brief=brief, mechanisms=summaries, completed_work=history)
+    proposer, author = roles['proposer'], roles['evaluator_author']
+    assert json.loads((proposer/'mechanism-summaries.json').read_text()) == summaries
+    assert (proposer/'completed-work.json').read_bytes() == history.read_bytes()
+    assert (proposer/'history.bin').read_bytes() == (source/'history.bin').read_bytes()
+    assert not any((author/name).exists() for name in ('mechanism-summaries.json', 'completed-work.json', 'history.bin'))
