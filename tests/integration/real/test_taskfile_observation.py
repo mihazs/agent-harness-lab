@@ -79,15 +79,22 @@ def test_real_absent_taskfile_stays_unknown(checkout):
 
 def test_real_taskfile_without_runtime_root_instruction(checkout):
     yaml = pytest.importorskip('yaml')
-    project, _ = checkout
+    project, root = checkout
     taskfile = project/'Taskfile.yml'
     if not taskfile.is_file() or taskfile.is_symlink() or (project/'CLAUDE.md').exists():
         pytest.skip('needs a real Taskfile without a root Claude instruction')
     before = subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z'])
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
     inventory = harness_inventory.capture(project, profile, schema_version=2)
-    report = capture(project, inventory, '.')
-    assert report['status'] == 'observed'
-    assert set(report['targets']) == set(yaml.safe_load(taskfile.read_bytes())['tasks'])
-    assert report['mention_coverage'] == 'unknown' and report['mentions'] == []
+    direct = capture(project, inventory, '.')
+    environment = dict(os.environ, XDG_STATE_HOME=str(root/'state'), PYTHONPATH=str(CODE_ROOT), PYTHONDONTWRITEBYTECODE='1')
+    command = [sys.executable, '-m', 'agent_harness_lab', 'audit', str(project), '--runtime', 'claude-code',
+               '--taskfile-observation', '--json']
+    result = subprocess.run(command, env=environment, cwd=project, capture_output=True, text=True, timeout=45)
+    assert result.returncode in (0, 3)
+    cli = json.loads(result.stdout)['taskfile_observation']
+    for report in (direct, cli):
+        assert report['status'] == 'observed'
+        assert set(report['targets']) == set(yaml.safe_load(taskfile.read_bytes())['tasks'])
+        assert report['mention_coverage'] == 'unknown' and report['mentions'] == []
     assert subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z']) == before
