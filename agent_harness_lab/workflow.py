@@ -682,6 +682,8 @@ def _prepare_completed_work(args, output, remaining, runner, progress, *, contro
         os.fsync(content.fileno())
     work_path = work_dir/'history.json'
     write_json(work_path, work)
+    if remaining() <= 0:
+        raise TimeoutError('improvement budget exhausted during completed-work collection')
     args._completed_work_path = work_path
     args._completed_work_digest = runner.digest(work_dir)
     args._completed_work_summary = completed_work.summary(work)
