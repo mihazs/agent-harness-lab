@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.230.0
+
+### Minor Changes
+
+- 46dc5b8: Add an opt-in private audit observation for literal Taskfile targets and instruction mentions.
+
 ## 0.229.0
 
 ### Minor Changes
