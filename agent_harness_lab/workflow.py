@@ -682,13 +682,13 @@ def _prepare_completed_work(args, output, remaining, runner, progress, *, contro
         os.fsync(content.fileno())
     work_path = work_dir/'history.json'
     write_json(work_path, work)
+    args._completed_work_summary = completed_work.summary(work)
+    args._completed_work_summary['native_history_scope'] = 'restricted' if narrowed else 'project_default'
+    args._completed_work_summary['artifact'] = 'completed-work/history.json'
     if remaining() <= 0:
         raise TimeoutError('improvement budget exhausted during completed-work collection')
     args._completed_work_path = work_path
     args._completed_work_digest = runner.digest(work_dir)
-    args._completed_work_summary = completed_work.summary(work)
-    args._completed_work_summary['native_history_scope'] = 'restricted' if narrowed else 'project_default'
-    args._completed_work_summary['artifact'] = 'completed-work/history.json'
     args._completed_work_summary['artifact_tree_sha256'] = args._completed_work_digest
     args._completed_work_hypotheses = bool(work.get('commits') or work.get('merged_pull_requests') or work.get('closed_issues'))
     if not work.get('enumeration_complete', False):
@@ -1606,6 +1606,7 @@ def _run_improvement(args, *, parent_started=None):
         construction_receipt(result, args)
         from .scope import interrupted
         result=interrupted(args, result)  # keeps the layers an earlier step of this run already changed
+        result=_completed_work_result(result, args)
         typed_exit.seal(result, args)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
