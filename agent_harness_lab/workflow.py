@@ -811,6 +811,14 @@ def static_convention_stage(args, data, progress):
     args._static_audit = dict(findings=audited['findings'], checked=audited['checked'], unsettled=audited['unsettled'], **cause)
 
 
+def _record_evaluation_stop(result, evaluated):
+    """Preserve a runner preflight stop before interpreting trial coverage."""
+    if evaluated.get('status') not in ('blocked', 'budget_exhausted'): return False
+    result.pop('exit_receipt', None)
+    result.update(status=evaluated['status'], reason=evaluated.get('reason'))
+    return True
+
+
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
     from .diagnostics.mechanisms import MECHANISM_GUIDANCE
@@ -1440,24 +1448,23 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'evaluation',
                         'grader_bundles' if 'bundle' in str(exc) else 'grader_self_tests') from exc
                 raise
-        ran_trials = True
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         args._observed = evaluated.get('trials', [])
+        ran_trials = ran_trials or bool(args._observed)
         if hasattr(args, 'project_settings'):
             from .one_call import unchanged
             if not unchanged(args):
                 raise ValueError('project configuration changed during evaluation')
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
+        if _record_evaluation_stop(result, evaluated):
+            break
         if permission_audit is not None:
             result['isolation_qualification']=grading.permission_qualification()
             if result['isolation_qualification']['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
-            result.update(status=evaluated['status'],reason=evaluated.get('reason'))
-            break
         if grader_fingerprint(manifest_path) != grader_before:
             # The comparison is void for adoption; fresh trials under the new grader are a new comparison.
             grader_changed = True

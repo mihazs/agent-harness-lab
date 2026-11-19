@@ -16,6 +16,7 @@ RESUME = 'Resume with no other option: ahl improve PROJECT --resume RUN_ID'
 # reason: (status, default stage, content-free next step). Every next step is unique: exit_guidance keys remediation by reason.
 # Exit code 2 (invalid_input, setup_error) is for usage and input errors only.
 REASONS = {
+    'codex_credentials_unavailable': ('blocked', 'trials', 'Authenticate the isolated Codex trial runtime; the host login is not automatically shared.'),
     'invalid_usage': ('invalid_input', 'usage', 'Correct the option or project argument named on stderr, then rerun; ahl improve --help lists every option.'),
     'usage_conflict': ('invalid_input', 'usage', RESUME),
     'protected_destination': ('invalid_input', 'usage', 'Choose an output or state location outside the project and its history, then rerun.'),

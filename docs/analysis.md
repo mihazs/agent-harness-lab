@@ -478,7 +478,7 @@ provider-reported usage per request) are not covered.
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |
 | `capture_version_differs_from_pin` | Selected captures were recorded by a runtime version outside the fixture-verified declared range and were not parsed with the verified adapter. Rerun without --source-root for descriptive, unverified project-filtered discovery, or verify that release: run ahl sources claude pin-check --events FILE on one capture, then add its contract fixture and extend the range. |
 | `certification_prerequisites_unverified` | Verify the certification prerequisites before drawing a conclusion. |
-| `codex_credentials_unavailable` | Authenticate the selected runtime before requesting model execution. |
+| `codex_credentials_unavailable` | Authenticate the isolated Codex trial runtime; the host login is not automatically shared. |
 | `configuration_changed_before_execution` | Review the changed configuration before retrying. |
 | `configuration_requires_recommendation_only` | Review the recommendation under the configured application policy. |
 | `configured_bank_cannot_combine_with_managed_experiment` | Run without --experiment-request/--evaluation-store, or use the starter bank. |

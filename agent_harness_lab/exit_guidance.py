@@ -75,7 +75,7 @@ REMEDIATION = {
     'configured_executable_unavailable': 'Provide the configured executable at its trusted path.',
     'configuration_changed_before_execution': 'Review the changed configuration before retrying.',
     'preflight_budget_exhausted': 'Review the preflight budget before retrying.',
-    'codex_credentials_unavailable': 'Authenticate the selected runtime before requesting model execution.',
+    'codex_credentials_unavailable': 'Authenticate the isolated Codex trial runtime; the host login is not automatically shared.',
     'frozen_inputs_changed': 'Review the changed frozen inputs before starting a fresh evaluation.',
     'inference_aborted_after_failure': 'Review the recorded inference failure before retrying.',
     'isolation_qualification_unverified': 'Verify the required isolation qualification before retrying.',
