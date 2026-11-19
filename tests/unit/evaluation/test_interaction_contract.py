@@ -41,6 +41,46 @@ EDIT = ('mutation', 'path', 'app.py')
 STOP = ('stop', 'reason', 'already-correct')
 
 
+def test_permitted_reads_require_complete_read_capture_to_pass():
+    policy = contract(permitted_reads=['source.py'])
+    evidence = episode(('read', 'path', 'source.py'), EDIT)
+    assert evaluate(policy, evidence)['passed'] is None
+    evidence['capture']['reads'] = 'partial'
+    result = evaluate(policy, evidence)
+    assert result['passed'] is None and 'read_capture_incomplete' in result['unknowns']
+    evidence['capture']['reads'] = 'complete'
+    assert evaluate(policy, evidence)['passed'] is True
+
+
+@pytest.mark.parametrize('coverage', ['complete', 'partial', 'missing'])
+def test_a_reported_prohibited_read_fails_even_if_read_capture_is_partial(coverage):
+    evidence = episode(('read', 'path', 'secret.txt'), EDIT)
+    evidence['capture']['reads'] = coverage
+    result = evaluate(contract(permitted_reads=['source.py']), evidence)
+    assert result['passed'] is False and 'prohibited_read' in result['violations']
+
+
+def test_read_policy_is_opt_in_and_changes_the_contract_identity():
+    original = contract()
+    assert contract_sha256(original) != contract_sha256(contract(permitted_reads=[]))
+    assert evaluate(original, episode(EDIT))['passed'] is True
+    assert evaluate(original, episode(('read', 'path', 'source.py'), EDIT))['passed'] is None
+
+
+def test_empty_permitted_reads_forbids_an_observed_read():
+    evidence = episode(('read', 'path', 'source.py'), EDIT)
+    evidence['capture']['reads'] = 'complete'
+    assert evaluate(contract(permitted_reads=[]), evidence)['passed'] is False
+
+
+def test_invalid_read_policy_or_capture_never_becomes_a_pass():
+    evidence = episode(EDIT)
+    evidence['capture']['reads'] = 'complete'
+    assert evaluate(contract(permitted_reads=['source.py', 'source.py']), evidence)['passed'] is None
+    evidence['capture']['reads'] = 'unverified'
+    assert evaluate(contract(permitted_reads=[]), evidence)['passed'] is None
+
+
 def grade(spec, **kwargs):
     return evaluate(spec, episode(*kwargs.pop('events'), **kwargs))
 

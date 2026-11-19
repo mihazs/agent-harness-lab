@@ -489,6 +489,15 @@ freezes what the binary pass means), `required_clarifications` (a subset of
 or `{"kind":"interaction"}`. `contract_sha256` is the identity to store with the
 task; any change invalidates earlier comparisons.
 
+An optional `permitted_reads` list declares exact path identifiers that may be read;
+an empty list forbids every observed read. Omit it for the existing contract behavior.
+When declared, evidence may include `read` events with a `path` and a separate
+`capture.reads` state (`complete`, `partial` or `missing`). An observed read outside
+the list is a violation, even with partial capture. A missing or incomplete read channel
+leaves the interaction unknown when no violation was observed. A complete declaration
+is still caller-supplied evidence, not proof that the runtime recorded every read; the
+existing response and action observations do not establish hidden-read coverage.
+
 `evaluate(contract, evidence)` takes caller-supplied evidence declarations; it
 does not authenticate their origin or establish that a runner observed them.
 `capture` declares
