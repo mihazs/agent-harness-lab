@@ -8,8 +8,8 @@ LangMem with the LangGraph store, and Basic Memory. Every finding cites a file a
 pinned commit, so a reader can check it and a later release cannot silently change it.
 It was checked on 2026-11-16 against the pins in the summary table.
 
-It is a catalogue, not an adapter. No second-wave adapter exists yet, nothing here is
-imported, run or contacted, and `ahl` reads none of these systems. A row marked
+This catalogue does not contact providers. Experimental offline Graphiti episode-response and LangGraph item
+projections are described separately; it is not a live connector or a full provider adapter. A row marked
 `verified` means the pinned source states the fact. It does not mean AHL supports the
 system: a provider becomes supported only after independent mocked contract tests and a
 real-format compatibility check, which are later slices of issue #56.
@@ -28,11 +28,11 @@ real-format compatibility check, which are later slices of issue #56.
 
 | Id | System | Release | Commit | Licence | Safe read path | AHL adapter |
 | --- | --- | --- | --- | --- | --- | --- |
-| `graphiti` | [Graphiti core](https://github.com/getzep/graphiti) | v0.31.2 | `d72407dcedac911e1be9fc15b55e8c05a3efcc36` | Apache-2.0 | Operator-run listing of a graph database; no export file exists | none |
+| `graphiti` | [Graphiti core](https://github.com/getzep/graphiti) | v0.31.2 | `d72407dcedac911e1be9fc15b55e8c05a3efcc36` | Apache-2.0 | Operator-run listing of a graph database; no export file exists | experimental offline episodes |
 | `zep-cloud` | [Zep Cloud Python SDK](https://github.com/getzep/zep-python) | v4.1.0 | `305d8b3a03293355013d1e0e7f124337b7684a25` | Apache-2.0 | Operator-saved responses of the paged graph list calls | none |
 | `supermemory` | [Supermemory](https://github.com/supermemoryai/supermemory) | server-v0.0.9 | `4036c7d4470d335022952e67da0c56048f341d23` | MIT | Operator-saved responses of the list tools; the server source is not public | none |
 | `letta` | [Letta](https://github.com/letta-ai/letta) | 0.16.8 | `1131535716e8a31c9a437f8695e25ac98f203a24` | Apache-2.0 | Operator-saved agent file, blocks and messages only; archival memory is separate | none |
-| `langgraph-store` | [LangGraph store](https://github.com/langchain-ai/langgraph) | 1.2.22 | `08a2016953789a4f579b4d36bd1967941ec62012` | MIT | Operator-made row dump of one store; no export format exists | none |
+| `langgraph-store` | [LangGraph store](https://github.com/langchain-ai/langgraph) | 1.2.22 | `08a2016953789a4f579b4d36bd1967941ec62012` | MIT | Operator-made row dump of one store; no export format exists | experimental offline items |
 | `langmem` | [LangMem](https://github.com/langchain-ai/langmem) | 0.0.30 (no tag) | `8620b986af5b0c7593e6b7fbece2998690d22d15` | MIT | The same store row dump; LangMem has no storage of its own | none |
 | `basic-memory` | [Basic Memory](https://github.com/basicmachines-co/basic-memory) | v1.0.0 | `c9bd187b83baba549d5cd16bacc180f8023d51c8` | AGPL-3.0-or-later | Operator-run `bm okf export` bundle of one project | none |
 
