@@ -21,6 +21,7 @@ reader purpose.
 - [Convert a task-plus-text-expectations case list into a native bank](convert-a-case-list.md) and run a before/after comparison on it.
 - [Preflight experiment precision](experiment-precision.md), [add a Bayesian decision score to a plan and read it](bayesian-decision-how-to.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
+- [Import an ATIF trajectory as AHL metadata](import-atif-trajectory.md) to analyze its tool-call structure and token counts without keeping the conversation.
 - [Share a forge API quota safely](forge-rate-limits.md), [manage repository work](project-management.md), [verify release publication](release-publication.md), [measure startup, throughput and memory](performance-benchmark.md), or [contribute](../CONTRIBUTING.md), [try AHL on a real project without changing it](isolated-project-check.md), or [validate AHL on a real project](real-project-acceptance.md) with a first-use run, a before/after evaluation and incremental runs.
 
 ## Look up behavior and contracts
@@ -32,6 +33,8 @@ reader purpose.
 - [Loop declaration, state machine and controller](loop-reference.md): the acceptance score declaration, its sources and precedence, the evaluate > improve > evaluate states, stop criteria, decision table and order invariants, the controller's ports, rounds, budget reserve and round ledger, the default of `ahl improve` and `--single-pass`, the receipt and exit codes, and the simulation test-bed.
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
+- [ATIF import reference](atif-import-reference.md): the pinned ATIF-v1.8 field mapping, event rules, loss report, limits and typed rejection reasons.
+- [OTLP export](otel-export.md): the local private log representation and its loss boundaries.
 - [Bayesian decision score reference](bayesian-decision-reference.md): the `bayes_decision` spec field, the output block with the recorded input behind each number, reasons, verdict meanings and the six synthetic fixtures.
 - [Repeat reliability profile](repeat-reliability.md), [controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), [cascade evaluation](diagnostic-cascade.md), [judge controls](diagnostic-judge.md), [backend prediction envelope](diagnostic-backend-envelope.md), [retrieval leakage check](diagnostic-retrieval-leakage.md), and [audit sampling](audit-sampling.md).

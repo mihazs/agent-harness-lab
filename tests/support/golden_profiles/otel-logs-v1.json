@@ -1,0 +1,59 @@
+{
+  "resourceLogs": [
+    {
+      "scopeLogs": [
+        {
+          "logRecords": [
+            {
+              "attributes": [
+                {
+                  "key": "ahl.case.sha256",
+                  "value": {
+                    "stringValue": "5f4129b72a4a0a3a209d30950c81bd9fcc77c2f3c3e80edd16beaddcaa21497b"
+                  }
+                },
+                {
+                  "key": "ahl.event.sha256",
+                  "value": {
+                    "stringValue": "2029cbe2fe2332787fe366887007b4d8f0c233d973dd86da527c5aeb54f520ee"
+                  }
+                },
+                {
+                  "key": "ahl.event.activity",
+                  "value": {
+                    "stringValue": "response_usage"
+                  }
+                },
+                {
+                  "key": "ahl.capture.status",
+                  "value": {
+                    "stringValue": "unverified"
+                  }
+                },
+                {
+                  "key": "ahl.observed.input_tokens",
+                  "value": {
+                    "intValue": "5"
+                  }
+                },
+                {
+                  "key": "ahl.observed.output_tokens",
+                  "value": {
+                    "intValue": "3"
+                  }
+                }
+              ],
+              "body": {
+                "stringValue": "AHL metadata event"
+              },
+              "timeUnixNano": "1767225600123456789"
+            }
+          ],
+          "scope": {
+            "name": "agent-harness-lab"
+          }
+        }
+      ]
+    }
+  ]
+}
