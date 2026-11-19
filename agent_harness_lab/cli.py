@@ -175,6 +175,9 @@ def main(argv=None):
     if argv and argv[0] == 'score':
         from agent_harness_lab.evaluation.score import main as score_main
         return score_main(argv[1:])
+    if argv and argv[0] == 'score-sessions':
+        from agent_harness_lab.telemetry.session_signals_cli import main as score_sessions_main
+        return score_sessions_main(argv[1:])
     if argv and argv[0] == 'adapters':
         from agent_harness_lab.evaluation.adapter_cli import main as adapters_main
         return adapters_main(argv[1:])
@@ -246,6 +249,7 @@ def main(argv=None):
         'instruction-repair':'Name candidate mechanisms and repair classes for ignored instructions and screen one repair against recorded arms; offline, recommendation only',
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
         'score':'Report one recorded paired experiment per declared capability area with an evidence state per area; offline, read-only',
+        'score-sessions':'Export content-free advisory session signals from a native capture; offline',
         'adapters':'Stage one reviewed presentation adapter version under a controller-owned manifest, or roll it back; offline, no hook or runtime',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',

@@ -14,7 +14,7 @@ MIN_SIGNALS = 3  # recognized signals a session needs before it can be placed
 MIN_SHARE = (3, 5)  # the leading area needs at least 3/5 of the recognized signals
 FIELDS = {'session': r'[A-Za-z0-9._:-]{1,64}', 'tools': r'[A-Za-z0-9_.:-]{1,64}',
           'extensions': r'[a-z0-9]{1,16}', 'commands': r'[a-z0-9][a-z0-9-]{0,31}'}
-REASONS = ('no_signal', 'below_minimum_signal', 'ambiguous', 'area_not_declared')
+REASONS = ('no_signal', 'input_unavailable', 'below_minimum_signal', 'ambiguous', 'area_not_declared')
 # Tools that change files: a change makes review commands (git diff and friends) routine work, not evidence of a review.
 CHANGE_TOOLS = frozenset(('Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'apply_patch'))
 EXTENSIONS = {'coding': 'py js mjs cjs ts go rs java kt c h cc cpp hpp cs rb php swift sql sh',
@@ -34,8 +34,10 @@ def parse(value):
     seen = set()
     for index, entry in enumerate(value):
         where = f'sessions[{index}]'
-        if not isinstance(entry, dict) or not set(entry) <= set(FIELDS) or 'session' not in entry:
+        if not isinstance(entry, dict) or not set(entry) <= set(FIELDS) | {'unknown_input'} or 'session' not in entry:
             raise ValueError(f'{where} must be an object with a session id and optional tools, extensions and commands')
+        if 'unknown_input' in entry and type(entry['unknown_input']) is not bool:
+            raise ValueError(f'{where}.unknown_input must be boolean')
         if not isinstance(entry['session'], str) or not re.fullmatch(FIELDS['session'], entry['session']):
             raise ValueError(f'{where}.session is not a valid session id')
         if entry['session'] in seen: raise ValueError(f'{where}.session repeats an earlier session id')
@@ -59,6 +61,7 @@ def classify(entry, declared):
         area = COMMAND_AREA.get(name)
         if area is not None and not (area == 'review' and changes): hits[area] += count
     total = sum(hits.values())
+    if entry.get('unknown_input', False): return None, 'input_unavailable', dict(hits)
     if total == 0: return None, 'no_signal', {}
     if total < MIN_SIGNALS: return None, 'below_minimum_signal', dict(hits)
     lead, top = hits.most_common(1)[0]
@@ -93,6 +96,7 @@ def markdown(section):
         label = row['label'].replace('|', '\\|')
         lines.append(f"| {label} (`{row['id']}`) | advisory | {'n/a (no classification rule)' if row['sessions'] is None else row['sessions']} |")
     unplaced = section['unclassified']
-    lines.append(f"| Unclassified | unclassified | {unplaced['sessions']} ({', '.join(f'{r} {n}' for r, n in unplaced['reasons'].items())}) |")
+    reasons = (f'{r} {n}' for r, n in unplaced['reasons'].items() if r != 'input_unavailable' or n)
+    lines.append(f"| Unclassified | unclassified | {unplaced['sessions']} ({', '.join(reasons)}) |")
     if section['not_selected']: lines += ['', f"{section['not_selected']} sessions are placed in a declared area that --area did not select."]
     return '\n'.join(lines) + '\n'

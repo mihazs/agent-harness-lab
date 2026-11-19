@@ -64,12 +64,19 @@ Controlled scores say how well the harness does in an area; they do not say wher
 real work happens. Add `--sessions` to place recorded sessions beside the scores:
 
 ```sh
+ahl score-sessions . --capture /path/to/capture.jsonl --format codex --output sessions.json
 ahl score . --spec experiment.json --records trials.json --sessions sessions.json
 ```
 
 `sessions.json` is a list of content-free summaries, one per session: an opaque id and counts
 of tool names, file extensions and command families, never paths or text. The
 [reference](score-reference.md#session-summaries) lists the exact shape.
+`score-sessions` reads one explicitly selected pinned Codex or Claude native capture offline,
+writes a new owner-only file, and refuses to replace an existing file. Use `--format claude`
+for Claude captures. It omits unknown tokens and cannot recover uncaptured inputs. A session
+with unavailable call input, an unrecognized tool or shell command, a partial trailing record,
+or unsupported records stays unclassified, even if some signals were observed. Shell commands
+with composition or substitutions are not classified.
 
 The report then adds an advisory section. Read it as context only:
 

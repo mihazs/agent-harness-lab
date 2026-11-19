@@ -7,6 +7,7 @@ from .claude_cwd import Places
 from .error_catalog import classify
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import BODY_DERIVED, SOURCE_ORDER, edit_fingerprints, event, input_fingerprint, message_fingerprint
+from .session_signals import extract as session_signals, input_missing
 from ..sources.config_inventory import telemetry_server_sha256
 from ..sources.schema import digest
 from ..surfaces import skill_prefixes
@@ -132,10 +133,11 @@ def skill_signal(project, tool, arguments):
 
 
 class Projection:
-    def __init__(self, project, limit, check, revisions=None, versions=VERIFIED, places=None):
+    def __init__(self, project, limit, check, revisions=None, versions=VERIFIED, places=None, include_session_signals=False):
         self.versions, self.recorded, self.skipped = versions, set(), Counter()
         self.project, self.session, self.writer = Path(project), None, None
         self.limit, self.check = limit, check
+        self.include_session_signals = include_session_signals
         self.revisions, self.raw_revisions = revisions, {}
         self.rows, self.seen, self.responses = [], {}, {}
         self.unsupported, self.duplicates, self.unattributed = 0, 0, 0
@@ -229,6 +231,9 @@ class Projection:
                     metadata.update(invocation_signal(name, block.get('input')) or {})
                     if 'input' in block and (fingerprint := input_fingerprint(block['input'], case)) is not None: metadata['input_fingerprint'] = fingerprint
                     metadata.update(edit_fingerprints(name, block.get('input'), case))
+                    if self.include_session_signals:
+                        metadata.update(session_signals(name, block.get('input')))
+                        metadata['signal_input_missing'] = input_missing(name, block.get('input'))
                     if block.get('id') is not None: metadata['call_id'] = self.scoped(self.session, writer, text(block['id']))
                     else: metadata['missing_reason'] = 'native_call_id_unavailable'
                     emit('tool_call', index, **metadata)
@@ -300,9 +305,9 @@ class Projection:
         return tuple(self.rows), conflicts
 
 
-def decode(folder, name, project, max_records, *, revisions=None, versions=VERIFIED, **limits):
+def decode(folder, name, project, max_records, *, revisions=None, versions=VERIFIED, include_session_signals=False, **limits):
     places = Places(project)
-    projection = Projection(project, max_records, folder.check, revisions, versions, places)
+    projection = Projection(project, max_records, folder.check, revisions, versions, places, include_session_signals)
     sha256, partial, count = jsonl(folder, name, max_records, projection.add, **limits)
     rows, conflicts = projection.finish(folder.check)
     if max_records is not None and len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')

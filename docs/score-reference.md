@@ -102,7 +102,9 @@ opaque id of 1 to 64 characters from `A-Z a-z 0-9 . _ : -`, unique in the file) 
 1,000,000. Tool names use `A-Z a-z 0-9 _ . : -` (up to 64 characters), extensions are
 lower-case without the dot (up to 16 characters) and command families are lower-case
 program names (up to 32 characters), with `git` and `gh` written as `git-diff` or `gh-pr`. A
-summary holds counts only: never a path, a command line, an argument or text. Any other field,
+summary holds counts only: never a path, a command line, an argument or text. Optional boolean
+`unknown_input` marks a session with unavailable native call input; it is never placed in an area.
+Any other field,
 a repeated id or a bad name or count exits 2 with a message that names the position, such as
 `sessions[3].extensions`, and never the value. A name the rules below do not know is accepted
 and carries no signal.
@@ -130,6 +132,7 @@ signals and the leading area holds at least three fifths of them. Otherwise it i
 | Reason | Cause |
 | --- | --- |
 | `no_signal` | No recognized signal: an empty summary, or only names the rules do not know. |
+| `input_unavailable` | A call input or tool was unrecognized or unavailable, the capture contained no calls, or its tail or unsupported records left capture coverage incomplete. |
 | `below_minimum_signal` | One or two recognized signals. |
 | `ambiguous` | The leading area holds less than three fifths of the recognized signals. |
 | `area_not_declared` | The session looks like a built-in area that `ahl.json` does not declare. |
