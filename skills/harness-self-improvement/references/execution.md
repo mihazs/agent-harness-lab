@@ -271,6 +271,9 @@ runs. There is no cooperative fallback. The existing whole-run wall-clock budget
 includes probing, task execution and regrading; in-process preparation is charged
 before dispatch, but is not preemptible at an exact deadline.
 The evaluator clock starts before manifest/configuration reads and input freezing.
+Cooperative preparation and grader processes share a 16 MiB stdout/stderr limit per
+process. Exceeding it stops the process group and reports an output-limit failure;
+partial output cannot count as a completed trace or a passing grade.
 When called by `improve`, it also inherits the original controller deadline;
 starting a trial stage cannot reset that deadline or enlarge a manifest/config cap.
 Exhausted preparation writes a budget-exhausted report without a capability or
