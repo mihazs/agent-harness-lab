@@ -23,6 +23,10 @@ CONFIGS={
 
 def category(path):
     parts=PurePosixPath(path).parts;name=parts[-1]
+    if (len(parts)==3 and parts[:2]==('.github','workflows') and name.endswith(('.yml','.yaml'))
+            or parts==('.gitlab-ci.yml',)):
+        return 'ci','ci'
+    if parts[:2]==('.github','workflows'):return None
     if name in CONFIGS:return CONFIGS[name]
     if ((name.startswith('test_') and name.endswith('.py')) or name.endswith(('_test.py','.test.js','.test.ts',
             '.test.tsx','.spec.js','.spec.ts','.spec.tsx'))):
@@ -35,7 +39,7 @@ class _MetadataWalk(harness_inventory._Walk):
         super().__init__({});self.candidates=[]
 
     def child(self, descriptor, name, path, info, depth, root):
-        if path in ('.github/workflows', '.circleci', '.buildkite'): return
+        if path in ('.circleci', '.buildkite') or path.startswith('.github/workflows/'): return
         return super().child(descriptor, name, path, info, depth, root)
 
     def file(self, descriptor, name, path, info, root):

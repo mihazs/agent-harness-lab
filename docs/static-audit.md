@@ -501,8 +501,10 @@ A candidate's `stage` is a filename convention, not proof that a check exists,
 runs early or executes successfully. Contents and commands are not read by this
 inventory. `coverage` describes only the metadata walk: refused paths make it
 unknown, and unrecognized filenames mean detection completeness is unknown even
-when the walk completed. The `.github/workflows`, `.circleci`, and `.buildkite`
-subtrees are excluded; other hosted configuration paths may not be recognized.
+when the walk completed. Root GitLab CI configuration and GitHub workflow YAML
+filenames are listed as CI candidates without reading their contents. The
+`.circleci` and `.buildkite` subtrees and nested GitHub workflow directories are
+excluded; other hosted configuration paths may not be recognized.
 The walk is the inventory walk, so in a checkout with a `.git` entry at its root a
 directory the checkout's own `.gitignore` files exclude is not entered (see
 [ignored directories](#ignored-directories-and-the-entry-bound)): a test path,

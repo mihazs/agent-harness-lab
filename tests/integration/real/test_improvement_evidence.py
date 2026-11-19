@@ -131,6 +131,24 @@ def test_real_no_change_receipt_resumes_as_inconclusive(real_run, entry):
         assert result[field] == original[field]
 
 
+def test_real_feedback_inventory_includes_ci_configuration(real_run):
+    from agent_harness_lab.audit.feedback_sensors import capture
+
+    checkout = real_run.checkout
+    workflows = checkout/'.github/workflows'
+    expected = {str(path.relative_to(checkout)) for path in workflows.glob('*.yml') if path.is_file() and not path.is_symlink()}
+    expected |= {str(path.relative_to(checkout)) for path in workflows.glob('*.yaml') if path.is_file() and not path.is_symlink()}
+    if (checkout/'.gitlab-ci.yml').is_file(): expected.add('.gitlab-ci.yml')
+    if not expected: pytest.skip('selected checkout has no recognized CI configuration')
+    before = subprocess.check_output(['git', '-C', str(checkout), 'status', '--porcelain', '-z'])
+    report = capture(checkout)
+    found = {row['path'] for row in report['candidates'] if row['category'] == 'ci' and row['stage'] == 'ci'
+             and row['content'] == 'not_read' and row['execution'] == 'unknown'}
+    assert expected <= found
+    assert report['consistency'] == 'not_checked' and report['publication_allowed'] is False
+    assert subprocess.check_output(['git', '-C', str(checkout), 'status', '--porcelain', '-z']) == before
+
+
 def test_real_remote_selects_the_review_forge(real_run):
     remote = subprocess.check_output(['git', '-C', str(real_run.checkout), 'remote', 'get-url', 'origin'], text=True).strip()
     host = urlsplit(remote).hostname if '://' in remote else remote.split(':', 1)[0].rsplit('@', 1)[-1]
