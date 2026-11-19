@@ -19,8 +19,10 @@ for source operations. `ahl sources identity-key fingerprint --key-file FILE
 --value-file JSON` fingerprints one JSON value without printing it.
 The key file must be owned by the current user, private, a regular
 single-link file, and reached without symlinks. A missing or different key is
-rejected. Keep a private backup: losing it prevents reconstructing the same
-identities.
+rejected when a keyed source is opened. The key is not encryption or access
+control: operations that do not open the source journal, such as
+`sources lineage show`, do not validate it. Keep a private backup: losing it
+prevents reconstructing the same identities.
 
 Capture into a new journal; existing schema-1 journals remain readable and are
 not silently rewritten or linked to the new identity. Re-capture is required
