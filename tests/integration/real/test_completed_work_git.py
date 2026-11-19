@@ -228,9 +228,15 @@ def test_real_github_inline_review_comments_match_rest(checkout):
     query = ('query($owner:String!,$name:String!,$endCursor:String) { repository(owner:$owner,name:$name) {'
              ' pullRequests(first:100,states:MERGED,after:$endCursor,orderBy:{field:UPDATED_AT,direction:DESC}) {'
              ' pageInfo { hasNextPage endCursor } nodes { number reviewThreads { totalCount } } } } }')
-    command = ['gh', 'api', 'graphql', '--paginate', '-f', 'query='+query, '-f', 'owner='+parts[0], '-f', 'name='+parts[1],
-               '--jq', '.data.repository.pullRequests.nodes[] | select(.reviewThreads.totalCount > 0) | .number']
-    numbers = subprocess.check_output(command, cwd=checkout).splitlines()
+    command = ['gh', 'api', 'graphql', '-f', 'query='+query, '-f', 'owner='+parts[0], '-f', 'name='+parts[1]]
+    numbers, cursor = [], None
+    for _ in range(5):
+        args = [*command, '-f', 'endCursor='+cursor] if cursor is not None else command
+        page = json.loads(subprocess.check_output(args, cwd=checkout, timeout=20))['data']['repository']['pullRequests']
+        numbers = [row['number'] for row in page['nodes'] if row['reviewThreads']['totalCount'] > 0]
+        if numbers or not page['pageInfo']['hasNextPage']:
+            break
+        cursor = page['pageInfo']['endCursor']
     if not numbers:
         pytest.skip('no merged pull request with inline review threads')
     number = int(numbers[0])
