@@ -16,6 +16,8 @@ RESUME = 'Resume with no other option: ahl improve PROJECT --resume RUN_ID'
 # reason: (status, default stage, content-free next step). Every next step is unique: exit_guidance keys remediation by reason.
 # Exit code 2 (invalid_input, setup_error) is for usage and input errors only.
 REASONS = {
+    'codex_subscription_runtime_untrusted': ('blocked', 'trials', 'Use the Codex executable selected by a trusted PATH outside the project before starting subscription trials.'),
+    'codex_subscription_runtime_unsupported': ('blocked', 'trials', 'Use Codex CLI 0.170.0 for subscription trials, or update AHL when support for your version is available.'),
     'invalid_usage': ('invalid_input', 'usage', 'Correct the option or project argument named on stderr, then rerun; ahl improve --help lists every option.'),
     'usage_conflict': ('invalid_input', 'usage', RESUME),
     'protected_destination': ('invalid_input', 'usage', 'Choose an output or state location outside the project and its history, then rerun.'),

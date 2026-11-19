@@ -14,6 +14,10 @@ if sys.platform == 'linux':
 MAX_AUTH = 1024 * 1024
 SEED = '/tmp/ahl-codex-login'
 LOGIN_FD = 200
+CODEX_VERSION = '0.170.0'
+STATE_FILES = ('installation_id', *(base + suffix
+    for base in ('goals_1.sqlite', 'logs_2.sqlite', 'memories_1.sqlite', 'queue_1.sqlite', 'state_5.sqlite')
+    for suffix in ('', '-shm', '-wal')))
 
 
 def bubblewrap():
@@ -43,6 +47,27 @@ def source(environ):
         return home / 'auth.json'
     except OSError:
         return None
+
+
+def trusted_runtime(binary, environ, forbidden_roots):
+    try:
+        search_path = environ.get('PATH', os.defpath)
+        selected = shutil.which(binary, path=search_path)
+        default = shutil.which('codex', path=search_path)
+        if not selected or not default:
+            return False
+        executable = Path(selected).resolve(strict=True)
+        if executable != Path(default).resolve(strict=True) or not executable.is_file():
+            return False
+        if any(executable.is_relative_to(Path(root).resolve()) for root in forbidden_roots):
+            return False
+        for path in (executable, *executable.parents):
+            entry = path.stat()
+            if entry.st_uid not in (0, os.getuid()) or entry.st_mode & 0o022:
+                return False
+        return os.access(executable, os.X_OK)
+    except (OSError, ValueError):
+        return False
 
 
 def command(auth, trial, workspace, argv):
@@ -110,12 +135,21 @@ def launch(auth, trial, workspace, argv):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     from agent_harness_lab.evaluation.sandbox import keyring_launcher
     executable = Path(shutil.which(argv[0]) or argv[0]).resolve(strict=True)
+    if not trusted_runtime(argv[0], os.environ, (trial, workspace)):
+        raise ValueError('subscription runtime is not trusted')
     if any(path.is_relative_to(executable.parent) for path in masks):
         raise ValueError('Codex executable directory overlaps a login directory')
     runtime = bubblewrap()
     if runtime is None:
         raise ValueError('subscription sandbox is unavailable')
     fd = snapshot(auth)
+    runtime_home = trial / 'codex-runtime'
+    runtime_home.mkdir(mode=0o700)
+    for name in STATE_FILES:
+        (home / name).touch(mode=0o600, exist_ok=False)
+    for name in ('skills', 'tmp'):
+        (home / name).mkdir(mode=0o700)
+    scratch = [os.open('/dev/null', os.O_RDONLY) for _ in STATE_FILES]
     info_read, info_write = os.pipe()
     block_read, block_write = os.pipe()
     process = None
@@ -125,16 +159,21 @@ def launch(auth, trial, workspace, argv):
         bubblewrap_args = [runtime, '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc',
                       '--tmpfs', '/tmp', '--ro-bind', str(executable.parent), '/tmp/ahl-codex-bin',
                       '--bind', str(trial), str(trial), '--ro-bind', str(home), str(home),
-                      '--ro-bind', str(home), '/tmp/ahl-codex-home', '--setenv', 'CODEX_HOME', '/tmp/ahl-codex-home']
+                      '--ro-bind', str(home), str(runtime_home), '--setenv', 'CODEX_HOME', str(runtime_home)]
         argv = ['/tmp/ahl-codex-bin/' + executable.name, *argv[1:]]
         for mask in sorted(masks):
             bubblewrap_args += ['--tmpfs', str(mask)]
+        for name, empty_fd in zip(STATE_FILES, scratch):
+            bubblewrap_args += ['--bind-data', str(empty_fd), str(runtime_home / name)]
+        for name in ('skills', 'tmp'):
+            bubblewrap_args += ['--tmpfs', str(runtime_home / name)]
         bubblewrap_args += ['--perms', '0600', '--file', str(fd), SEED, '--info-fd', str(info_write),
                        '--block-fd', str(block_read), '--die-with-parent', '--chdir', str(workspace), '--',
                        sys.executable, '-I', '-S', str(Path(__file__).resolve()), 'inside', str(auth),
                        str(os.getpid()), str(fd), *argv]
         env = dict(os.environ, TMPDIR='/tmp')
-        process = subprocess.Popen(keyring_launcher() + bubblewrap_args, env=env, pass_fds=(fd, info_write, block_read))
+        process = subprocess.Popen(keyring_launcher() + bubblewrap_args, env=env,
+                                   pass_fds=(fd, info_write, block_read, *scratch))
         os.close(info_write); info_write = None
         os.close(block_read); block_read = None
         if not select.select([info_read], [], [], 10)[0]:
@@ -159,6 +198,8 @@ def launch(auth, trial, workspace, argv):
         for pipe in (info_read, info_write, block_read, block_write):
             if pipe is not None:
                 os.close(pipe)
+        for empty_fd in scratch:
+            os.close(empty_fd)
         os.close(fd)
 
 
@@ -175,6 +216,9 @@ def inside(auth, host_pid, host_fd, argv):
             raise ValueError('subscription login directory is writable')
         check = ('command -v head >/dev/null && head -c 1 /proc/self/status >/dev/null || exit 1; '
                  'if [ -w "$CODEX_HOME" ] || chmod u+w "$CODEX_HOME" 2>/dev/null; then exit 1; fi; '
+                 'if (printf x > "$CODEX_HOME/skills/.ahl-probe") 2>/dev/null; then exit 1; fi; '
+                 'if (printf x > "$CODEX_HOME/tmp/.ahl-probe") 2>/dev/null; then exit 1; fi; '
+                 'if (printf x > "$CODEX_HOME/state_5.sqlite") 2>/dev/null; then exit 1; fi; '
                  'for p in "$CODEX_HOME/auth.json" "$HOME/.codex/auth.json" "$1" '
                  '"/proc/$2/fd/$3" "/proc/$2/root$1" "/proc/$4/fd/$3" "/proc/$4/root$1" '
                  '/tmp/ahl-codex-login /tmp/ahl-codex-bin/auth.json; do '

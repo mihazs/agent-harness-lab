@@ -72,6 +72,8 @@ REMEDIATION = {
     'configuration_changed_before_execution': 'Review the changed configuration before retrying.',
     'preflight_budget_exhausted': 'Review the preflight budget before retrying.',
     'codex_credentials_unavailable': 'Authenticate the selected runtime before requesting model execution.',
+    'codex_subscription_runtime_unsupported': 'Use Codex CLI 0.170.0 for subscription trials, or update AHL when support for your version is available.',
+    'codex_subscription_runtime_untrusted': 'Use the Codex executable selected by a trusted PATH outside the project before starting subscription trials.',
     'frozen_inputs_changed': 'Review the changed frozen inputs before starting a fresh evaluation.',
     'inference_aborted_after_failure': 'Review the recorded inference failure before retrying.',
     'isolation_qualification_unverified': 'Verify the required isolation qualification before retrying.',

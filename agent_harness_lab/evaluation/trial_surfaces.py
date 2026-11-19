@@ -91,9 +91,9 @@ def codex_authentication(version, environ):
     if environ.get(CODEX_CREDENTIAL):
         return 'environment_variable_unobserved'
     if sys.platform == 'linux' and CODEX_BANNER.match(version.strip()):
-        from .codex_subscription import source
+        from .codex_subscription import CODEX_VERSION, source
         if source(environ) is not None:
-            return 'subscription_unverified'
+            return 'subscription_unverified' if version.strip() == 'codex-cli ' + CODEX_VERSION else 'subscription_runtime_unsupported'
     return 'unavailable' if CODEX_BANNER.match(version.strip()) else 'unknown'
 
 

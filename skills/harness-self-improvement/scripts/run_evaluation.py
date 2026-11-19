@@ -590,6 +590,18 @@ def _evaluate(args):
         blocked = 'inference_sandbox_unavailable'
     available = budget - (time.monotonic() - started)
     if available <= 0: blocked = 'preflight_budget_exhausted'
+    if agent == 'codex' and not blocked and not os.environ.get('CODEX_API_KEY'):
+        application_modules()
+        from agent_harness_lab.evaluation import codex_subscription
+        cwd = Path.cwd().resolve()
+        project_root = next((path for path in (cwd, *cwd.parents) if (path / '.git').exists()), None)
+        roots = [manifest_path.parent, *versions.values(), *((manifest_path.parent / task['fixture']).resolve() for task in tasks)]
+        if project_root is not None:
+            roots.append(project_root)
+        elif cwd not in (Path.home().resolve(), Path('/')):
+            roots.append(cwd)
+        if codex_subscription.source(os.environ) is not None and not codex_subscription.trusted_runtime(binary, os.environ, roots):
+            blocked = 'codex_subscription_runtime_untrusted'
     version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute(
         [binary, '--version'], manifest_path.parent, min(timeout, available), env=native_environment(agent, inherit_env))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
@@ -608,6 +620,8 @@ def _evaluate(args):
             version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ)
         if authentication == 'unavailable':
             blocked = 'codex_credentials_unavailable'
+        elif authentication == 'subscription_runtime_unsupported':
+            blocked = 'codex_subscription_runtime_unsupported'
     output.mkdir(parents=True, exist_ok=False)
     output.chmod(0o700)
     results = dict(manifest_sha256=manifest_hash,
@@ -854,7 +868,7 @@ def _evaluate(args):
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
-            effective_environment = (dict(environment, CODEX_HOME='/tmp/ahl-codex-home', TMPDIR='/tmp')
+            effective_environment = (dict(environment, CODEX_HOME=str(trial / 'codex-runtime'), TMPDIR='/tmp')
                                      if agent == 'codex' and authentication == 'subscription_unverified' else environment)
             record['environment'] = environment_receipt(effective_environment, inherit_env, output)
             try:
@@ -1005,7 +1019,7 @@ def main():
         epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
         'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
         'Claude keeps authentication but loads only project and managed settings, so put trial permissions in the fixture .claude/settings.json;\n'
-        'Codex gets a credential-free temporary CODEX_HOME and blocks without CODEX_API_KEY (results: inherited_unverified);\n'
+        'Codex uses a temporary CODEX_HOME; supported Linux trials can use a saved subscription login (results: inherited_unverified);\n'
         'offline/Responses require supported Linux isolation.\n'
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
