@@ -13,6 +13,8 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from urllib.parse import quote
+from urllib.error import HTTPError
+from urllib.request import ProxyHandler, build_opener
 
 import pytest
 
@@ -252,3 +254,27 @@ def test_real_github_inline_review_comments_match_rest(checkout):
     def hashes(rows):
         return {item['id']: hashlib.sha256((item.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for item in rows}
     assert hashes(row['comments']) == hashes(expected)
+
+
+def test_real_private_gitea_without_credentials_is_incomplete(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')
+    if completed_work.detect(checkout)['provider'] != 'gitea':
+        pytest.skip('this check requires a Gitea remote')
+    host, port, parts = completed_work._repository(checkout)
+    if completed_work._credential('gitea', host, port) is not None:
+        pytest.skip('this check requires an unconfigured Gitea token')
+    authority = f'[{host}]' if ':' in host else host
+    if port is not None:
+        authority += f':{port}'
+    endpoint = 'https://'+authority+'/api/v1/repos/'+'/'.join(parts)
+    try:
+        with build_opener(ProxyHandler({})).open(endpoint, timeout=8):
+            pytest.skip('the repository is accessible without credentials')
+    except HTTPError as error:
+        assert error.code in (401, 403, 404)
+    with tempfile.TemporaryFile() as content:
+        result = completed_work.capture(checkout, seconds=30, content=content)
+    assert result['provider'] == 'gitea' and result['complete'] is False
+    assert not result.get('enumeration_complete', False)
+    assert 'forge_repository_unavailable_or_mismatched' in result['problems']
