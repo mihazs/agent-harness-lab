@@ -1,9 +1,8 @@
 """Bounded, private root-file observations; no script execution or stale-command claim."""
-import hashlib
 import json
 import re
-import time
 
+from agent_harness_lab.audit import observation_inputs
 from agent_harness_lab.sources.git_view import Folder
 
 PROFILE='ahl-npm-test-observation-v1'
@@ -24,17 +23,10 @@ def capture(project, inventory, task_cwd):
     result=dict(profile=PROFILE,status='unknown',instruction_mention='unknown',test_script='unknown',
                 scope='checkout_root_files_only',observed_loading='unknown',runtime_execution='unknown',
                 snapshot_relation='separate_observation',publication_allowed=False)
-    if task_cwd!='.' or inventory.status!='declared': return result
-    source={'codex':'AGENTS.md','claude-code':'CLAUDE.md'}.get(inventory.runtime)
-    nodes=[node for node in inventory.nodes if node.origin=='checkout' and node.kind=='instruction' and node.path==source]
-    if (len(nodes)!=1 or nodes[0].declared_state!='present' or nodes[0].parse_status!='parsed'): return result
     try:
-        with Folder(project,time.monotonic()+30) as folder:
-            instruction=folder.read(source,MAX_BYTES)
-            package=folder.read('package.json',MAX_BYTES)
-            folder.verify()
-        if instruction is None or package is None or hashlib.sha256(instruction).hexdigest()!=nodes[0].content_sha256:
-            return result
+        found=observation_inputs.read(project,inventory,task_cwd,'package.json',Folder,MAX_BYTES)
+        if found is None: return result
+        instruction,package=found
         text=instruction.decode('utf-8');data=json.loads(package,object_pairs_hook=_unique)
         if not isinstance(data,dict): return result
         scripts=data.get('scripts',{})

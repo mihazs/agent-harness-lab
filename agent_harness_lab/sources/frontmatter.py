@@ -108,33 +108,33 @@ def _padded(line):
     return line != '---' and line.rstrip(' \t') == '---'
 
 
-def _mapping(lines, strict):
+def _mapping(lines, strict, key_pattern=_KEY):
     result, index = {}, 0
     while index < len(lines):
         line = lines[index]; index += 1
         if _blank(line): continue
         if line[0] == '\t': raise FrontmatterError('bad_yaml')
         if line[0] == ' ': raise FrontmatterError('unsupported_yaml')  # an indented root mapping
-        key, inline = _entry(line, result)
+        key, inline = _entry(line, result, key_pattern)
         if key in result: raise FrontmatterError('bad_yaml')
         following = next((later for later in lines[index:] if not _blank(later)), '')
         compact = not _strip_comment(inline or '', strict) and _item(following)  # a block list at the key's indent
         block = []
         while index < len(lines) and (_blank(lines[index]) or lines[index][0] in ' \t' or compact and _item(lines[index])):
             block.append(lines[index]); index += 1
-        result[key] = _value(inline, block, strict)
+        result[key] = _value(inline, block, strict, key_pattern)
     return result
 
 
-def _entry(line, seen):
+def _entry(line, seen, key_pattern=_KEY):
     """(key, inline value) of a mapping line; a bare word or stray list entry after a key is never valid YAML."""
-    match = _KEY.match(line)
+    match = key_pattern.match(line)
     if match is not None: return next(group for group in match.groups()[:3] if group is not None), match.group(4)
     bare = _item(line) or re.fullmatch(r'[A-Za-z0-9_][^:]*', _strip_comment(line))
     raise FrontmatterError('bad_yaml' if seen and bare else 'unsupported_yaml')
 
 
-def _value(value, block, strict):
+def _value(value, block, strict, key_pattern=_KEY):
     value = _strip_comment(value or '', strict)
     if re.fullmatch(r'[|>](?:[1-9]?[+-]?|[+-][1-9])', value):  # '#' is content inside a block scalar
         return ('\n' if value[0] == '|' else ' ').join(line.strip() for line in _block_scalar(block))
@@ -148,15 +148,15 @@ def _value(value, block, strict):
     if strict and len(first) != len(block): raise FrontmatterError('unsupported_yaml')  # deeper list content
     if all(_item(line) for line in first):
         items = [_strip_comment(line[1:], strict) for line in first]
-        return [Mapping(()) if _KEY.match(item) else _scalar(item, strict=strict) if item else None for item in items]
-    if not any(_KEY.match(line) or _item(line) for line in first):  # a plain or quoted scalar on the next lines
+        return [Mapping(()) if key_pattern.match(item) else _scalar(item, strict=strict) if item else None for item in items]
+    if not any(key_pattern.match(line) or _item(line) for line in first):  # a plain or quoted scalar on the next lines
         return _scalar(' '.join(line.strip() for line in block), strict=strict)
     keys, open_key = [], False
     for line in first:
         if _item(line):  # a compact list belongs to the key above only when that key has no inline value
             if not open_key: raise FrontmatterError('bad_yaml')
             continue
-        key, inline = _entry(line, keys)
+        key, inline = _entry(line, keys, key_pattern)
         if key in keys: raise FrontmatterError('bad_yaml')
         keys.append(key); open_key = not _strip_comment(inline or '', strict)
     return Mapping(tuple(keys))
