@@ -1,4 +1,7 @@
-"""Opt-in checks against local repositories, without recording their contents."""
+"""Opt-in checks against local repositories, without recording their contents.
+
+The forge check needs the operator's credentials; run it with pytest --noconftest.
+"""
 import gzip
 import hashlib
 import json
@@ -8,6 +11,8 @@ import re
 import subprocess
 import tempfile
 import time
+from datetime import datetime
+from urllib.parse import quote
 
 import pytest
 
@@ -62,3 +67,40 @@ def test_real_git_history_and_patches_cover_every_reachable_commit(checkout):
                     patches.add(chunk[7:-1].decode('ascii'))
         assert (length, digest.hexdigest()) == (result['decoded_length'], result['decoded_sha256'])
         assert patches == expected
+
+
+def test_real_forge_collection_matches_forge_cli(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
+    with tempfile.TemporaryFile() as content:
+        result = completed_work.capture(checkout, seconds=600, content=content)
+    assert result.get('enumeration_complete'), result.get('problems')
+    provider = result['provider']
+    assert provider in ('github', 'gitlab')
+    host, port, parts = completed_work._repository(checkout)
+    cutoff = datetime.fromisoformat(result['captured_at'])
+    for kind, resource in (('merged_pull_requests', 'pulls' if provider == 'github' else 'merge_requests'),
+                           ('closed_issues', 'issues')):
+        state = 'closed' if provider == 'github' or kind == 'closed_issues' else 'merged'
+        if provider == 'github':
+            target = '/repos/' + '/'.join(parts) + f'/{resource}?state={state}&per_page=100'
+            args = ['gh', 'api', '--paginate', '--slurp', target]
+            pages = json.loads(subprocess.check_output(args, cwd=checkout))
+            rows = [row for page in pages for row in page]
+        else:
+            target = 'projects/' + quote('/'.join(parts), safe='') + f'/{resource}?state={state}&per_page=100'
+            authority = f'[{host}]' if ':' in host else host
+            if port is not None:
+                authority += f':{port}'
+            args = ['glab', 'api', '--hostname', authority, '--paginate', '--output', 'ndjson', target]
+            rows = [json.loads(line) for line in subprocess.check_output(args, cwd=checkout).splitlines()]
+        expected = set()
+        for row in rows:
+            if provider == 'github' and (kind == 'merged_pull_requests' and not row.get('merged_at')
+                    or kind == 'closed_issues' and row.get('pull_request')):
+                continue
+            stamp = row.get('merged_at' if kind == 'merged_pull_requests' else 'closed_at')
+            if stamp and datetime.fromisoformat(stamp.replace('Z', '+00:00')) > cutoff:
+                continue
+            expected.add(row['number' if provider == 'github' else 'iid'])
+        assert {row['number'] for row in result[kind]} == expected
