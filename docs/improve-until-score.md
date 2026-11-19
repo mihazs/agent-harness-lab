@@ -36,6 +36,8 @@ history as restricted and does not treat it as complete. Sealed input evaluation
 silently add network data. The controlled proposer bounds its history index to 8 MiB
 and streams the separate text file; a larger index blocks with a coverage reason.
 Recovery checks the recorded history rather than repeating provider calls.
+Actual model consumption of the completed-work artifact is not yet verified; a
+no-change result remains blocked even when a candidate was evaluated.
 
 `--repair-contracts` also collects completed work and native history before changing
 files. Its deterministic contract repairs are selected from current files; the receipt

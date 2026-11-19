@@ -12,6 +12,8 @@ NO_CHANGE_REASONS = ('no_change_harness_supported', 'no_change_evidence_insuffic
 def _completed_work_valid(output, receipt):
     coverage = receipt.get('completed_work') if isinstance(receipt, dict) else None
     if (not isinstance(coverage, dict) or coverage.get('complete') is not True
+            or coverage.get('model_consumption') != 'verified'
+            or receipt.get('reason') != 'evaluation_no_improvement' or 'findings_not_candidates' in receipt
             or coverage.get('artifact') != 'completed-work/history.json'
             or not isinstance(coverage.get('artifact_tree_sha256'), str)):
         return False

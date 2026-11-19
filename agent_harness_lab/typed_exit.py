@@ -26,7 +26,7 @@ REASONS = {
     'completed_work_incomplete': ('blocked', 'run', 'Inspect completed-work coverage, fix forge access or the reported limit, then rerun.'),
     'completed_work_closed_input': ('blocked', 'run', 'Collect completed work outside the sealed evaluation and explicitly bind its inputs.'),
     'completed_work_controlled_too_large': ('blocked', 'run', 'A safely bounded larger controlled proposer input is required for the complete history.'),
-    'completed_work_unresolved': ('blocked', 'run', 'Review incomplete historical coverage and findings, then evaluate a supported candidate before concluding no change.'),
+    'completed_work_unresolved': ('blocked', 'run', 'Verify historical coverage and consumption, then evaluate a supported candidate before concluding no change.'),
     'budget_exhausted': ('budget_exhausted', 'run', 'Raise the whole-run budget with --timeout SECONDS (or the construction share with --construction-fraction FRACTION), then rerun.'),
     'execution_failed': ('execution_error', 'run', 'Inspect the private run output and stage stderr logs for the cause. Reconcile any unresolved provider request before retrying.'),
     'system_error': ('setup_error', 'run', 'Fix the filesystem or operating-system condition reported on stderr, then rerun.'),

@@ -1654,11 +1654,12 @@ def _completed_work_result(result, args):
         return result
     result['completed_work'] = completed
     if result.get('status') == 'no_change' and (not completed['complete']
+            or completed.get('model_consumption') != 'verified'
             or result.get('reason') != 'evaluation_no_improvement' or 'findings_not_candidates' in result):
         result['previous_reason'] = result.get('reason')
         result.pop('exit_receipt', None)
         result.update(status='blocked', reason='completed_work_unresolved',
-                      remediation='Review incomplete historical coverage and findings, then evaluate a supported candidate before concluding no change.')
+                      remediation='Verify historical coverage and consumption, then evaluate a supported candidate before concluding no change.')
     return result
 
 
