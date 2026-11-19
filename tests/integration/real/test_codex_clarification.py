@@ -2,11 +2,43 @@
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 
 import pytest
 
 from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
 from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, analyze, load_sessions
+
+WORKTREES = Path.home()/'dev/.worktrees'
+CODE_ROOT = Path(__file__).resolve().parents[3]
+
+
+def check_cli_in_worktree(path, project):
+    git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'index.threads=1', '-C', project]
+    repository = Path(subprocess.check_output([*git, 'rev-parse', '--show-toplevel'], text=True).strip())
+    before = subprocess.check_output([*git, 'status', '--porcelain', '--untracked-files=no'])
+    with tempfile.TemporaryDirectory(prefix='ahl-reply-real-', dir=WORKTREES) as folder:
+        root, checkout = Path(folder), Path(folder)/'checkout'
+        subprocess.run([*git, 'worktree', 'add', '-q', '--detach', str(checkout), 'HEAD'], check=True)
+        try:
+            checkout_git = ['git', '-C', str(checkout), 'status', '--porcelain', '--untracked-files=no']
+            checkout_before = subprocess.check_output(checkout_git)
+            report = root/'report.json'
+            env = dict(os.environ, PYTHONPATH=str(CODE_ROOT), PYTHONDONTWRITEBYTECODE='1')
+            command = ['unshare', '--user', '--map-root-user', '--mount', 'bash', '-c',
+                'set -eu; mount --make-rprivate /; mount --bind "$1" "$2"; exec "${@:3}"',
+                '_', str(checkout), str(repository), sys.executable, '-m', 'agent_harness_lab',
+                'instruction-adherence', str(path), '--native', 'codex', '--project', project, '--output', str(report)]
+            result = subprocess.run(command, env=env, cwd=root, capture_output=True, timeout=60)
+            assert result.returncode == 0
+            data = json.loads(report.read_text())
+            assert data['status'] == 'completed' and data['redaction'] == 'digest_only' and data['publication_allowed'] is False
+            assert subprocess.check_output(checkout_git) == checkout_before
+        finally:
+            subprocess.run([*git, 'worktree', 'remove', '--force', str(checkout)], check=True)
+    assert subprocess.check_output([*git, 'status', '--porcelain', '--untracked-files=no']) == before
 
 
 @pytest.mark.parametrize('name', ['request_user_input', 'request_user_input_async'])
@@ -39,6 +71,7 @@ def test_real_codex_question_call_is_recognized(name):
 def test_real_codex_input_reply_reaches_adherence():
     root = os.environ.get('REAL_CODEX_SESSION_ROOT')
     if not root: pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
+    projects = [Path(item).resolve() for item in json.loads(os.environ.get('REAL_CODEX_PROJECTS', '[]'))]
     start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
         if index >= 150: break
@@ -47,6 +80,7 @@ def test_real_codex_input_reply_reaches_adherence():
         with path.open() as stream:
             try: project = json.loads(next(stream))['payload']['cwd']
             except (ValueError, StopIteration, KeyError, TypeError): continue
+            if projects and not any(Path(project) == base or base in Path(project).parents for base in projects): continue
             for line in stream:
                 if start not in line: continue
                 try: row = json.loads(line)
@@ -77,5 +111,6 @@ def test_real_codex_input_reply_reaches_adherence():
                 report = analyze([normalized], [])
                 assert report['status'] == 'completed' and report['redaction'] == 'digest_only'
                 assert report['sessions']['partial'] == 1 and report['publication_allowed'] is False
+                if projects: check_cli_in_worktree(path, project)
                 return
     pytest.fail('no usable real request and reply in the bounded session set')
