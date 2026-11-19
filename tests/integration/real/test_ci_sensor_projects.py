@@ -12,14 +12,14 @@ from agent_harness_lab.audit.feedback_sensors import capture
 
 PROJECTS = json.loads(os.environ.get('REAL_SENSOR_PROJECTS', '[]'))
 CODE_ROOT = Path(__file__).resolve().parents[3]
+WORKTREES = Path.home()/'dev/.worktrees'
 
 
 @pytest.fixture(params=PROJECTS or [None], ids=lambda _: 'private-project')
 def checkout(request):
     if request.param is None: pytest.skip('set REAL_SENSOR_PROJECTS to existing local checkouts')
     project = Path(request.param).resolve(strict=True)
-    worktrees = Path.home()/'dev/.worktrees'
-    with tempfile.TemporaryDirectory(prefix='ahl-ci-sensor-real-', dir=worktrees) as folder:
+    with tempfile.TemporaryDirectory(prefix='ahl-ci-sensor-real-', dir=WORKTREES) as folder:
         root = Path(folder)
         path = root/'checkout'
         git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'index.threads=1', '-C', str(project)]
