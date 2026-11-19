@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.231.1
+
+### Patch Changes
+
+- c5b62a6: Recognize Codex user-input tools and replies in instruction adherence and telemetry analysis.
+
 ## 0.231.0
 
 ### Minor Changes
