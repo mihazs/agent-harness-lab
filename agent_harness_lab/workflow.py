@@ -1513,10 +1513,12 @@ def _run_improvement(args, *, parent_started=None):
                 return blocked
             data = evidence(args, output, progress=progress)
             _note_native_history(args, data)
-            if not args._completed_work_summary['complete']:
+            if (not args._completed_work_summary['complete']
+                    or args._completed_work_summary.get('model_consumption') != 'verified'
+                    or args._completed_work_summary.get('repair_selection') != 'verified'):
                 result = dict(status='blocked', reason='completed_work_unresolved', output=str(output), changed_files=[],
                               completed_work=args._completed_work_summary, automatic_promotion=False,
-                              remediation='Resolve incomplete historical coverage before repairing contracts.')
+                              remediation='Verify historical coverage and its use in repair selection before changing contracts.')
                 write_json(output/'workflow.json', result)
                 return result
             result = contracts(args, output=output)

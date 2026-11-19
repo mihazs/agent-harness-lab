@@ -40,8 +40,8 @@ Actual model consumption of the completed-work artifact is not yet verified; a
 no-change result remains blocked even when a candidate was evaluated.
 
 `--repair-contracts` also collects completed work and native history before changing
-files. Its deterministic contract repairs are selected from current files; the receipt
-labels historical context as collected but not used to select those repairs.
+files. It remains blocked until historical consumption and its use in repair selection
+are verified; its existing deterministic selector uses only current files.
 
 The examples below show loop controls. Their actual stops depend on the project's
 history, forge access, task bank, evaluation results and available budget.
