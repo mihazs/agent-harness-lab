@@ -74,6 +74,11 @@ These measurements do not establish performance on other hosts or all providers.
 The `sources` startup guard is 12 times the bare interpreter; the post-change median
 in a separate 15-run sample was 44.3 ms against a 17.9 ms interpreter median.
 
+Deferring Bayesian analysis until a history is analyzed reduced the median CPU time of
+`experiment-history --help` from 65.62 to 61.64 ms in 12 interleaved runs per version.
+The commands ran sequentially under a 20% CPU quota with separately warmed bytecode
+caches; this is process CPU time, not wall-clock latency or a cross-host guarantee.
+
 ## Baseline
 
 One run on a Linux x86-64 workstation with Python 3.14.9 while other jobs were running

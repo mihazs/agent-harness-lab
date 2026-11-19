@@ -13,7 +13,6 @@ from types import SimpleNamespace
 
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, scratch_dir, sync_directory, write_bytes
 from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
-from .bayes_analysis import attach
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
@@ -597,6 +596,7 @@ class HistoryStore(PrivateJournal):
         if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
+        from .bayes_analysis import attach
         return attach(spec,records,result,root_similarity_evidence=similarity,root_similarity_bank=similarity_path)
 
     def _interaction(self, case, inputs, spec, result):
