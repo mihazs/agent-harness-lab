@@ -11,6 +11,7 @@ import pytest
 from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
 from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, analyze, load_sessions
 from agent_harness_lab.telemetry import codex_rollout
+from agent_harness_lab.telemetry.session_signals import summarize
 
 WORKTREES = Path.home()/'dev/.worktrees'
 CODE_ROOT = Path(__file__).resolve().parents[3]
@@ -128,8 +129,10 @@ def test_real_async_input_tool_is_preserved_in_telemetry():
             except (ValueError, StopIteration, KeyError, TypeError): continue
             if meta.get('cli_version') != codex_rollout.PINNED_VERSION or not isinstance(meta.get('cwd'), str): continue
             if not any('"name":"request_user_input_async"' in line for line in stream): continue
-        try: rows, _, _ = codex_rollout.read(path, meta['cwd'])
+        try: rows, _, _ = codex_rollout.read(path, meta['cwd'], include_session_signals=True)
         except (OSError, ValueError): continue
-        assert any(row.get('tool_name') == 'request_user_input_async' for row in rows)
+        calls = [row for row in rows if row.get('activity') == 'tool_call' and row.get('tool_name') == 'request_user_input_async']
+        assert calls and all(type(row.get('signal_input_missing')) is bool and 'arguments' not in row for row in calls)
+        assert all(row['unknown_input'] for row in summarize(rows, incomplete=True))
         return
     pytest.skip('no compatible real capture with an asynchronous input call')
