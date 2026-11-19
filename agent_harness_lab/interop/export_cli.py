@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 from agent_harness_lab.evaluation.integrity import invalid_constant, read_regular, unique_object
@@ -16,11 +17,15 @@ def export_trace(source, output):
     if '..' in source.parts or '..' in output.parts or source == output or source in output.parents or output in source.parents:
         raise Rejected('unsafe_output', 'output')
     try:
+        if os.lstat(source / EVENTS).st_size > otel.MAX_TOTAL_BYTES:
+            raise Rejected('input_too_large', 'input')
         raw = read_regular(source / EVENTS, otel.MAX_TOTAL_BYTES)
         records = (json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
                    for line in raw.splitlines())
         document, report = otel.convert(records)
         report['source_digest'] = hashlib.sha256(raw).hexdigest()
+    except Rejected:
+        raise
     except (OSError, ValueError, TypeError, RecursionError):
         raise Rejected('invalid_structure', 'input') from None
     publish(output, {OTEL_LOGS: encoded(document), REPORT: encoded(report)})
