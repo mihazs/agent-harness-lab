@@ -29,7 +29,7 @@ MAX_GIT_BYTES = 8 * 1024 * 1024
 def _git(project, *args, timeout=10):
     return subprocess.run(['git', '-C', str(project), *args], check=True, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, timeout=timeout,
-                          env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'}).stdout.decode('utf-8', 'strict')
+                          env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'GIT_NO_REPLACE_OBJECTS': '1'}).stdout.decode('utf-8', 'strict')
 
 
 def _bounded_git(project, args, problems, deadline, label):
@@ -74,7 +74,7 @@ def _git_stream(project, args, content, problems, deadline, label, *, limit=MAX_
     offset = content.tell()
     command = ['git', '-c', 'core.fsmonitor=false', '-C', str(project), *args]
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                               env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0'})
+                               env={**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'GIT_NO_REPLACE_OBJECTS': '1'})
     interrupted, digest = False, hashlib.sha256()
     try:
         while True:
