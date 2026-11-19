@@ -127,7 +127,16 @@ def normalize(rows, source_format='normalized', project=None, source_version=Non
     elif source_format in ('normalized', 'ai-memory'):
         if source_version is not None:
             raise ValueError('source version is unsupported for this adapter')
+        roots = {}
         for record in _native(rows, source_format, project):
-            yield event(record)
+            record = event(record)
+            case = record['case_id']
+            if (source_format == 'normalized' and 'root_case_id' not in record and roots.get(case) is not None
+                    and record['event_id'] == 'coverage:event_store_truncated:' + case
+                    and record['activity'] == 'capture_coverage' and record.get('capture_complete') is False
+                    and record.get('missing_reason') == 'event_store_truncated'):
+                record['root_case_id'] = roots[case]
+            roots.setdefault(case, record.get('root_case_id'))
+            yield record
     else:
         raise ValueError('unsupported capture format')
