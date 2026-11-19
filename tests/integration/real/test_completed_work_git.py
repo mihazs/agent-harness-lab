@@ -71,6 +71,23 @@ def test_real_git_history_and_patches_cover_every_reachable_commit(checkout):
                     patches.add(chunk[7:-1].decode('ascii'))
         assert (length, digest.hexdigest()) == (result['decoded_length'], result['decoded_sha256'])
         assert patches == expected
+        git = subprocess.Popen([*command, 'log', '--no-show-signature', '--no-notes', '--no-decorate',
+                                '--no-color', '--no-ext-diff', '--no-textconv', '--binary', '--full-index',
+                                '--diff-merges=first-parent', '--format=commit %H%n', '--patch', '--all', head],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               env={**os.environ, 'GIT_OPTIONAL_LOCKS':'0', 'GIT_NO_REPLACE_OBJECTS':'1'})
+        try:
+            expected_digest, expected_length = hashlib.sha256(), 0
+            for chunk in iter(lambda: git.stdout.read(65536), b''):
+                expected_digest.update(chunk)
+                expected_length += len(chunk)
+            assert git.wait(timeout=10) == 0
+        finally:
+            if git.poll() is None:
+                git.kill()
+                git.wait()
+            git.stdout.close()
+        assert (length, digest.hexdigest()) == (expected_length, expected_digest.hexdigest())
 
 
 def test_real_untracked_work_is_captured_without_modifying_source(checkout, request):
