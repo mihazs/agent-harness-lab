@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.231.2
+
+### Patch Changes
+
+- 8c2d6f8: Bound cooperative process output and fail closed when the limit is exceeded.
+
 ## 0.231.1
 
 ### Patch Changes
