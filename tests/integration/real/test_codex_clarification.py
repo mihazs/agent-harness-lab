@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
-from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question
+from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, load_sessions
 
 
 @pytest.mark.parametrize('name', ['request_user_input', 'request_user_input_async'])
@@ -61,11 +61,18 @@ def test_real_codex_input_reply_reaches_adherence():
                     if isinstance(values, list):
                         answers.extend(x['answer'] for x in values if isinstance(x, dict) and isinstance(x.get('answer'), str))
         if not answers: continue
-        try: turns = read_session(path, 'codex', project)['turns']
+        try: session = read_session(path, 'codex', project)
         except Skipped: continue
+        normalized = load_sessions({'profile': 'ahl-instruction-sessions-v1', 'sessions': [session]})[0]
+        turns = normalized['turns']
         for position, turn in enumerate(turns):
             if turn.get('tool') not in ('request_user_input', 'request_user_input_async'): continue
-            if any(later.get('role') == 'user' and later.get('text') in answers for later in turns[position + 1:]):
-                assert _asked(turns, position, len(turns)) is None
+            for reply in range(position + 1, len(turns)):
+                later = turns[reply]
+                if later.get('role') != 'user' or not later.get('reply_to_question') or later.get('text') not in answers: continue
+                between = [item for item in turns[position:reply] if item['role'] != 'user']
+                if _question(between[-1]): continue
+                assert _asked(turns, position, reply + 1) is None
+                assert all(item['restated'] != reply and reply not in item['signals'].values() for item in _user_items(normalized))
                 return
     pytest.fail('no usable real request and reply in the bounded session set')

@@ -84,8 +84,11 @@ def _segments(command):
 def _turn(raw, index):
     role = raw.get('role') if isinstance(raw, dict) else None
     if role in ('user', 'agent'):
-        _fields(raw, {'role', 'text'}, {'role', 'text'}, 'turn')
-        return dict(role=role, text=_bounded(raw['text'], 'turn text', empty=True))
+        _fields(raw, {'role', 'text', 'reply_to_question'} if role == 'user' else {'role', 'text'}, {'role', 'text'}, 'turn')
+        if 'reply_to_question' in raw and type(raw['reply_to_question']) is not bool:
+            raise ValueError('reply_to_question must be boolean')
+        return dict(role=role, text=_bounded(raw['text'], 'turn text', empty=True),
+                    reply_to_question=raw.get('reply_to_question', False))
     if role != 'tool_call':
         raise ValueError('turn role must be user, agent or tool_call')
     _fields(raw, {'role', 'tool', 'command', 'path'}, {'role', 'tool'}, 'turn')
@@ -286,6 +289,7 @@ def _signals(item, sentences, turns):
     """
     found, names = {}, rules.subjects(item['rule']) if item['rule'] else []
     for later in (u for u in sentences if names and item['turn'] < u < item['until']):
+        if turns[later].get('reply_to_question'): continue
         named = [s for s in sentences[later] if any(name in s for name in names)]
         between = [turn for turn in turns[item['turn'] + 1:later] if turn['role'] != 'user'] if named else []
         if between and not _question(between[-1]):
@@ -297,6 +301,7 @@ def _signals(item, sentences, turns):
 
 
 def _restates(item, at, sentences, later, turns):
+    if turns[later].get('reply_to_question'): return False
     repeated = (item['ref'], later) in at
     corrected = any(_CORRECTION.search(s) and any(subject in s for subject in rules.subjects(item['rule'] or {})) for s in sentences)
     between = [turn for turn in turns[item['turn'] + 1:later] if turn['role'] != 'user']

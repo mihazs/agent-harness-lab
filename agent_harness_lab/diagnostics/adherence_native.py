@@ -181,7 +181,7 @@ class _Codex(_Capture):
             except ValueError: continue
             if not isinstance(answers, list) or len(answers) > adherence.MAX_USER_ITEMS: continue
             values = [answer['answer'] for answer in answers if isinstance(answer, dict) and isinstance(answer.get('answer'), str)]
-            if values: self.message('user', '\n'.join(values))
+            if values: self.add_turn(dict(role='user', text=_clip('\n'.join(values), True), reply_to_question=True))
 
     def tool(self, payload):
         item = payload['type']
