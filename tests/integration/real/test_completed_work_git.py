@@ -120,3 +120,55 @@ def test_real_forge_collection_matches_forge_cli(checkout):
                     actual_hash = hashlib.sha256(captured_text(captured[number][field])).digest()
                     expected_hash = hashlib.sha256((row.get(source) or '').encode('utf-8', 'surrogatepass')).digest()
                     assert actual_hash == expected_hash
+
+
+def test_real_forge_discussions_match_rest(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
+    from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection
+    from agent_harness_lab.sources.transport import JsonAPI, capture_state
+    host, port, parts = completed_work._repository(checkout)
+    provider = completed_work.detect(checkout)['provider']
+    if provider not in ('github', 'gitlab'):
+        pytest.skip('this comparison requires an authenticated GitHub or GitLab CLI')
+    token = completed_work._credential(provider, host, port)
+    assert token
+    if provider == 'github':
+        base = '/repos/' + '/'.join(parts)
+        repo_id = int(subprocess.check_output(['gh', 'api', base, '--jq', '.id'], cwd=checkout))
+        listing = json.loads(subprocess.check_output(['gh', 'api', base+'/issues?state=closed&per_page=100'], cwd=checkout))
+        choices = [row['number'] for row in listing if not row.get('pull_request') and 0 < row.get('comments', 0) <= 20]
+        if not choices:
+            pytest.skip('no suitable closed issue with discussions in the first page')
+        number = choices[0]
+        pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+            base+f'/issues/{number}/comments?per_page=100'], cwd=checkout))
+        expected = [row for page in pages for row in page]
+        api = GitHubAPI('https://api.github.com'+base, GitHubSelection(repo_id=repo_id),
+                        authorization='Bearer '+token, max_pages=30, max_bytes=8*1024*1024, timeout=5, seconds=60)
+        found = api._graphql_comments([number], capture_state(api.transport)).get(number)
+    else:
+        authority = f'[{host}]' if ':' in host else host
+        if port is not None:
+            authority += f':{port}'
+        prefix = 'projects/' + quote('/'.join(parts), safe='')
+        cli = ['glab', 'api', '--hostname', authority]
+        repo = json.loads(subprocess.check_output([*cli, prefix], cwd=checkout))
+        listing = json.loads(subprocess.check_output([*cli, prefix+'/issues?state=closed&per_page=100'], cwd=checkout))
+        choices = [row['iid'] for row in listing if 0 < row.get('user_notes_count', 0) <= 20]
+        if not choices:
+            pytest.skip('no suitable closed issue with discussions in the first page')
+        number = choices[0]
+        raw = subprocess.check_output([*cli, '--paginate', '--output', 'ndjson',
+                                       prefix+f'/issues/{number}/discussions?per_page=100'], cwd=checkout)
+        expected = [note for line in raw.splitlines() for note in json.loads(line)['notes']]
+        api = JsonAPI('https://'+authority+'/api', max_pages=30, max_bytes=8*1024*1024, timeout=5, seconds=60)
+        api._work_authorization = 'Bearer '+token
+        found = completed_work._gitlab_discussions(api, capture_state(api), parts, 'closed_issues',
+                                                    [dict(number=number)], repo['id']).get(number)
+    if found is None:
+        pytest.skip('forge response requires the collector REST fallback')
+    assert expected and found
+    actual_hashes = {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in found}
+    expected_hashes = {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in expected}
+    assert actual_hashes == expected_hashes
