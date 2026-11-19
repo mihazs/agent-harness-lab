@@ -321,7 +321,7 @@ if __name__ == '__main__':
 
 class InterruptCleanupTests(unittest.TestCase):
     def test_interrupt_reaps_its_owned_process_group(self):
-        from unittest.mock import Mock, patch
+        from unittest.mock import MagicMock, Mock, patch
         import signal
         import importlib.util
         spec = importlib.util.spec_from_file_location("runner_under_test", RUNNER)
@@ -329,12 +329,16 @@ class InterruptCleanupTests(unittest.TestCase):
         spec.loader.exec_module(runner)
         process = Mock(pid=12345)
         process.poll.return_value = None
-        process.communicate.side_effect = [KeyboardInterrupt(), ('', '')]
-        with patch.object(runner.subprocess, 'Popen', return_value=process), patch.object(runner.os, 'killpg') as kill:
+        poll = MagicMock()
+        poll.__enter__.return_value = poll
+        poll.get_map.return_value = {1: True}
+        poll.select.side_effect = KeyboardInterrupt()
+        with patch.object(runner.subprocess, 'Popen', return_value=process), patch.object(runner.os, 'set_blocking'), \
+             patch.object(runner.selectors, 'DefaultSelector', return_value=poll), patch.object(runner.os, 'killpg') as kill:
             with self.assertRaises(KeyboardInterrupt):
                 runner.execute(['synthetic-child'], Path.cwd(), 10)
         kill.assert_called_once_with(12345, signal.SIGKILL)
-        self.assertEqual(process.communicate.call_count, 2)
+        process.wait.assert_called_once_with()
 
 
 class TrialSurfaceTests(unittest.TestCase):

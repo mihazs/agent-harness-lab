@@ -3,9 +3,11 @@
 import argparse
 import hashlib
 import json
+import locale
 import math
 import os
 from pathlib import Path
+import selectors
 import shutil
 import signal
 import subprocess
@@ -14,6 +16,7 @@ import time
 import tomllib
 
 DIGEST_CHUNK_BYTES = 1024 * 1024
+MAX_PROCESS_OUTPUT = 16 * 1024 * 1024
 
 
 def application_modules():
@@ -65,27 +68,66 @@ def managed_environment(parent_id, agent, inherit=False):
 
 def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
+    encoding = locale.getpreferredencoding(False)
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, errors='replace', start_new_session=True,**({} if env is None else dict(env=env)))
+                                   start_new_session=True,**({} if env is None else dict(env=env)))
+        buffers, reason = [bytearray(), bytearray()], None
         try:
-            out, err = process.communicate(stdin, timeout=timeout)
-            return dict(exit_code=process.returncode, stdout=out, stderr=err,
-                        elapsed_seconds=time.monotonic() - start, timeout=False)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            out, err = process.communicate()
-            return dict(exit_code=process.returncode, stdout=out, stderr=err,
-                        elapsed_seconds=time.monotonic() - start, timeout=True)
+            pending = memoryview(stdin.encode(encoding) if stdin is not None else b'')
+            with selectors.DefaultSelector() as poll:
+                for index, pipe in enumerate((process.stdout, process.stderr)):
+                    os.set_blocking(pipe.fileno(), False)
+                    poll.register(pipe, selectors.EVENT_READ, index)
+                if pending:
+                    os.set_blocking(process.stdin.fileno(), False)
+                    poll.register(process.stdin, selectors.EVENT_WRITE, 2)
+                else:
+                    process.stdin.close()
+                while poll.get_map():
+                    remaining = timeout - (time.monotonic() - start)
+                    if remaining <= 0:
+                        reason = 'timeout'; break
+                    for key, _ in poll.select(remaining):
+                        if key.data == 2:
+                            try: written = os.write(key.fd, pending[:65536])
+                            except BrokenPipeError: written = len(pending)
+                            pending = pending[written:]
+                            if not pending:
+                                poll.unregister(key.fileobj); key.fileobj.close()
+                            continue
+                        block = os.read(key.fd, 65536)
+                        if not block:
+                            poll.unregister(key.fileobj); key.fileobj.close(); continue
+                        available = MAX_PROCESS_OUTPUT - sum(map(len, buffers))
+                        buffers[key.data].extend(block[:available])
+                        if len(block) > available:
+                            reason = 'output_limit'; break
+                    if reason: break
+            if reason is None:
+                try: process.wait(timeout=max(0, timeout - (time.monotonic() - start)))
+                except subprocess.TimeoutExpired: reason = 'timeout'
         except BaseException:
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            process.communicate()
+            try: os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            process.wait()
             raise
+        finally:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe and not pipe.closed: pipe.close()
+        if reason:
+            try: os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            process.wait()
+        result = dict(exit_code=None if reason == 'output_limit' else process.returncode,
+                      stdout=bytes(buffers[0]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
+                      stderr=bytes(buffers[1]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
+                      elapsed_seconds=time.monotonic() - start, timeout=reason == 'timeout')
+        if reason == 'output_limit':
+            result['output_limit'] = True
+            result['stderr'] += '\nProcess output exceeded the 16 MiB limit.'
+        return result
     except OSError as exc:
         return dict(exit_code=None, stdout='', stderr=str(exc),
                     elapsed_seconds=time.monotonic() - start, timeout=False)
