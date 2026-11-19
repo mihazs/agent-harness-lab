@@ -359,6 +359,29 @@ def test_real_github_inline_review_comments_match_rest(checkout):
     assert hashes(row['comments']) == hashes(expected)
 
 
+def test_real_gitea_api_documents_collector_routes(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')
+    if completed_work.detect(checkout)['provider'] != 'gitea':
+        pytest.skip('this check requires a Gitea remote')
+    host, port, _ = completed_work._repository(checkout)
+    authority = ('[' + host + ']' if ':' in host else host) + (':' + str(port) if port else '')
+    with build_opener(ProxyHandler({})).open('https://' + authority + '/swagger.v1.json', timeout=10) as response:
+        raw = response.read(4*1024*1024+1)
+    assert len(raw) <= 4*1024*1024
+    api = json.loads(raw)
+    paths = api['paths']
+    for suffix in ('/pulls', '/issues', '/issues/{index}/comments', '/pulls/{index}/reviews',
+                   '/pulls/{index}/reviews/{id}/comments'):
+        assert 'get' in paths['/repos/{owner}/{repo}' + suffix]
+    for name, fields in {'Issue': ('number', 'title', 'body', 'closed_at', 'updated_at'),
+                         'PullRequest': ('number', 'title', 'body', 'merged_at', 'updated_at'),
+                         'Comment': ('id', 'body', 'created_at', 'updated_at'),
+                         'PullReview': ('id', 'body', 'submitted_at', 'updated_at'),
+                         'PullReviewComment': ('id', 'body', 'created_at', 'updated_at')}.items():
+        assert set(fields) <= api['definitions'][name]['properties'].keys()
+
+
 def test_real_private_gitea_without_credentials_is_incomplete(checkout):
     if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
         pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')
