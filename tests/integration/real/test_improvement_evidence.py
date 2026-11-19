@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -123,3 +124,15 @@ def test_real_no_change_receipt_resumes_as_inconclusive(real_run, entry):
     assert completed.returncode == 3
     assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     assert result['changed_files'] == [] and result['exit_receipt']
+
+
+def test_real_remote_selects_the_review_forge(real_run):
+    remote = subprocess.check_output(['git', '-C', str(real_run.checkout), 'remote', 'get-url', 'origin'], text=True).strip()
+    host = urlsplit(remote).hostname if '://' in remote else remote.split(':', 1)[0].rsplit('@', 1)[-1]
+    expected = {'github.com':'github', 'gitlab.com':'gitlab'}.get((host or '').lower())
+    if expected is None:
+        pytest.skip('self-hosted remotes need an independently established provider')
+    environment = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=str(CODE_ROOT))
+    completed = subprocess.run([sys.executable, '-m', 'agent_harness_lab', 'sources', 'detect', str(real_run.checkout)],
+                               env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=20)
+    assert completed.returncode == 0 and json.loads(completed.stdout)['provider'] == expected
