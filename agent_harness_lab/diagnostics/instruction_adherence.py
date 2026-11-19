@@ -175,11 +175,13 @@ def _hit(call, match, project):
 
 
 def _asked(turns, lo, hi):
-    """Whether a question to the user, then a user reply, both fall in turns[lo:hi]."""
-    # A general input request does not establish that an approval was sought.
-    question = next((i for i in range(lo, hi) if _question(turns[i]) and turns[i].get('tool') not in
-                     ('request_user_input', 'request_user_input_async')), None)
-    return question is not None and any(turns[i]['role'] == 'user' for i in range(question + 1, hi))
+    """Whether a question and reply occur; general input requests have unknown approval intent."""
+    question = next((i for i in range(lo, hi) if _question(turns[i])), None)
+    if question is None or not any(turns[i]['role'] == 'user' for i in range(question + 1, hi)):
+        return False
+    if turns[question].get('tool') in ('request_user_input', 'request_user_input_async'):
+        return None
+    return True
 
 
 def _question(turn):
@@ -219,8 +221,10 @@ def _verdict(rule, session, lo, hi):
                 unsure |= True not in earlier and None in earlier
                 if True not in earlier and None not in earlier:
                     bad.append(call['turn'])
-            elif not _asked(session['turns'], lo, call['turn']):
-                bad.append(call['turn'])
+            else:
+                asked = _asked(session['turns'], lo, call['turn'])
+                if asked is False: bad.append(call['turn'])
+                elif asked is None: unsure = True
         # Absence of an earlier step or a question is only evidence when nothing was dropped from the capture.
         bad, unsure = ([], True) if bad and not complete else (bad, unsure)
     if bad:
