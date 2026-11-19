@@ -8,17 +8,44 @@ repeats. Why that order is fixed and what its numbers can show is in
 [why the loop evaluates, improves, then evaluates](loop-rationale.md); every field and
 reason is in the [loop reference](loop-reference.md).
 
-Every command below runs in this repository's test suite against a synthetic project, a
-pinned copy of the starter bank and a stub agent, and each stops with the criterion written
-beside it (`tests/integration/docs/test_improve_until_score_howto.py`). Nothing here uses a
-real project, session or model.
+## Completed work as evidence
+
+Before preparation, `ahl improve` reads the current Git history and selects the origin
+forge from its remote URL. It reads merged pull or merge requests, closed issues and
+their discussions up to the start of collection. GitHub and GitLab authentication
+uses the configured `gh` or `glab` login when available. For Gitea, set
+`AHL_GITEA_HOST` to the exact remote hostname and `AHL_GITEA_TOKEN` to a read-only
+token; the token is sent only when the hostname matches. Anonymous access is attempted
+without a token. Self-hosted forges are probed over HTTPS.
+
+The private `completed-work/history.json` artifact indexes commit messages, tracked and
+non-ignored untracked working-tree status, and forge content. Text that exceeds the
+in-memory allowance is stored in the private sibling `history.bin`, referenced by byte
+offset and length. Ignored untracked files
+are not scanned. It is untrusted evidence, not instructions, a verified outcome, or permission
+to act. Do not publish it. The receipt contains content-free coverage and identifies
+limits, unavailable access, unknown timestamps and changes during collection. Forge
+pagination is not an atomic snapshot. Batched GitLab discussion timestamps have second
+precision; a timestamp within one second of the cutoff is treated as an uncertain change.
+Incomplete enumeration blocks improvement rather
+than treating missing history as a clean result. A selected session, date, source or
+single-worktree history does not narrow forge collection; the receipt labels native
+history as restricted and does not treat it as complete. Sealed input evaluations cannot
+silently add network data. The controlled proposer bounds its history index to 8 MiB
+and streams the separate text file; a larger index blocks with a coverage reason.
+Recovery checks the recorded history rather than repeating provider calls.
+
+`--repair-contracts` also collects completed work and native history before changing
+files. Its deterministic contract repairs are selected from current files; the receipt
+labels historical context as collected but not used to select those repairs.
+
+The examples below show loop controls. Their actual stops depend on the project's
+history, forge access, task bank, evaluation results and available budget.
 
 ## Before you start
 
-The examples use a synthetic project that pins a five-root bank and declares
-`"loop": {"alpha": 0.999}` in `ahl.json`: five scored roots cannot clear a bar at the default
-`alpha` of 0.05, so a project with a bank this small declares a high one (and a real bank
-should be larger, not the declaration looser).
+Use a reviewed task bank with enough independent roots for the declared confidence and
+score. A small bank may not support a decision.
 
 - `ahl.json` pins a task bank (`bank.path` other than `starter`, with its `bank.sha256`)
   and names a cooperative runtime. Without a pinned bank there is nothing to freeze: a plain
@@ -32,7 +59,6 @@ should be larger, not the declaration looser).
 
 ```sh
 ahl improve .
-# stops: acceptance_score_reached (exit 0)
 ```
 
 With no score declared the loop stops when its analysis reports a supported improvement
@@ -44,7 +70,6 @@ It never invents an absolute score.
 
 ```sh
 ahl improve . --accept-score 0.1 --max-rounds 3
-# stops: acceptance_score_reached (exit 0)
 ```
 
 `--accept-score X` is the bar: the lower bound of the success rate on the frozen
@@ -72,7 +97,6 @@ The loop ends with exactly one `loop.stop_criterion` in `workflow.json` and on s
 
 ```sh
 ahl improve . --accept-score 0.9 --max-rounds 1
-# stops: max_rounds (exit 3)
 ```
 
 `--max-rounds 1` is exactly one evaluate, improve, evaluate pass. When it ends below the
@@ -83,7 +107,6 @@ result.
 
 ```sh
 ahl improve . --accept-score 0.1
-# stops: accepted_without_change (exit 0)
 ```
 
 A baseline that meets the bar on valid, scored evidence stops before any improvement call.
@@ -100,7 +123,6 @@ controller ([resuming a loop](loop-reference.md#resuming-a-loop)).
 
 ```sh
 ahl improve . --resume RUN_ID
-# resumes: the finished run's receipt (exit 0)
 ```
 
 `RUN_ID` is the final directory name of the run's private output, printed on stderr as
@@ -117,7 +139,6 @@ than claiming an area result. Give one number until per-area decisions ship.
 
 ```sh
 ahl improve . --single-pass
-# loop: not_used (exit 3)
 ```
 
 `--single-pass` makes the earlier improve-first pass: one preparation, then the baseline and

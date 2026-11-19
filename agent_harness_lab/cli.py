@@ -278,6 +278,7 @@ def main(argv=None):
             epilog=(boundary[name]+'Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
+                +('Completed work: reads Git history and the origin forge\'s merged requests, closed issues and discussions; incomplete coverage blocks improvement.\n' if name=='improve' else '')
                 +(('An explicit nonstarter ahl.json bank is frozen for the loop (with --single-pass, for one cooperative comparison); its entire paired task set and preparation must fit the configured budget.\n' if name=='improve' else
                     'An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n') if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'

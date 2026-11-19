@@ -9,6 +9,19 @@ from .private_journal import atomic_json, record_bytes
 NO_CHANGE_REASONS = ('no_change_harness_supported', 'no_change_evidence_insufficient')
 
 
+def _completed_work_valid(output, receipt):
+    coverage = receipt.get('completed_work') if isinstance(receipt, dict) else None
+    if (not isinstance(coverage, dict) or coverage.get('complete') is not True
+            or coverage.get('artifact') != 'completed-work/history.json'
+            or not isinstance(coverage.get('artifact_tree_sha256'), str)):
+        return False
+    try:
+        from .cli import evaluator
+        return evaluator().digest(output/'completed-work') == coverage['artifact_tree_sha256']
+    except (OSError, ValueError):
+        return False
+
+
 def checkpoint(args, output, result, original, allowed_paths, proposal_path):
     from .workflow import identity, state_root
     if output.parent != state_root()/'runs'/identity(args.project):
@@ -34,7 +47,11 @@ def resume(args):
         finally: os.close(descriptor)
         from .loop import stored
         finished=stored.read(output,args.project)  # a loop run that already stopped is returned as recorded, after its receipt and ledger verify
-        if finished is not None: return finished
+        if finished is not None:
+            if finished.get('status') == 'no_change' and not _completed_work_valid(output, finished):
+                return dict(status='blocked', reason='completed_work_unresolved', output=str(output),
+                            automatic_promotion=False, publication_allowed=False)
+            return finished
         try: descriptor=open_nofollow(output/'recovery.json')
         except FileNotFoundError:
             return dict(status='blocked',reason='resume_requires_intervention',output=str(output),
@@ -79,5 +96,8 @@ def resume(args):
                 or receipt.get('reason') not in NO_CHANGE_REASONS or receipt.get('output') != str(output)
                 or receipt.get('changed_files') != [] or receipt.get('automatic_promotion') is not False):
             raise ValueError('invalid recovery receipt')
+        if not _completed_work_valid(output, receipt):
+            return dict(status='blocked', reason='completed_work_unresolved', output=str(output),
+                        automatic_promotion=False, publication_allowed=False)
         atomic_json(output/'workflow.json',receipt)
         return receipt

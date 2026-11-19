@@ -246,23 +246,33 @@ def layer_lock(args, layer):
     return contextlib.nullcontext() if layer.label == 'project' or layer.root == args.project else project_lock(layer.root)
 
 
-def contracts(args):
+def contracts(args, *, output=None):
     """One-call deterministic contract path; invoked only by explicit CLI option. --scope selects the layers: the
     project by default, or the user-level skill directory (alone or first) when explicitly requested."""
     from . import scope
-    from .workflow import output_dir, write_json
+    from .workflow import _completed_work_result, output_dir, write_json
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
     started = getattr(args, '_construction_started', None)
     if started is None: started = time.monotonic()
     args._budget_started = started
     selection = scope.layers(args)
-    output = output_dir(args, deadline=started + args.timeout)
+    if output is None:
+        output = output_dir(args, deadline=started + args.timeout)
+    def with_history(result):
+        if getattr(args, '_completed_work_summary', None) is not None:
+            from . import typed_exit
+            result['historical_context_in_repair'] = 'collected_not_used_to_select_repairs'
+            return typed_exit.seal(_completed_work_result(result, args), args)
+        return result
     if len(selection) == 1:
         layer = selection[0]
         with layer_lock(args, layer):
             args._scope_current, args._scope_results, args._scope_roots = layer.label, [], {layer.label: layer.root}
-            return _layer_contracts(args, layer, output, output, started, lambda result: scope.combine(args, [(layer.label, result)], base=result, roots=args._scope_roots))
+            def finish(result):
+                annotated = with_history(result)
+                return scope.combine(args, [(layer.label, annotated)], base=annotated, roots=args._scope_roots)
+            return _layer_contracts(args, layer, output, output, started, finish)
     results, args._scope_results, args._scope_roots = [], [], {layer.label: layer.root for layer in selection}
     for layer in selection:
         args._scope_current = layer.label
@@ -282,7 +292,7 @@ def contracts(args):
         args._scope_results = list(results)
     base = dict(output=str(output), profile='one-call-improvement-v1', publication_allowed=False, behavioral_certification=False,
                 deferred=results[0][1]['deferred'], precedence=scope.precedence(scope.runtime_of(args), selection))
-    result = scope.combine(args, results, base=base, roots=args._scope_roots)
+    result = with_history(scope.combine(args, results, base=base, roots=args._scope_roots))
     try:
         write_json(output / 'workflow.json', result)
     except (OSError, KeyboardInterrupt):

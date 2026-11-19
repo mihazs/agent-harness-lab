@@ -5,6 +5,7 @@ import hashlib
 import math
 import os
 from pathlib import Path
+import stat
 import time
 from weakref import WeakKeyDictionary
 
@@ -12,9 +13,9 @@ from agent_harness_lab.cli import assets
 from agent_harness_lab.private_journal import encoded, record, sync_directory, write_bytes
 from . import certification_access as ledger
 from .decision_receipts import engine
-from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
+from .integrity import contained, copy_frozen, digest, open_directory_nofollow, open_nofollow, read_regular, regular_size, relative, tree
 from .regressions import fields, sha256
-from .working_state import Snapshot, WorkingState, analysis_snapshot, check_deadline
+from .working_state import Snapshot, WorkingState, check_deadline, scan_directory
 
 PROFILE='controlled-development-derivation-v1'
 _OWNED=WeakKeyDictionary()
@@ -58,6 +59,115 @@ def _snapshot_pin(snapshot):
     identity = hashlib.sha256()
     for piece in _snapshot_repr(snapshot): identity.update(piece.encode())
     return identity.hexdigest()
+
+
+def _analysis_pin(path, deadline):
+    """Pin read-only analysis inputs in bounded memory using the existing Snapshot representation."""
+    root = Path(path).absolute()
+    check_deadline(deadline)
+    descriptor = open_directory_nofollow(root)
+    directories, files, directory_ids = [], [], {}
+
+    def mode(info):
+        if info.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+            raise ValueError('working state cannot preserve special mode bits')
+        return stat.S_IMODE(info.st_mode)
+
+    def identity(info):
+        return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_size,
+                info.st_mtime_ns, info.st_ctime_ns)
+
+    def visit(parent, prefix):
+        check_deadline(deadline)
+        with scan_directory(parent) as entries:
+            for entry in entries:
+                check_deadline(deadline)
+                name = prefix + entry.name
+                relative(name)
+                if len(name.encode('utf-8')) > 4096:
+                    raise ValueError('working state path/metadata bound exceeded')
+                info = entry.stat(follow_symlinks=False)
+                permission = mode(info)
+                if stat.S_ISDIR(info.st_mode):
+                    child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                    try:
+                        if identity(os.fstat(child)) != identity(info):
+                            raise ValueError('working state changed while opening')
+                        directories.append((name, permission))
+                        directory_ids[name] = identity(info)
+                        visit(child, name + '/')
+                        if identity(os.fstat(child)) != identity(info):
+                            raise ValueError('working state changed during capture')
+                    finally:
+                        os.close(child)
+                elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                    files.append((name, permission, identity(info)))
+                else:
+                    raise ValueError('working state requires regular single-link files and directories')
+
+    try:
+        root_info = os.fstat(descriptor)
+        root_mode = mode(root_info)
+        visit(descriptor, '')
+        if identity(os.fstat(descriptor)) != identity(root_info):
+            raise ValueError('working state changed during capture')
+    finally:
+        os.close(descriptor)
+    directories, files = tuple(sorted(directories)), tuple(sorted(files))
+    result = hashlib.sha256()
+
+    def add(piece):
+        result.update(piece.encode())
+
+    add(repr(Snapshot(root_mode, directories, ()))[:-2])
+    for index, (name, permission, expected) in enumerate(files):
+        check_deadline(deadline)
+        add((', (' if index else '(') + repr(name) + ', ' + repr(permission) + ', ')
+        descriptor = open_nofollow(root/name)
+        try:
+            if identity(os.fstat(descriptor)) != expected:
+                raise ValueError('working state changed while opening')
+            first, has_single, has_double = hashlib.sha256(), False, False
+            while True:
+                check_deadline(deadline)
+                chunk = os.read(descriptor, 65536)
+                if not chunk: break
+                first.update(chunk)
+                has_single |= b"'" in chunk
+                has_double |= b'"' in chunk
+            if identity(os.fstat(descriptor)) != expected:
+                raise ValueError('working state changed during capture')
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            double = has_single and not has_double
+            quote = '"' if double else "'"
+            add('b' + quote)
+            second = hashlib.sha256()
+            while True:
+                check_deadline(deadline)
+                chunk = os.read(descriptor, 65536)
+                if not chunk: break
+                second.update(chunk)
+                text = repr(chunk)[2:-1]
+                if not double and b"'" in chunk and b'"' not in chunk:
+                    text = text.replace("'", "\\'")
+                add(text)
+            if first.digest() != second.digest() or identity(os.fstat(descriptor)) != expected:
+                raise ValueError('working state changed during capture')
+            add(quote)
+        finally:
+            os.close(descriptor)
+        add(')')
+    add((',' if len(files) == 1 else '') + '))')
+    for name, expected in [('', identity(root_info)), *directory_ids.items()]:
+        check_deadline(deadline)
+        descriptor = open_directory_nofollow(root/name)
+        try:
+            if identity(os.fstat(descriptor)) != expected:
+                raise ValueError('working state changed during capture')
+        finally:
+            os.close(descriptor)
+    check_deadline(deadline)
+    return result.hexdigest()
 
 
 def _tree_pin(path,deadline):
@@ -206,7 +316,7 @@ def _check_role_custody(owned):
     if analysis!=(inputs.get('analysis_fixture_admission')=='unlimited_readonly_v1'):
         raise ValueError('actual construction analysis admission changed')
     if (record(folder/'handoff.json',ledger.MAX_BYTES)[1]!=_hash(value)
-            or (_snapshot_pin(analysis_snapshot(owned['context'],owned['deadline'])) if analysis else _tree_pin(owned['context'],owned['deadline']))!=value['context_tree_sha256']
+            or (_analysis_pin(owned['context'],owned['deadline']) if analysis else _tree_pin(owned['context'],owned['deadline']))!=value['context_tree_sha256']
             or _tree_pin(owned['baseline'],owned['deadline'])!=value['baseline_tree_sha256']
             or _hash(engine())!=value['engine_sha256'] or value['engine_sha256']!=inputs['engine_sha256']
             or record(folder/'inputs.json',ledger.MAX_BYTES)[1]!=_hash(inputs)
