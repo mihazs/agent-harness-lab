@@ -112,6 +112,51 @@ def test_real_untracked_work_is_captured_without_modifying_source(checkout, requ
     assert hashlib.sha256(source.read_bytes()).digest() == expected
 
 
+def test_real_tracked_work_matches_git_before_and_after_staging(checkout, request):
+    project = Path(request.node.callspec.params['checkout']).resolve(strict=True)
+    status = subprocess.check_output(['git', '-c', 'core.fsmonitor=false', '-C', str(project),
+                                      'status', '--porcelain=v1', '-z', '--untracked-files=no'])
+    source = None
+    for entry in status.split(b'\0'):
+        if not entry.startswith(b' M '):
+            continue
+        relative = Path(os.fsdecode(entry[3:]))
+        if relative.is_absolute() or '..' in relative.parts:
+            continue
+        candidate = project/relative
+        if any(path.is_symlink() for path in (candidate, *candidate.parents) if path.is_relative_to(project)):
+            continue
+        info = candidate.lstat()
+        if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 1024*1024:
+            source = candidate
+            break
+    if source is None:
+        pytest.skip('no bounded existing unstaged tracked file')
+    target = checkout/source.relative_to(project)
+    assert not any(path.is_symlink() for path in (target, *target.parents) if path.is_relative_to(checkout))
+    assert target.is_file()
+    original = hashlib.sha256(source.read_bytes()).digest()
+    shutil.copyfile(source, target)
+    target.chmod(stat.S_IMODE(source.stat().st_mode))
+    git = ['git', '-c', 'core.fsmonitor=false', '-C', str(checkout)]
+    head = subprocess.check_output([*git, 'rev-parse', 'HEAD'], text=True).strip()
+    for staged in (False, True):
+        if staged:
+            subprocess.run([*git, 'add', '--', str(target.relative_to(checkout))], check=True)
+        options = ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--binary', '--full-index']
+        options += ['--cached', head, '--'] if staged else ['--']
+        expected = subprocess.check_output([*git, *options])
+        assert expected
+        problems = set()
+        with tempfile.TemporaryFile() as content:
+            result = completed_work._working_patch(checkout, head, content, problems, time.monotonic()+30, staged=staged)
+            content.seek(result['offset'])
+            actual = content.read(result['length'])
+        assert not problems and hashlib.sha256(actual).digest() == hashlib.sha256(expected).digest()
+        assert result['sha256'] == hashlib.sha256(expected).hexdigest()
+    assert hashlib.sha256(source.read_bytes()).digest() == original
+
+
 def test_real_forge_collection_matches_forge_cli(checkout):
     if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
         pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
