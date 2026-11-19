@@ -8,11 +8,16 @@ owner-only 32-byte key with `ahl sources identity-key create --output FILE`;
 the command refuses to overwrite an existing file and prints only its key ID.
 If creation reports an error, inspect the destination before retrying; a key may
 have been written before a durability check failed. Do not use a hand-chosen key.
-Use `ahl sources identity-key fingerprint --key-file FILE --value-file JSON`
-to fingerprint a JSON value without printing the value. Set the schema-2
-manifest's root, project and scope fingerprints to keyed fingerprints of the
-same values used by schema 1, and pass `--identity-key-file FILE` to source
-operations. The key file must be owned by the current user, private, a regular
+Prepare a separate schema-2 declaration using
+`ahl sources identity-key prepare-okf --manifest LEGACY --scope-file JSON --key-file FILE --output NEW`.
+The scope file holds the exact original scope as a JSON value; the command checks
+it against the legacy declaration and checks the project against the export.
+The output must share the legacy declaration's directory and cannot overwrite an
+existing file. It prints the new source, project and scope fingerprints, not the
+scope. Use those project and scope fingerprints and `--identity-key-file FILE`
+for source operations. `ahl sources identity-key fingerprint --key-file FILE
+--value-file JSON` fingerprints one JSON value without printing it.
+The key file must be owned by the current user, private, a regular
 single-link file, and reached without symlinks. A missing or different key is
 rejected. Keep a private backup: losing it prevents reconstructing the same
 identities.

@@ -230,6 +230,8 @@ def test_real_keyed_source_capture_and_provenance(real_run):
                                    '--value-file', str(value_file)], env=environment, cwd=real_run.base,
                                   capture_output=True, text=True, timeout=20)
     assert fingerprinted.returncode == 0 and json.loads(fingerprinted.stdout)['fingerprint'] == keyed(config['project'])
+    scope_file = source_dir/'scope-value.json'
+    scope_file.write_text(json.dumps(config['workspace'])); scope_file.chmod(0o600)
     results = []
     for version in (1, 2):
         fingerprint = digest if version == 1 else keyed
@@ -239,8 +241,22 @@ def test_real_keyed_source_capture_and_provenance(real_run):
         if version == 2: values.update(identity_scheme='hmac-sha256-v1', identity_key_id=hashlib.sha256(key).hexdigest())
         source = SourceSpec.parse(values)
         manifest = source_dir/f'manifest-{version}.json'
-        manifest.write_text(json.dumps(dict(schema_version=1, source=source.to_dict(), data='export')))
-        manifest.chmod(0o600)
+        if version == 1:
+            manifest.write_text(json.dumps(dict(schema_version=1, source=source.to_dict(), data='export')))
+            manifest.chmod(0o600)
+        else:
+            prepare = [*cli, 'identity-key', 'prepare-okf', '--manifest', str(source_dir/'manifest-1.json'),
+                       '--scope-file', str(scope_file), '--key-file', str(key_file), '--output', str(manifest)]
+            prepared = subprocess.run(prepare, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=30)
+            assert prepared.returncode == 0 and json.loads(prepared.stdout)['source_sha256'] == source.source_key
+            assert json.loads(manifest.read_text())['source'] == source.to_dict()
+            assert subprocess.run(prepare, env=environment, cwd=real_run.base, capture_output=True, timeout=30).returncode != 0
+            if config['project'] != config['workspace']:
+                refused = source_dir/'refused-manifest.json'
+                bad = [*cli, 'identity-key', 'prepare-okf', '--manifest', str(source_dir/'manifest-1.json'),
+                       '--scope-file', str(value_file), '--key-file', str(key_file), '--output', str(refused)]
+                assert subprocess.run(bad, env=environment, cwd=real_run.base, capture_output=True, timeout=30).returncode != 0
+                assert not refused.exists()
         identity_key = key if version == 2 else None
         connector = OKFExport(manifest, identity_key=identity_key)
         scope_args = dict(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)

@@ -41,6 +41,45 @@ def fingerprint(key, value):
     return hmac.new(key, raw, hashlib.sha256).hexdigest()
 
 
+def prepare_okf(manifest, scope_file, key_file, output):
+    from agent_harness_lab.evaluation.integrity import contained
+    from .okf import concept
+    from .schema import SourceSpec, digest
+    from .snapshot import LocalExport
+    manifest, output = Path(manifest).absolute(), Path(output).absolute()
+    if manifest.parent != output.parent: raise ValueError('new declaration must share the original root')
+    manifest_raw = read_regular(manifest, 1024*1024)
+    value = json.loads(manifest_raw, object_pairs_hook=unique_object)
+    source = SourceSpec.parse(value['source'])
+    if (source.schema_version, source.kind, source.provider, source.version) != (1, 'local_file', 'ai-memory-okf', '0.2'):
+        raise ValueError('a legacy local memory declaration is required')
+    scope_raw = read_regular(scope_file, 65536)
+    scope = json.loads(scope_raw, object_pairs_hook=unique_object)
+    old, declaration = LocalExport(manifest).declaration(project_sha256=source.project_sha256, scope_sha256=digest(scope))
+    if old != source or declaration != value: raise ValueError('source declaration changed')
+    root = contained(manifest.parent, declaration['data'])
+    metadata_path = contained(root, '_meta.md')
+    metadata_raw = read_regular(metadata_path, 1024*1024)
+    metadata, _ = concept(metadata_raw)
+    project = metadata.get('project')
+    if not isinstance(project, str) or digest(project) != old.project_sha256:
+        raise ValueError('memory project identity mismatch')
+    key = load(key_file)
+    new = dict(old.to_dict(), schema_version=2, identity_scheme='hmac-sha256-v1',
+               identity_key_id=hashlib.sha256(key).hexdigest(), root_sha256=fingerprint(key, str(manifest.parent.resolve())),
+               project_sha256=fingerprint(key, project), scope_sha256=fingerprint(key, scope))
+    keyed_source = SourceSpec.parse(new)
+    raw = (json.dumps(dict(schema_version=1, source=keyed_source.to_dict(), data=declaration['data']),
+                      indent=2, allow_nan=False)+'\n').encode()
+    if (load(key_file) != key or read_regular(manifest, 1024*1024) != manifest_raw
+            or read_regular(scope_file, 65536) != scope_raw or read_regular(metadata_path, 1024*1024) != metadata_raw):
+        raise ValueError('source identity input changed')
+    write_bytes(output, raw)
+    sync_directory(output.parent)
+    return dict(source_sha256=keyed_source.source_key, project_sha256=keyed_source.project_sha256,
+                scope_sha256=keyed_source.scope_sha256, identity_key_id=keyed_source.identity_key_id)
+
+
 def main(argv):
     import argparse
     import sys
@@ -51,16 +90,26 @@ def main(argv):
     hashed = commands.add_parser('fingerprint', help='Fingerprint one JSON value without printing it')
     hashed.add_argument('--key-file', required=True)
     hashed.add_argument('--value-file', required=True)
+    prepare = commands.add_parser('prepare-okf', help='Prepare a separate keyed declaration from a legacy local memory source')
+    prepare.add_argument('--manifest', required=True)
+    prepare.add_argument('--scope-file', required=True)
+    prepare.add_argument('--key-file', required=True)
+    prepare.add_argument('--output', required=True)
     args = parser.parse_args(argv)
     try:
         if args.operation == 'create':
             result = dict(identity_key_id=create(args.output))
-        else:
+        elif args.operation == 'fingerprint':
             key = load(args.key_file)
             value = json.loads(read_regular(args.value_file, 65536), object_pairs_hook=unique_object)
             result = dict(identity_key_id=hashlib.sha256(key).hexdigest(), fingerprint=fingerprint(key, value))
+        else:
+            result = prepare_okf(args.manifest, args.scope_file, args.key_file, args.output)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (OSError, ValueError, TypeError, RecursionError):
+    except NotImplementedError:
+        print('identity key operation unavailable', file=sys.stderr)
+        return 3
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
         print('identity key operation rejected', file=sys.stderr)
         return 2
