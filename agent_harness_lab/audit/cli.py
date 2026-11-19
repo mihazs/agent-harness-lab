@@ -93,6 +93,7 @@ def main(argv=None):
 
     parser.add_argument('--feedback-sensors', action='store_true', help='Add local filename-only sensor candidates')
     parser.add_argument('--npm-test-observation', action='store_true', help='Compare root instruction mentions and package test declaration')
+    parser.add_argument('--taskfile-observation', action='store_true', help='Compare root instruction mentions with lexical Taskfile keys')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
                         help='Caller-declared Codex byte budget; runtime configuration is not read')
     parser.add_argument('--codex-budget-boundary', action='store_true',
@@ -192,6 +193,9 @@ def main(argv=None):
         if args.npm_test_observation:
             from .npm_test_observation import capture as npm_test_observation
             report['npm_test_observation'] = npm_test_observation(project,inventory,args.task_cwd)
+        if args.taskfile_observation:
+            from .taskfile_observation import capture as taskfile_observation
+            report['taskfile_observation'] = taskfile_observation(project,inventory,args.task_cwd)
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
@@ -247,6 +251,9 @@ def main(argv=None):
                 npm=report['npm_test_observation']
                 print(f"Root npm test: instruction mention {npm['instruction_mention']}; "
                       f"script declaration {npm['test_script']}; execution unknown")
+            if args.taskfile_observation:
+                observed=report['taskfile_observation']
+                print('Root Taskfile lexical observation: '+observed['status']+'; target coverage and execution unknown')
             if args.codex_budget_boundary:
                 boundary=report['codex_budget_boundary']
                 print('Codex budget boundary observation: '+boundary['status']+

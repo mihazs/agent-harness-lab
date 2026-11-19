@@ -529,3 +529,17 @@ are separately observed rather than an atomic snapshot. Missing, changed,
 malformed, oversized or linked files and nested task directories leave the
 comparison unknown. Without the option the existing audit report shape is
 unchanged.
+
+### Root Taskfile lexical observation
+
+`ahl audit PROJECT --taskfile-observation` reads the root `Taskfile.yml` and
+root instruction file to compare literal `task NAME` mentions with keys in a
+bounded YAML subset, including colon-qualified names. The private report keeps
+the target names and line references. A match is a lexical candidate, not proof
+that the command is applicable or that the task loads or runs; a mention may be
+prose or negated. The subset reader does not validate complete YAML, included
+Taskfiles, aliases, or runtime configuration. An unmatched name and incomplete
+target coverage remain unknown, not a missing-task finding. Unsupported, linked,
+changed, oversized, or unavailable inputs leave the observation unknown. The
+instruction must match its inventory digest; the reads are separate observations.
+No Taskfile, task, hook, or project command is executed.
