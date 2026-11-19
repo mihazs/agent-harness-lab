@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness_lab.diagnostics.adherence_native import _Codex
+from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
 from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question
 
 
@@ -34,3 +34,38 @@ def test_real_codex_question_call_is_recognized(name):
                 assert not _asked(reader.turns, 0, len(reader.turns))
                 return
     pytest.skip('no matching real tool call in the bounded session set')
+
+
+def test_real_codex_input_reply_reaches_adherence():
+    root = os.environ.get('REAL_CODEX_SESSION_ROOT')
+    if not root: pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
+    start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
+    for index, path in enumerate(Path(root).rglob('*.jsonl')):
+        if index >= 150: break
+        if path.stat().st_size > 8 * 1024 * 1024: continue
+        answers = []
+        with path.open() as stream:
+            try: project = json.loads(next(stream))['payload']['cwd']
+            except (ValueError, StopIteration, KeyError, TypeError): continue
+            for line in stream:
+                if start not in line: continue
+                try: row = json.loads(line)
+                except ValueError: continue
+                payload = row.get('payload', {})
+                if not isinstance(payload, dict) or payload.get('type') != 'message' or payload.get('role') != 'user': continue
+                for item in payload.get('content', []):
+                    text = item.get('text', '') if isinstance(item, dict) else ''
+                    if not isinstance(text, str) or not text.startswith(start) or not text.endswith(end): continue
+                    try: values = json.loads(text[len(start):-len(end)])
+                    except ValueError: continue
+                    if isinstance(values, list):
+                        answers.extend(x['answer'] for x in values if isinstance(x, dict) and isinstance(x.get('answer'), str))
+        if not answers: continue
+        try: turns = read_session(path, 'codex', project)['turns']
+        except Skipped: continue
+        for position, turn in enumerate(turns):
+            if turn.get('tool') not in ('request_user_input', 'request_user_input_async'): continue
+            if any(later.get('role') == 'user' and later.get('text') in answers for later in turns[position + 1:]):
+                assert _asked(turns, position, len(turns)) is None
+                return
+    pytest.fail('no usable real request and reply in the bounded session set')

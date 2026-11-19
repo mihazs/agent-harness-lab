@@ -165,8 +165,23 @@ class _Codex(_Capture):
             self.compaction()
         elif kind == 'event_msg' and payload.get('type') in ('user_message', 'agent_message'):
             self.message(payload['type'].split('_')[0], payload.get('message'))
+        elif kind == 'response_item' and payload.get('type') == 'message' and payload.get('role') == 'user':
+            self.question_reply(payload)
         elif kind == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call', 'local_shell_call'):
             self.tool(payload)
+
+    def question_reply(self, payload):
+        start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
+        content = payload.get('content')
+        if not isinstance(content, list) or len(content) > adherence.MAX_USER_ITEMS: return
+        for item in content:
+            text = item.get('text') if isinstance(item, dict) and item.get('type') == 'input_text' else None
+            if not isinstance(text, str) or len(text) > MAX_TEXT or not text.startswith(start) or not text.endswith(end): continue
+            try: answers = json.loads(text[len(start):-len(end)])
+            except ValueError: continue
+            if not isinstance(answers, list) or len(answers) > adherence.MAX_USER_ITEMS: continue
+            values = [answer['answer'] for answer in answers if isinstance(answer, dict) and isinstance(answer.get('answer'), str)]
+            if values: self.message('user', '\n'.join(values))
 
     def tool(self, payload):
         item = payload['type']
