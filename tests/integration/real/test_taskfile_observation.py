@@ -16,13 +16,14 @@ from agent_harness_lab.sources import harness_inventory
 
 PROJECTS = json.loads(os.environ.get('REAL_TASK_PROJECTS', '[]'))
 CODE_ROOT = Path(__file__).resolve().parents[3]
+WORKTREES = Path.home()/'dev/.worktrees'
 
 
 @pytest.fixture(params=PROJECTS or [None], ids=lambda _: 'private-project')
 def checkout(request):
     if request.param is None: pytest.skip('set REAL_TASK_PROJECTS to existing local checkouts')
     project = Path(request.param).resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix='ahl-task-real-', dir=Path.home()/'dev/.worktrees') as folder:
+    with tempfile.TemporaryDirectory(prefix='ahl-task-real-', dir=WORKTREES) as folder:
         root = Path(folder)
         path = root/'checkout'
         git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'index.threads=1', '-C', str(project)]
@@ -54,6 +55,7 @@ def test_real_taskfile_and_instruction_observation(checkout):
     cli = json.loads(result.stdout)['taskfile_observation']
     for report in (direct, cli):
         assert report['status'] == 'observed' and set(report['targets']) == set(expected)
+        assert report['mention_coverage'] == 'root_instruction_only'
         assert report['target_coverage'] == report['observed_loading'] == report['runtime_execution'] == 'unknown'
         assert report['publication_allowed'] is False
         assert any(row['status'] == 'lexical_candidate' for row in report['mentions'])
@@ -70,5 +72,6 @@ def test_real_absent_taskfile_stays_unknown(checkout):
     inventory = harness_inventory.capture(project, profile, schema_version=2)
     report = capture(project, inventory, '.')
     assert report['status'] == report['target_coverage'] == 'unknown'
+    assert report['mention_coverage'] == 'unknown'
     assert report['targets'] == report['mentions'] == []
     assert subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z']) == before

@@ -1,5 +1,6 @@
 """Bounded lexical Taskfile observations; no task execution or missing-target verdict."""
 import re
+import time
 
 from agent_harness_lab.audit import observation_inputs
 from agent_harness_lab.sources import frontmatter
@@ -32,12 +33,19 @@ def capture(project, inventory, task_cwd):
     """Compare root instruction mentions to lexical root task keys without executing either file."""
     result = dict(profile=PROFILE, status='unknown', scope='checkout_root_files_only', targets=[], mentions=[],
                   target_coverage='unknown', matching='lexical_only', observed_loading='unknown',
-                  runtime_execution='unknown', snapshot_relation='separate_observation', publication_allowed=False)
+                  mention_coverage='unknown', runtime_execution='unknown',
+                  snapshot_relation='separate_observation', publication_allowed=False)
     try:
-        found = observation_inputs.read(project, inventory, task_cwd, 'Taskfile.yml', Folder, MAX_BYTES)
-        if found is None: return result
-        instruction, taskfile = found
+        if task_cwd != '.': return result
+        with Folder(project, time.monotonic() + 30) as folder:
+            taskfile = folder.read('Taskfile.yml', MAX_BYTES)
+            folder.verify()
+        if taskfile is None: return result
         names = targets(taskfile)
+        result.update(status='observed', targets=list(names))
+        found = observation_inputs.read(project, inventory, task_cwd, 'Taskfile.yml', Folder, MAX_BYTES)
+        if found is None or found[1] != taskfile: return result
+        instruction, _ = found
         matches = []
         for number, line in enumerate(instruction.decode('utf-8').splitlines(), 1):
             for match in _MENTION.finditer(line):
@@ -45,7 +53,7 @@ def capture(project, inventory, task_cwd):
                 target = match.group(1)
                 matches.append(dict(line=number, target=target,
                                     status='lexical_candidate' if target in names else 'unknown'))
-        result.update(status='observed', targets=list(names), mentions=matches)
+        result.update(mentions=matches, mention_coverage='root_instruction_only')
     except (ValueError, OSError, TimeoutError, UnicodeError, RecursionError):
         pass
     return result
