@@ -11,7 +11,7 @@ import re
 import subprocess
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import pytest
@@ -212,3 +212,37 @@ def test_real_github_reviews_match_rest(checkout):
     def hashes(rows):
         return {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in rows}
     assert hashes(actual) == hashes(expected)
+
+
+def test_real_github_inline_review_comments_match_rest(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
+    from agent_harness_lab.sources.transport import JsonAPI, capture_state
+    host, port, parts = completed_work._repository(checkout)
+    if completed_work.detect(checkout)['provider'] != 'github':
+        pytest.skip('this comparison requires a GitHub repository')
+    token = completed_work._credential('github', host, port)
+    assert token
+    base = '/repos/' + '/'.join(parts)
+    repo_id = int(subprocess.check_output(['gh', 'api', base, '--jq', '.id'], cwd=checkout))
+    query = ('query($owner:String!,$name:String!,$endCursor:String) { repository(owner:$owner,name:$name) {'
+             ' pullRequests(first:100,states:MERGED,after:$endCursor,orderBy:{field:UPDATED_AT,direction:DESC}) {'
+             ' pageInfo { hasNextPage endCursor } nodes { number reviewThreads { totalCount } } } } }')
+    command = ['gh', 'api', 'graphql', '--paginate', '-f', 'query='+query, '-f', 'owner='+parts[0], '-f', 'name='+parts[1],
+               '--jq', '.data.repository.pullRequests.nodes[] | select(.reviewThreads.totalCount > 0) | .number']
+    numbers = subprocess.check_output(command, cwd=checkout).splitlines()
+    if not numbers:
+        pytest.skip('no merged pull request with inline review threads')
+    number = int(numbers[0])
+    pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+                                               base+f'/pulls/{number}/comments?per_page=100'], cwd=checkout))
+    expected = [row for page in pages for row in page]
+    api = JsonAPI('https://api.github.com'+base, max_pages=30, max_bytes=8*1024*1024, timeout=5, seconds=90)
+    api._work_provider, api._work_authorization, api._work_repository_id = 'github', 'Bearer '+token, repo_id
+    row, problems = dict(number=number, comments=[]), set()
+    completed_work._comments(api, capture_state(api), '', 'github', 'merged_pull_requests', row,
+                             datetime.now(timezone.utc), problems, [0, None], conversation=False, reviews=False)
+    assert not problems and expected and row['comments']
+    def hashes(rows):
+        return {item['id']: hashlib.sha256((item.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for item in rows}
+    assert hashes(row['comments']) == hashes(expected)
