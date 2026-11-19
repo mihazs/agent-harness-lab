@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.225.0
+
+### Minor Changes
+
+- 007460a: Add an explicitly scoped, bounded offline JSON and JSONL memory export reader with caller-declared identity mappings. Imported rows remain private contextual claims, and provider support and capture completeness are not inferred.
+- 007460a: Inspect explicitly declared offline memory links against exact captured revisions, preserving scoped missing-target fingerprints as unverified private claims.
+- 007460a: Project explicitly mapped memory validity declarations into revision-bound temporal facets while retaining unknown end times and unverified source claims.
+- 73294f7: Identify the forge of a selected Git remote and use it to select the matching configured source reader.
+
+### Patch Changes
+
+- 14cfdd9: Reject configured evaluation manifests whose task area tags differ from their pinned bank.
+- 8245f0a: Defer source-provider imports for source help, delegated source commands and the empty default probe.
+- f7bd29a: Reduce buffered diagnostic replay memory by reusing event references already held for sequence analysis.
+- ff8c732: Coordinate concurrent forge requests using the same quota identity so each response updates the shared reserve before the next request starts.
+- 0ea41ad: Prefer a GraphQL comment batch when the selected REST comment pages do not all have validators, preserving conditional refreshes for fully cached pages.
+- b2836de: Document objective area graders and a reproducible synthetic two-area scoring example.
+- 9385244: Prevent ambiguous proposal retries, preserve recorded area regressions, verify stored loop specs and receipt evidence when resuming, and reject non-integer schema versions.
+  
+  Record proposal dispatch before entering the built-in proposer, allowing a verified pre-dispatch interruption to be distinguished from an unresolved request.
+
 ## 0.224.0
 
 ### Minor Changes
