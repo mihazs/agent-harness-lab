@@ -78,3 +78,5 @@ def test_real_git_history_stops_at_output_limit(checkout):
         pytest.skip('selected history did not reach the output limit')
     assert result['exit_code'] is None and len(result['stdout'].encode()) <= runner.MAX_PROCESS_OUTPUT * 3
     assert 'output exceeded' in result['stderr']
+    assert runner.trace_result(result) == ('execution_error', None)
+    assert runner.grading_status(result) == 'grader_error'
