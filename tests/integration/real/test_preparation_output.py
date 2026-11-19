@@ -1,6 +1,7 @@
 """Opt-in process-output checks using existing project histories."""
 import importlib.util
 import json
+import locale
 import os
 from pathlib import Path
 import subprocess
@@ -82,6 +83,23 @@ def test_real_tracked_text_streams_through_stdin(checkout):
         assert early_close['exit_code'] == 0 and early_close['stdout'] == head
         return
     pytest.skip('no suitable real tracked text file in the selected checkout')
+
+
+def test_real_binary_output_uses_replacement_decoding(checkout):
+    names = subprocess.check_output(['git', '-C', str(checkout), 'ls-files', '-z', '--', '*.png', '*.jpg', '*.webp', '*.gz']).split(b'\0')
+    for name in names:
+        if not name: continue
+        path = checkout/os.fsdecode(name)
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 512 * 1024: continue
+        command = ['git', '-C', str(checkout), 'show', 'HEAD:' + os.fsdecode(name)]
+        raw = subprocess.check_output(command)
+        try: raw.decode(locale.getpreferredencoding(False))
+        except UnicodeError:
+            expected = subprocess.check_output(command, text=True, errors='replace')
+            result = runner.execute(command, checkout, 20)
+            assert result['exit_code'] == 0 and result['stdout'] == expected
+            return
+    pytest.skip('no suitable real tracked binary in the selected checkout')
 
 
 def test_real_git_history_stops_at_output_limit(checkout):
