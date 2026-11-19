@@ -165,6 +165,10 @@ class _Codex(_Capture):
             self.compaction()
         elif kind == 'event_msg' and payload.get('type') in ('user_message', 'agent_message'):
             self.message(payload['type'].split('_')[0], payload.get('message'))
+        elif kind == 'response_item' and payload.get('type') == 'message' and payload.get('role') == 'user':
+            from ..telemetry.native import question_reply
+            reply = question_reply(payload)
+            if reply is not None: self.add_turn(dict(role='user', text=_clip(reply, True), reply_to_question=True))
         elif kind == 'response_item' and payload.get('type') in ('function_call', 'custom_tool_call', 'local_shell_call'):
             self.tool(payload)
 

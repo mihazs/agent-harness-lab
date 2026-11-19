@@ -28,7 +28,9 @@ Profile `ahl-instruction-sessions-v1`: at most 5,000 sessions and 16 MiB. Unknow
 | `loaded` | Optional map of `LAYER:FILE-NAME` to `loaded`, `truncated`, `not_loaded`, `unknown` or `{"state": ..., "turn": N, "before": ...}` (loaded from turn N; `before` is what the earlier turns are, `not_loaded` by default or `unknown` when the capture cannot show whether the file was already in context) |
 
 A turn is `{"role": "user"|"agent", "text": ...}` or `{"role": "tool_call", "tool": ..., "command": ..., "path": ...}`
-where `command` and `path` are optional; each text is at most 64 KiB.
+where `command` and `path` are optional; each text is at most 64 KiB. A user turn may declare
+`reply_to_question: true` when it is a reply to a question; the declaration suppresses treating that
+turn as a restatement or steering signal. The declaration is input evidence, not independently verified.
 
 ## Native session files
 
@@ -38,6 +40,7 @@ directory) and is projected into one session in memory; nothing but the turns be
 | Rule | Behavior |
 | --- | --- |
 | Release | Claude Code: a release in the verified range of the telemetry adapter. Codex: the pinned `0.166.0` rollout. Anything else is skipped as `unsupported_version` |
+| Question replies | Bounded Codex user-input reply records supply user turns marked `reply_to_question`; other injected context is not read as a reply. A general input request and reply do not establish approval intent |
 | Project | The first recorded directory must be the project or inside it, else `foreign_project`; in `ahl analyze --history-from CHECKOUT` it is that checkout, where the sessions were recorded. A subagent transcript is `subagent_transcript`; two sessions in one file are `mixed_sessions`; no session record is `no_session` |
 | Files | A missing, linked, multi-linked or changed file is `unavailable`; over 128 MiB or a line over 8 MiB is `oversized`; invalid or duplicate-key JSON is `malformed`; at most 200 files, the rest `over_file_limit`, and about 512 MiB in all, the rest `over_byte_budget` (only captures really read count against both bounds; a subagent or foreign-project file is skipped at its first row and costs neither, and an analysis offers the newest captures first); a second file of one session is `duplicate_session` |
 | Turns | User prompts, agent replies and tool calls. Injected meta rows, compaction summaries and tool results are not turns. A prompt is clipped to its first 64 KiB, a reply to its last 64 KiB (where a question sits), and a command or path over 64 KiB is dropped so the call is undecidable |

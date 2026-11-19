@@ -84,8 +84,11 @@ def _segments(command):
 def _turn(raw, index):
     role = raw.get('role') if isinstance(raw, dict) else None
     if role in ('user', 'agent'):
-        _fields(raw, {'role', 'text'}, {'role', 'text'}, 'turn')
-        return dict(role=role, text=_bounded(raw['text'], 'turn text', empty=True))
+        _fields(raw, {'role', 'text', 'reply_to_question'} if role == 'user' else {'role', 'text'}, {'role', 'text'}, 'turn')
+        if 'reply_to_question' in raw and type(raw['reply_to_question']) is not bool:
+            raise ValueError('reply_to_question must be boolean')
+        return dict(role=role, text=_bounded(raw['text'], 'turn text', empty=True),
+                    reply_to_question=raw.get('reply_to_question', False))
     if role != 'tool_call':
         raise ValueError('turn role must be user, agent or tool_call')
     _fields(raw, {'role', 'tool', 'command', 'path'}, {'role', 'tool'}, 'turn')
@@ -175,13 +178,17 @@ def _hit(call, match, project):
 
 
 def _asked(turns, lo, hi):
-    """Whether a question to the user, then a user reply, both fall in turns[lo:hi]."""
+    """Whether a question and reply occur; general input requests have unknown approval intent."""
     question = next((i for i in range(lo, hi) if _question(turns[i])), None)
-    return question is not None and any(turns[i]['role'] == 'user' for i in range(question + 1, hi))
+    if question is None or not any(turns[i]['role'] == 'user' for i in range(question + 1, hi)):
+        return False
+    if turns[question].get('tool') in ('request_user_input', 'request_user_input_async'):
+        return None
+    return True
 
 
 def _question(turn):
-    return turn.get('tool') == 'AskUserQuestion' or turn['role'] == 'agent' and turn['text'].rstrip().endswith('?')
+    return turn.get('tool') in ('AskUserQuestion', 'request_user_input', 'request_user_input_async') or turn['role'] == 'agent' and turn['text'].rstrip().endswith('?')
 
 
 def _verdict(rule, session, lo, hi):
@@ -217,8 +224,10 @@ def _verdict(rule, session, lo, hi):
                 unsure |= True not in earlier and None in earlier
                 if True not in earlier and None not in earlier:
                     bad.append(call['turn'])
-            elif not _asked(session['turns'], lo, call['turn']):
-                bad.append(call['turn'])
+            else:
+                asked = _asked(session['turns'], lo, call['turn'])
+                if asked is False: bad.append(call['turn'])
+                elif asked is None: unsure = True
         # Absence of an earlier step or a question is only evidence when nothing was dropped from the capture.
         bad, unsure = ([], True) if bad and not complete else (bad, unsure)
     if bad:
@@ -280,6 +289,7 @@ def _signals(item, sentences, turns):
     """
     found, names = {}, rules.subjects(item['rule']) if item['rule'] else []
     for later in (u for u in sentences if names and item['turn'] < u < item['until']):
+        if turns[later].get('reply_to_question'): continue
         named = [s for s in sentences[later] if any(name in s for name in names)]
         between = [turn for turn in turns[item['turn'] + 1:later] if turn['role'] != 'user'] if named else []
         if between and not _question(between[-1]):
@@ -291,6 +301,7 @@ def _signals(item, sentences, turns):
 
 
 def _restates(item, at, sentences, later, turns):
+    if turns[later].get('reply_to_question'): return False
     repeated = (item['ref'], later) in at
     corrected = any(_CORRECTION.search(s) and any(subject in s for subject in rules.subjects(item['rule'] or {})) for s in sentences)
     between = [turn for turn in turns[item['turn'] + 1:later] if turn['role'] != 'user']

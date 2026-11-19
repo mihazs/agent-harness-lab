@@ -384,6 +384,10 @@ fingerprinted; bodies, arguments, results, reasoning, native paths and account
 metadata are not copied to the ordinary ledger. The private source summary keeps
 the input path as a fingerprint.
 
+Bounded native user-input replies are projected as user messages. Their answer text
+is not retained; a sufficiently long answer may produce the same case-scoped message
+fingerprint used for other user messages. The projection does not infer approval.
+
 Turn-context model names become `requested_model_fingerprint`, not a served-model
 identity, only on the context record that declares them. Explicit turn/root-turn
 IDs become scoped fingerprints; delayed usage does not inherit a later turn's

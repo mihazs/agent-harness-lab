@@ -2,7 +2,7 @@
 from pathlib import Path
 from .schema import event, input_fingerprint, message_fingerprint
 from .session_signals import extract as session_signals, input_missing
-from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded  # noqa: F401 - re-exported for existing importers
+from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded, question_reply  # noqa: F401 - re-exported for existing importers
 from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'
@@ -11,7 +11,7 @@ UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
 # The pinned rollout records no instruction, rule, agent or hook load; the hierarchy stays unknown, never absent.
 LOADING_SIGNAL = 'no_native_loading_signal'
 KNOWN_TOOLS = ('exec_command', 'write_stdin', 'apply_patch', 'shell', 'shell_command',
-    'update_plan', 'view_image', 'request_user_input')
+    'update_plan', 'view_image', 'request_user_input', 'request_user_input_async')
 # Where each pinned call item carries its input; the input is hashed, never stored.
 INPUT_FIELDS = dict(function_call='arguments', custom_tool_call='input', local_shell_call='action')
 ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_aborted='cancelled',
@@ -102,7 +102,10 @@ class Projection:
                         record['signal_input_missing'] = input_missing(name, arguments)
                         if namespace in (None, 'functions'): record.update(session_signals(name, arguments))
             elif item in ('message', 'reasoning'):
-                record['activity'] = item
+                reply = question_reply(payload) if item == 'message' and payload.get('role') == 'user' else None
+                record['activity'] = 'user_message' if reply is not None else item
+                if reply is not None and (fingerprint := message_fingerprint(reply, record['case_id'])) is not None:
+                    record['message_fingerprint'] = fingerprint
             else: self.unsupported += 1; record['missing_reason'] = 'unsupported_native_item'
         elif kind == 'token_usage_record':
             if payload.get('thread_id') != thread or payload.get('session_id') != root:
