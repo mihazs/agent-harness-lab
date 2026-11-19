@@ -176,3 +176,39 @@ def test_real_forge_discussions_match_rest(checkout, kind):
     actual_hashes = {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in found}
     expected_hashes = {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in expected}
     assert actual_hashes == expected_hashes
+
+
+def test_real_github_reviews_match_rest(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 and use the real forge credentials')
+    from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection
+    from agent_harness_lab.sources.transport import capture_state
+    host, port, parts = completed_work._repository(checkout)
+    if completed_work.detect(checkout)['provider'] != 'github':
+        pytest.skip('this comparison requires a GitHub repository')
+    token = completed_work._credential('github', host, port)
+    assert token
+    base = '/repos/' + '/'.join(parts)
+    repo_id = int(subprocess.check_output(['gh', 'api', base, '--jq', '.id'], cwd=checkout))
+    numbers = json.loads(subprocess.check_output(['gh', 'api', base+'/pulls?state=closed&per_page=100',
+                                                  '--jq', '[.[] | select(.merged_at != null) | .number]'], cwd=checkout))
+    api = GitHubAPI('https://api.github.com'+base, GitHubSelection(repo_id=repo_id),
+                    authorization='Bearer '+token, max_pages=30, max_bytes=8*1024*1024, timeout=5, seconds=90)
+    state = capture_state(api.transport)
+    found = None
+    for offset in range(0, len(numbers), 10):
+        batch = [dict(number=number) for number in numbers[offset:offset+10]]
+        reviews = completed_work._github_review_counts(api, batch, state, repo_id)
+        found = next(((number, notes) for number, (count, _, notes) in reviews.items() if count and notes), None)
+        if found:
+            break
+    if found is None:
+        pytest.skip('no bounded merged pull request with reviews in the first page')
+    number, actual = found
+    pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+                                               base+f'/pulls/{number}/reviews?per_page=100'], cwd=checkout))
+    expected = [row for page in pages for row in page]
+    assert expected and actual
+    def hashes(rows):
+        return {row['id']: hashlib.sha256((row.get('body') or '').encode('utf-8', 'surrogatepass')).digest() for row in rows}
+    assert hashes(actual) == hashes(expected)
