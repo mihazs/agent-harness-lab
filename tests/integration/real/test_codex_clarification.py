@@ -19,6 +19,12 @@ WORKTREES = Path.home()/'dev/.worktrees'
 CODE_ROOT = Path(__file__).resolve().parents[3]
 
 
+def selected_project(meta):
+    projects = [Path(item).resolve() for item in json.loads(os.environ.get('REAL_CODEX_PROJECTS', '[]'))]
+    project = meta.get('cwd') if isinstance(meta, dict) else None
+    return not projects or isinstance(project, str) and any(Path(project) == base or base in Path(project).parents for base in projects)
+
+
 def check_cli_in_worktree(path, project):
     git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'index.threads=1', '-C', project]
     repository = Path(subprocess.check_output([*git, 'rev-parse', '--show-toplevel'], text=True).strip())
@@ -54,6 +60,9 @@ def test_real_codex_question_call_is_recognized(name):
         if index >= 150: break
         if path.stat().st_size > 8 * 1024 * 1024: continue
         with path.open() as stream:
+            try: meta = json.loads(next(stream))['payload']
+            except (ValueError, StopIteration, KeyError, TypeError): continue
+            if not selected_project(meta): continue
             for line in stream:
                 if name not in line: continue
                 try:
@@ -75,7 +84,7 @@ def test_real_codex_question_call_is_recognized(name):
 def test_real_codex_input_reply_reaches_adherence():
     root = os.environ.get('REAL_CODEX_SESSION_ROOT')
     if not root: pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
-    projects = [Path(item).resolve() for item in json.loads(os.environ.get('REAL_CODEX_PROJECTS', '[]'))]
+    projects = json.loads(os.environ.get('REAL_CODEX_PROJECTS', '[]'))
     start, end = '<send_user_message_question_reply>', '</send_user_message_question_reply>'
     for index, path in enumerate(Path(root).rglob('*.jsonl')):
         if index >= 150: break
@@ -84,7 +93,7 @@ def test_real_codex_input_reply_reaches_adherence():
         with path.open() as stream:
             try: meta = json.loads(next(stream))['payload']; project = meta['cwd']
             except (ValueError, StopIteration, KeyError, TypeError): continue
-            if projects and not any(Path(project) == base or base in Path(project).parents for base in projects): continue
+            if not selected_project(meta): continue
             for line_number, line in enumerate(stream, 1):
                 if start not in line: continue
                 try: row = json.loads(line)
@@ -136,8 +145,20 @@ def test_real_async_input_tool_is_preserved_in_telemetry():
         with path.open() as stream:
             try: meta = json.loads(next(stream))['payload']
             except (ValueError, StopIteration, KeyError, TypeError): continue
+            if not selected_project(meta): continue
             if meta.get('cli_version') != codex_rollout.PINNED_VERSION or not isinstance(meta.get('cwd'), str): continue
-            if not any('"name":"request_user_input_async"' in line for line in stream): continue
+            found = False
+            for line in stream:
+                if 'request_user_input_async' not in line: continue
+                try: row = json.loads(line)
+                except ValueError: continue
+                payload = row.get('payload', {})
+                if (row.get('type') == 'response_item' and isinstance(payload, dict)
+                        and payload.get('type') in ('function_call', 'custom_tool_call')
+                        and payload.get('name') == 'request_user_input_async' and payload.get('namespace') in (None, 'functions')):
+                    found = True
+                    break
+            if not found: continue
         try: rows, _, _ = codex_rollout.read(path, meta['cwd'], include_session_signals=True)
         except (OSError, ValueError): continue
         calls = [row for row in rows if row.get('activity') == 'tool_call' and row.get('tool_name') == 'request_user_input_async']
