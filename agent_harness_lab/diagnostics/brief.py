@@ -387,3 +387,9 @@ def disposition(data):
     supported = (bool(outcomes) and all(verified(record, 'success') for record in outcomes)
                  and not data.get('caveats'))
     return 'no_change_harness_supported' if supported else 'no_change_evidence_insufficient'
+
+
+def no_change_result(data):
+    """A proposal without sufficient evidence is not a successful evaluation."""
+    reason = disposition(data)
+    return dict(status='inconclusive' if reason == 'no_change_evidence_insufficient' else 'no_change', reason=reason)

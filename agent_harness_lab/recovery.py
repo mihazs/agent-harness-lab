@@ -75,9 +75,16 @@ def resume(args):
         if hashlib.sha256(proposal_raw).hexdigest() != value['proposal_sha256'] or proposal.get('status') != 'no_change':
             raise ValueError('completed proposal changed since the run')
         receipt=value['receipt']
-        if (not isinstance(receipt,dict) or receipt.get('status') != 'no_change'
-                or receipt.get('reason') not in NO_CHANGE_REASONS or receipt.get('output') != str(output)
+        if (not isinstance(receipt,dict) or receipt.get('reason') not in NO_CHANGE_REASONS
+                or receipt.get('status') not in ('no_change', 'inconclusive')
+                or receipt.get('status') == 'inconclusive' and receipt.get('reason') != 'no_change_evidence_insufficient'
+                or receipt.get('output') != str(output)
                 or receipt.get('changed_files') != [] or receipt.get('automatic_promotion') is not False):
             raise ValueError('invalid recovery receipt')
+        if receipt['reason'] == 'no_change_evidence_insufficient':
+            from .typed_exit import seal
+            receipt['status'] = 'inconclusive'
+            receipt.pop('exit_receipt', None)
+            seal(receipt, args)
         atomic_json(output/'workflow.json',receipt)
         return receipt

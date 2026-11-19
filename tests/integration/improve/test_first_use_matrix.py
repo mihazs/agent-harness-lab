@@ -42,7 +42,7 @@ def test_a_single_failure_without_outcomes_ends_typed_and_spends_nothing(home):
 def test_failures_beside_a_user_focus_still_run_preparation_and_label_the_unevaluated_spend(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis')
-    assert home.model_calls == 1 and receipt['status'] == 'no_change'
+    assert home.model_calls == 1 and receipt['status'] == 'inconclusive'
     assert receipt['spend_label'] == 'spent_without_evaluation'
     assert receipt['spent_without_evaluation']['provider_reported_spend'] == 'unverified'
     assert 'label=spent_without_evaluation' in err
@@ -54,7 +54,7 @@ def test_a_candidate_identical_to_the_baseline_still_explains_each_finding_and_l
     for name in ('a', 'b', 'c'): home.codex(name)
     home.proposes_an_unedited_candidate()
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis')
-    assert home.model_calls == 1 and (receipt['status'], receipt['reason']) == ('no_change', 'candidate_identical_to_baseline')
+    assert home.model_calls == 1 and (receipt['status'], receipt['reason']) == ('inconclusive', 'candidate_identical_to_baseline')
     assert_candidate_or_typed_reason(receipt)
     assert receipt['findings_not_candidates']['causes']['proposer_returned_no_change'] == receipt['analysis']['findings']
     assert receipt['spend_label'] == 'spent_without_evaluation' and 'label=spent_without_evaluation' in err

@@ -270,7 +270,7 @@ def test_watch_remembers_unchanged_evidence_across_restarts(wf):
 def test_no_supported_change_does_not_create_evaluation(wf):
     (wf.project/'mode').write_text('no_change')
     result=improve(wf.args())
-    assert result['status'] == 'no_change'
+    assert result['status'] == 'inconclusive'
     assert result['reason'] == 'no_change_evidence_insufficient'
     assert 'No supported defect' not in json.dumps(result)
     assert not (Path(result['output'])/'evaluation-0').exists()
@@ -279,7 +279,7 @@ def test_no_supported_change_does_not_create_evaluation(wf):
 def test_identical_candidate_has_distinct_reason_without_evaluation(wf):
     (wf.project/'mode').write_text('identical')
     result=improve(wf.args())
-    assert result['status'] == 'no_change'
+    assert result['status'] == 'inconclusive'
     assert result['reason'] == 'candidate_identical_to_baseline'
     assert (wf.project/'AGENTS.md').read_text() == 'bad'
     assert not (Path(result['output'])/'evaluation-0').exists()
@@ -379,7 +379,7 @@ def test_audit_focus_hint_reaches_cooperative_proposer_without_source_text(wf, m
     assert context['focus'] == hint['focus']
     assert 'SYNTHETIC_PRIVATE_SENTENCE' not in context['focus']
     assert str(wf.project) not in context['focus']
-    assert result['status'] == 'no_change'
+    assert result['status'] == 'inconclusive'
 
 
 def test_audit_focus_hint_keeps_instruction_validation_in_force(wf, monkeypatch, capsys):

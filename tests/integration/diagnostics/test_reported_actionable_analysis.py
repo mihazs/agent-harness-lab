@@ -114,13 +114,13 @@ def test_no_evidence_history_is_reported_as_insufficient_with_ranked_commands_ne
     args = workflow.args()
     args.events = str(pipeline.root/'synthetic.jsonl')
     result = improve(args)
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     steps = result['next_steps']
     assert steps and [row['rank'] for row in steps] == list(range(1, len(steps) + 1)) and all(row['command'] and row['action'] for row in steps)
     assert any(row['command'].startswith('ahl ') for row in steps)
     said = json.dumps(result) + exit_guidance.summary(result)
     assert 'proposer_no_change' not in said and 'harness is fine' not in said.replace('does not show the harness is fine', '')
-    assert exit_guidance.summary(result).startswith('Evidence insufficient.')
+    assert exit_guidance.summary(result).startswith('Inconclusive.')
 
 
 def collected(*outcomes, caveats=()):
@@ -146,7 +146,7 @@ def test_only_positive_verified_evidence_yields_harness_supported(workflow):
 def test_anything_short_of_positive_evidence_stays_insufficient(workflow, data):
     with patch('agent_harness_lab.workflow.collect', return_value=data):
         result = improve(workflow.args())
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     assert result['next_steps']
 
 

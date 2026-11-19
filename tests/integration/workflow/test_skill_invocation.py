@@ -69,7 +69,7 @@ class TestSkillInvocation:
         with patch.object(workflow,'improve',wraps=workflow.improve) as improve:
             code,stdout,_=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','10'])
         assert improve.call_count == 1
-        result=json.loads(stdout);assert (code,result['status']) == (0,'no_change')
+        result=json.loads(stdout);assert (code,result['status']) == (3,'inconclusive')
         assert (fixture.project/'AGENTS.md').read_text() == 'bad'
         context=json.loads((Path(result['output'])/'invocation.json').read_text())
         assert (context['origin'],context['scope'],context['runtime']) == ('skill','project','codex')
@@ -283,7 +283,7 @@ class TestEntryReceiptParity:
         return code,receipt,stderr,run
 
     @pytest.mark.parametrize('options,status',[
-        pytest.param(dict(mode='no_change'),'no_change',id='no_history_no_change'),
+        pytest.param(dict(mode='no_change'),'inconclusive',id='no_history_no_change'),
         pytest.param(dict(agents='good'),'no_change',id='no_beneficial_change'),
         pytest.param({},'inconclusive',id='candidate_requires_certification'),
         pytest.param(dict(mode='refine'),'inconclusive',id='refined_candidate'),
@@ -306,7 +306,7 @@ class TestEntryReceiptParity:
         assert not (cli_run/'invocation.json').exists()
         context=json.loads((skill_run/'invocation.json').read_text())
         assert (context['origin'],context['parent_run_id'],context['execution_authority']) == ('skill',skill_run.name,False)
-        if status=='inconclusive':
+        if status=='inconclusive' and options.get('mode') != 'no_change':
             for key in ('decision','plan','recommendation','blocked_prerequisites','implementation_prerequisites'):
                 assert key in cli_receipt
             self.assert_bound_digests(cli_receipt,cli_run);self.assert_bound_digests(skill_receipt,skill_run)

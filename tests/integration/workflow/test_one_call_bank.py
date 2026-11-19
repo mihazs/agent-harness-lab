@@ -87,7 +87,7 @@ def test_configured_native_runtime_reaches_controller_in_one_invocation(pinned, 
     with contextlib.redirect_stdout(output):
         code = main([*entry, str(pinned.project)])
     result = json.loads(output.getvalue())
-    assert (code, result['status'], result['agent']) == (0, 'no_change', runtime)
+    assert (code, result['status'], result['agent']) == (3, 'inconclusive', runtime)
     assert (pinned.project/'AGENTS.md').read_text() == 'bad'
     assert not (Path(result['output'])/'preparation/evaluation-0/manifest.json').exists()
     if entry[0] == 'skills':
@@ -177,7 +177,7 @@ def test_shared_heldout_fixture_is_allowed_within_bank_but_not_prior_attempt(pin
 def test_no_change_does_not_execute_trials(pinned):
     (pinned.project/'mode').write_text('no_change')
     _, result = invoke(pinned)
-    assert result['status'] == 'no_change'
+    assert result['status'] == 'inconclusive'
     assert not (Path(result['output'])/'evaluation-0').exists()
 
 
@@ -319,4 +319,4 @@ def test_bank_area_tags_the_project_declares_pass_preflight(pinned):
     tag_bank(pinned, {'localization': ['coding'], 'regression': ['coding', 'ux-ui']}, REGISTRY)
     (pinned.project/'mode').write_text('no_change')
     code, result = invoke(pinned)
-    assert (code, result['status']) == (0, 'no_change')
+    assert (code, result['status']) == (3, 'inconclusive')

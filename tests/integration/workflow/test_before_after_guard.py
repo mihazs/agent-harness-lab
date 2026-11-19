@@ -108,7 +108,7 @@ def test_the_same_inputs_have_the_same_identity_in_another_run_folder(run):
 
 def test_an_earlier_attempt_regression_does_not_relabel_a_run_whose_final_attempt_never_evaluated(run):
     result, output, _ = run('good', 'late_stop', agent=LATE_STOP)
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     assert result['before_after']['verdict'] == 'candidate_regressed'
     assert result['before_after']['bindings']['describes_final_attempt'] is False
     assert 'investigation' not in result and not (output / 'investigation.json').exists()

@@ -176,9 +176,11 @@ The receipt holds the facts a final report may state. Hazards it closes, and the
 - **Provider-reported cost.** `model_calls[].provider_reported` is the runtime's own duration, turns, cost and token usage for an
   owned preparation or construction call (`provider_reported_unverified`). Quote it per call as reported; never sum it, call it AHL's cost, or
   read an absent field as zero.
-- **Pre-edit check.** Before staging or applying an edit to a harness file, check read-only for open pull
-  requests (`gh pr list --state open --search PATH`) and uncommitted changes touching it. The controller's
-  `pre_edit_check` covers local Git status only; report `open_pull_requests: not_checked` unless you checked.
+- **Pre-edit check.** Before staging or applying an edit to a harness file, detect the checkout's forge with
+  `ahl sources detect PROJECT`, then use that forge's read-only CLI or API to check open pull or merge requests
+  touching it. Check local uncommitted changes too. An unavailable forge, failed command or unknown provider
+  is not an empty result: report `open_pull_requests: not_checked`. The controller's `pre_edit_check` covers
+  local Git status only.
 
 ## CLI-managed preparation
 

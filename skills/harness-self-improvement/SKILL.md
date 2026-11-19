@@ -149,12 +149,12 @@ Do not force edits if executed evidence shows no useful candidate.
 
 Report applied changes, paired outcomes and sample sizes, regressions, checks that
 failed or did not run, remaining uncertainty, and exact rollback locations. Use
-`APPLIED`, `PARTIALLY APPLIED`, or `NO CHANGE JUSTIFIED` for the change disposition;
+`APPLIED`, `PARTIALLY APPLIED`, `NO CHANGE JUSTIFIED`, or `INCONCLUSIVE` for the change disposition;
 report execution errors separately. For broad work, include mechanism coverage,
 remaining deferred families and why analysis did or did not yield more changes.
 A no-change result needs the actual evaluated candidates and reasons, not merely
 the absence of a pre-existing benchmark.
-Report a controller `no_change_evidence_insufficient` as "evidence insufficient", never as
+Report a controller `no_change_evidence_insufficient` as "inconclusive: evidence insufficient", never as
 "the harness is fine", and relay its ranked `next_steps` with their commands. Say the harness is
 supported only for `no_change_harness_supported`, and only for the examined behaviors.
 

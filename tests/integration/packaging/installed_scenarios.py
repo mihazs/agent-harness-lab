@@ -190,7 +190,7 @@ def scenario_no_change_dispositions_are_honest(installed, sb):
     events = sb.root / 'events.jsonl'
     events.write_text(''.join(json.dumps(row) + '\n' for row in history(3)))
     code, result, _ = sb.ahl('improve', sb.project, '--events', events, '--agent', 'codex', '--timeout', '60')
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     steps = result['next_steps']
     assert [row['rank'] for row in steps] == list(range(1, len(steps) + 1)) and all(row['command'] for row in steps)
     # Positive verified evidence: a complete native capture plus a valid executable-grader report, nothing contradicting it.

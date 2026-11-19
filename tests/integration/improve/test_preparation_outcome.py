@@ -50,7 +50,7 @@ def test_a_typed_no_change_proposal_reaches_the_receipt_the_terminal_and_the_rep
         'no_change_supported', ['no_verified_outcome', 'pattern_not_recurring'], ['verified_outcomes'])
     assert block['baseline_checks_passed'] == dict(count=2, classes=sorted(PASSED))
     assert (block['declared_by'], block['controller_verified'], block['unrecognized']) == ('proposer', False, 0)
-    assert receipt['spend_label'] == 'spent_without_evaluation' and receipt['status'] == 'no_change'
+    assert receipt['spend_label'] == 'spent_without_evaluation' and receipt['status'] == 'inconclusive'
     lines = [line for line in err.splitlines() if line.startswith('ahl: preparation ')]
     assert lines == ['ahl: preparation outcome=no_change_supported reasons=no_verified_outcome,pattern_not_recurring '
                      'missing_evidence=verified_outcomes baseline_checks_passed=2']

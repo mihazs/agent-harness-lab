@@ -48,7 +48,7 @@ def test_history_without_findings_is_labelled_and_never_called_fine_in_default_m
 def test_a_focus_that_reaches_preparation_still_ends_with_its_labelled_unevaluated_spend_in_default_mode(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home, '--focus', 'synthetic hypothesis')
-    assert home.model_calls == 1 and receipt['status'] == 'no_change' and receipt['spend_label'] == 'spent_without_evaluation'
+    assert home.model_calls == 1 and receipt['status'] == 'inconclusive' and receipt['spend_label'] == 'spent_without_evaluation'
     assert_candidate_or_typed_reason(receipt)
     assert_labelled_single_pass(receipt)
 

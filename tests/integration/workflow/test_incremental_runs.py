@@ -112,7 +112,7 @@ def test_a_regressed_candidate_is_not_evaluated_again_by_the_third_run_or_any_la
 def test_a_run_that_proposed_nothing_does_not_make_the_next_run_forget_a_regression(runs):
     first, first_output = runs('worse', harness='good')
     quiet, _ = runs('no_change')
-    assert quiet['status'] == 'no_change'
+    assert quiet['status'] == 'inconclusive'
     again, output = runs('worse')
     assert (again['status'], again['reason'], again['previous_run']) == ('blocked', 'candidate_already_regressed', first_output.name)
     assert not (output / 'evaluation-0').exists()
@@ -166,7 +166,7 @@ def test_an_edit_does_not_let_a_regressed_candidate_block_a_different_pair(runs)
 
 def test_a_run_without_a_frozen_candidate_still_reports_the_harness_delta(runs):
     first, _ = runs('no_change', harness='bad')
-    assert first['status'] == 'no_change'
+    assert first['status'] == 'inconclusive'
     edit(runs, 'bad plus a line\n')
     block = runs('no_change')[0]['incremental']
     assert block['disposition'] == 'no_candidate' and block['previous']['candidate_frozen'] is False

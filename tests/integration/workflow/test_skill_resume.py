@@ -45,7 +45,7 @@ def test_resume_finalizes_completed_proposal_without_any_dispatch(project,entry)
     with patch('agent_harness_lab.cli.evaluator',side_effect=AssertionError('no model')), \
             patch.object(workflow,'collect',side_effect=AssertionError('no collection')):
         code,receipt=run([*entry,str(project.project),'--resume',output.name])
-    assert (code,receipt['status'],receipt['reason']) == (0,'no_change','no_change_evidence_insufficient')
+    assert (code,receipt['status'],receipt['reason']) == (3,'inconclusive','no_change_evidence_insufficient')
     assert receipt == json.loads((output/'workflow.json').read_bytes())
     assert (project.project/'AGENTS.md').read_bytes() == before
 

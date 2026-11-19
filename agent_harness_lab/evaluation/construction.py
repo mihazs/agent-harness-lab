@@ -39,7 +39,7 @@ def withheld_activities(summary, analysis):
     return result
 
 
-def views(data, assets, root, deadline, *, closed_domain=None, brief=None):
+def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mechanisms=None):
     analysis = data['analysis']
     summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining','method_inputs','method_execution')}
     summary['profile'] = 'ahl-analysis-execution-v1'
@@ -60,6 +60,10 @@ def views(data, assets, root, deadline, *, closed_domain=None, brief=None):
         (folder/'analysis-summary.json').write_text(json.dumps(summary,allow_nan=False))
         if brief is not None:
             (folder/'analysis-brief.json').write_bytes(rendered(brief))
+        if role == 'proposer' and mechanisms is not None:
+            target = folder/'mechanism-summaries.json'
+            target.write_text(json.dumps(mechanisms, allow_nan=False))
+            target.chmod(0o600)
         check_deadline(deadline)
         shutil.copytree(Path(assets)/'skills/harness-self-improvement',folder/'methodology/harness-self-improvement',symlinks=True,
             ignore=shutil.ignore_patterns('__pycache__','*.pyc',*hidden))
@@ -98,6 +102,9 @@ or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded 
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
     if analysis and (Path(context)/'analysis-brief.json').is_file(): instructions += BRIEF_LINE + '\n' + preparation.guidance()
+    if analysis and (Path(context)/'mechanism-summaries.json').is_file():
+        instructions += ('\nInspect /inputs/fixture/mechanism-summaries.json for ranked observed patterns and evidence references. '
+                         'They are not diagnoses or verified outcomes; formulate falsifiable candidates for separate evaluation.')
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
