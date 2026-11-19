@@ -34,8 +34,9 @@ def check_cli_in_worktree(path, project):
         root, checkout = Path(folder), Path(folder)/'checkout'
         subprocess.run([*git, 'worktree', 'add', '-q', '--detach', str(checkout), 'HEAD'], check=True)
         try:
-            checkout_git = ['git', '-C', str(checkout), 'status', '--porcelain', '--untracked-files=no']
+            checkout_git = ['git', '-C', str(checkout), 'status', '--porcelain', '--untracked-files=all']
             checkout_before = subprocess.check_output(checkout_git)
+            head = subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'])
             report = root/'report.json'
             env = dict(os.environ, PYTHONPATH=str(CODE_ROOT), PYTHONDONTWRITEBYTECODE='1')
             command = ['unshare', '--user', '--map-root-user', '--mount', 'bash', '-c',
@@ -47,6 +48,7 @@ def check_cli_in_worktree(path, project):
             data = json.loads(report.read_text())
             assert data['status'] == 'completed' and data['redaction'] == 'digest_only' and data['publication_allowed'] is False
             assert subprocess.check_output(checkout_git) == checkout_before
+            assert subprocess.check_output(['git', '-C', str(checkout), 'rev-parse', 'HEAD']) == head
         finally:
             subprocess.run([*git, 'worktree', 'remove', '--force', str(checkout)], check=True)
     assert subprocess.check_output([*git, 'status', '--porcelain', '--untracked-files=no']) == before
