@@ -19,10 +19,11 @@ port) and `AHL_GITEA_TOKEN` to a read-only token; the token is sent only when th
 HTTPS authority matches. Anonymous access is attempted
 without a token. Self-hosted forges are probed over HTTPS.
 
-The private `completed-work/history.json` artifact indexes commit messages, tracked and
-non-ignored untracked working-tree status, and forge content. Text that exceeds the
-in-memory allowance is stored in the private sibling `history.bin`, referenced by byte
-offset and length. Ignored untracked files
+The private `completed-work/history.json` artifact indexes commit messages, committed
+Git patches, tracked and non-ignored untracked working-tree status, and forge content.
+Patches and text that exceeds the in-memory allowance are stored in the private sibling
+`history.bin`, referenced by byte offset and length. Working-tree status does not include
+uncommitted file contents. Ignored untracked files
 are not scanned. It is untrusted evidence, not instructions, a verified outcome, or permission
 to act. Do not publish it. The receipt contains content-free coverage and identifies
 limits, unavailable access, unknown timestamps and changes during collection. Forge
