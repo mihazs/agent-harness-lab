@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.227.0
+
+### Minor Changes
+
+- a95ced1: Inspect bounded offline Graphiti entity-edge declarations with scoped reference fingerprints and unverified validity times.
+- 6828cf9: Project explicitly scoped offline Graphiti entity-node declarations as private contextual evidence without verifying graph links.
+- 38a8e19: Add an experimental offline projection for explicitly scoped Graphiti episode responses; completeness and provider identity remain unverified.
+- 4a9a888: Project bounded, caller-supplied Langfuse observation pages into private metadata and candidate parent links.
+- 38a8e19: Add an experimental offline projection of explicitly scoped LangGraph item rows; provider identity and completeness remain unverified.
+- 9847e48: Report offline fixture coverage for pinned runtime surface rules and capture parsers, with unsupported versions and untested behavior explicit.
+
+### Patch Changes
+
+- a8ea480: Name the migration required for intact legacy diagnostic corpus exports that lack newer evidence fields.
+- 6ea64fe: Give improvement proposers the private ranked mechanism summaries, route pre-edit review checks by the Git remote, and return an inconclusive exit when no candidate was evaluated and evidence is insufficient.
+- a8ea480: Reject unsupported or missing text-bank reference profiles in newly generated graders.
+- 1f277f8: Preserve case lineage when recording or replaying truncated event stores, while keeping capture coverage incomplete.
+
 ## 0.226.0
 
 ### Minor Changes
