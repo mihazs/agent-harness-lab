@@ -623,6 +623,9 @@ def _evaluate(args):
         application_modules()
         from agent_harness_lab.evaluation import trial_surfaces
         results['isolation'] = trial_surfaces.descriptor('claude-code' if agent == 'claude' else 'codex', config)
+        if authentication == 'subscription_unverified':
+            results['isolation']['credentials'] = 'subscription_ephemeral_unverified'
+            results['isolation']['excluded_requested'].remove('CODEX_HOME authentication')
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
     if precision_report is not None:
@@ -792,6 +795,9 @@ def _evaluate(args):
         else:
             argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config,
                                               native_environment(agent, inherit_env))
+            if agent == 'codex' and authentication == 'subscription_unverified':
+                from agent_harness_lab.evaluation import codex_subscription
+                argv = codex_subscription.command(codex_subscription.source(os.environ), trial, workspace, argv)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if record['skill_preload_requested'] else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -849,7 +855,11 @@ def _evaluate(args):
             run['timeout'] = run['status'] == 'timeout'
         else:
             record['environment'] = environment_receipt(environment, inherit_env, output)
-            run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
+            try:
+                run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
+            finally:
+                if agent == 'codex' and authentication == 'subscription_unverified':
+                    codex_subscription.cleanup(environment['CODEX_HOME'])
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))

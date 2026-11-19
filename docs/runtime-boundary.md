@@ -67,7 +67,13 @@ The Codex and Claude preparation children, trial runner and version probe pass o
 `TMPDIR`, `TERM`, `TERMINFO`, `COLORTERM`, `LANG`, `LANGUAGE`, standard `LC_*`
 locale variables, plus runtime authentication variables. Codex receives
 `CODEX_API_KEY` and `CODEX_HOME`; preparation can use the existing saved login.
-The trial replaces `CODEX_HOME` with a temporary one that does not include it.
+The trial replaces `CODEX_HOME` with a temporary one. On Linux, when no API key
+is set and a private saved subscription login is available, a trial can use an
+ephemeral snapshot inside a separate namespace. The launcher checks that Codex
+recognizes the login and that its workspace sandbox cannot read the staged or
+host login before starting the trial. Unsupported runtimes, failed checks and
+expired credentials may still block the run; this is not a full isolation or
+successful model-request claim. The snapshot cannot refresh the host login.
 Claude receives `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`
 and `ANTHROPIC_AUTH_TOKEN`; the existing `HOME` continues to support saved login.
 When Claude explicitly enables Bedrock, Vertex or Foundry in the parent, the runner

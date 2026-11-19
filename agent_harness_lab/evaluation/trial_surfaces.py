@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tomllib
 
 from agent_harness_lab import surfaces
@@ -82,13 +83,17 @@ def descriptor(runtime, copied_keys=()):
 def codex_authentication(version, environ):
     """How a trial can authenticate once its temporary CODEX_HOME holds no saved login; 'unavailable' blocks the run.
 
-    Saved `codex login` credentials live in the real CODEX_HOME, which a trial never names, so only the documented
-    CODEX_API_KEY override can reach it. A runtime whose --version is not the Codex CLI banner stays 'unknown'.
+    A saved subscription is only a candidate until the isolated launcher checks it. A runtime whose --version
+    is not the Codex CLI banner stays 'unknown'.
     """
     if not requests(CODEX)[0]['requested']:
         return 'inherited'
     if environ.get(CODEX_CREDENTIAL):
         return 'environment_variable_unobserved'
+    if sys.platform == 'linux' and CODEX_BANNER.match(version.strip()):
+        from .codex_subscription import source
+        if source(environ) is not None:
+            return 'subscription_unverified'
     return 'unavailable' if CODEX_BANNER.match(version.strip()) else 'unknown'
 
 
