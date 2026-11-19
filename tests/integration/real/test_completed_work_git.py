@@ -12,9 +12,9 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.error import HTTPError
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
@@ -278,3 +278,60 @@ def test_real_private_gitea_without_credentials_is_incomplete(checkout):
     assert result['provider'] == 'gitea' and result['complete'] is False
     assert not result.get('enumeration_complete', False)
     assert 'forge_repository_unavailable_or_mismatched' in result['problems']
+
+
+def test_real_authenticated_gitea_inventory(checkout):
+    if os.environ.get('REAL_COMPLETED_WORK_FORGE') != '1':
+        pytest.skip('set REAL_COMPLETED_WORK_FORGE=1 for live forge checks')
+    if completed_work.detect(checkout)['provider'] != 'gitea':
+        pytest.skip('this check requires a Gitea remote')
+    from agent_harness_lab.sources.forge_remote import _NoRedirect
+    host, port, parts = completed_work._repository(checkout)
+    token = completed_work._credential('gitea', host, port)
+    if token is None:
+        pytest.skip('a host-bound Gitea token is not configured')
+    authority = f'[{host}]' if ':' in host else host
+    if port is not None:
+        authority += f':{port}'
+    base = 'https://'+authority+'/api/v1/repos/'+'/'.join(parts)
+    opener = build_opener(ProxyHandler({}), _NoRedirect())
+    with tempfile.TemporaryFile() as content:
+        result = completed_work.capture(checkout, seconds=600, content=content)
+        assert result.get('enumeration_complete'), result.get('problems')
+        cutoff = datetime.fromisoformat(result['captured_at'])
+        for kind, resource in (('merged_pull_requests', 'pulls'), ('closed_issues', 'issues')):
+            expected = {}
+            for page in range(1, 21):
+                target = base+'/'+resource+'?'+urlencode(dict(state='closed', limit=50, page=page))
+                request = Request(target, headers={'Authorization': 'token '+token, 'Accept': 'application/json'})
+                with opener.open(request, timeout=8) as response:
+                    data = response.read(8*1024*1024+1)
+                assert len(data) <= 8*1024*1024
+                rows = json.loads(data)
+                assert isinstance(rows, list)
+                if not rows:
+                    break
+                for row in rows:
+                    if kind == 'merged_pull_requests' and not row.get('merged_at'):
+                        continue
+                    if kind == 'closed_issues' and row.get('pull_request') is not None:
+                        continue
+                    stamp = row.get('merged_at' if kind == 'merged_pull_requests' else 'closed_at')
+                    if stamp and datetime.fromisoformat(stamp.replace('Z', '+00:00')) > cutoff:
+                        continue
+                    expected[row['number']] = row
+            else:
+                pytest.skip('independent Gitea listing exceeded the test page bound')
+            captured = {row['number']: row for row in result[kind]}
+            assert captured.keys() == expected.keys()
+            for number, row in expected.items():
+                for field in ('title', 'body'):
+                    value = captured[number][field]
+                    if isinstance(value, dict):
+                        assert value['file'] == 'history.bin' and value['encoding'] == 'utf-8-surrogatepass'
+                        content.seek(value['offset'])
+                        actual = content.read(value['length'])
+                        assert len(actual) == value['length']
+                    else:
+                        actual = value.encode('utf-8', 'surrogatepass')
+                    assert hashlib.sha256(actual).digest() == hashlib.sha256((row.get(field) or '').encode('utf-8', 'surrogatepass')).digest()
