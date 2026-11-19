@@ -129,6 +129,29 @@ def test_real_untracked_work_is_captured_without_modifying_source(checkout, requ
     assert hashlib.sha256(source.read_bytes()).digest() == expected
 
 
+def test_real_symlink_target_is_captured_without_following_it(checkout):
+    git = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', str(checkout)]
+    records = subprocess.check_output([*git, 'ls-files', '--stage', '-z']).split(b'\0')
+    links = [Path(os.fsdecode(record.split(b'\t', 1)[1])) for record in records if record.startswith(b'120000 ')]
+    link = next((checkout/name for name in links if (checkout/name).is_symlink()
+                 and not any(path.is_symlink() for path in (checkout/name).parents if path.is_relative_to(checkout))), None)
+    if link is None:
+        pytest.skip('no existing tracked symlink')
+    relative = str(link.relative_to(checkout))
+    expected = os.fsencode(os.readlink(link))
+    subprocess.run([*git, 'rm', '--cached', '--quiet', '--', relative], check=True)
+    problems = set()
+    entries = completed_work._git_status(checkout, problems, time.monotonic()+30)
+    with tempfile.TemporaryFile() as content:
+        captured = completed_work._untracked(checkout, entries, content, problems, time.monotonic()+30)
+        match = [row for row in captured if row['path'] == relative]
+        assert not problems and len(match) == 1 and match[0]['encoding'] == 'symlink-target'
+        content.seek(match[0]['offset'])
+        assert content.read(match[0]['length']) == expected
+        assert match[0]['sha256'] == hashlib.sha256(expected).hexdigest()
+    assert link.is_symlink() and os.fsencode(os.readlink(link)) == expected
+
+
 def test_real_tracked_work_matches_git_before_and_after_staging(checkout, request):
     project = Path(request.node.callspec.params['checkout']).resolve(strict=True)
     status = subprocess.check_output(['git', '-c', 'core.fsmonitor=false', '-C', str(project),
