@@ -88,7 +88,7 @@ def bind_provenance(connector, source, store):
         raise ValueError('handoff provenance requires an OKF export connector and its source')
     pages = connector.pages(source)
     store._bind(source)
-    identity = lambda value: connector.identity(source, value)
+    identity = lambda value: connector.source_identity(source, value)
     state, key, bundle = store._read(), source.source_key, bundle_sha256(pages, None if source.schema_version == 1 else identity)
     journal = digest(state)
     cursor = (state['cursors'].get(key) or [None])[-1]

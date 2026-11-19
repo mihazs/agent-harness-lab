@@ -172,6 +172,67 @@ def test_real_legacy_source_journal_remains_readable(real_run):
     assert target.read_bytes() == raw and read_regular(original, 4*1024*1024) == raw
 
 
+def test_real_native_and_memory_session_with_missing_scope_stays_unlinked(real_run):
+    import secrets
+    import tomllib
+    from agent_harness_lab.sources.okf import concept
+    from agent_harness_lab.evaluation.integrity import contained
+
+    selected = os.environ.get('REAL_SOURCE_JOURNAL')
+    if not selected: pytest.skip('set REAL_SOURCE_JOURNAL to an existing private source journal')
+    journal = Path(selected)
+    scope_file = real_run.project/'.ai-memory.toml'
+    if not scope_file.is_file(): pytest.skip('selected project has no explicit memory scope')
+    scope = tomllib.loads(scope_file.read_text())
+    from agent_harness_lab.sources.schema import digest
+    if json.loads(journal.read_text())['project_sha256'] != digest(scope['project']):
+        pytest.skip('journal project differs from the selected run')
+    declaration = json.loads((journal.parent/'manifest.json').read_text())
+    export = contained(journal.parent, declaration['data'])
+    ids = set()
+    for path in export.rglob('*.md'):
+        metadata, _ = concept(path.read_bytes())
+        if metadata.get('type') == 'Session Summary' and metadata.get('project') is None:
+            if isinstance(metadata.get('session_id'), str): ids.add(metadata['session_id'])
+    capture = None
+    for directory, _, names in os.walk(HOST_HOME/'.codex/sessions'):
+        for name in names:
+            if not name.endswith('.jsonl') or not any(value in name for value in ids): continue
+            candidate = Path(directory)/name
+            if candidate.stat().st_size > 16*1024*1024: continue
+            with candidate.open('rb') as stream:
+                header = json.loads(stream.readline()).get('payload', {})
+                if (header.get('id') not in ids or header.get('cwd') != str(real_run.project)
+                        or header.get('cli_version') != '0.166.0'): continue
+                if 1+sum(1 for _ in stream) <= 10000:
+                    capture = candidate
+                    break
+        if capture: break
+    if capture is None: pytest.skip('no bounded matching real native capture')
+    root = real_run.base/'namespace'
+    root.mkdir(mode=0o700)
+    (root/real_run.project.name).mkdir()
+    (root/'memory').mkdir()
+    shutil.copytree(export, root/'memory/export', symlinks=True)
+    shutil.copy2(capture, root/'capture.jsonl')
+    (root/'scope.json').write_text(json.dumps([scope['project'], scope['workspace']]))
+    (root/'key').write_bytes(secrets.token_bytes(32))
+    code = root/'code'
+    code.mkdir()
+    shutil.copytree(CODE_ROOT/'agent_harness_lab', code/'agent_harness_lab',
+                    ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    shutil.copy2(Path(__file__).with_name('native_correlation_check.py'), code/'check.py')
+    command = ['unshare', '--user', '--map-root-user', '--mount', 'sh', '-ec',
+               'mount --make-rprivate /; mount --bind "$1" "$2/$3"; '
+               'mount --bind "$2" "$5"; '
+               'PYTHONPATH="$5/code" exec "$4" "$5/code/check.py" "$3"',
+               '_', str(real_run.checkout), str(root), real_run.project.name, sys.executable, str(real_run.project.parent)]
+    result = subprocess.run(command, cwd='/', env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
+                                                        REAL_DEV_ROOT=str(real_run.project.parent)),
+                            capture_output=True, text=True, timeout=240)
+    assert result.returncode == 0, 'isolated real native/memory correlation failed'
+
+
 def test_real_keyed_source_capture_and_provenance(real_run):
     import hmac
     import tomllib

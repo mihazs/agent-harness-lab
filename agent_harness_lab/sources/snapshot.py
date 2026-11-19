@@ -65,7 +65,7 @@ class LocalExport:
             raise ValueError('identity key must be 32 bytes')
         self._identity_key = identity_key
 
-    def identity(self, source, value):
+    def source_identity(self, source, value):
         if source.schema_version == 1:
             if self._identity_key is not None: raise ValueError('legacy source cannot use a keyed identity')
             return digest(value)
@@ -82,7 +82,7 @@ class LocalExport:
         source = SourceSpec.parse(value['source'])
         if (source.project_sha256, source.scope_sha256) != (project_sha256, scope_sha256):
             raise ValueError('export scope mismatch')
-        if source.root_sha256 != self.identity(source, str(self.manifest.parent.resolve())):
+        if source.root_sha256 != self.source_identity(source, str(self.manifest.parent.resolve())):
             raise ValueError('export root identity mismatch')
         if source.identity_provenance != 'source_declared_id' or source.auth_mode != 'none':
             raise ValueError('local exports require source-declared identity and local filesystem access')

@@ -93,7 +93,7 @@ class OKFExport(LocalExport):
             raise ValueError('source declaration changed or is disabled')
         root = contained(self.manifest.parent, value['data'])
         meta, _ = concept(read_regular(contained(root, '_meta.md'), None))
-        if not isinstance(meta.get('project'), str) or self.identity(source, meta['project']) != source.project_sha256:
+        if not isinstance(meta.get('project'), str) or self.source_identity(source, meta['project']) != source.project_sha256:
             raise ValueError('ai-memory project identity mismatch')
         index, _ = concept(read_regular(contained(root, 'index.md'), None))
         if index.get('okf_version') != '0.2':
@@ -135,10 +135,10 @@ class OKFExport(LocalExport):
             generated = page.metadata.get('generated', {})
             at = generated.get('at') if isinstance(generated, dict) else None
             original = instant(at).isoformat() if at is not None else None
-            records.append(EvidenceRecord(source.source_key, self.identity(source, page.path), page.sha256, page.sha256,
+            records.append(EvidenceRecord(source.source_key, self.source_identity(source, page.path), page.sha256, page.sha256,
                 'contextual_assertion', 'memory_page', now.isoformat(), original_at=original))
         self.summary = summary
-        return Snapshot(bundle_sha256(pages, None if source.schema_version == 1 else lambda value: self.identity(source, value)), tuple(records))
+        return Snapshot(bundle_sha256(pages, None if source.schema_version == 1 else lambda value: self.source_identity(source, value)), tuple(records))
 
 
 ABSENCE_BASIS = 'absent_from_project_okf_export'

@@ -68,7 +68,7 @@ def correlate_sessions(connector, source, store, natives):
     provenance = bind_provenance(connector, source, store)
     if provenance['status'] != 'evaluated': return _report(source, 'unknown', provenance['reason'])
     key = source.source_key
-    identity = lambda value: connector.identity(source, value)
+    identity = lambda value: connector.source_identity(source, value)
     present = {(e['record']['native_id_sha256'], e['record']['revision_sha256']) for e in store._read()['records']
                if e['record']['source_sha256'] == key and e['record']['state'] == 'present'}
     pages = [p for p in connector.pages(source) if p.metadata.get('type') == SESSION_TYPE and _identifier(p.metadata.get('session_id'))]
