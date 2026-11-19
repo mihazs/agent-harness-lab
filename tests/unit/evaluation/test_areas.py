@@ -136,6 +136,19 @@ BANK = tasks(('a', 'development', ['coding']), ('b', 'calibration', ['coding', '
              ('d', 'development', []), ('e', 'development', ['ux-ui'], 'quarantined'))
 
 
+def test_exported_manifest_selection_preserves_order_and_omits_untagged_tasks():
+    exported = [dict(id='a', areas=['coding']), dict(id='b', areas=['coding', 'ux-ui']), dict(id='c')]
+    assert areas.select_manifest_tasks(exported, ('coding', 'ux-ui'), ('ux-ui',)) == [exported[1]]
+    assert len(exported) == 3
+
+
+def test_exported_manifest_selection_refuses_unknown_duplicate_and_empty_areas():
+    exported = [dict(id='a', areas=['coding'])]
+    assert rejected(areas.select_manifest_tasks, exported, ('coding', 'ux-ui'), ('unknown',)).reason == 'area_selection_undeclared'
+    assert rejected(areas.select_manifest_tasks, exported, ('coding', 'ux-ui'), ('coding', 'coding')).reason == 'area_duplicate'
+    assert rejected(areas.select_manifest_tasks, exported, ('coding', 'ux-ui'), ('ux-ui',)).reason == 'area_selection_empty'
+
+
 def test_a_selection_keeps_the_tasks_that_carry_any_selected_area_in_bank_order_with_their_partitions():
     assert areas.select_tasks(BANK, ('coding', 'ux-ui'), ('ux-ui',)) == (['b', 'c'], {'calibration': 1, 'certification': 1})
     assert areas.select_tasks(BANK, ('coding', 'ux-ui'), ('ux-ui', 'coding')) == (['a', 'b', 'c'], {'development': 1, 'calibration': 1, 'certification': 1})

@@ -445,6 +445,9 @@ def _evaluate(args):
     budget = float(manifest.get('budget_seconds', 2700))
     trial_limit = int(manifest.get('max_trials', 24))
     configured = None
+    selected_areas = tuple(area for value in (getattr(args, 'area', None) or ()) for area in value.split(','))
+    declared_areas = ()
+    original_ids = ids
     binary = args.claude if args.agent == 'claude' else args.codex
     if getattr(args, 'config', None) is not None:
         application_modules()
@@ -453,6 +456,21 @@ def _evaluate(args):
         budget = min(budget, configured['configuration']['limits']['seconds'])
         trial_limit = min(trial_limit, configured['configuration']['limits']['trials'])
         binary = configured['binary']
+        from agent_harness_lab.evaluation.areas import parse_registry, select_manifest_tasks
+        declared_areas = parse_registry(configured['configuration'].get('areas', []))
+        if selected_areas:
+            selected_tasks = select_manifest_tasks(tasks, declared_areas, selected_areas)
+            if 'experiment' in manifest and len(selected_tasks) != len(tasks):
+                from agent_harness_lab.evaluation.manifest_contract import ContractError
+                raise ContractError('area_selection_frozen_plan', 'evaluation_selection', '--area', 'manifest.json')
+            tasks = selected_tasks
+            ids = [task['id'] for task in tasks]
+            if 'experiment' not in manifest:
+                trial_limit = min(trial_limit, 2 * len(tasks))
+    elif selected_areas:
+        application_modules()
+        from agent_harness_lab.evaluation.manifest_contract import ContractError
+        raise ContractError('area_selection_requires_config', 'evaluation_selection', '--config', 'ahl.json')
     initial_trial_ceiling = len(tasks) * 2
     if isinstance(manifest.get('experiment'), dict) and manifest['experiment'].get('sequential') is not None:
         application_modules()
@@ -518,8 +536,10 @@ def _evaluate(args):
     if declared_bundles:
         application_modules()
         from agent_harness_lab.evaluation.integrity import contained, digest as bundle_digest
-        if set(declared_bundles) != set(ids):
+        if set(declared_bundles) != set(original_ids):
             raise ValueError('every task must declare its complete grader bundle')
+        if selected_areas:
+            declared_bundles = {task_id: declared_bundles[task_id] for task_id in ids}
         from agent_harness_lab.evaluation.manifest_contract import ContractError
         for index, (task_id, bundle) in enumerate(declared_bundles.items()):
             if not isinstance(bundle, dict) or 'path' not in bundle or 'digest' not in bundle:
@@ -725,6 +745,14 @@ def _evaluate(args):
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=dict(status='not_executed', full_certification=False))
+    if selected_areas:
+        task_areas = {task['id']: task.get('areas', []) for task in tasks}
+        sequential = plan is not None and plan.sequential is not None
+        budget_share = dict(trials=selected_trial_ceiling if plan else len(ordered),
+                            per_area=None if sequential else {area: sum(area in task_areas[row['task']] for row in ordered)
+                                                              for area in selected_areas})
+        results['area_selection'] = dict(selected=list(selected_areas), tasks=list(ids), budget_share=budget_share,
+                                         manifest_sha256=manifest_hash)
     if authentication is not None:
         results['runtime']['codex_authentication'] = authentication
     if agent in ('codex', 'claude'):
@@ -1056,7 +1084,23 @@ def _evaluate(args):
         results['isolation_qualification']=backend.permission_qualification()
         if sequential_controller is not None and results['isolation_qualification']['qualification']!='qualified' and results['sequential_analysis']['status']!='rejected':
             results['sequential_analysis'].update(status='blocked',reason='isolation_qualification_unverified')
+    if getattr(args, '_evaluate_area_gate', False) and declared_areas and set(arms) == {'baseline', 'candidate'}:
+        from agent_harness_lab.evaluation import area_gate
+        pairs = area_gate.scheduled_pairs(tasks, ordered, results['trials'], inputs_unchanged=results['inputs_unchanged'] and sequential_controller is None,
+                                          require_qualified=permission_audit is not None)
+        gate = area_gate.gate(pairs, declared_areas, selected=selected_areas,
+                              **({'margin': plan.family_margin, 'alpha': plan.alpha, 'min_roots': plan.min_roots} if plan else {}))
+        results['area_gate'] = gate
+        if gate['multiplicity'] is not None:
+            print(gate['multiplicity']['note'])
+        if gate['status'] == 'blocked':
+            investigation = output / 'investigation.json'
+            write_results(investigation, gate)
+            results.update(status='blocked', reason=area_gate.REASON, remediation=area_gate.REMEDIATION,
+                           investigation=str(investigation))
     write_results(output / 'results.json', results)
+    if results.get('reason') == 'area_regressed':
+        return 3
     if sequential_controller is not None:
         status=results['sequential_analysis']['status']
         return {'supported':0,'rejected':0,'inconclusive':3,'blocked':3}.get(status,1)
@@ -1132,6 +1176,7 @@ def main():
             'candidate':'Existing candidate harness directory to compare against baseline under the same task manifest',
             'output':'New private results directory; must not already exist, trial workspaces and results.json are written here'}[name])
     parser.add_argument('--config', help='Existing ahl.json restricting bank, harness scope, cooperative runtime and caps; not supported with Responses execution')
+    parser.add_argument('--area', action='append', help='Declared capability area to evaluate; repeat or use commas for several; requires --config')
     parser.add_argument('--agent', choices=('codex', 'claude', 'offline', 'responses'), default='codex',
                         help='Executor: cooperative codex/claude, Linux offline fixture commands without inference, or controlled responses (default: %(default)s)')
     parser.add_argument('--codex', default='codex', help='Codex executable name/path for --agent codex (default: %(default)s)')
@@ -1149,6 +1194,7 @@ def main():
     parser.add_argument('--source-project-sha256', help='Expected declared project SHA-256 fingerprint; supply with --source-cache and --source-scope-sha256')
     parser.add_argument('--source-scope-sha256', help='Expected declared source-scope SHA-256 fingerprint; supply with --source-cache and --source-project-sha256')
     args = parser.parse_args()
+    args._evaluate_area_gate = True
     try:
         return evaluate(args)
     except (ValueError, OSError, KeyError, TypeError) as exc:

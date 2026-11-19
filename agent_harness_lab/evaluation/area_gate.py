@@ -9,6 +9,7 @@ regress, so an unknown outcome or a thin area is never read as either:
 - provisional: an outcome is unknown or the roots are below the minimum; the interval is shown, no verdict is drawn;
 - no_evidence: no pair carries the area, or none of its pairs has a known outcome on both arms; nothing is shown.
 """
+from collections import Counter
 from fractions import Fraction
 
 from . import before_after
@@ -19,6 +20,28 @@ MIN_ROOTS = 2  # the least an ExperimentSpec allows for independent roots
 REASON = 'area_regressed'
 REMEDIATION = ('Read the named areas in investigation.json: revise or discard the candidate so none of them loses paired outcomes '
                'and rerun; a pooled gain does not offset a regressed area and the margin is not raised after the result.')
+
+
+def scheduled_pairs(tasks, scheduled, trials, *, inputs_unchanged=True, require_qualified=False):
+    """Pair every scheduled task and repetition; absent or duplicate outcomes remain unknown."""
+    declarations = {task['id']: task for task in tasks}
+    counts = Counter((row['task'], row['repetition'], row['version']) for row in trials)
+    outcomes = {(row['task'], row['repetition'], row['version']): {'passed': True, 'failed': False}.get(row['status'])
+                if inputs_unchanged and row.get('split') == declarations[row['task']].get('split')
+                and (not require_qualified or row.get('isolation_qualification') == 'qualified')
+                and ('controller_grade' not in row or (row['controller_grade'].get('valid') is True
+                     and row['controller_grade'].get('outcome') is (row['status'] == 'passed'))) else None for row in trials}
+    cells = {}
+    for row in scheduled:
+        task, repeat, arm = row['task'], row['repetition'], row['version']
+        declaration = declarations[task]
+        cell = cells.setdefault((task, repeat), dict(task=task, repeat=repeat, root=declaration.get('root'),
+                                                     areas=declaration.get('areas'), split=declaration.get('split')))
+        key = (task, repeat, arm)
+        cell[arm] = outcomes.get(key) if counts[key] == 1 else None
+    for cell in cells.values():
+        cell.setdefault('baseline', None); cell.setdefault('candidate', None)
+    return list(cells.values())
 
 
 def _row(area, rows, margin, alpha, min_roots):
