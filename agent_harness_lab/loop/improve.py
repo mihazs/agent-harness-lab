@@ -24,7 +24,7 @@ CLOSED = re.compile(r'[a-z0-9_]{1,80}')
 
 
 def mechanisms(args):
-    """The mechanism queue in priority order: a focus first, then each distinct mechanism of the analysis brief, then the one the agent selects itself."""
+    """Queue the focus, ranked summary mechanisms, and an agent-selected fallback."""
     brief = getattr(args, '_analysis_brief', None)
     summaries = getattr(args, '_mechanism_summaries', None)
     source = summaries if isinstance(summaries, dict) else brief

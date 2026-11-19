@@ -18,7 +18,7 @@ CONTROLLER_FIELDS = ('instruction_plan', *preparation.FIELDS)
 
 
 def citable(brief, summaries=None):
-    """Evidence identifiers the proposer was shown: observed brief mechanisms and signals, never unknowns."""
+    """Evidence identifiers supplied to the proposer, never unknown signals."""
     if not isinstance(brief, dict):
         return frozenset()
     extra = summaries.get('mechanisms', []) if isinstance(summaries, dict) and summaries.get('profile') == analysis_brief.SUMMARY_PROFILE else []
@@ -28,7 +28,7 @@ def citable(brief, summaries=None):
 
 
 def admit(proposal, brief, component_version, *, summaries=None):
-    """The admission of one candidate proposal against the brief its proposer saw."""
+    """Admit a proposal against the brief and private summaries supplied to it."""
     version = 'brief:' + hashlib.sha256(analysis_brief.rendered(brief)).hexdigest()[:16] if isinstance(brief, dict) else 'brief_unavailable'
     if isinstance(summaries, dict) and summaries.get('profile') == analysis_brief.SUMMARY_PROFILE:
         version += ':summary:' + hashlib.sha256(json.dumps(summaries, sort_keys=True, allow_nan=False).encode()).hexdigest()[:16]
