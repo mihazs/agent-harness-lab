@@ -576,7 +576,7 @@ def capture(project, *, seconds=30, content=None):
     deadline = time.monotonic() + max(0, min(seconds, 600))
     result = dict(schema_version=1, captured_at=cutoff.isoformat(), commits=[], merged_pull_requests=[], closed_issues=[],
                   provider=None, network_used=False, complete=False, problems=[],
-                  git_detail='commit_messages_patches_and_worktree_content', ignored_untracked='not_scanned',
+                  git_detail='not_collected', ignored_untracked='not_scanned',
                   forge_snapshot='non_atomic', trust='untrusted_data', publication_allowed=False)
     problems = set()
     try:
@@ -587,12 +587,6 @@ def capture(project, *, seconds=30, content=None):
         if not re.fullmatch(r'[0-9a-f]{40,64}', head):
             raise ValueError('invalid head identity')
         result['git_head'] = head
-        result['commits'] = _git_history(project, head, problems, deadline)
-        result['git_patches'] = _git_patches(project, head, content, problems, deadline)
-        result['working_tree'] = _git_status(project, problems, deadline)
-        result['staged_patch'] = _working_patch(project, head, content, problems, deadline, staged=True)
-        result['unstaged_patch'] = _working_patch(project, head, content, problems, deadline, staged=False)
-        result['untracked_files'] = _untracked(project, result['working_tree'], content, problems, deadline)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('completed-work budget exhausted')
@@ -651,6 +645,19 @@ def capture(project, *, seconds=30, content=None):
         api._work_repository_id = native_id
     except (Unavailable, ValueError, OSError, TimeoutError):
         problems.add('forge_repository_unavailable_or_mismatched')
+        result['problems'] = sorted(problems)
+        return result
+    try:
+        result['commits'] = _git_history(project, head, problems, deadline)
+        result['git_patches'] = _git_patches(project, head, content, problems, deadline)
+        result['working_tree'] = _git_status(project, problems, deadline)
+        result['staged_patch'] = _working_patch(project, head, content, problems, deadline, staged=True)
+        result['unstaged_patch'] = _working_patch(project, head, content, problems, deadline, staged=False)
+        result['untracked_files'] = _untracked(project, result['working_tree'], content, problems, deadline)
+        result['git_detail'] = 'commit_messages_patches_and_worktree_content'
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
+        problems.add('git_history_unavailable')
+    if problems:
         result['problems'] = sorted(problems)
         return result
     batched_comments = None

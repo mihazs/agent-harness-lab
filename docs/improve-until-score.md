@@ -17,7 +17,8 @@ uses the configured `gh` or `glab` login when available. For Gitea, set
 `AHL_GITEA_HOST` to the remote hostname (include `:port` for a nonstandard HTTPS
 port) and `AHL_GITEA_TOKEN` to a read-only token; the token is sent only when the
 HTTPS authority matches. Anonymous access is attempted
-without a token. Self-hosted forges are probed over HTTPS.
+without a token. Self-hosted forges are probed over HTTPS. If the forge repository
+cannot be verified, collection stops before reading local history and reports incomplete coverage.
 
 The private `completed-work/history.json` artifact indexes commit messages, committed,
 staged and unstaged tracked Git patches, non-ignored untracked files and link targets, and forge
