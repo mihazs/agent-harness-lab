@@ -131,7 +131,8 @@ def launch(auth, trial, workspace, argv):
             bubblewrap_args += ['--tmpfs', str(mask)]
         bubblewrap_args += ['--perms', '0600', '--file', str(fd), SEED, '--info-fd', str(info_write),
                        '--block-fd', str(block_read), '--die-with-parent', '--chdir', str(workspace), '--',
-                       sys.executable, '-I', '-S', str(Path(__file__).resolve()), 'inside', str(auth), *argv]
+                       sys.executable, '-I', '-S', str(Path(__file__).resolve()), 'inside', str(auth),
+                       str(os.getpid()), str(fd), *argv]
         env = dict(os.environ, TMPDIR='/tmp')
         process = subprocess.Popen(keyring_launcher() + bubblewrap_args, env=env, pass_fds=(fd, info_write, block_read))
         os.close(info_write); info_write = None
@@ -161,7 +162,7 @@ def launch(auth, trial, workspace, argv):
         os.close(fd)
 
 
-def inside(auth, argv):
+def inside(auth, host_pid, host_fd, argv):
     fd = snapshot(SEED)
     copied = False
     try:
@@ -175,11 +176,13 @@ def inside(auth, argv):
         check = ('command -v head >/dev/null && head -c 1 /proc/self/status >/dev/null || exit 1; '
                  'if [ -w "$CODEX_HOME" ] || chmod u+w "$CODEX_HOME" 2>/dev/null; then exit 1; fi; '
                  'for p in "$CODEX_HOME/auth.json" "$HOME/.codex/auth.json" "$1" '
+                 '"/proc/$2/fd/$3" "/proc/$2/root$1" "/proc/$4/fd/$3" "/proc/$4/root$1" '
                  '/tmp/ahl-codex-login /tmp/ahl-codex-bin/auth.json; do '
                  'if head -c 1 "$p" >/dev/null 2>&1; then exit 1; fi; done')
         login = subprocess.run([argv[0], 'login', 'status'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         probe = subprocess.run([argv[0], '-c', 'sandbox_mode="workspace-write"', 'sandbox', '--',
-                                'sh', '-c', check, 'sh', auth], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                'sh', '-c', check, 'sh', auth, host_pid, host_fd, str(os.getppid())],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if login.returncode or probe.returncode:
             raise ValueError('subscription login or sandbox verification failed')
         return subprocess.run(argv).returncode
@@ -194,7 +197,7 @@ if __name__ == '__main__':
         if sys.argv[1] == 'launch':
             sys.exit(launch(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]))
         if sys.argv[1] == 'inside':
-            sys.exit(inside(sys.argv[2], sys.argv[3:]))
+            sys.exit(inside(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]))
         raise ValueError('invalid subscription launcher mode')
     except (OSError, ValueError, IndexError) as exc:
         sys.stderr.write(f'Codex subscription trial could not be started safely ({type(exc).__name__}).\n')
