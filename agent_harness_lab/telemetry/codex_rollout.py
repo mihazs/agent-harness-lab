@@ -11,7 +11,7 @@ UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
 # The pinned rollout records no instruction, rule, agent or hook load; the hierarchy stays unknown, never absent.
 LOADING_SIGNAL = 'no_native_loading_signal'
 KNOWN_TOOLS = ('exec_command', 'write_stdin', 'apply_patch', 'shell', 'shell_command',
-    'update_plan', 'view_image', 'request_user_input')
+    'update_plan', 'view_image', 'request_user_input', 'request_user_input_async')
 # Where each pinned call item carries its input; the input is hashed, never stored.
 INPUT_FIELDS = dict(function_call='arguments', custom_tool_call='input', local_shell_call='action')
 ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_aborted='cancelled',

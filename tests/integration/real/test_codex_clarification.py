@@ -10,6 +10,7 @@ import pytest
 
 from agent_harness_lab.diagnostics.adherence_native import Skipped, _Codex, read_session
 from agent_harness_lab.diagnostics.instruction_adherence import _asked, _question, _user_items, analyze, load_sessions
+from agent_harness_lab.telemetry import codex_rollout
 
 WORKTREES = Path.home()/'dev/.worktrees'
 CODE_ROOT = Path(__file__).resolve().parents[3]
@@ -114,3 +115,21 @@ def test_real_codex_input_reply_reaches_adherence():
                 if projects: check_cli_in_worktree(path, project)
                 return
     pytest.fail('no usable real request and reply in the bounded session set')
+
+
+def test_real_async_input_tool_is_preserved_in_telemetry():
+    root = os.environ.get('REAL_CODEX_SESSION_ROOT')
+    if not root: pytest.skip('set REAL_CODEX_SESSION_ROOT to a native session directory')
+    for index, path in enumerate(Path(root).rglob('*.jsonl')):
+        if index >= 150: break
+        if path.stat().st_size > 8 * 1024 * 1024: continue
+        with path.open() as stream:
+            try: meta = json.loads(next(stream))['payload']
+            except (ValueError, StopIteration, KeyError, TypeError): continue
+            if meta.get('cli_version') != codex_rollout.PINNED_VERSION or not isinstance(meta.get('cwd'), str): continue
+            if not any('"name":"request_user_input_async"' in line for line in stream): continue
+        try: rows, _, _ = codex_rollout.read(path, meta['cwd'])
+        except (OSError, ValueError): continue
+        assert any(row.get('tool_name') == 'request_user_input_async' for row in rows)
+        return
+    pytest.skip('no compatible real capture with an asynchronous input call')
