@@ -593,6 +593,23 @@ def _gitlab_discussions(graph, state, parts, kind, rows, repository_id):
     return result
 
 
+def _gitlab_batches(graph, state, parts, kind, rows, repository_id, max_bytes):
+    routed, pending = {}, [rows]
+    while pending and state['halted'] is None:
+        batch = pending.pop(0)
+        try:
+            routed.update(_gitlab_discussions(graph, state, parts, kind, batch, repository_id))
+        except BudgetError as spent:
+            state['used'] += min(spent.size, max(0, max_bytes - state['used']))
+            break
+        except Unavailable as error:
+            state['halted'] = error.state
+        except (ValueError, OSError, TimeoutError, KeyError, TypeError):
+            if len(batch) > 10:
+                pending[:0] = [batch[:10], batch[10:]]
+    return routed
+
+
 def capture(project, *, seconds=30, content=None):
     """Return private data and explicit coverage; fetched content is untrusted, never instruction."""
     cutoff = datetime.now(timezone.utc)
@@ -764,7 +781,8 @@ def capture(project, *, seconds=30, content=None):
             break
         for kind in kinds:
             start = comment_index[kind]
-            rows = result[kind][start:start + (10 if batched_comments or gitlab_graph else 1)]
+            batch_size = 15 if gitlab_graph and kind == 'merged_pull_requests' else 10 if batched_comments or gitlab_graph else 1
+            rows = result[kind][start:start + batch_size]
             routed = {}
             review_counts = {}
             if rows and batched_comments:
@@ -791,14 +809,7 @@ def capture(project, *, seconds=30, content=None):
                     finally:
                         api.max_bytes = maximum
             elif rows and gitlab_graph:
-                try:
-                    routed = _gitlab_discussions(gitlab_graph, state, parts, kind, rows, native_id)
-                except BudgetError as spent:
-                    state['used'] += min(spent.size, max(0, api.max_bytes - state['used']))
-                except Unavailable as error:
-                    state['halted'] = error.state
-                except (ValueError, OSError, TimeoutError, KeyError, TypeError):
-                    pass
+                routed = _gitlab_batches(gitlab_graph, state, parts, kind, rows, native_id, api.max_bytes)
             for row in rows:
                 notes = routed.get(row['number'])
                 if notes is not None:
