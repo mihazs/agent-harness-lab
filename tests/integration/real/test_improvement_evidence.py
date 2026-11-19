@@ -261,6 +261,10 @@ def test_real_keyed_source_capture_and_provenance(real_run):
     shutil.copytree(contained(original.parent, declaration['data']), source_dir/'export', symlinks=True)
     environment = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', PYTHONPATH=str(CODE_ROOT))
     cli = [sys.executable, '-m', 'agent_harness_lab', 'sources']
+    for action in ([], ['create'], ['fingerprint'], ['prepare-okf']):
+        help_result = subprocess.run([*cli, 'identity-key', *action, '--help'], env=environment, cwd=real_run.checkout,
+                                     capture_output=True, text=True, timeout=20)
+        assert help_result.returncode == 0 and 'usage:' in help_result.stdout and not help_result.stderr
     key_file = source_dir/'identity.key'
     create = [*cli, 'identity-key', 'create', '--output', str(key_file)]
     created = subprocess.run(create, env=environment, cwd=real_run.base, capture_output=True, text=True, timeout=20)

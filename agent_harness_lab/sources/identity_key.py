@@ -83,18 +83,21 @@ def prepare_okf(manifest, scope_file, key_file, output):
 def main(argv):
     import argparse
     import sys
-    parser = argparse.ArgumentParser(prog='ahl sources identity-key')
-    commands = parser.add_subparsers(dest='operation', required=True)
-    new = commands.add_parser('create', help='Create a new owner-only identity key without overwriting')
-    new.add_argument('--output', required=True)
-    hashed = commands.add_parser('fingerprint', help='Fingerprint one JSON value without printing it')
-    hashed.add_argument('--key-file', required=True)
-    hashed.add_argument('--value-file', required=True)
-    prepare = commands.add_parser('prepare-okf', help='Prepare a separate keyed declaration from a legacy local memory source')
-    prepare.add_argument('--manifest', required=True)
-    prepare.add_argument('--scope-file', required=True)
-    prepare.add_argument('--key-file', required=True)
-    prepare.add_argument('--output', required=True)
+    parser = argparse.ArgumentParser(prog='ahl sources identity-key', description='Manage private keys and keyed local memory source identities.')
+    commands = parser.add_subparsers(dest='operation', required=True, help='Choose an identity key operation')
+    new = commands.add_parser('create', help='Create a new owner-only identity key without overwriting',
+                              description='Create a new random owner-only source identity key.')
+    new.add_argument('--output', required=True, help='New key file; existing files are never overwritten')
+    hashed = commands.add_parser('fingerprint', help='Fingerprint one JSON value without printing it',
+                                 description='Fingerprint a JSON value with a private source identity key.')
+    hashed.add_argument('--key-file', required=True, help='Owner-only source identity key file')
+    hashed.add_argument('--value-file', required=True, help='JSON file containing the value to fingerprint')
+    prepare = commands.add_parser('prepare-okf', help='Prepare a separate keyed declaration from a legacy local memory source',
+                                  description='Prepare a keyed declaration for a legacy local memory export.')
+    prepare.add_argument('--manifest', required=True, help='Existing legacy local memory source declaration')
+    prepare.add_argument('--scope-file', required=True, help='JSON file containing the original source scope')
+    prepare.add_argument('--key-file', required=True, help='Owner-only source identity key file')
+    prepare.add_argument('--output', required=True, help='New declaration alongside the original manifest')
     args = parser.parse_args(argv)
     try:
         if args.operation == 'create':
