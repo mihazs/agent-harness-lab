@@ -5,6 +5,7 @@ evaluates a mechanism, charges a budget or says which mechanism a combined patch
 admitted record stays ``proposed`` and unreviewed, so a tie or an accepted patch never closes one.
 """
 import hashlib
+import json
 
 from agent_harness_lab import preparation
 from agent_harness_lab.diagnostics import brief as analysis_brief
@@ -16,19 +17,23 @@ from agent_harness_lab.monitoring.state import atomic_json
 CONTROLLER_FIELDS = ('instruction_plan', *preparation.FIELDS)
 
 
-def citable(brief):
+def citable(brief, summaries=None):
     """Evidence identifiers the proposer was shown: observed brief mechanisms and signals, never unknowns."""
     if not isinstance(brief, dict):
         return frozenset()
+    extra = summaries.get('mechanisms', []) if isinstance(summaries, dict) and summaries.get('profile') == analysis_brief.SUMMARY_PROFILE else []
     return frozenset([row['mechanism_id'] for row in brief.get('mechanisms', [])]
+                     + [row['mechanism_id'] for row in extra]
                      + [row['id'] for row in brief.get('weak_outcome_signals', []) if row.get('status') == 'observed_pattern'])
 
 
-def admit(proposal, brief, component_version):
+def admit(proposal, brief, component_version, *, summaries=None):
     """The admission of one candidate proposal against the brief its proposer saw."""
     version = 'brief:' + hashlib.sha256(analysis_brief.rendered(brief)).hexdigest()[:16] if isinstance(brief, dict) else 'brief_unavailable'
+    if isinstance(summaries, dict) and summaries.get('profile') == analysis_brief.SUMMARY_PROFILE:
+        version += ':summary:' + hashlib.sha256(json.dumps(summaries, sort_keys=True, allow_nan=False).encode()).hexdigest()[:16]
     return from_proposal({key: value for key, value in proposal.items() if key not in CONTROLLER_FIELDS},
-                         evidence_refs=citable(brief), evidence_version=version, component_version=component_version)
+                         evidence_refs=citable(brief, summaries), evidence_version=version, component_version=component_version)
 
 
 def attach(output, admissions):

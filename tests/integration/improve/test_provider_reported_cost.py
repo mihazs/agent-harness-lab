@@ -34,7 +34,7 @@ def test_a_claude_preparation_that_reports_its_figures_carries_them_in_the_recei
     assert call['provider_reported'] == dict(profile='ahl-provider-reported-v1', source='provider_reported_unverified', controller_verified=False,
                                              certification_authority=False, duration_ms=4200, num_turns=3, reported_cost=0.0123,
                                              reported_cost_unit='usd', usage=dict(input_tokens=11, output_tokens=7))
-    assert receipt['spend_label'] == 'spent_without_evaluation' and receipt['status'] == 'no_change'
+    assert receipt['spend_label'] == 'spent_without_evaluation' and receipt['status'] == 'inconclusive'
     assert err.splitlines().count(LINE) == 1 and err.index(LINE) < err.index('ahl: outcome=')
     assert 'trials_spent=unknown cost=unknown' in outcome_line(err)  # AHL itself still measures no money
 

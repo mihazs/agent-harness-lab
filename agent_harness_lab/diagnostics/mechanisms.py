@@ -69,7 +69,7 @@ class MechanismRecord:
 # a reason, never truncated, upgraded or silently dropped.
 ADMISSION_PROFILE = 'proposer-mechanism-admission-v1'
 # Stated to the proposer; the controller admits entries as unverified hypotheses and records why any is refused.
-MECHANISM_GUIDANCE = ('Each "mechanisms" entry is an object with mechanism_id, symptom, evidence_refs (ids listed in the brief), '
+MECHANISM_GUIDANCE = ('Each "mechanisms" entry is an object with mechanism_id, symptom, evidence_refs (mechanism IDs listed in the brief or summaries), '
                       'component, severity, boundary, controls, counterexamples, competing_explanations and falsifier. '
                       'The parent records it as an unverified hypothesis; an entry that cites unlisted evidence is recorded as refused.')
 ADMITTED_STATUS = 'proposed_unverified'

@@ -69,7 +69,7 @@ class TestSkillInvocation:
         with patch.object(workflow,'improve',wraps=workflow.improve) as improve:
             code,stdout,_=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','10'])
         assert improve.call_count == 1
-        result=json.loads(stdout);assert (code,result['status']) == (0,'no_change')
+        result=json.loads(stdout);assert (code,result['status']) == (3,'inconclusive')
         assert (fixture.project/'AGENTS.md').read_text() == 'bad'
         context=json.loads((Path(result['output'])/'invocation.json').read_text())
         assert (context['origin'],context['scope'],context['runtime']) == ('skill','project','codex')

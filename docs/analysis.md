@@ -65,6 +65,17 @@ an independence claim.
 | `instruction-adherence.json` | Where the read Claude Code or Codex sessions ignored a project rule or a prompt instruction; digests only | At most 5,000 findings; written only when at least one native session was read; the brief's `instruction_adherence` section holds its counts |
 | `instruction-repair-plan.json` | Candidate mechanisms and repair classes for each adherence finding, recommendation only and digest only; see [instruction repair](instruction-repair.md) | One candidate per finding; written whenever `instruction-adherence.json` is; the brief carries counts only |
 
+Improvement preparation can inspect this private summary as well as the shorter brief.
+The evaluator-author role does not receive it. These are observed patterns and references,
+not verified outcomes or diagnoses; candidate claims still require separate evaluation.
+
+To check this handoff and recovery against existing private no-change runs, set
+`REAL_IMPROVE_RUNS` to a JSON array of their run-directory paths and run
+`python -m pytest tests/integration/real/test_improvement_evidence.py`. The runs must retain
+their analysis, summary, proposal and recovery artifacts, and the original harness files must
+still match. The checks require Linux user and mount namespaces, create detached worktrees under
+`~/dev/.worktrees/`, remove them afterward, and do not dispatch a model or publish the artifacts.
+
 Structured tool errors are grouped by tool class and a fixed error category. A tool
 class is a documented built-in tool name or a stable opaque label; free-text error
 bodies, prompts, paths and identifiers are never copied into the brief. The category
@@ -403,15 +414,17 @@ The descriptive analysis changes do not close those broader issues.
 
 ## Exit reasons and next actions
 
-The CLI writes one short summary to stderr and preserves the JSON receipt on stdout. Empty evidence exits 0: analysis ran, but no capture was found. The first suggested step, `ahl audit .`, is offline and uses no model; `ahl improve` can incur model costs. Unknown or unrecognized reasons remain inconclusive; inspect the private receipt before retrying.
+The CLI writes one short summary to stderr and preserves the JSON receipt on stdout. An empty `ahl analyze` exits 0: analysis ran, but no capture was found. The first suggested step, `ahl audit .`, is offline and uses no model; `ahl improve` can incur model costs. Unknown or unrecognized reasons remain inconclusive; inspect the private receipt before retrying.
 
 When a proposer writes `no_change`, the controller chooses the reason. `no_change_harness_supported`
 requires an executable-grader success among the verified outcomes, no failure outcome and no collection
 caveat. Every other case is `no_change_evidence_insufficient`: the receipt then carries a non-empty, ranked
 `next_steps` list (strongest observed patterns, each missing-evidence item, then `ahl audit .`), each with
-the command to run. Neither reason claims the harness is correct beyond the examined behaviors.
+the command to run. This case and an unchanged, unevaluated candidate have status `inconclusive` and exit 3;
+neither is a successful no-change evaluation.
+Neither reason claims the harness is correct beyond the examined behaviors.
 
-A receipt that ends `no_outcome_evidence`, or `no_change` after preparation (the proposer wrote `no_change`, or a
+A receipt that ends `no_outcome_evidence`, or a no-change proposal after preparation (including an inconclusive result, or a
 candidate identical to the baseline, `candidate_identical_to_baseline`), while `analysis.findings` is above zero, carries `findings_not_candidates`: `reason: findings_not_actionable`, the
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are

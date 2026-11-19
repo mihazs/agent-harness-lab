@@ -133,7 +133,7 @@ def test_stub_proposer_given_only_the_brief_cites_the_mechanism_and_is_not_point
     args = workflow.args()
     args.events = str(pipeline.root/'synthetic.jsonl')
     result = improve(args)
-    assert (result['status'], result['reason']) == ('no_change', 'no_change_evidence_insufficient')
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     output = Path(result['output'])
     assert json.loads((output/'preparation/proposal-0/proposal.json').read_text())['reason'] == 'cites Bash/tool_reported_error'
     prompt = (output/'preparation/prompt.txt').read_text()
