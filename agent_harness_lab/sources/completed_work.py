@@ -41,7 +41,7 @@ def _bounded_git(project, args, problems, deadline, label):
 
 def _git_history(project, head, problems, deadline):
     data = _bounded_git(project, ('log', '--no-show-signature', '--no-notes', '--no-decorate',
-                                 f'-n{MAX_COMMITS + 1}', '--format=%H%x00%cI%x00%B%x00', head),
+                                 f'-n{MAX_COMMITS + 1}', '--format=%H%x00%cI%x00%B%x00', '--all', head),
                         problems, deadline, 'git_history')
     fields = data.split(b'\0')
     if len(fields) % 3 != 1:
@@ -108,7 +108,13 @@ def _git_stream(project, args, content, problems, deadline, label, *, limit=MAX_
 def _git_patches(project, head, content, problems, deadline):
     return _git_stream(project, ('log', '--no-show-signature', '--no-notes', '--no-decorate', '--no-color',
                        '--no-ext-diff', '--no-textconv', '--binary', '--full-index', '--diff-merges=first-parent',
-                       '--format=commit %H%n', '--patch', head), content, problems, deadline, 'git_patches')
+                       '--format=commit %H%n', '--patch', '--all', head), content, problems, deadline, 'git_patches')
+
+
+def _git_refs(project, problems, deadline):
+    data = _bounded_git(project, ('for-each-ref', '--format=%(refname)%00%(objectname)'),
+                        problems, deadline, 'git_refs')
+    return hashlib.sha256(data).hexdigest()
 
 
 def _working_patch(project, head, content, problems, deadline, *, staged):
@@ -657,6 +663,7 @@ def capture(project, *, seconds=30, content=None):
         result['problems'] = sorted(problems)
         return result
     try:
+        result['git_refs_sha256'] = _git_refs(project, problems, deadline)
         result['commits'] = _git_history(project, head, problems, deadline)
         result['git_patches'] = _git_patches(project, head, content, problems, deadline)
         result['working_tree'] = _git_status(project, problems, deadline)
@@ -815,6 +822,8 @@ def capture(project, *, seconds=30, content=None):
             raise TimeoutError('completed-work budget exhausted')
         if _git(project, 'rev-parse', '--verify', 'HEAD', timeout=min(2, remaining)).strip() != head:
             problems.add('git_head_changed')
+        if _git_refs(project, problems, deadline) != result['git_refs_sha256']:
+            problems.add('git_refs_changed')
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('completed-work budget exhausted')
