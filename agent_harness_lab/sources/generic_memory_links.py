@@ -21,13 +21,11 @@ class LinkClaim:
     target: RecordRef | None = None
 
 
-def links(source, snapshot, rows, *, project, namespace, fields, links_field):
-    """Bind supplied rows to exact captured revisions, then project declared links without fetching targets.
-
-    Each mapped link value is a list of objects with exactly `relation` and `target` string fields.
-    Missing link fields are unknown; an empty list declares no links in that row.
-    """
-    project, namespace, links_field = _text(project), _text(namespace), _text(links_field)
+def _bind(source, snapshot, rows, *, project, namespace, fields, extra_fields):
+    """Copy and bind every supplied row to one exact captured record."""
+    project, namespace = _text(project), _text(namespace)
+    if not isinstance(extra_fields, tuple): raise ValueError('explicit additional fields required')
+    extra_fields = tuple(_text(value) for value in extra_fields)
     required = {'id', 'revision', 'project', 'namespace'}
     if not isinstance(fields, dict): raise ValueError('explicit identity mapping required')
     fields = dict(fields)
@@ -35,7 +33,7 @@ def links(source, snapshot, rows, *, project, namespace, fields, links_field):
             or source.project_sha256 != digest(project) or source.scope_sha256 != digest(namespace)
             or not isinstance(snapshot, Snapshot) or not isinstance(rows, list) or len(rows) > MAX_RECORDS
             or set(fields) != required
-            or len({_text(value) for value in fields.values()} | {links_field}) != 5):
+            or len({_text(value) for value in fields.values()} | set(extra_fields)) != 4 + len(extra_fields)):
         raise ValueError('explicit source scope and distinct mapping required')
     try:
         frozen = bytearray()
@@ -64,10 +62,17 @@ def links(source, snapshot, rows, *, project, namespace, fields, links_field):
                 or record.revision_sha256 != digest((revision, content))):
             raise ValueError('rows do not match exact captured revisions')
         seen.add(identity)
-        selected.append((record, row.get(links_field)))
+        selected.append((record, row))
     if seen != set(records): raise ValueError('rows do not cover the captured snapshot')
+    return records, selected
+
+
+def links(source, snapshot, rows, *, project, namespace, fields, links_field):
+    """Project declared links without fetching targets; absent fields remain unknown."""
+    records, selected = _bind(source, snapshot, rows, project=project, namespace=namespace, fields=fields, extra_fields=(links_field,))
     result, unknown = [], 0
-    for record, declared in selected:
+    for record, row in selected:
+        declared = row.get(links_field)
         if declared is None:
             unknown += 1
             continue
