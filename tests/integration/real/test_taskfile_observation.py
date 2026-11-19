@@ -75,3 +75,19 @@ def test_real_absent_taskfile_stays_unknown(checkout):
     assert report['mention_coverage'] == 'unknown'
     assert report['targets'] == report['mentions'] == []
     assert subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z']) == before
+
+
+def test_real_taskfile_without_runtime_root_instruction(checkout):
+    yaml = pytest.importorskip('yaml')
+    project, _ = checkout
+    taskfile = project/'Taskfile.yml'
+    if not taskfile.is_file() or taskfile.is_symlink() or (project/'CLAUDE.md').exists():
+        pytest.skip('needs a real Taskfile without a root Claude instruction')
+    before = subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z'])
+    profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
+    inventory = harness_inventory.capture(project, profile, schema_version=2)
+    report = capture(project, inventory, '.')
+    assert report['status'] == 'observed'
+    assert set(report['targets']) == set(yaml.safe_load(taskfile.read_bytes())['tasks'])
+    assert report['mention_coverage'] == 'unknown' and report['mentions'] == []
+    assert subprocess.check_output(['git', '-C', str(project), 'status', '--porcelain', '-z']) == before
