@@ -16,6 +16,17 @@ runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
+def git_running_in(checkout):
+    for process in Path('/proc').iterdir():
+        if not process.name.isdecimal(): continue
+        try:
+            if (process/'comm').read_text().strip() == 'git' and Path(os.readlink(process/'cwd')) == checkout:
+                return True
+        except (OSError, UnicodeError):
+            continue
+    return False
+
+
 @pytest.fixture(params=PROJECTS or [None], ids=lambda _: 'private-project')
 def checkout(request):
     if request.param is None: pytest.skip('set REAL_RUNNER_PROJECTS to existing checkouts')
@@ -52,6 +63,7 @@ def test_real_git_error_and_timeout_are_not_success(checkout):
     assert type(error['exit_code']) is int and error['exit_code'] != 0 and not error['timeout'] and error['stderr']
     timed = runner.execute(['git', '-C', str(checkout), 'log', '--all', '--binary', '-p'], checkout, .001)
     assert timed['timeout'] and timed['exit_code'] != 0
+    assert not git_running_in(checkout)
 
 
 def test_real_tracked_text_streams_through_stdin(checkout):
@@ -83,3 +95,4 @@ def test_real_git_history_stops_at_output_limit(checkout):
     assert 'output exceeded' in result['stderr']
     assert runner.trace_result(result) == ('execution_error', None)
     assert runner.grading_status(result) == 'grader_error'
+    assert not git_running_in(checkout)
