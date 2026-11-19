@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.226.0
+
+### Minor Changes
+
+- 539456f: Add script-free filters to the offline comparison task table and show privately imported required-assertion claims as unverified, without changing the supplied analysis or decision.
+- c2ec2a4: Export advisory, content-free session signals from explicitly selected pinned native Claude and Codex captures for `ahl score --sessions`. Missing or ambiguous tool input stays unclassified.
+
 ## 0.225.1
 
 ### Patch Changes
