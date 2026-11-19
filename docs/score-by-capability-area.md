@@ -32,6 +32,9 @@ ahl score . --spec experiment.json --records trials.json --format md
 JSON is the default and is meant for tools. `--format md` prints a table for people.
 Both list the areas in the order `ahl.json` declares them.
 
+For a reproducible two-area example and guidance on objective UI graders, see
+[author objective area graders](author-objective-area-graders.md).
+
 To look at one area, repeat `--area`:
 
 ```sh
