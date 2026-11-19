@@ -590,6 +590,15 @@ def capture(project, *, seconds=30, content=None):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('completed-work budget exhausted')
+        shallow = _git(project, 'rev-parse', '--is-shallow-repository', timeout=min(10, remaining)).strip()
+        if shallow not in ('true', 'false'):
+            raise ValueError('unknown Git history completeness')
+        if shallow == 'true':
+            result['problems'] = ['shallow_git_history']
+            return result
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('completed-work budget exhausted')
         host, port, parts = _repository(project, timeout=min(10, remaining))
         found = detect(project, deadline=deadline)
         result['provider'], result['network_used'] = found['provider'], found['network_used']
@@ -806,6 +815,11 @@ def capture(project, *, seconds=30, content=None):
             raise TimeoutError('completed-work budget exhausted')
         if _git(project, 'rev-parse', '--verify', 'HEAD', timeout=min(2, remaining)).strip() != head:
             problems.add('git_head_changed')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError('completed-work budget exhausted')
+        if _git(project, 'rev-parse', '--is-shallow-repository', timeout=min(2, remaining)).strip() != 'false':
+            problems.add('shallow_git_history')
         if _git_status(project, problems, deadline) != result['working_tree']:
             problems.add('working_tree_changed')
         for name, staged in (('staged_patch', True), ('unstaged_patch', False)):
