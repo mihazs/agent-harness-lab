@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.231.0
+
+### Minor Changes
+
+- e5d8066: Include GitHub and GitLab CI configuration filenames in the private feedback sensor inventory.
+
 ## 0.230.0
 
 ### Minor Changes
