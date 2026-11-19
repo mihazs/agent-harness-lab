@@ -92,10 +92,13 @@ def analysis_view(data, args, store=None):
     return out
 
 
-def _marker(case):
+def _marker(case, root):
     from ..telemetry.schema import event
-    return event(dict(case_id=case, event_id='coverage:event_store_truncated:' + case, activity='capture_coverage',
-                      capture_complete=False, missing_reason='event_store_truncated'))
+    row = dict(case_id=case, event_id='coverage:event_store_truncated:' + case, activity='capture_coverage',
+               capture_complete=False, missing_reason='event_store_truncated')
+    if root is not None:
+        row['root_case_id'] = root
+    return event(row)
 
 
 def store_rows(lines, args, report):
@@ -109,12 +112,13 @@ def store_rows(lines, args, report):
     from ..telemetry.schema import serialize
     cap = limits(args)
     full = bool(getattr(args, 'full_detail', False))
-    started, written, omitted, used, reason, markers, reserve = time.monotonic(), 0, 0, 0, None, set(), 0
+    started, written, omitted, used, reason, markers, reserve = time.monotonic(), 0, 0, 0, None, {}, 0
     for line in lines:
         if reason is None:
             row = json.loads(line)
             case = row.get('case_id')
-            extra = 0 if full or case in markers or not isinstance(case, str) or not case else len(serialize(_marker(case))) + 1
+            root = row.get('root_case_id')
+            extra = 0 if full or case in markers or not isinstance(case, str) or not case else len(serialize(_marker(case, root))) + 1
             if not full:
                 if used + len(line.encode()) + 1 + reserve + extra > cap['store_bytes']:
                     reason = 'byte_limit'
@@ -124,13 +128,13 @@ def store_rows(lines, args, report):
                 used += len(line.encode()) + 1
                 reserve += extra
                 if extra:
-                    markers.add(case)
+                    markers[case] = root
                 written += 1
                 yield row
                 continue
         omitted += 1
     if reason is not None:
         for case in sorted(markers):
-            yield _marker(case)
+            yield _marker(case, markers[case])
     report.update(profile=PROFILE, full_detail=full, byte_limit=cap['store_bytes'], seconds_limit=cap['store_seconds'],
                   events_written=written, truncated=dict(applied=reason is not None, reason=reason, events_omitted=omitted))
