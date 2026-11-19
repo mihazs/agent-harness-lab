@@ -2,6 +2,7 @@
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import json
 from pathlib import Path
 from agent_harness_lab.config import read_json
@@ -58,8 +59,20 @@ def claim_snapshot(source, prefix, claims, provenance, export_native, export_sha
 
 
 class LocalExport:
-    def __init__(self, manifest):
+    def __init__(self, manifest, *, identity_key=None):
         self.manifest = Path(manifest).absolute()
+        if identity_key is not None and (type(identity_key) is not bytes or len(identity_key) != 32):
+            raise ValueError('identity key must be 32 bytes')
+        self._identity_key = identity_key
+
+    def identity(self, source, value):
+        if source.schema_version == 1:
+            if self._identity_key is not None: raise ValueError('legacy source cannot use a keyed identity')
+            return digest(value)
+        if self._identity_key is None or not hmac.compare_digest(hashlib.sha256(self._identity_key).hexdigest(), source.identity_key_id):
+            raise ValueError('source identity key unavailable or mismatched')
+        raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+        return hmac.new(self._identity_key, raw, hashlib.sha256).hexdigest()
 
     def declaration(self, *, project_sha256, scope_sha256):
         fingerprint(project_sha256); fingerprint(scope_sha256)
@@ -69,7 +82,7 @@ class LocalExport:
         source = SourceSpec.parse(value['source'])
         if (source.project_sha256, source.scope_sha256) != (project_sha256, scope_sha256):
             raise ValueError('export scope mismatch')
-        if source.root_sha256 != digest(str(self.manifest.parent.resolve())):
+        if source.root_sha256 != self.identity(source, str(self.manifest.parent.resolve())):
             raise ValueError('export root identity mismatch')
         if source.identity_provenance != 'source_declared_id' or source.auth_mode != 'none':
             raise ValueError('local exports require source-declared identity and local filesystem access')

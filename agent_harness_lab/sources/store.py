@@ -1,6 +1,8 @@
 """Private metadata history; records and checkpoints commit together."""
 from collections import Counter, defaultdict, deque
 import fcntl
+import hashlib
+import hmac
 import os
 from pathlib import Path
 import stat
@@ -67,8 +69,10 @@ def validate_edges(edges, identities):
 
 class SourceStore:
     def __init__(self, path, *, project_sha256, scope_sha256,
-                 max_bytes=None, max_records=None):
+                 max_bytes=None, max_records=None, identity_key=None):
         fingerprint(project_sha256); fingerprint(scope_sha256)
+        if identity_key is not None and (type(identity_key) is not bytes or len(identity_key) != 32):
+            raise ValueError('identity key must be 32 bytes')
         if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
             raise ValueError('invalid metadata byte limit')
         if max_records is not None and (type(max_records) is not int or max_records <= 0):
@@ -76,6 +80,7 @@ class SourceStore:
         self.path = Path(path).absolute()
         self.project, self.scope = project_sha256, scope_sha256
         self.max_bytes, self.max_records = max_bytes, max_records
+        self._identity_key = identity_key
 
     def _over(self, count):
         return self.max_records is not None and count > self.max_records
@@ -84,6 +89,9 @@ class SourceStore:
         if not isinstance(source, SourceSpec):
             raise ValueError('validated source specification required')
         SourceSpec.parse(source.to_dict())
+        if source.schema_version == 2:
+            if self._identity_key is None or not hmac.compare_digest(hashlib.sha256(self._identity_key).hexdigest(), source.identity_key_id):
+                raise ValueError('source identity key unavailable or mismatched')
         if (source.project_sha256, source.scope_sha256) != (self.project, self.scope):
             raise ValueError('source project/scope mismatch')
         if writing and (not source.enabled or source.identity_provenance == 'unverified'):

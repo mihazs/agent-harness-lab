@@ -170,3 +170,64 @@ def test_real_legacy_source_journal_remains_readable(real_run):
     sources = [SourceSpec.parse(value) for value in state['sources'].values()]
     assert sources and all(store.status(source)['source_sha256'] == source.source_key for source in sources)
     assert target.read_bytes() == raw and read_regular(original, 4*1024*1024) == raw
+
+
+def test_real_keyed_source_capture_and_provenance(real_run):
+    import hmac
+    import secrets
+    import tomllib
+    from agent_harness_lab.evaluation.integrity import contained, read_regular
+    from agent_harness_lab.sources.memory_provenance import bind_provenance
+    from agent_harness_lab.sources.okf import OKFExport
+    from agent_harness_lab.sources.registry import Capability, Registry
+    from agent_harness_lab.sources.schema import SourceSpec, digest
+    from agent_harness_lab.sources.store import SourceStore
+    selected = os.environ.get('REAL_SOURCE_JOURNAL')
+    if not selected:
+        pytest.skip('set REAL_SOURCE_JOURNAL to an existing private source journal')
+    original = Path(selected)
+    original_raw = read_regular(original, 4*1024*1024)
+    journal = json.loads(original_raw)
+    scope = real_run.project/'.ai-memory.toml'
+    if not scope.is_file(): pytest.skip('selected project has no explicit memory scope')
+    config = tomllib.loads(read_regular(scope, 65536).decode('utf-8'))
+    if journal['project_sha256'] != digest(config['project']): pytest.skip('journal project differs from the selected run')
+    declaration = json.loads(read_regular(original.parent/'manifest.json', 1024*1024))
+    source_dir = real_run.checkout/'private-keyed-evidence'
+    source_dir.mkdir(mode=0o700)
+    shutil.copytree(contained(original.parent, declaration['data']), source_dir/'export', symlinks=True)
+    key = secrets.token_bytes(32)
+    def keyed(value):
+        raw = json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+        return hmac.new(key, raw, hashlib.sha256).hexdigest()
+    results = []
+    for version in (1, 2):
+        fingerprint = digest if version == 1 else keyed
+        values = dict(declaration['source'], root_sha256=fingerprint(str(source_dir.resolve())),
+                      project_sha256=fingerprint(config['project']), scope_sha256=fingerprint(config['workspace']),
+                      enabled=True, schema_version=version)
+        if version == 2: values.update(identity_scheme='hmac-sha256-v1', identity_key_id=hashlib.sha256(key).hexdigest())
+        source = SourceSpec.parse(values)
+        manifest = source_dir/f'manifest-{version}.json'
+        manifest.write_text(json.dumps(dict(schema_version=1, source=source.to_dict(), data='export')))
+        manifest.chmod(0o600)
+        identity_key = key if version == 2 else None
+        connector = OKFExport(manifest, identity_key=identity_key)
+        scope_args = dict(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
+        store = SourceStore(source_dir/f'journal-{version}.json', identity_key=identity_key, **scope_args)
+        registry = Registry()
+        registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
+        assert registry.ingest(source, store, **scope_args).source_sha256 == source.source_key
+        report = bind_provenance(connector, source, store)
+        state, _ = store.read_snapshot()
+        pages = connector.pages(source)
+        assert state['records'] and pages
+        if version == 2:
+            serialized = json.dumps(state)
+            assert all(digest(value) not in serialized for value in
+                       (config['project'], config['workspace'], str(source_dir.resolve()), pages[0].path))
+            with pytest.raises(ValueError): OKFExport(manifest).read(source)
+            with pytest.raises(ValueError): SourceStore(source_dir/f'journal-{version}.json', **scope_args).status(source)
+            with pytest.raises(ValueError): OKFExport(manifest, identity_key=secrets.token_bytes(32)).read(source)
+        results.append((len(state['records']), report['status'], report['reason'], report['counts']))
+    assert results[0] == results[1] and read_regular(original, 4*1024*1024) == original_raw

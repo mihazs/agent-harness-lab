@@ -66,21 +66,47 @@ class SourceSpec(Contract):
     read_only: bool = True
     enabled: bool = False
     schema_version: int = 1
+    identity_scheme: str | None = None
+    identity_key_id: str | None = None
+
+    @classmethod
+    def parse(cls, value):
+        fields = set(cls.__dataclass_fields__)
+        if not isinstance(value, dict) or set(value) not in (fields, fields - {'identity_scheme', 'identity_key_id'}):
+            raise ValueError('fields must match the versioned source contract')
+        if (value.get('schema_version') == 1) != ('identity_scheme' not in value):
+            raise ValueError('identity scheme requires source schema 2')
+        return cls(**value)
+
+    def to_dict(self):
+        result = asdict(self)
+        if self.schema_version == 1:
+            result.pop('identity_scheme'); result.pop('identity_key_id')
+        return result
 
     def __post_init__(self):
         self.validate(('root_sha256', 'project_sha256', 'scope_sha256'), {
             'kind': ('local_file', 'local_git', 'api', 'controller'),
             'identity_provenance': ('unverified', 'trusted_git_remote', 'source_declared_id'),
-            'auth_mode': ('none', 'configured')})
+            'auth_mode': ('none', 'configured')}, versions=(1, 2))
         label(self.provider); label(self.version)
+        if self.schema_version == 1:
+            if self.identity_scheme is not None or self.identity_key_id is not None:
+                raise ValueError('legacy source cannot declare a keyed identity')
+        else:
+            if (self.kind, self.provider, self.version, self.identity_scheme) != (
+                    'local_file', 'ai-memory-okf', '0.2', 'hmac-sha256-v1'):
+                raise ValueError('unsupported keyed source profile')
+            fingerprint(self.identity_key_id)
         if self.read_only is not True or type(self.enabled) is not bool:
             raise ValueError('sources must be read-only and explicitly enabled')
 
     @property
     def source_key(self):
         # Auth, adapter upgrades and enablement do not create a new native source.
-        return digest({k: v for k, v in self.to_dict().items() if k in
-                       ('kind', 'provider', 'root_sha256', 'project_sha256', 'scope_sha256')})
+        fields = ('kind', 'provider', 'root_sha256', 'project_sha256', 'scope_sha256')
+        if self.schema_version == 2: fields += ('identity_scheme', 'identity_key_id')
+        return digest({k: v for k, v in self.to_dict().items() if k in fields})
 
 
 @dataclass(frozen=True)

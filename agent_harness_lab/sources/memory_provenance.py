@@ -39,11 +39,11 @@ def _created(value):
     return (when.isoformat(), None) if problem is None else (None, problem)
 
 
-def _scope(metadata, source):
+def _scope(metadata, source, identity):
     project, workspace = metadata.get('project'), metadata.get('workspace')
     if project is None: return 'scope_undeclared'
     if not _identifier(project) or workspace is not None and not _identifier(workspace): return 'scope_invalid'
-    if digest(project) != source.project_sha256 or workspace is not None and digest(workspace) != source.scope_sha256:
+    if identity(project) != source.project_sha256 or workspace is not None and identity(workspace) != source.scope_sha256:
         return 'cross_scope'
     return None
 
@@ -88,7 +88,8 @@ def bind_provenance(connector, source, store):
         raise ValueError('handoff provenance requires an OKF export connector and its source')
     pages = connector.pages(source)
     store._bind(source)
-    state, key, bundle = store._read(), source.source_key, bundle_sha256(pages)
+    identity = lambda value: connector.identity(source, value)
+    state, key, bundle = store._read(), source.source_key, bundle_sha256(pages, None if source.schema_version == 1 else identity)
     journal = digest(state)
     cursor = (state['cursors'].get(key) or [None])[-1]
     snapshots = state['snapshots'].get(key, {})
@@ -97,7 +98,7 @@ def bind_provenance(connector, source, store):
         return _report(source, 'unknown', 'bundle_not_latest_checkpoint', journal, bundle)
     records = [EvidenceRecord.parse(e['record']) for e in state['records'] if e['record']['source_sha256'] == key]
     present = {(r.native_id_sha256, r.revision_sha256) for r in records if r.state == 'present'}
-    refs = {p.path: RecordRef(key, digest(p.path), p.sha256) for p in pages}
+    refs = {p.path: RecordRef(key, identity(p.path), p.sha256) for p in pages}
     sessions = {}
     for page in pages:
         if page.metadata.get('type') == SESSION_TYPE and _identifier(page.metadata.get('session_id')):
@@ -109,7 +110,7 @@ def bind_provenance(connector, source, store):
     for page, kind, field in sorted(declared, key=lambda item: refs[item[0].path].native_id_sha256):
         left, native = refs[page.path], page.metadata.get(field)
         created, created_reason = _created(page.metadata.get('created_at'))
-        row = dict(kind=kind, record_id_sha256=digest((kind, native)) if _identifier(native) else None,
+        row = dict(kind=kind, record_id_sha256=identity((kind, native)) if _identifier(native) else None,
             record=left.to_dict(), created_at=dict(status='declared' if created else 'unknown', reason=created_reason),
             scope=None, links=[])
         if (left.native_id_sha256, left.revision_sha256) not in present:
@@ -120,7 +121,7 @@ def bind_provenance(connector, source, store):
             rows.append(dict(row, status='ambiguous_identity', reason='duplicate_record_id')); continue
         nodes[left.key] = left
         facets.append(TemporalFacet(left, recorded_at=created))
-        scope = _scope(page.metadata, source); row['scope'] = scope or 'declared_match'
+        scope = _scope(page.metadata, source, identity); row['scope'] = scope or 'declared_match'
         for name, relation, target_kind in LINKS:
             namespace = 'ai-memory.'+kind
             def unlinked(reason, target=None):
@@ -136,7 +137,7 @@ def bind_provenance(connector, source, store):
             if targets is None: unlinked('link_field_invalid'); continue
             if name == 'from_session' and not targets: unlinked('from_session_missing'); continue
             for value in targets:
-                target = digest((target_kind, value))
+                target = identity((target_kind, value))
                 if scope is not None: unlinked(scope, target); continue
                 found = sessions.get(value, []) if target_kind == 'session' else [by_path[value]] if value in by_path else []
                 if not found: unlinked('target_missing', target); continue
@@ -144,7 +145,7 @@ def bind_provenance(connector, source, store):
                 other = found[0]; right = refs[other.path]
                 if other.path == page.path: unlinked('self_reference', target); continue
                 # The target must declare the same project and workspace scope as the record itself.
-                target_scope = _scope(other.metadata, source)
+                target_scope = _scope(other.metadata, source, identity)
                 if target_scope is not None: unlinked('target_'+target_scope, target); continue
                 if (right.native_id_sha256, right.revision_sha256) not in present: unlinked('target_not_imported', target); continue
                 nodes[right.key] = right
