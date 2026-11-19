@@ -98,3 +98,11 @@ def test_claims_belong_to_the_returned_capture(capture):
     _, second = connector.read_claims(source)
     assert first[0].target_node_sha256 == digest(('graphiti.entity', 'group', 'missing-entity'))
     assert second[0].target_node_sha256 == digest(('graphiti.entity', 'group', 'different-entity'))
+
+
+def test_edge_dump_depth_is_bounded_before_normalization(capture):
+    source, path, row, connector = capture
+    nested = '0'
+    for _ in range(70): nested = '[' + nested + ']'
+    path.write_text('[' + json.dumps(row)[:-1] + ',"extra":' + nested + '}]')
+    with pytest.raises(ValueError, match='invalid Graphiti edge dump'): connector.read(source)
