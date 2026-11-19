@@ -119,12 +119,13 @@ def _repository(project, *, timeout=10):
     return host, port, parts
 
 
-def _credential(provider, host, *, timeout=3):
+def _credential(provider, host, port=None, *, timeout=3):
+    authority = ('[' + host + ']' if ':' in host else host) + (':' + str(port) if port not in (None, 443) else '')
     if provider == 'gitea':
-        # Never send a token to an arbitrary remote without an explicit host binding.
-        return os.environ.get('AHL_GITEA_TOKEN') if os.environ.get('AHL_GITEA_HOST', '').lower() == host else None
+        # Bind credentials to the HTTPS authority, including a nonstandard port.
+        return os.environ.get('AHL_GITEA_TOKEN') if os.environ.get('AHL_GITEA_HOST', '').lower() == authority else None
     command = (['gh', 'auth', 'token', '--hostname', host] if provider == 'github' else
-               ['glab', 'config', 'get', 'token', '--host', host])
+               ['glab', 'config', 'get', 'token', '--host', authority])
     try:
         token = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                check=True, timeout=timeout).stdout.decode('ascii').strip()
@@ -517,7 +518,7 @@ def capture(project, *, seconds=30, content=None):
         problems.add('collection_budget_exhausted')
         result['problems'] = sorted(problems)
         return result
-    token = _credential(provider, host, timeout=min(3, remaining))
+    token = _credential(provider, host, port, timeout=min(3, remaining))
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         problems.add('collection_budget_exhausted')

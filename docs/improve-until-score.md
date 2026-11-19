@@ -14,8 +14,9 @@ Before preparation, `ahl improve` reads the current Git history and selects the 
 forge from its remote URL. It reads merged pull or merge requests, closed issues and
 their discussions up to the start of collection. GitHub and GitLab authentication
 uses the configured `gh` or `glab` login when available. For Gitea, set
-`AHL_GITEA_HOST` to the exact remote hostname and `AHL_GITEA_TOKEN` to a read-only
-token; the token is sent only when the hostname matches. Anonymous access is attempted
+`AHL_GITEA_HOST` to the remote hostname (include `:port` for a nonstandard HTTPS
+port) and `AHL_GITEA_TOKEN` to a read-only token; the token is sent only when the
+HTTPS authority matches. Anonymous access is attempted
 without a token. Self-hosted forges are probed over HTTPS.
 
 The private `completed-work/history.json` artifact indexes commit messages, tracked and

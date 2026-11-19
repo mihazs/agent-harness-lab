@@ -6,8 +6,9 @@ import pytest
 
 
 # Every AHL_* variable the product code reads. tests/unit/repository/test_env_isolation.py derives the read set from
-# the code and fails when one is missing here; AHL_STATE_HOME and AHL_MEMORY_STORE are paths, the third denies entry.
-AHL_AMBIENT_VARIABLES = ('AHL_STATE_HOME', 'AHL_MEMORY_STORE', 'AHL_MANAGED_PREPARATION')
+# the code and fails when one is missing here, including forge credentials.
+AHL_AMBIENT_VARIABLES = ('AHL_STATE_HOME', 'AHL_MEMORY_STORE', 'AHL_MANAGED_PREPARATION',
+                         'AHL_GITEA_HOST', 'AHL_GITEA_TOKEN')
 
 
 @pytest.fixture(autouse=True, scope='session')
