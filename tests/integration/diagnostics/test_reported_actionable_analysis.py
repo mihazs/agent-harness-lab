@@ -120,7 +120,7 @@ def test_no_evidence_history_is_reported_as_insufficient_with_ranked_commands_ne
     assert any(row['command'].startswith('ahl ') for row in steps)
     said = json.dumps(result) + exit_guidance.summary(result)
     assert 'proposer_no_change' not in said and 'harness is fine' not in said.replace('does not show the harness is fine', '')
-    assert exit_guidance.summary(result).startswith('Evidence insufficient.')
+    assert exit_guidance.summary(result).startswith('Inconclusive.')
 
 
 def collected(*outcomes, caveats=()):
