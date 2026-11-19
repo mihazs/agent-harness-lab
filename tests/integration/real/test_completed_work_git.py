@@ -90,7 +90,8 @@ def test_real_git_history_and_patches_cover_every_reachable_commit(checkout):
         assert (length, digest.hexdigest()) == (expected_length, expected_digest.hexdigest())
 
 
-def test_real_untracked_work_is_captured_without_modifying_source(checkout, request):
+@pytest.mark.parametrize('suffix', ['.svg', '.zst'], ids=['text', 'binary'])
+def test_real_untracked_work_is_captured_without_modifying_source(checkout, request, suffix):
     project = Path(request.node.callspec.params['checkout']).resolve(strict=True)
     output = subprocess.check_output(['git', '-c', 'core.fsmonitor=false', '-C', str(project),
                                       'status', '--porcelain=v1', '-z', '--untracked-files=all'])
@@ -99,7 +100,7 @@ def test_real_untracked_work_is_captured_without_modifying_source(checkout, requ
         if not entry.startswith(b'?? '):
             continue
         relative = Path(os.fsdecode(entry[3:]))
-        if relative.is_absolute() or '..' in relative.parts or relative.suffix.lower() != '.svg':
+        if relative.is_absolute() or '..' in relative.parts or relative.suffix.lower() != suffix:
             continue
         candidate = project/relative
         if any(path.is_symlink() for path in (candidate, *candidate.parents) if path.is_relative_to(project)):
@@ -109,7 +110,7 @@ def test_real_untracked_work_is_captured_without_modifying_source(checkout, requ
             source = candidate
             break
     if source is None:
-        pytest.skip('no bounded existing untracked SVG file')
+        pytest.skip('no bounded existing untracked file of this type')
     target = checkout/source.relative_to(project)
     assert not any(path.is_symlink() for path in (target, *target.parents) if path.is_relative_to(checkout))
     assert not target.exists() and not target.is_symlink()
