@@ -3,10 +3,10 @@ import json
 import os
 from pathlib import Path
 import platform
-import resource
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 
 import pytest
@@ -37,8 +37,9 @@ def test_real_codex_initializes_without_exposing_login_or_network():
     project_name = os.environ.get('REAL_CODEX_SUBSCRIPTION_PROJECT')
     host_home = os.environ.get('REAL_CODEX_HOST_HOME')
     binary = shutil.which('codex')
-    if not project_name or not host_home or not binary or platform.machine() != 'x86_64':
+    if not project_name or not host_home or not binary or sys.platform != 'linux' or platform.machine() != 'x86_64':
         pytest.skip('requires a real project and Linux x86-64 Codex subscription')
+    import resource
     environment = dict(os.environ, HOME=host_home, CODEX_HOME=os.environ.get('REAL_CODEX_LOGIN_HOME', str(Path(host_home)/'.codex')))
     environment.pop('CODEX_API_KEY', None)
     auth = codex_subscription.source(environment)
