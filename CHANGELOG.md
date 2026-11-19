@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.228.0
+
+### Minor Changes
+
+- e0c13db: Allow interaction contracts to declare permitted reads and preserve unknown results when read capture is incomplete.
+
 ## 0.227.0
 
 ### Minor Changes
