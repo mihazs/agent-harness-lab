@@ -328,7 +328,7 @@ def render(report):
         row = (pair['task'], pair['root'], pair['family'], pair['repeat'], 'yes' if pair['planned'] else 'no',
                _arm(pair, 'baseline'), _arm(pair, 'candidate'), pair['verdict'].replace('_', ' '), reasons, coverage)
         if assertions: row += ('; '.join(claim_text(claims, arm, status) for arm, status in zip(sbs.ARMS, statuses)),)
-        gap = 'yes' if 'unknown' in statuses else 'no'
+        gap = 'yes' if assertions and 'unknown' in statuses else 'no'
         rows.append((pair['verdict'], coverage, claim, gap, number, row))
         timeline = pair['timeline']
         events = [(row['match'].replace('_', ' '), _event(row.get('baseline')), _event(row.get('candidate'))) for row in timeline['rows']]
