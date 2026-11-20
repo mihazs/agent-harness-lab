@@ -46,13 +46,16 @@ class Faulty(Budgeted):
 def end_state(code, captured):
     """The one rule every cell must meet: a typed, non-vacuous receipt on stdout and no crash trace.
 
-    Returns the parsed receipt. A zero exit is never an adoption, and a `no_change` always says why.
+    Returns the parsed receipt. A zero exit is a journaled, verified install or a `no_change` that says why.
     """
     assert 'Traceback' not in captured.err, captured.err
     try:
         receipt = json.loads(captured.out)
     except ValueError:
         raise AssertionError(f'no JSON receipt on stdout: code={code} out={captured.out[:300]!r} err={captured.err[-300:]!r}') from None
+    if receipt['status'] == 'applied':  # a run the fault did not stop installs its winner: journaled, verified and reversible
+        assert code == 0 and receipt['changed_files'] and receipt['application']['status'] == 'applied_verified' and receipt['rollback'], receipt
+        return receipt
     status, reason = receipt['status'], receipt['reason']
     assert status in EXIT_CODES and isinstance(reason, str) and reason, receipt
     assert code == EXIT_CODES[status], (code, receipt)

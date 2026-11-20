@@ -217,7 +217,7 @@ def main(argv=None):
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
     _TypedParser.command = argv[0] if argv else None
-    parser = _TypedParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
+    parser = _TypedParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and install the\nwinning harness candidate in one call. AHL itself writes private state and, for a winning candidate, a journaled install with a rollback\ncommand; a project ahl.json, watch and user-level scopes keep candidates as recommendations, and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action=_VersionAction, help='Print the installed AHL version and exit without running a command')
@@ -264,15 +264,16 @@ def main(argv=None):
     from .loop.entry import EXIT_TEXT
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
-            'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
+            'improve': 'Stage and evaluate harness candidates, then install the winning one through a rollback journal (a project ahl.json keeps it a recommendation)',
             'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence or configuration, or a classified transient retry; AHL never writes harness files'}
         boundary = {'analyze': '',
             'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
-                'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+                'A winning candidate is installed through a rollback journal; the receipt names the changed files and the ahl rollback command.\n'
+                'Installing is not certification. A project ahl.json, a user-level scope and watch keep the candidate a recommendation.\n'
                 'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
                 'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
-                'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
-                'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
+                '--repair-contracts applies only a bounded skill-header repair, without model calls, through the same journal.\n'
+                'No commit, publish, deploy or background service.\n',
             'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
                 'AHL never writes project harness files; watch has no --repair-contracts and applies no candidate.\n'
                 'Each pass uses the same cooperative agent as improve: read-only project access is instructed, not enforced.\n'

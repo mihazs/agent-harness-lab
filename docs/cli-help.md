@@ -44,9 +44,10 @@ ahl watch . --agent codex --timeout 600 --once
 The improvement examples require a trusted, supported, separately authenticated
 runtime and may spend model resources. JSON receipts and private artifacts carry
 the actual outcome; help text and declared configuration never grant authority or
-certify success. Behavioral candidates remain recommendations. Explicit
-`--repair-contracts` is a separate bounded structural application path; `watch`
-has no such option and never writes harness files itself. The agent either command
+certify success. `improve` installs a winning candidate through a rollback journal
+and reports it as not certified; a project `ahl.json`, a user-level scope and `watch`
+keep candidates as recommendations. Explicit `--repair-contracts` is a separate bounded
+structural application path; `watch` has no such option and never writes harness files itself. The agent either command
 starts is cooperative: read-only project access is instructed, not enforced.
 `ahl improve --help` and `ahl watch --help` list what each command changes, what
 AHL never writes and that cooperative limit. `ahl improve --help` also describes the

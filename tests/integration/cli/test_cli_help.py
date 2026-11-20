@@ -30,8 +30,8 @@ def test_top_level_help_lists_every_command(tmp_path):
 
 
 @pytest.mark.parametrize(('args', 'boundaries'), [
-    (('--help',), ('behavioral candidates stay recommendations', 'except explicit improve --repair-contracts')),
-    (('improve', '--help'), ('behavioral candidates stay recommendations', 'explicit --repair-contracts may apply')),
+    (('--help',), ('a journaled install with a rollback command', 'keep candidates as recommendations')),
+    (('improve', '--help'), ('installed through a rollback journal', 'installing is not certification', 'keep the candidate a recommendation')),
     (('watch', '--help'), ('watch has no --repair-contracts and applies no candidate',)),
 ])
 def test_help_states_adoption_boundary(tmp_path, args, boundaries):

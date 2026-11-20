@@ -72,10 +72,12 @@ The command automatically:
    development/regression/held-out tasks, and frozen evaluator inputs. Baseline and
    candidate run under the same selected CLI. A failed candidate may be refined once
    with fresh held-out inputs, within the shared resource ceiling.
-5. **Reports eligible candidates.** A descriptive comparison requires a reproduced baseline development failure,
-   passing candidate tasks, passing baseline regression controls, and unchanged inputs.
-   Behavioral candidates remain recommendations while role isolation, audited lineage,
-   repeated certification and effective runtime verification are unavailable.
+5. **Installs the winning candidate.** A winner needs a reproduced baseline development failure that the
+   candidate fixes, no task the baseline passed and the candidate fails, passing baseline regression controls,
+   and unchanged inputs. `ahl improve` installs it through a rollback journal and ends `applied`;
+   a tie is installed too, labelled `no_regression_observed` and never as an improvement. That is not
+   certification: role isolation, audited lineage, repeated certification and effective runtime verification
+   stay unavailable and are reported as such. A project `ahl.json` keeps the winner a recommendation.
    Ties, incomplete results, and failed checks leave project files unchanged.
 
 An optional hint can focus the investigation without replacing discovery:
@@ -120,7 +122,8 @@ certification remain unverified; behavioral repairs still require review.
 Candidate snapshots cover `AGENTS.md`, `CLAUDE.md`, project-local
 `.agents/skills/` and `.claude/skills/`, and an existing project-owned `skills/` tree.
 Symlinked/global skills and runtime permission settings are outside adoption scope.
-Behavioral candidates remain recommendations. The explicit `--repair-contracts`
+A winning behavioral candidate is installed with journaled rollback and is never certified; a project
+`ahl.json` keeps it a recommendation. The explicit `--repair-contracts`
 mode can apply a narrowly supported skill-header BOM repair with journaled rollback;
 it does not run behavioral optimization or certify native activation.
 The command does not commit, publish, deploy, or install a background service.

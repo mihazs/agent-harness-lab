@@ -44,7 +44,7 @@ class TestDefaultDecisionDisposition:
                          '--claude', 'missing', '--timeout', '30', '--output', str(output), *extra])
         return code, json.loads((output / 'workflow.json').read_text())
 
-    def assert_no_authority(self, result):
+    def assert_no_authority(self, result, applied=False):
         decision = result['decision']
         assert decision['profile'] == policy.SINGLE_RUN_PROFILE
         assert decision['evidence_scope'] == 'single_run_descriptive_only'
@@ -64,8 +64,9 @@ class TestDefaultDecisionDisposition:
             assert reason in decision['reasons']
         assert set(decision['unmet_prerequisites']) == set(result['implementation_prerequisites']['mandatory_certification'])
         assert result['automatic_promotion'] is False
-        assert result['changed_files'] == []
-        assert (self.project / 'AGENTS.md').read_text() == self.original
+        # an installed winner is the operator's request: the files moved, and the decision still carries no authority
+        assert (result['changed_files'], (self.project / 'AGENTS.md').read_text() != self.original) == (['AGENTS.md'], True) if applied else (
+            result['changed_files'] == [] and (self.project / 'AGENTS.md').read_text() == self.original)
         binding = decision['bindings']
         evaluation = Path(binding['evaluation'])
         assert 'evaluation_sha256' not in binding
@@ -78,10 +79,10 @@ class TestDefaultDecisionDisposition:
     def test_improved_candidate_explains_insufficient_single_run_evidence(self):
         self.original = 'bad'
         code, result = self.run_cli()
-        assert (code, result['status']) == (3, 'inconclusive')
-        assert result['recommendation'] == 'candidate_requires_independent_certification'
-        decision = self.assert_no_authority(result)
-        assert decision['disposition'] == 'insufficient_evidence'
+        assert (code, result['status']) == (0, 'applied')
+        assert 'recommendation' not in result and result['application']['certification'] == 'not_established'
+        decision = self.assert_no_authority(result, applied=True)
+        assert decision['disposition'] == 'insufficient_evidence'  # installed at the operator's request, still not certified
         assert decision['observed_pattern'] == 'candidate_passed_where_baseline_failed'
         assert decision['promotion']['status'] == 'inconclusive'
         assert decision['observed']['pairs'] == dict(candidate_only_passed=2, baseline_only_passed=0,
@@ -155,14 +156,13 @@ class TestDefaultDecisionDisposition:
         assert label['label'] == 'insufficient' and label['reasons'][0] == 'grader_changed_after_trials'
         assert label['adoption_support'] is False and label['comparison_valid_for_adoption'] is False
 
-    def test_no_change_reports_observed_absence_not_failure(self):
+    def test_a_tie_is_installed_as_no_regression_observed_and_never_as_an_improvement(self):
         self.original = 'good'
         (self.project / 'AGENTS.md').write_text('good')
         code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
-        assert 'recommendation' not in result
-        assert 'blocked_prerequisites' not in result
-        decision = self.assert_no_authority(result)
+        assert (code, result['status'], result['application']['basis']) == (0, 'applied', 'no_regression_observed')
+        assert 'recommendation' not in result and 'partial_improvement' not in result
+        decision = self.assert_no_authority(result, applied=True)
         assert decision['disposition'] == 'insufficient_evidence'
         assert decision['observed_pattern'] == 'no_observed_difference'
         assert decision['observed']['pairs']['both_passed'] == 3
@@ -185,7 +185,8 @@ class TestDefaultDecisionDisposition:
         self.original = 'good'
         (self.project / 'AGENTS.md').write_text('good')
         code, result = self.run_cli()
-        assert (code, result['status'], result.get('reason')) == (0, 'no_change', 'evaluation_no_improvement')
+        # Regression (fixed-in: 0.232.0): the favorable branch digested every trial workspace and rejected the symlink a trial made.
+        assert (code, result['status'], result['application']['basis']) == (0, 'applied', 'no_regression_observed')
         assert result['decision']['observed_pattern'] == 'no_observed_difference'
         assert any(path.is_symlink() for path in (self.root / 'run' / 'evaluation-0').rglob('*'))
 
@@ -212,7 +213,7 @@ class TestDefaultDecisionDisposition:
         (self.project / 'AGENTS.md').write_text('good')
         with patch('agent_harness_lab.promotion.policy.single_run_decision', side_effect=RuntimeError('synthetic')):
             code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+        assert (code, result['status']) == (0, 'applied')
         assert (result['decision']['status'], result['decision']['reason']) == ('unavailable', 'RuntimeError')
         assert not public_export_allowed([result['decision']])
 

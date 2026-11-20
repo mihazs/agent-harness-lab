@@ -7,6 +7,7 @@ import json
 import os
 import random
 from pathlib import Path
+import shlex
 import shutil
 import stat
 import sys
@@ -558,18 +559,46 @@ def trial_timeout(manifest, available, planned=1):
     return min(float(manifest.get('timeout_seconds', 180)), available / planned)
 
 
+def _targets_writable(project, names):
+    """True when every file the plan would change, and the folder a replacement needs, accepts a write: a read-only
+    harness the owner protected is left as it is and keeps the recommendation."""
+    for name in names:
+        target = project / name
+        folder = target.parent
+        while not folder.exists() and folder != project: folder = folder.parent
+        if not os.access(folder, os.W_OK | os.X_OK) or (target.exists() and not os.access(target, os.W_OK)): return False
+    return True
+
+
+# The proposer of an installing run: the evaluation, not the proposer, decides whether a change is kept, so a missing
+# verified outcome is no reason to stop. Completed by the proposal path and the no_change form.
+STAGE_A_CANDIDATE = """The operator asked for an improvement, and the evaluation stage decides whether your change is kept: a candidate
+that scores worse than the baseline is discarded, any other is installed with a rollback. Missing verified outcomes, unverified
+capture, ambiguous evidence or a baseline that passes the convention checks are therefore not reasons to stop: stage the smallest
+falsifiable candidate for the strongest observed pattern or the clearest gap that source inspection shows, and name its falsifier.
+Only when every change you can name would make the harness worse, write"""
+
+
+def _installs(args):
+    """`ahl improve` on the project scope with a native CLI is the operator asking for the change. `ahl watch`, the
+    programmatic entry, a user-level scope, the controlled Responses backend (its own certification track) and a project
+    ahl.json (recommendation-only by declaration) keep every candidate a recommendation."""
+    return (getattr(args, 'command', None) == 'improve' and not getattr(args, 'project_settings', None)
+            and getattr(args, 'scope', 'project') == 'project' and args.agent != 'responses')
+
+
 def adopt(project, baseline, candidate, original, proposed, scoped=False):
     """Journal a directly authorized owned patch; behavioral controller is gated."""
     receipt = adopt_with_receipt(project, baseline, candidate, original, proposed, scoped)
     return [operation['path'] for operation in receipt['operations']]
 
 
-def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False, provenance=None):
+def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=False, provenance=None, locked=False):
     """adopt(), returning the re-read target-state receipt; a no-change set returns status no_change.
-    provenance replaces the journal source and adds fields (the reviewed plan's identity)."""
+    provenance replaces the journal source and adds fields (the reviewed plan's identity). locked: the caller holds the project lock."""
     from agent_harness_lab.application_receipt import application_receipt
     from agent_harness_lab.promotion.journal import Journal, file_record
-    with project_lock(project):
+    with contextlib.nullcontext() if locked else project_lock(project):
         if candidate_states(candidate, original) != proposed:
             raise ValueError('Evaluated candidate changed before adoption')
         verdict = agents_validation.review_tree(baseline, candidate, original, proposed).verdict
@@ -836,6 +865,7 @@ def _improve(args):
     proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
     model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
+    basis = None  # why the favorable branch was taken: improvement_observed or no_regression_observed
     final_attempt = None
     proposed = None
     grader_changed = False
@@ -904,7 +934,7 @@ Only modify {candidate} and create files in {proposal_folder}. Never modify base
 previous attempts, global skills, model settings, permissions, hooks or credentials. No commits,
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
-If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
+{STAGE_A_CANDIDATE if _installs(args) else 'If none is supported, write'} {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 {preparation.guidance()}
 Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
 {instruction_validation.PROPOSER_GUIDANCE}
@@ -914,7 +944,7 @@ Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparat
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 {MECHANISM_GUIDANCE}
-The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
+The parent will reject incomplete/changed inputs, regressions, {'' if _installs(args) else 'unsupported ties, '}and concurrent edits.
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
@@ -1296,7 +1326,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                             if t['version'] == 'baseline' and t['split'] == 'regression')
         improvement = any(t['status'] == 'failed' for t in trials
                           if t['version'] == 'baseline' and t['split'] == 'development')
-        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass:
+        # A candidate that fixed a failing development task and failed only what the baseline also fails scored higher
+        # with nothing lost. That is a gain to keep, not a failed evaluation to refine away.
+        partial = None
+        if not candidate_pass and all(t['status'] in ('passed', 'failed') for t in trials):
+            passed = {version: {t['task'] for t in trials if t['version'] == version and t['status'] == 'passed'} for version in ('baseline', 'candidate')}
+            gained = sorted(passed['candidate'] - passed['baseline'] - {t['task'] for t in trials if t['split'] != 'development'})
+            if gained and passed['baseline'] <= passed['candidate']:
+                partial = dict(gained=gained, still_failing=sorted({t['task'] for t in trials} - passed['candidate']))
+        if evaluated['inputs_unchanged'] and (candidate_pass or partial) and controls_pass:
             current_harness = {str(path.relative_to(args.project)):file_state(path)
                                for path in harness_files(args.project,allowed_paths(args))}
             if current_harness != original:
@@ -1304,7 +1342,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
                     baseline, frozen, project=args.project, deadline=started+args.timeout):
                 raise ValueError('Instruction context changed during evaluation; result is stale')
-        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
+        # A tie is installed only where a winner would be: the baseline did not score better, so "no change" is not
+        # justified, and the receipt says no_regression_observed instead of claiming an improvement.
+        if evaluated['inputs_unchanged'] and controls_pass and (candidate_pass and (improvement or _installs(args)) or partial):
+            basis = 'improvement_observed' if improvement or partial else 'no_regression_observed'
+            if partial: result['partial_improvement'] = partial
             removal = result.get('instruction_removal') if instruction is not None else None
             if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
                 # Removed active guidance is recommended only under faithful passing behavioral controls.
@@ -1314,7 +1356,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             from .harness_change_plan import produce,attach
             common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
                 diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),
-                controls=dict(evaluation_sha256=runner.digest(Path(options.output)),candidate_pass=candidate_pass,controls_pass=controls_pass),
+                # The results file, not the whole output tree: trial workspaces hold whatever the agent made, symlinks included.
+                controls=dict(results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),candidate_pass=candidate_pass,controls_pass=controls_pass),
                 deferred=['behavioral_application_pending_independent_certification','skill_lifecycle',
                           *surfaces.deferred(surfaces.adopted())])
             common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(frozen,original))
@@ -1368,6 +1411,21 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
         from .evaluation import before_after
         before_after.attach(result, output, dict(single_run, bindings=bindings), margin=getattr(args, 'regression_margin', None))
+    if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
+            and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])):
+        # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
+        applied = adopt_with_receipt(args.project, baseline, frozen, original, proposed, allowed_paths(args) is not None,
+                                     provenance=dict(source='evaluated_candidate_apply', plan_sha256=common_plan.sha256), locked=True)
+        if applied['status'] != 'no_change':
+            del result['recommendation']
+            result.update(status='applied', changed_files=[operation['path'] for operation in applied['operations']],
+                          application=dict(applied, basis=basis, authority='operator_invocation', certification='not_established'),
+                          deployment=applied['deployment'],
+                          rollback=f'ahl rollback {applied["deployment"]} --project {shlex.quote(str(args.project))}')
+    if basis == 'no_regression_observed' and result.get('recommendation') == 'candidate_requires_independent_certification':
+        # A tie that could not be installed supports no recommendation either.
+        for name in ('recommendation', 'blocked_prerequisites', 'plan', 'plan_sha256'): result.pop(name, None)
+        result.update(status='no_change', reason='evaluation_no_improvement')
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     if model_calls: result['model_calls'] = model_calls

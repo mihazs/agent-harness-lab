@@ -11,23 +11,24 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 # Exact help snapshots: the lines that say what each command changes and never changes.
-TOP_DESCRIPTION = ('Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\n'
-                   'harness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n'
-                   '(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.\n')
+TOP_DESCRIPTION = ('Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and install the\n'
+                   'winning harness candidate in one call. AHL itself writes private state and, for a winning candidate, a journaled install with a rollback\n'
+                   'command; a project ahl.json, watch and user-level scopes keep candidates as recommendations, and the cooperative agent is not sandboxed.\n')
 SUMMARIES = {
-    'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes '
-               '(only --repair-contracts may apply bounded skill-header repairs)',
+    'improve': 'Stage and evaluate harness candidates, then install the winning one through a rollback journal '
+               '(a project ahl.json keeps it a recommendation)',
     'campaign': 'Create, inspect and cancel private planned campaigns offline; execution is not implemented',
     'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence '
              'or configuration, or a classified transient retry; AHL never writes harness files',
 }
 BOUNDARIES = {
     'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
-               'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+               'A winning candidate is installed through a rollback journal; the receipt names the changed files and the ahl rollback command.\n'
+               'Installing is not certification. A project ahl.json, a user-level scope and watch keep the candidate a recommendation.\n'
                'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
                'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
-               'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
-               'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
+               '--repair-contracts applies only a bounded skill-header repair, without model calls, through the same journal.\n'
+               'No commit, publish, deploy or background service.\n',
     'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
              'AHL never writes project harness files; watch has no --repair-contracts and applies no candidate.\n'
              'Each pass uses the same cooperative agent as improve: read-only project access is instructed, not enforced.\n'
@@ -57,15 +58,15 @@ FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automat
 UNQUALIFIED = ('never changes:', 'never change:', 'never edits', 'never apply behavioral changes to the project',
                'only when evidence or configuration changes')
 README_BOUNDARY = (
-    '`ahl improve .` writes private state only: staged baseline and candidate copies, evaluation results, '
-    'a change plan and a run lock. AHL itself never writes project instructions, skills or hooks.',
+    '`ahl improve .` stages baseline and candidate copies, evaluation results, a change plan and a run lock as private state.',
+    'installs the evaluated candidate into the project through a rollback journal and ends `applied`',
     'It is told to treat the project as read-only, but nothing enforces that; your agent\'s own permission '
     'settings decide whether it can write there.',
     'AHL rechecks the project harness before it recommends and rejects a stale result, but it does not revert '
     'such a change.',
-    'A candidate that passes evaluation is reported for independent certification; it is not applied.',
-    '`ahl improve . --repair-contracts` is the one exception',
-    'A project `ahl.json` keeps even that repair recommendation-only.',
+    'Installing is your request, not certification',
+    '`ahl improve . --repair-contracts` applies only a bounded skill-header repair',
+    '`ahl.json` keeps even that repair recommendation-only.',
     '`ahl watch .` reruns the same recommendation-only staging and evaluation when evidence or execution '
     'configuration changes, or after a classified transient failure.',
     'has no `--repair-contracts` option and never writes harness files itself; its agent is cooperative in the same way.',
