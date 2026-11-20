@@ -63,7 +63,8 @@ def _text(value):
 
 
 class _Capture:
-    def __init__(self, project, harness):
+    def __init__(self, project, harness, any_version=False):
+        self.any_version, self.unverified = any_version, False
         # The text the report will judge, by loaded key: an attachment counts only when it carries exactly this text.
         self.project, self.id, self.turns, self.loaded, self.compactions = PurePosixPath(project), None, [], {}, set()
         self.judged = {f"{source['layer']}:{source['name']}": source['text'] for source in harness}
@@ -88,10 +89,16 @@ class _Capture:
                 turn[name] = value.replace('\0', '')
         self.add_turn(turn)
 
+    def other_version(self):
+        # Read only on the operator's opt-in: the row shapes of an unverified release are assumed, so the session is marked.
+        if not self.any_version:
+            raise Skipped('unsupported_version')
+        self.unverified = True
+
     def finish(self):
         if self.id is None:
             raise Skipped('no_session')
-        return dict(session=self.id, capture='partial', project_dir=str(self.project), loaded=self.loaded, turns=self.turns, compactions=sorted(self.compactions))
+        return dict(**(dict(unverified_version=True) if self.unverified else {}), session=self.id, capture='partial', project_dir=str(self.project), loaded=self.loaded, turns=self.turns, compactions=sorted(self.compactions))
 
 
 class _Claude(_Capture):
@@ -102,7 +109,7 @@ class _Claude(_Capture):
         if kind not in ('user', 'assistant', 'attachment') and not boundary:
             return
         if row.get('version') not in VERIFIED:
-            raise Skipped('unsupported_version')
+            self.other_version()
         if row.get('isSidechain') is not False:
             raise Skipped('subagent_transcript' if row.get('isSidechain') is True else 'malformed')
         session = _text(row.get('sessionId'))
@@ -155,7 +162,7 @@ class _Codex(_Capture):
             if kind != 'session_meta':
                 raise Skipped('no_session')
             if payload.get('cli_version') != PINNED_VERSION:
-                raise Skipped('unsupported_version')
+                self.other_version()
             if not _inside(payload.get('cwd'), self.project):
                 raise Skipped('foreign_project')
             self.id = _text(payload.get('id'))
@@ -205,14 +212,14 @@ def _reason(error):
     return 'malformed'
 
 
-def read_session(path, runtime, project, harness=()):
+def read_session(path, runtime, project, harness=(), any_version=False):
     """One native capture as a raw session of the sessions file; raises Skipped with a typed reason when it cannot be read.
 
     harness is the rule files (layer, name, text) the report will judge; a rule file counts as loaded only when an attachment carries its text.
     """
     if runtime not in RUNTIMES:
         raise ValueError('runtime must be claude or codex')
-    capture = (_Claude if runtime == 'claude' else _Codex)(Path(project).resolve(), harness)
+    capture = (_Claude if runtime == 'claude' else _Codex)(Path(project).resolve(), harness, any_version)
     # The directory the caller named may hold `..` or links; the file itself must be a plain regular file (checked below).
     path = Path(path).absolute()
     path = path.parent.resolve() / path.name
@@ -240,7 +247,7 @@ def read_session(path, runtime, project, harness=()):
     return capture.finish()
 
 
-def read_sessions(files, project, harness=()):
+def read_sessions(files, project, harness=(), any_version=False):
     """(raw sessions, {reason: count}) for (runtime, path) pairs; every skipped capture is counted, none is read as clean.
 
     The file and byte bounds charge the captures that were really read; a subagent or foreign-project file is turned
@@ -260,7 +267,7 @@ def read_sessions(files, project, harness=()):
             skipped['over_byte_budget'] += 1
             continue
         try:
-            session = read_session(path, runtime, project, harness)
+            session = read_session(path, runtime, project, harness, any_version)
         except Skipped as error:
             skipped[error.reason] += 1
             if error.reason not in CHEAP_SKIPS:
@@ -312,7 +319,10 @@ def for_analysis(args, data):
     harness = harness_files(project)
     # --history-from names the checkout whose sessions were read for this (worktree) project: they are recorded under that path.
     recorded_in = Path(args.history_from).resolve() if getattr(args, 'history_from', None) else project
-    sessions, skipped = read_sessions(files, recorded_in, harness)
+    # improve --correction-excerpts: the operator opted in to quoting their own messages, so sessions of other releases are read too.
+    excerpts = bool(getattr(args, 'correction_excerpts', False))
+    sessions, skipped = read_sessions(files, recorded_in, harness, excerpts)
+    unverified = sum(session.pop('unverified_version', False) for session in sessions)
     if not sessions:
         # A bound that stopped the read is not "unreadable": the untried captures may be fine.
         bounded = 'over_file_limit' in skipped or 'over_byte_budget' in skipped
@@ -320,13 +330,18 @@ def for_analysis(args, data):
         return dict(base, status='not_run', reason=reason, skipped=skipped, user_reactions=user_reactions.not_run(reason)), None
     # Lifted by brief.build into a sibling section of the brief; it needs no parsed rule, so it survives a rejected adherence input.
     base['user_reactions'] = user_reactions.summarize(sessions)
+    if excerpts:
+        # The document is private and holds user text: the caller pops it, writes it beside the report and the brief keeps the count only.
+        base['user_corrections'] = user_reactions.corrections(sessions)
+        base['user_reactions'].update(excerpts=len(base['user_corrections']['rows']), unverified_version_sessions=unverified)
     try:
         report = adherence.build(adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)), harness)
     except ValueError:
         return dict(base, status='not_run', reason='adherence_input_rejected', skipped=skipped), None
     layers_not_read = ['global'] if 'global' in getattr(args, 'scope', 'project').split('+') else []
     section = dict(base, status='completed', profile=report['profile'], artifact=ARTIFACT, redaction=report['redaction'],
-                   sessions=dict(read=len(sessions), unknown_lineage=report['sessions']['unknown_lineage'], skipped=skipped),
+                   sessions=dict(read=len(sessions), unknown_lineage=report['sessions']['unknown_lineage'], skipped=skipped,
+                                 **(dict(unverified_version=unverified) if excerpts else {})),
                    findings=report['counts'], abstentions=len(report['abstentions']),
                    mechanisms=dict(sorted(Counter(f['mechanism'] for f in report['findings']).items())),
                    rule_files_read=len(report['inventory']['sources']), rule_layers_not_read=layers_not_read)

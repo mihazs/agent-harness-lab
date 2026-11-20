@@ -21,7 +21,9 @@ fixture, using the existing paired evaluation, and nothing else changes.
 
 It is a hypothesis test, not a replay. The fixture is synthetic and built from the
 content-free brief, never from captured prompts, paths or error bodies, so a probe cannot
-leak a private history. The result answers one question: under these controlled conditions,
+leak a private history (the one place user text can reach a model is the proposer session of
+`ahl improve --correction-excerpts`, opt-in, as [scrubbed excerpts](instruction-adherence.md); the
+session that builds fixtures is told not to open that file). The result answers one question: under these controlled conditions,
 does this repair change the outcome of this pattern?
 
 ## Why it stays separate

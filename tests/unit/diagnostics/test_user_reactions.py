@@ -1,6 +1,8 @@
 """User reactions located by the agent's last tool calls; synthetic sessions only."""
 import json
 
+import pytest
+
 from agent_harness_lab.diagnostics import adherence_native as native, user_reactions
 from tests.support.native_session_fixture import claude, write
 from tests.unit.diagnostics.test_adherence_native import analysis
@@ -61,3 +63,65 @@ def test_analysis_section_carries_the_reactions_and_says_not_run_when_no_session
                          (dict(sources=[dict(format='claude', path=str(tmp_path / 'gone.jsonl'))]), 'no_readable_native_session')):
         reactions = native.for_analysis(analysis(project), data)[0]['user_reactions']
         assert (reactions['status'], reactions['reason'], 'rows' in reactions) == ('not_run', reason, False)
+
+
+@pytest.mark.parametrize('text,expected', [
+    ('look at /srv/app/secret-dir/a.py now', 'look at <path> now'),
+    ('look at ~/work/notes.md now', 'look at <path> now'),
+    ('see https://example.invalid/a?b=1 first', 'see <url> first'),
+    ('mail someone@example.invalid about it', 'mail <email> about it'),
+    ('the hash 0123456789abcdef0123456789abcdef is wrong', 'the hash <secret> is wrong'),
+    ('key sk-abcdefgh12345678 leaked', 'key <secret> leaked'),
+    ('token ghp_abcdefgh1234 and gho_abcdefgh1234', 'token <secret> and <secret>'),
+    ('aws AKIAABCDEFGHIJKLMNOP here', 'aws <secret> here'),
+    ('pem -----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY----- done', 'pem <secret> done'),
+    ('ticket 1234567 not 12345', 'ticket <number> not 12345'),
+    ('too   many\n\tspaces', 'too many spaces'),
+    ('keep src/app/a.py and test_a_long_identifier_name', 'keep src/app/a.py and test_a_long_identifier_name'),
+], ids=['absolute path', 'home path', 'url', 'email', 'hex run', 'sk key', 'github tokens', 'aws key', 'pem block', 'digits', 'whitespace', 'kept'])
+def test_scrub_replaces_each_private_shape_with_its_placeholder(text, expected):
+    assert user_reactions.scrub(text) == expected
+
+
+def test_scrub_handles_a_combined_message_cuts_it_to_the_bound_and_drops_one_with_nothing_but_placeholders():
+    text = 'No, revert /srv/x/a.py; see https://example.invalid/x, mail a@example.invalid, key ghp_abcdefgh1234, id 123456789. ' + 'word ' * 100
+    excerpt = user_reactions.scrub(text)
+    assert excerpt.startswith('No, revert <path> see <url> mail <email>, key <secret>, id <number>. word') and len(excerpt) == user_reactions.MAX_EXCERPT
+    assert user_reactions.scrub(' /srv/a/b https://example.invalid 1234567 ') is None and user_reactions.scrub('  ') is None
+
+
+def test_corrections_quote_only_corrections_scrubbed_with_at_most_two_per_session_and_twelve_in_all():
+    correcting = [step for n in range(3) for step in (('call', 'Bash', dict(command='pytest -q')), ('user', f'stop {n} at /srv/{CANARY}/f.py'))]
+    document = user_reactions.corrections([session(('user', 'start'), *correcting) for _ in range(8)])
+    assert (document['profile'], document['authority'], len(document['rows'])) == ('ahl-user-corrections-v1', 'untrusted_evidence_only', 12)
+    assert document['rows'][:3] == [
+        dict(correction_id='c1', reaction='steering', after_tool='Bash', command_family='pytest', file_extensions=[], excerpt='stop 0 at <path>'),
+        dict(correction_id='c2', reaction='steering', after_tool='Bash', command_family='pytest', file_extensions=[], excerpt='stop 1 at <path>'),
+        dict(correction_id='c3', reaction='steering', after_tool='Bash', command_family='pytest', file_extensions=[], excerpt='stop 0 at <path>')]
+    assert CANARY not in json.dumps(document)
+
+
+@pytest.mark.parametrize('text,kept', [
+    ('thanks, now the docs', False), ('That is wrong.', True), ('Isso está errado, faça de novo.', True), ('Eu disse para usar o outro.', True),
+    ('Não faça isso.', True), ('Use that instead.', True), ('<command-name>/clear</command-name> again', False),
+    ('[Request interrupted by user] again', False), ('/srv/a/b', False)],
+    ids=['plain followup', 'english', 'portuguese', 'portuguese said', 'portuguese negative', 'instead', 'runtime wrapper', 'interrupt marker', 'only a path'])
+def test_a_followup_after_the_agent_stopped_is_quoted_only_when_it_reads_as_the_users_own_correction(text, kept):
+    rows = user_reactions.corrections([session(('user', 'start'), ('agent', 'Done.'), ('user', text))])['rows']
+    assert len(rows) == kept
+
+
+def test_sessions_of_an_unverified_version_are_read_only_with_the_excerpt_flag_and_subagents_never(tmp_path):
+    project = tmp_path / 'project'
+    project.mkdir()
+    steps = [('user', 'start'), ('call', 'Bash', dict(command='pytest -q')), ('user', f'no, not {CANARY}')]
+    listed = [dict(format='claude', path=str(write(tmp_path / f'{name}.jsonl', claude(project, steps, session=name, **fields))))
+              for name, fields in (('pinned', {}), ('other', dict(version='9.9.9')), ('sub', dict(version='9.9.9', sidechain=True)))]
+    section, _ = native.for_analysis(analysis(project), dict(sources=listed))
+    assert section['sessions']['read'] == 1 and section['sessions']['skipped'] == dict(unsupported_version=2)
+    assert 'user_corrections' not in section and 'excerpts' not in section['user_reactions'] and CANARY not in json.dumps(section)
+    section, _ = native.for_analysis(analysis(project, correction_excerpts=True), dict(sources=listed))
+    assert section['sessions'] == dict(read=2, unknown_lineage=2, skipped=dict(subagent_transcript=1), unverified_version=1)
+    assert (section['user_reactions']['excerpts'], section['user_reactions']['unverified_version_sessions']) == (2, 1)
+    assert [row['excerpt'] for row in section['user_corrections']['rows']] == [f'no, not {CANARY}'] * 2
+    assert CANARY not in json.dumps({name: value for name, value in section.items() if name != 'user_corrections'})

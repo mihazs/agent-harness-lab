@@ -329,6 +329,8 @@ def main(argv=None):
                 command.add_argument('--history', action='store_true', help='Use captured past project sessions as read-only evidence; the receipt reports what was captured and what stays unknown')
                 command.add_argument('--since', help="With --history: 'first' (default, every available session) or an ISO 8601 date; selects capture files modified on or after it (UTC without an offset)")
                 command.add_argument('--source', dest='history_source', choices=('native', 'codex', 'claude', 'ai-memory'), help='With --history: native Codex and Claude sessions (default), or only codex or only claude; ai-memory is reported as unsupported with its next step')
+            if name=='improve':
+                command.add_argument('--correction-excerpts', action='store_true', help='Off by default. Give the proposer model session bounded, scrubbed excerpts of your own recorded user messages from this project (at most 12, 240 characters each; paths, URLs, emails, secret shapes and long numbers replaced), written to the private user-corrections.json; also reads sessions of unverified runtime versions for them')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto',help='Execution backend; auto resolves the supported configured or unambiguous local runtime; Responses needs explicit settings and isolation')
             command.add_argument('--inference-settings', type=Path, help='Schema-1 controlled Responses settings JSON, including credential_file and shared request/tool/output caps; requires the explicit isolated worker configuration')

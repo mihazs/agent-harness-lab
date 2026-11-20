@@ -41,7 +41,7 @@ RUNTIME = ('--format', '--source-version', '--output')
 EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--inherit-env', '--sandbox-graders',
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
-    'improve': (*COMMON, '--history-from', '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--memory-store', '--incremental', '--explain-reuse', '--experiment-request', '--from-audit', '--history', '--since', '--source', *EXECUTION,
+    'improve': (*COMMON, '--history-from', '--incident-corpus', '--incident-query', '--history-store', '--history-run', *RUNTIME, '--memory-store', '--incremental', '--explain-reuse', '--experiment-request', '--from-audit', '--history', '--since', '--source', '--correction-excerpts', *EXECUTION,
                 '--resume', '--construction-fraction', '--regression-margin', '--area', '--repair-contracts', '--scope', '--remember-runtime',
                 '--accept-score', '--max-rounds', '--plateau-rounds', '--on-regression', '--single-pass'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),

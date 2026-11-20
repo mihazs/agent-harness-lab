@@ -79,6 +79,23 @@ closed command and extension vocabularies, with `other` for anything else and `n
 call. No user text, path, identifier or digest is kept. A row says where, not why; with no session read the
 section is `not_run` with the same `reason`, and an empty `rows` is not evidence that nobody intervened.
 
+One opt-in exception keeps user text. `ahl improve --correction-excerpts` (off by default) also writes the
+private `user-corrections.json`: `{profile: "ahl-user-corrections-v1", authority: "untrusted_evidence_only", rows}`
+with at most 12 rows, at most 2 per session, newest sessions first. A row is
+`{correction_id, reaction, after_tool, command_family, file_extensions, excerpt}` for a user turn classified
+`revert_requested`, `task_reopened`, `instruction_restated` or `steering`, or a `followup_after_stop` that
+matches a short list of English and Portuguese correction shapes; a turn that starts with a runtime tag or
+interrupt marker is not quoted. `excerpt` is the first 240 characters after absolute and home-relative paths
+become `<path>`, URLs `<url>`, emails `<email>`, secret shapes (`sk-`, `ghp_`, `gho_`, `AKIA`, a PEM block,
+a run of 20 or more key-like characters holding a digit) `<secret>` and runs of six or more digits `<number>`;
+a turn with nothing else left is dropped. Scrubbing is lexical: it lowers, and does not remove, the chance that
+a private detail is quoted. With the flag, sessions of a runtime version outside the verified pin are read as
+well (their row shapes are assumed), counted in `sessions.unverified_version` and
+`user_reactions.unverified_version_sessions`; every other bound and skip stays. The brief gets
+`sources.user_corrections` and `user_reactions.excerpts` (a count), never the text. Only the proposer session of
+an installing run is pointed at the file, as untrusted data and never instructions; the evaluation author is
+told not to open it. Without the flag no user text is written to any run artifact.
+
 ## Instructions it can check
 
 Extraction is lexical and identical for harness files and user prompts. A sentence is

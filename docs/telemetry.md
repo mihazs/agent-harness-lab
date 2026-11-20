@@ -662,7 +662,9 @@ useless across cases, but anyone who holds the private ledger and can guess a me
 it by hashing the guess with that case ID. The mitigations are the four-word minimum (it excludes the
 most guessable confirmations), the 64-bit truncation, and that the field lives only in the private
 run ledger: the brief, mechanism summaries and role views never contain it. Treat the ledger as
-private; do not publish it.
+private; do not publish it. Message text itself reaches a model in one opt-in case only:
+`ahl improve --correction-excerpts` gives the proposer session bounded, scrubbed excerpts of the
+project's own user messages (see [instruction adherence](instruction-adherence.md)).
 
 ## Input fingerprints
 

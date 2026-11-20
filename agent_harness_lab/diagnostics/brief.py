@@ -363,6 +363,8 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
     if adherence is not None:
         adherence = dict(adherence)
         if (reactions := adherence.pop('user_reactions', None)) is not None: brief['user_reactions'] = reactions
+        # Only with improve --correction-excerpts: the brief names the private file and counts its rows, never their text.
+        if 'excerpts' in (reactions or {}): brief['sources']['user_corrections'] = 'user-corrections.json'
         # Counts only: the digest-only findings stay in the private instruction-adherence.json the section names.
         brief['instruction_adherence'] = adherence
         if adherence.get('artifact'): brief['sources']['instruction_adherence'] = adherence['artifact']
