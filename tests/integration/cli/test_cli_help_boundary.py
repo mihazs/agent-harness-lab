@@ -59,7 +59,7 @@ UNQUALIFIED = ('never changes:', 'never change:', 'never edits', 'never apply be
                'only when evidence or configuration changes')
 README_BOUNDARY = (
     '`ahl improve .` stages baseline and candidate copies, evaluation results, a change plan and a run lock as private state.',
-    'installs it into the project through a rollback journal and ends `applied`',
+    'installs the evaluated candidate into the project through a rollback journal and ends `applied`',
     'It is told to treat the project as read-only, but nothing enforces that; your agent\'s own permission '
     'settings decide whether it can write there.',
     'AHL rechecks the project harness before it recommends and rejects a stale result, but it does not revert '

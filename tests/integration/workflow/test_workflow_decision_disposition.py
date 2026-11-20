@@ -156,14 +156,13 @@ class TestDefaultDecisionDisposition:
         assert label['label'] == 'insufficient' and label['reasons'][0] == 'grader_changed_after_trials'
         assert label['adoption_support'] is False and label['comparison_valid_for_adoption'] is False
 
-    def test_no_change_reports_observed_absence_not_failure(self):
+    def test_a_tie_is_installed_as_no_regression_observed_and_never_as_an_improvement(self):
         self.original = 'good'
         (self.project / 'AGENTS.md').write_text('good')
         code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
-        assert 'recommendation' not in result
-        assert 'blocked_prerequisites' not in result
-        decision = self.assert_no_authority(result)
+        assert (code, result['status'], result['application']['basis']) == (0, 'applied', 'no_regression_observed')
+        assert 'recommendation' not in result and 'partial_improvement' not in result
+        decision = self.assert_no_authority(result, applied=True)
         assert decision['disposition'] == 'insufficient_evidence'
         assert decision['observed_pattern'] == 'no_observed_difference'
         assert decision['observed']['pairs']['both_passed'] == 3
@@ -186,7 +185,8 @@ class TestDefaultDecisionDisposition:
         self.original = 'good'
         (self.project / 'AGENTS.md').write_text('good')
         code, result = self.run_cli()
-        assert (code, result['status'], result.get('reason')) == (0, 'no_change', 'evaluation_no_improvement')
+        # Regression (fixed-in: 0.232.0): the favorable branch digested every trial workspace and rejected the symlink a trial made.
+        assert (code, result['status'], result['application']['basis']) == (0, 'applied', 'no_regression_observed')
         assert result['decision']['observed_pattern'] == 'no_observed_difference'
         assert any(path.is_symlink() for path in (self.root / 'run' / 'evaluation-0').rglob('*'))
 
@@ -213,7 +213,7 @@ class TestDefaultDecisionDisposition:
         (self.project / 'AGENTS.md').write_text('good')
         with patch('agent_harness_lab.promotion.policy.single_run_decision', side_effect=RuntimeError('synthetic')):
             code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+        assert (code, result['status']) == (0, 'applied')
         assert (result['decision']['status'], result['decision']['reason']) == ('unavailable', 'RuntimeError')
         assert not public_export_allowed([result['decision']])
 

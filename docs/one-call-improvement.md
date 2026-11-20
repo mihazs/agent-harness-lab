@@ -53,9 +53,11 @@ changed and how to undo it, and `application` holds the re-read target receipt w
 `authority: operator_invocation` and `certification: not_established`. A candidate
 wins when it passes every task while the baseline fails a development task, or, as
 `partial_improvement`, when it fixes a development task and fails only tasks the
-baseline also fails. The install is the operator's request, never certification:
+baseline also fails; `application.basis` is then `improvement_observed`. A tie, where
+both arms pass every task, is installed too with the basis `no_regression_observed`,
+because only a baseline that scored better justifies no change; it claims no improvement. The install is the operator's request, never certification:
 the `decision` block and every evidence label are unchanged. A project `ahl.json`,
-a scope that includes user-level files, `ahl watch` and the programmatic entry keep
+a scope that includes user-level files, the controlled `--agent responses` backend, `ahl watch` and the programmatic entry keep
 the previous outcome: `inconclusive` with `candidate_requires_independent_certification`.
 After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see

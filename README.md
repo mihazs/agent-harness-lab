@@ -76,13 +76,15 @@ What `improve` and `watch` themselves write, and what AHL never writes (their ag
 cooperative, not sandboxed):
 
 - `ahl improve .` stages baseline and candidate copies, evaluation results, a change
-  plan and a run lock as private state. When the evaluated candidate wins (it fixes
-  at least one task the baseline fails and loses none), `improve` installs it into
-  the project through a rollback journal and ends `applied`, with the changed files
-  and the `ahl rollback` command in the receipt. Installing is your request, not
+  plan and a run lock as private state. Unless the baseline scored better, `improve`
+  installs the evaluated candidate into the project through a rollback journal and ends `applied`, with the changed files
+  and the `ahl rollback` command in the receipt. `application.basis` says why:
+  `improvement_observed` (the candidate fixes at least one task the baseline fails
+  and loses none) or `no_regression_observed` (a tie, which claims no improvement).
+  Installing is your request, not
   certification: the receipt keeps every evidence label, and one run per task is
   weak evidence. A project `ahl.json`, a `--scope` that includes user-level files,
-  and `ahl watch` keep the candidate as a recommendation that is not applied.
+  `--agent responses` and `ahl watch` keep the candidate as a recommendation that is not applied.
 - The agent that `improve` starts is cooperative. It is told to treat the project
   as read-only, but nothing enforces that; your agent's own permission settings
   decide whether it can write there. AHL rechecks the project harness before it

@@ -141,7 +141,8 @@ After dispatch, quote `loop.stop_criterion`, `loop.acceptance_source`, `loop.rem
 (deprecated: the previous improve-first pass, removed after one release, whose receipt says `loop.status: not_used`).
 A receipt whose `loop.status` is `not_used` made a single pass: report that, with its `loop.reason`.
 A single pass that ends `applied` installed its evaluated candidate in the project: relay `changed_files`, `partial_improvement` when present
-and the `rollback` command as printed, and say that `application.certification` is `not_established`.
+and the `rollback` command as printed, say that `application.certification` is `not_established`, and call it an improvement only when
+`application.basis` is `improvement_observed`; `no_regression_observed` is a tie.
 
 ## Report integrity
 

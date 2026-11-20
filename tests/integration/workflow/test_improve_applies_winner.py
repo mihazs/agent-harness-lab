@@ -24,8 +24,9 @@ def cli(tmp_path, capsys):
     with ExitStack() as cleanups:
         base = workflow_fixture.WorkflowTests(cleanups.callback)
 
-        def go(command='improve', *extra, agent=None):
+        def go(command='improve', *extra, agent=None, original=None):
             if agent is not None: base.agent.write_text(agent)
+            if original is not None: (base.project / 'AGENTS.md').write_text(original)
             code = main([command, str(base.project), '--agent', 'codex', '--codex', str(base.agent), '--claude', 'missing',
                          '--timeout', '30', '--output', str(tmp_path / command), *extra])
             out = capsys.readouterr().out
@@ -39,6 +40,7 @@ def test_the_evaluated_winner_is_installed_with_a_verified_receipt_and_a_working
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
     application = receipt['application']
     assert (application['status'], application['authority'], application['certification']) == ('applied_verified', 'operator_invocation', 'not_established')
+    assert application['basis'] == 'improvement_observed'
     assert 'recommendation' not in receipt and receipt['automatic_promotion'] is False
     assert receipt['decision']['application_eligible'] is False  # the evidence labels are untouched by the install
     assert receipt['rollback'].startswith(f'ahl rollback {receipt["deployment"]} --project ')
@@ -51,6 +53,13 @@ def test_a_candidate_that_gains_one_task_and_loses_none_is_installed_as_a_partia
     assert (code, receipt['status']) == (0, 'applied')
     assert receipt['partial_improvement'] == dict(gained=['development'], still_failing=['heldout'])
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_tie_is_installed_and_labelled_no_regression_observed(cli):
+    # "No change" is justified only when the baseline scored better; on a tie the candidate goes in without an improvement claim.
+    code, receipt, base = cli(original='good')
+    assert (code, receipt['status'], receipt['application']['basis']) == (0, 'applied', 'no_regression_observed')
+    assert 'partial_improvement' not in receipt and (base.project / 'AGENTS.md').read_text() == 'good\n'
 
 
 def test_watch_and_the_programmatic_entry_keep_the_recommendation(cli):

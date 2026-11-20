@@ -284,7 +284,7 @@ class TestEntryReceiptParity:
 
     @pytest.mark.parametrize('options,status',[
         pytest.param(dict(mode='no_change'),'inconclusive',id='no_history_no_change'),
-        pytest.param(dict(agents='good'),'no_change',id='no_beneficial_change'),
+        pytest.param(dict(agents='good'),'applied',id='tie_installed_without_an_improvement_claim'),
         pytest.param({},'applied',id='winning_candidate_installed'),
         pytest.param(dict(mode='refine'),'applied',id='refined_candidate'),
         pytest.param(dict(runtime='missing'),'blocked',id='blocked_runtime'),
