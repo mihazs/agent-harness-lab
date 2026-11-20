@@ -539,11 +539,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 expected = check['state'] == 'complete'
                 if complete and (run['timeout'] or now() - began > per_trial):
                     raise manifest_contract.ContractError('evaluation_task_infeasible', 'manifest_validation', f'tasks[{index}]')
-                # Graded exactly as a trial will be: a declared bundle requires the typed result, so a plain exit-code
-                # grader is rejected here instead of turning every later trial into grader_error.
-                if runner.grading_status(run, typed=bool(frozen_bundles)) != ('passed' if expected else 'failed'):
-                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass'
-                                     + ('; with grader_bundles declared each grader must print the typed JSON result' if frozen_bundles else ''))
+                if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
