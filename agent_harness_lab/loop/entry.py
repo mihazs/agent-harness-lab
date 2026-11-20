@@ -69,7 +69,7 @@ def spec_for(args, found):
     """Resolve the declaration against this run's ceilings. A round reserves one preparation role from the shared trial ceiling."""
     layers_ = {key: found[key] for key in ('cli', 'user', 'project', 'areas')}
     rounds = resolve(limits=dict(seconds=args.timeout, trials=args.trial_limit), **layers_).max_rounds
-    ceilings, source = limits(args, max(1, args.trial_limit - rounds))
+    ceilings, source = limits(args, max(1, args.trial_limit - rounds - getattr(args, '_loop_construction_reserve', 0)))
     return resolve(limits=ceilings, limits_source=source, **layers_)
 
 
@@ -95,7 +95,7 @@ def prepare(args):
     """Decide whether this improve run is a loop run and check its declaration before any spend; sets args._loop to the layers or None.
 
     The loop is the default: with no flag and no declaration args._loop holds empty layers and args._loop_default is true, so the
-    resolver labels every value `default`; workflow._improve hands the run back to the single pass, labelled, when no frozen bank exists.
+    resolver labels every value `default`; the native workflow constructs a bank before scoring when none is pinned.
     --single-pass sets args._loop_label instead. A declaration problem raises LoopError (exit 2 with its reason); a combination the
     loop cannot honor is a usage conflict.
     """

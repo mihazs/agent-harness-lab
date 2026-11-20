@@ -106,6 +106,15 @@ class ExecutorRunner:
         return json.loads((Path(out)/'results.json').read_text())
 
 
+def baseline_observations(tasks, trials):
+    """Expose graded scoring-task descriptions and outcomes without held-out data."""
+    prompts = {task['id']: task.get('prompt', '')[:4000] for task in tasks
+               if task.get('split') in SCORING and isinstance(task.get('prompt'), str)}
+    return [dict(task=row['task'], status=row['status'], prompt=prompts[row['task']])
+            for row in trials if isinstance(row, dict) and row.get('task') in prompts
+            and row.get('version') == 'baseline' and row.get('status') in ('passed', 'failed')]
+
+
 class FrozenBankEvaluator:
     """controller.Evaluator over one frozen scoring bank.
 
@@ -125,11 +134,15 @@ class FrozenBankEvaluator:
         self.runner, self.snapshots, self.work, self.spec, self.min_roots = runner, snapshots, Path(work), spec, min_roots
         self.areas = areas or None
         self.scoring, self.excluded = scoring_manifest(manifest)
-        self.tasks = [(task['id'], task.get('root') if isinstance(task.get('root'), str) else task['id']) for task in json.loads(self.scoring.read_text())['tasks']]
+        scoring_tasks = json.loads(self.scoring.read_text())['tasks']
+        self.tasks = [(task['id'], task.get('root') if isinstance(task.get('root'), str) else task['id']) for task in scoring_tasks]
+        self.scoring_tasks = scoring_tasks
         self.identity = self._observe()
         if not self._known(self.identity): raise LoopError('loop_port_invalid', 'frozen_inputs', 'declared')
         self.frozen_inputs = self.identity['identity_sha256']
         self.bases, self.runs, self.constructions, self.baseline = {}, [], 0, None
+        self.baseline_observations = []
+        self.blocker = None
 
     @classmethod
     def first_use(cls, construct, *args, stages=None, **options):
@@ -173,10 +186,14 @@ class FrozenBankEvaluator:
         before = self._observe()
         ran = before == self.identity  # inputs that already differ would spend trials on a comparison that cannot be valid
         result = self._run(arms, {'baseline': against if paired else snapshot, 'candidate': snapshot}, index) if ran else dict(trials=[], elapsed_seconds=0.0)
+        if result.get('status') in ('blocked', 'budget_exhausted') and isinstance(result.get('reason'), str):
+            self.blocker = dict(status=result['status'], reason=result['reason'], stage='candidate' if paired else 'baseline')
         unchanged = not ran or self._observe() == before and result.get('inputs_unchanged') is True  # a run that moved an input leaves them unknown
         observed = before if unchanged else before_after.frozen_inputs()
         trials = result.get('trials')
         ids = dict(self.tasks)
+        if not paired:
+            self.baseline_observations = baseline_observations(self.scoring_tasks, trials) if isinstance(trials, list) else []
         recorded = [row for row in trials if isinstance(row, dict) and row.get('task') in ids] if isinstance(trials, list) else []
         mine = [row for row in recorded if row.get('version') == arm]
         labels = vacuity.classify([dict(id=task) for task, _ in self.tasks], mine, baseline_sha256=against if paired else None, candidate_sha256=snapshot) if ran else []

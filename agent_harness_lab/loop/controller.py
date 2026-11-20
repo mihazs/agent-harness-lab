@@ -268,7 +268,14 @@ class _Loop:
     def next_candidate(self):
         """The first pending mechanism the proposer can stage a candidate for; one that cannot is deferred and not asked again."""
         if self.journal_proposal: self.record('proposal_started')
-        for mechanism in self.pending():
+        pending = self.pending()
+        if getattr(self.proposer, 'diagnose_exhaustion', False):
+            allowance = self.spec.max_rounds - self.proposer.attempt
+            if pending and allowance <= 0:
+                raise TimeoutError('Proposal dispatch budget exhausted')
+            recovery = [name for name in pending if name == self.proposer.recovery_mechanism]
+            pending = [name for name in pending if name != self.proposer.recovery_mechanism][:max(0, allowance - bool(recovery))] + recovery
+        for mechanism in pending:
             candidate = self.proposer.propose(self.best, mechanism)
             if candidate is None:
                 self.dispositions[mechanism] = 'deferred'

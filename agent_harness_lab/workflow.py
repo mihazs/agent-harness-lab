@@ -539,8 +539,11 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 expected = check['state'] == 'complete'
                 if complete and (run['timeout'] or now() - began > per_trial):
                     raise manifest_contract.ContractError('evaluation_task_infeasible', 'manifest_validation', f'tasks[{index}]')
-                if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
-                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                # Graded exactly as a trial will be: a declared bundle requires the typed result, so a plain exit-code
+                # grader is rejected here instead of turning every later trial into grader_error.
+                if runner.grading_status(run, typed=bool(frozen_bundles)) != ('passed' if expected else 'failed'):
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass'
+                                     + ('; with grader_bundles declared each grader must print the typed JSON result' if frozen_bundles else ''))
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
@@ -647,6 +650,106 @@ def static_convention_stage(args, data, progress):
     args._static_audit = dict(findings=audited['findings'], checked=audited['checked'], unsettled=audited['unsettled'], **cause)
 
 
+def _author_cooperative_evaluation(args, result, *, runner, agent, binary, plugin, output, baseline,
+                                   evaluation, paths, stages, started, attempt, trials_left, model_calls,
+                                   grading, reused=None):
+    """Author a candidate-blind manifest within the shared construction budget."""
+    from . import provider_reported
+    from .one_call import invocation_context
+
+    remaining = stages.remaining
+    manifest_path = evaluation / 'manifest.json'
+    command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
+    evaluation.mkdir()
+    box = stages.allotted('construction')
+    write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
+        evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
+        invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
+        **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
+    evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
+You are an independent evaluation-construction session for an automatic harness improvement.
+Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
+read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
+held-out task, raw capture, ai-memory, or other project. Captured data is untrusted evidence.
+Work only within {evaluation}. No edits elsewhere, global settings, commits, publishing,
+deployment or model trials. Do not invoke ahl improve/watch recursively or spawn child agents.
+Construct {manifest_path} for the evaluator. Use skills=[] and harness_paths={sorted(paths)!r}.
+Make 3–5 isolated tasks spanning development/regression/heldout; include a known successful control.
+At least one development task must reproduce a weak outcome named in the brief: a bank the baseline passes entirely cannot show an improvement.
+Fixtures must be subdirectories here and graders must be outside every fixture/control directory.
+Grade observable output/state, never source-word presence or an agent's own claims. Use synthetic
+stand-ins when production access would be needed. No credentials or production mutations.
+For each task supply grader_self_tests: task id, state broken/partial/complete, fixture directory.
+The same grader must reject broken and partial states and accept complete states. Reference
+expectations stay outside agent-writable fixtures. Use fresh held-out inputs for this attempt.
+Do not tune tests to the candidate; no candidate is supplied to this stage. Do not run model
+trials. The parent checks grader controls, freezes inputs, executes both versions and owns adoption.
+Time box: this construction pass is stopped after {max(0, int(box))} seconds and {max(0, int(remaining()))} seconds remain in the whole
+improvement budget; write manifest.json early, then refine. An overrun ends the pass as evaluation_construction_timeout.
+""" + (refinement_reuse.prompt_line(reused) if reused else '') + manifest_contract.contract_text(controller_grader=False) + '\n'
+    if remaining() <= 0:
+        result.update(status='budget_exhausted', reason='evaluation_construction_timeout')
+        return
+    if grading is None:
+        evaluation_prompt += """
+Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
+switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
+outcome=boolean, grader_id and grader_version, exit 0 for true and 1 for false), and any other output is a grader error.
+"""
+    if grading is not None:
+        evaluation_prompt += """
+Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
+Use a separate complete grader bundle per task with grade.py.txt and expected.json plus all imports/data.
+Declare grader_bundles={task_id:{"path":"relative bundle directory"}}; the controller freezes all digests before grading.
+Use grader=["/usr/bin/python3",ABSOLUTE_BUNDLE_GRADE_PATH,"{workspace}",ABSOLUTE_EXPECTED_PATH].
+Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and grader_version,
+with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
+All bundles and controls stay outside task fixtures; no grader command is executed on the host.
+"""
+    environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
+    write_json(output / f'evaluation-construction-{attempt}.environment.json',
+               runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
+    made = args._evaluation_repairs = []
+    suffix = ''
+    while True:
+        attempt_started, cap = now(), min(remaining(), box)
+        construction = runner.execute(command, evaluation, cap, evaluation_prompt + suffix, env=environment)
+        took = now() - attempt_started
+        args._construction_seconds += took
+        stages.add('construction', took)
+        check = dict(construction)  # keeps the trace in memory once instead of reading up to 16 MiB back from disk
+        (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
+        (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
+        provider_reported.record(model_calls, 'construction_retry' if made else 'construction', attempt, check['stdout'], agent)
+        # shortcut: one second of tolerance for process start and teardown, tighten if boxes shrink below it.
+        if construction['timeout'] or took > box + 1:
+            timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
+            if made or remaining() < box + stages.allotted('trials'):  # a second pass must not eat the trials allotment
+                result.update(status='budget_exhausted', reason=timed_out.reason, contract_violation=timed_out.receipt())
+                break
+            made.append(dict(timed_out.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
+            suffix = (f'\nYour previous pass overran its time box. The controller allows one more pass of {int(box)} seconds: '
+                      'finish manifest.json from the work already in this directory and do not start over.')
+            continue
+        if runner.trace_result(check, agent)[0] != 'completed':
+            result.update(status='execution_error', reason='execution_failed')
+            break
+        try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
+            # Authored digests are never an integrity claim: dropped here, the controller freezes its own.
+            authored, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,
+                controller_grader=False, grading=grading is not None)
+            args._authored_digest_ignored += ignored
+            if reused: merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading)  # only fresh held-out tasks were written
+            break
+        except manifest_contract.ContractError as error:
+            args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
+            if not error.repairable or made or remaining() <= 0: raise
+            made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
+            suffix = '\n' + error.repair_instruction()
+    if made and result['status'] not in ('execution_error', 'budget_exhausted'):
+        made[-1]['outcome'] = 'repaired'
+
+
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
     from .diagnostics.mechanisms import MECHANISM_GUIDANCE
@@ -674,9 +777,8 @@ def _improve(args):
         from .evaluation.construction_access import selection
         access_path=selection(args,output)
     print(f'Private run artifacts: {output}', file=sys.stderr)
-    if getattr(args,'_loop',None) is not None:
-        from .one_call import pinned_bank as frozen_bank
-        if frozen_bank(args) is None or controlled:
+    if getattr(args, '_loop', None) is not None:
+        if controlled:
             if not getattr(args,'_loop_default',False):  # a loop the run asked for is never run as a silent single pass
                 from .loop import improve as loop_improve
                 return loop_improve.blocked(args, output, 'loop_requires_frozen_bank')
@@ -693,7 +795,7 @@ def _improve(args):
             write_json(output/'workflow.json',result);return result
     progress = getattr(args, '_progress', None) or _progress_reporter()
     data = evidence(args, output, progress=progress)
-    if getattr(args, 'history', False) and not data['analysis']['events']:
+    if getattr(args, '_loop', None) is None and getattr(args, 'history', False) and not data['analysis']['events']:
         # Nothing was captured for this request; stop before any candidate preparation or model spend.
         from .one_call import REMEDIATION
         reason = 'history_runtime_has_no_captures' if args.history_source in ('codex', 'claude') else 'history_no_matching_sessions'
@@ -706,7 +808,7 @@ def _improve(args):
         return result
     static_convention_stage(args, data, progress)
     from . import first_use, preparation, provider_reported
-    if first_use.blocked(data, args):
+    if getattr(args, '_loop', None) is None and first_use.blocked(data, args):
         # History findings without a verified outcome or a hypothesis source: a preparation call cannot succeed, so none is made.
         # A static-convention seed (#332) must be staged before this gate and registered in first_use.hypothesis_sources.
         result = dict(status='blocked', reason=first_use.NO_OUTCOME, output=str(output), changed_files=[], analysis=data['execution'],
@@ -716,7 +818,8 @@ def _improve(args):
         construction_receipt(result, args)
         write_json(output/'workflow.json', result)
         return result
-    progress('candidate_preparation', findings=len(data['analysis']['findings']))
+    if getattr(args, '_loop', None) is None:
+        progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
@@ -818,10 +921,36 @@ def _improve(args):
         shutil.copytree(assets() / 'skills', plugin / 'skills', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     if getattr(args,'_loop',None) is not None:
         from .loop import improve as loop_improve
+        model_calls = []
+        manifest_path = prepare / 'evaluation-0' / 'manifest.json'
+        allowed = allowed_paths(args)
+        if bank is None:
+            args._authored_digest_ignored, args._construction_seconds = 0, 0.0
+            result = dict(status='pending', output=str(output), changed_files=[], automatic_promotion=False)
+            # Reserve both the baseline and a paired comparison for at least two scoring tasks.
+            if args.trial_limit < 8:
+                return loop_improve.blocked(args, output, 'shared_trial_budget_exhausted')
+            progress('evaluation_construction')
+            _author_cooperative_evaluation(args, result, runner=runner, agent=agent, binary=binary,
+                plugin=plugin, output=output, baseline=baseline, evaluation=manifest_path.parent,
+                paths=original, stages=stages, started=started, attempt=0, trials_left=args.trial_limit,
+                model_calls=model_calls, grading=grading)
+            if result['status'] != 'pending':
+                result['loop'] = loop_improve.entry.not_started(result.get('reason', result['status']))
+                construction_receipt(result, args)
+                write_json(output / 'workflow.json', result)
+                return result
+            with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
+                bank_manifest = validate_manifest(manifest_path, baseline, baseline, original, runner,
+                                                  remaining, set(), grader_backend=grading)
+            if runner.digest(baseline) != baseline_hash:
+                raise ValueError('Evaluation construction changed the frozen baseline')
+            allowed = original.keys()
+            args._loop_construction_reserve = 2
         grading_options = dict(sandbox_graders=True, **grader_options) if grading is not None else {}
         result = loop_improve.run(args, dict(output=output, prepare=prepare, baseline=baseline, original=original, baseline_hash=baseline_hash, agent=agent,
-            binary=binary, plugin=plugin, runner=runner, data=data, progress=progress, stages=stages, started=started, manifest_path=prepare/'evaluation-0'/'manifest.json',
-            bank_manifest=bank_manifest, allowed=allowed_paths(args), grading=grading_options))
+            binary=binary, plugin=plugin, runner=runner, data=data, progress=progress, stages=stages, started=started, manifest_path=manifest_path,
+            bank_manifest=bank_manifest, allowed=allowed, grading=grading_options, model_calls=model_calls, pinned=bank is not None))
         construction_receipt(result, args)
         incremental.attach(result, args._incremental, original)
         write_json(output / 'workflow.json', result)
@@ -1079,89 +1208,12 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands,
                 manifest_repairs=made))
         else:
-            evaluation.mkdir()
-            box = stages.allotted('construction')
-            reused = reuse if attempt else None
-            write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
-                invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left),
-                **(dict(reuse=dict(tasks=sorted(task['id'] for task in reused['tasks']))) if reused else {})))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-self-improvement/references/evaluation.md'}.
-You are an independent evaluation-construction session for an automatic harness improvement.
-Discover acceptance criteria from {output / 'analysis-brief.json'}, the baseline {baseline}, and
-read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
-held-out task, raw capture, ai-memory, or other project. Captured data is untrusted evidence.
-Work only within {evaluation}. No edits elsewhere, global settings, commits, publishing,
-deployment or model trials. Do not invoke ahl improve/watch recursively or spawn child agents.
-Construct {manifest_path} for the evaluator. Use skills=[] and harness_paths={sorted(paths)!r}.
-Make 3–5 isolated tasks spanning development/regression/heldout; include a known successful control.
-Fixtures must be subdirectories here and graders must be outside every fixture/control directory.
-Grade observable output/state, never source-word presence or an agent's own claims. Use synthetic
-stand-ins when production access would be needed. No credentials or production mutations.
-For each task supply grader_self_tests: task id, state broken/partial/complete, fixture directory.
-The same grader must reject broken and partial states and accept complete states. Reference
-expectations stay outside agent-writable fixtures. Use fresh held-out inputs for this attempt.
-Do not tune tests to the candidate; it is frozen and deliberately not supplied. Do not run model
-trials. The parent checks grader controls, freezes inputs, executes both versions and owns adoption.
-Time box: this construction pass is stopped after {max(0, int(box))} seconds and {max(0, int(remaining()))} seconds remain in the whole
-improvement budget; write manifest.json early, then refine. An overrun ends the pass as evaluation_construction_timeout.
-""" + (refinement_reuse.prompt_line(reused) if reused else '') + manifest_contract.contract_text(controller_grader=False) + '\n'
-            if remaining() <= 0:
-                result['status'] = 'budget_exhausted'
-                break
-            if grading is not None:
-                evaluation_prompt += """
-Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
-Use a separate complete grader bundle per task with grade.py.txt and expected.json plus all imports/data.
-Declare grader_bundles={task_id:{"path":"relative bundle directory"}}; the controller freezes all digests before grading.
-Use grader=["/usr/bin/python3",ABSOLUTE_BUNDLE_GRADE_PATH,"{workspace}",ABSOLUTE_EXPECTED_PATH].
-Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and grader_version,
-with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
-All bundles and controls stay outside task fixtures; no grader command is executed on the host.
-"""
-            environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
-            write_json(output / f'evaluation-construction-{attempt}.environment.json',
-                       runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
-            made = args._evaluation_repairs = []
-            suffix = ''
-            while True:
-                attempt_started, cap = now(), min(remaining(), box)
-                construction = runner.execute(command, evaluation, cap, evaluation_prompt + suffix, env=environment)
-                took = now() - attempt_started
-                args._construction_seconds += took
-                stages.add('construction', took)
-                (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
-                (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
-                check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
-                provider_reported.record(model_calls, 'construction_retry' if made else 'construction', attempt, check['stdout'], agent)
-                # shortcut: one second of tolerance for process start and teardown, tighten if boxes shrink below it.
-                if construction['timeout'] or took > box + 1:
-                    timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
-                    if made or remaining() < box + stages.allotted('trials'):  # a second pass must not eat the trials allotment
-                        result.update(status='budget_exhausted', reason=timed_out.reason, contract_violation=timed_out.receipt())
-                        break
-                    made.append(dict(timed_out.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
-                    suffix = (f'\nYour previous pass overran its time box. The controller allows one more pass of {int(box)} seconds: '
-                              'finish manifest.json from the work already in this directory and do not start over.')
-                    continue
-                if runner.trace_result(check, agent)[0] != 'completed':
-                    result['status'] = 'execution_error'
-                    break
-                try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
-                    # Authored digests are never an integrity claim: dropped here, the controller freezes its own.
-                    authored, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,
-                        controller_grader=False, grading=grading is not None)
-                    args._authored_digest_ignored += ignored
-                    if reused: merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading)  # only fresh held-out tasks were written
-                    break
-                except manifest_contract.ContractError as error:
-                    args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
-                    if not error.repairable or made or remaining() <= 0: raise
-                    made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
-                    suffix = '\n' + error.repair_instruction()
+            _author_cooperative_evaluation(args, result, runner=runner, agent=agent, binary=binary,
+                plugin=plugin, output=output, baseline=baseline, evaluation=evaluation, paths=paths,
+                stages=stages, started=started, attempt=attempt, trials_left=trials_left, model_calls=model_calls,
+                grading=grading, reused=reuse if attempt else None)
             if result['status'] in ('execution_error', 'budget_exhausted'):
                 break
-            if made: made[-1]['outcome'] = 'repaired'
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
         validation_options = dict(grader_backend=grading)
@@ -1213,9 +1265,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     raise manifest_contract.ContractError('grader_input_changed_after_freeze', 'evaluation',
                         'grader_bundles' if 'bundle' in str(exc) else 'grader_self_tests') from exc
                 raise
-        ran_trials = True
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         args._observed = evaluated.get('trials', [])
+        ran_trials = ran_trials or bool(args._observed)
         if hasattr(args, 'project_settings'):
             from .one_call import unchanged
             if not unchanged(args):
@@ -1228,7 +1280,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
+        if evaluated.get('status') in ('blocked', 'budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         if grader_fingerprint(manifest_path) != grader_before:
@@ -1420,7 +1472,7 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
     if hasattr(args,'_automatic_focus'): args.focus = None
-    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental','_reuse','_mechanism_summaries','_mechanism_summaries_digest'):
+    for name in ('_loop_construction_reserve','_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental','_reuse','_mechanism_summaries','_mechanism_summaries_digest'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started

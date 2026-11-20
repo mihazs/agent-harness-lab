@@ -33,8 +33,9 @@ Choose the mode before following the manual steps below. Read
 - If the CLI is unavailable before any attempt, use the assisted manual fallback
   in the reference and state its verification limits.
 
-Complete the improvement loop: diagnose from evidence, construct an evaluation, execute baseline and
-candidate, repair failures, and apply supported improvements. A failure description or proposed candidate
+Complete the improvement loop: diagnose from evidence, construct and run the baseline evaluation,
+then propose and evaluate a repair. Apply changes only when the controller's authorization and
+evidence allow it. A failure description or proposed candidate
 is optional. Discover improvement candidates from available traces, evaluation failures, current
 instructions and source contracts yourself. Do not require the user to identify what went wrong before
 beginning. An optional focus hint does not replace coverage of other material mechanisms. When capture

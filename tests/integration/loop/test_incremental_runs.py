@@ -163,7 +163,8 @@ def test_an_interrupted_previous_run_hands_on_what_its_rounds_decided(stack, mon
     monkeypatch.setattr(loop_improve.PreparationProposer, 'propose', real)
     _, third, _ = project.invoke('--accept-score', '0.9')
     carry = third['loop']['carry_over']
-    assert (carry['previous_stop'], carry['mechanisms']['carried']) == ('interrupted', dict(m1='rejected', m2='deferred')) and carry['status'] == 'carried'
+    # A deferral holds no evaluation, so it is offered again; only decided mechanisms are carried.
+    assert (carry['previous_stop'], carry['mechanisms']['carried']) == ('interrupted', dict(m1='rejected')) and carry['status'] == 'carried'
 
 
 def test_a_rerun_receipt_validates_stays_recommendation_only_and_holds_no_previous_trial(stack, monkeypatch):

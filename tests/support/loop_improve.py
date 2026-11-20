@@ -26,7 +26,10 @@ sys.stdin.read()
 SCRIPT = json.loads(p(@SCRIPT@).read_text())
 KINDS = @KINDS@
 if p('context.json').exists():
- c = json.loads(p('context.json').read_text()); assert c['phase'] == 'candidate'
+ c = json.loads(p('context.json').read_text())
+ if c['phase'] != 'candidate':  # an unpinned run asks for an evaluation first; this stub authors none
+  with open(@CALLS@, 'a') as calls: calls.write(json.dumps(dict(phase=c['phase'])) + chr(10))
+  raise SystemExit(3)
  step = SCRIPT.get(str(c['attempt']), {}); candidate = p(c['candidate']); proposal = p(c['evaluation'])/'proposal.json'
  with open(@CALLS@, 'a') as calls: calls.write(json.dumps(dict(attempt=c['attempt'], mechanism=c.get('mechanism'))) + chr(10))
  if step.get('crash'): raise SystemExit(3)

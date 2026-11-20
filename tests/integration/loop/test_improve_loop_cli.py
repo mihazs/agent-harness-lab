@@ -184,12 +184,13 @@ def test_a_project_loop_declaration_that_asks_for_authority_is_refused_before_an
 
 
 @pytest.mark.parametrize('entry', [pytest.param(('improve',), id='improve'), pytest.param(('skills', 'invoke'), id='skills-invoke')])
-def test_a_loop_declaration_without_a_pinned_bank_is_blocked_with_one_step_and_never_runs_a_single_pass(stack, monkeypatch, entry):
+def test_a_loop_declaration_without_a_pinned_bank_constructs_an_evaluation_before_any_candidate_and_never_runs_a_single_pass(stack, monkeypatch, entry):
     project = li.LoopProject(stack, monkeypatch, script={0: dict(harness=li.EVERYTHING)}, pinned=False)
     code, found, _ = project.invoke('--accept-score', '0.5', entry=entry)
-    assert (code, found['status'], found['reason']) == (3, 'blocked', 'loop_requires_frozen_bank') and project.calls() == []
-    assert found['remediation'].startswith('Pin a task bank in ahl.json') and found['loop']['status'] == 'not_started' and 'stop_criterion' not in found['loop']
-    assert (found['automatic_promotion'], found['changed_files']) == (False, []) and not list(Path(found['output']).glob('evaluation-*'))
+    # The stub authors no evaluation, so the run stops there: the baseline is evaluated before any candidate is asked for.
+    assert (found['status'], found['reason'], found['loop']['status']) == ('execution_error', 'execution_failed', 'not_started') and project.calls() == [dict(phase='evaluation')]
+    assert code == 1 and 'stop_criterion' not in found['loop']
+    assert (found['automatic_promotion'], found['changed_files']) == (False, []) and not list(Path(found['output']).glob('evaluation-[0-9]*'))
     assert (project.project/'AGENTS.md').read_text().startswith(li.NOTHING)
 
 

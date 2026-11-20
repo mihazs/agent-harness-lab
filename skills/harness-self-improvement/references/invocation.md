@@ -122,7 +122,7 @@ failed layer a success.
 
 ## Loop routing
 
-`ahl skills invoke` runs the evaluate > improve > evaluate loop by default whenever `ahl.json` pins a task bank, with the
+`ahl skills invoke` runs the evaluate > improve > evaluate loop by default with the native CLI. If no bank is pinned, AHL constructs one before evaluating the baseline. It uses the
 same receipt as `ahl improve`. The user's words choose the loop flags and nothing widens them: a bar comes only from a
 number the user gave, and the scope is still written out as in the table above.
 

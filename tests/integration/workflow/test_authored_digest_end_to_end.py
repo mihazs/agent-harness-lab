@@ -35,7 +35,8 @@ if p('context.json').exists():
                 "import json, pathlib, sys\n"
                 + ("ok = (pathlib.Path(sys.argv[1]) / 'artifact').read_text() == 'done'\n" if mode.endswith('-plain') else
                    "sys.path.insert(0, str(pathlib.Path(sys.argv[0]).parent))\nimport helper\nok = helper.passed(pathlib.Path(sys.argv[1]))\n") +
-                "print(json.dumps(dict(schema_version=1, valid=True, outcome=ok, grader_id='synthetic', grader_version='1')))\n"
+                ("print('PASS' if ok else 'FAIL')\n" if mode == 'untyped' else
+                 "print(json.dumps(dict(schema_version=1, valid=True, outcome=ok, grader_id='synthetic', grader_version='1')))\n") +
                 "sys.exit(0 if ok else 1)\n"))
             (bundle / 'expected.json').write_text('{{}}')
             tasks.append(dict(id=split, split=split, fixture=split, prompt='Produce the synthetic artifact', artifacts=['artifact'],
@@ -123,6 +124,13 @@ def test_a_grader_that_writes_into_its_frozen_bundle_ends_with_a_typed_reason_an
     assert 'integrity mismatch' not in json.dumps(receipt) and violation['next_step']
     assert receipt['authored_digest_ignored'] == 0 and isinstance(receipt['evaluation_construction_seconds'], float)
     assert not (run / 'evaluation-0').exists()  # found before any trial ran
+
+
+def test_an_exit_code_grader_with_declared_bundles_is_rejected_at_its_self_test_before_any_trial(stub, capsys):
+    # fixed-in: 0.232.0. The self-test judged exit codes only while trials required the typed result, so every trial was a grader_error.
+    code, receipt, run = stub.improve(capsys, 'untyped')
+    assert (code, receipt['status']) == (2, 'invalid_input'), receipt
+    assert not (run / 'evaluation-0').exists() and 'grader_error' not in json.dumps(receipt)
 
 
 def test_a_blocked_result_before_any_construction_still_carries_the_construction_facts(stub, capsys):

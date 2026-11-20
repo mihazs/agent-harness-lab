@@ -122,7 +122,7 @@ def test_an_interrupted_loop_run_is_not_continued_by_the_command_and_says_so(sta
 def test_a_loop_run_blocked_before_it_started_has_no_receipt_to_return(stack, monkeypatch):
     project = li.LoopProject(stack, monkeypatch, loop=HIGH, pinned=False)
     code, found, _ = project.invoke('--accept-score', '0.5')
-    assert (code, found['reason']) == (3, 'loop_requires_frozen_bank')
+    assert (code, found['reason'], found['loop']['status']) == (1, 'execution_failed', 'not_started')  # the stub authors no evaluation
     resumed_code, resumed, _ = project.invoke('--resume', Path(found['output']).name)
     assert (resumed_code, resumed['reason']) == (3, 'resume_requires_intervention')
 

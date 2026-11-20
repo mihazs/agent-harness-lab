@@ -95,20 +95,19 @@ def test_single_pass_wins_over_a_project_loop_declaration_without_reading_it(sta
 
 
 @pytest.mark.parametrize('entry', [pytest.param(('improve',), id='improve'), pytest.param(('skills', 'invoke'), id='skills-invoke')])
-def test_a_default_run_without_a_pinned_bank_makes_the_labelled_single_pass_and_never_a_silent_one(stack, monkeypatch, entry):
+def test_a_default_run_without_a_pinned_bank_constructs_an_evaluation_first_and_never_makes_a_single_pass(stack, monkeypatch, entry):
     project = li.LoopProject(stack, monkeypatch, script={0: dict(harness=li.EVERYTHING)}, pinned=False)
     code, found, _ = project.invoke(entry=entry)
-    label = found['loop']
-    assert set(label) == NOT_USED_KEYS and (label['status'], label['reason'], label['deprecated']) == ('not_used', 'loop_requires_frozen_bank', False)
-    assert label['remediation'] == loop_entry.NOT_USED['loop_requires_frozen_bank'] and 'bank.sha256' in label['remediation']
-    assert (label['recommendation_only'], label['automatic_promotion'], label['certification']) == (True, False, 'unverified')
+    label = found['loop']  # fixed-in: 0.232.0; before, this run fell back to an improve-first single pass labelled not_used
+    assert (found['status'], found['reason'], label['status']) == ('execution_error', 'execution_failed', 'not_started') and project.calls() == [dict(phase='evaluation')]
+    assert label.get('reason') != 'loop_requires_frozen_bank' and 'single_pass' not in label
     assert json.loads((Path(found['output'])/'workflow.json').read_text())['loop'] == label
 
 
-def test_an_explicit_declaration_without_a_pinned_bank_is_still_blocked_and_not_labelled_as_a_single_pass(stack, monkeypatch):
+def test_an_explicit_declaration_without_a_pinned_bank_constructs_an_evaluation_first(stack, monkeypatch):
     project = improving(stack, monkeypatch, pinned=False)
     code, found, _ = project.invoke('--max-rounds', '2')
-    assert (code, found['status'], found['reason'], found['loop']['status']) == (3, 'blocked', 'loop_requires_frozen_bank', 'not_started') and project.calls() == []
+    assert (found['status'], found['reason'], found['loop']['status']) == ('execution_error', 'execution_failed', 'not_started') and project.calls() == [dict(phase='evaluation')]
 
 
 def test_a_repair_contracts_run_is_no_improvement_pass_and_carries_no_loop_label(stack, monkeypatch):
