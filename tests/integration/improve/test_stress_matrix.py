@@ -227,7 +227,7 @@ def test_a_second_run_on_another_project_in_one_state_home_is_not_blocked_by_the
     code, captured = improve(stub, capsys, {})
     end_state(code, captured)
     returncode, stdout, stderr = json.loads(second.read_text())
-    assert json.loads(stdout)['reason'] != 'workspace_busy', (returncode, stdout[:300], stderr[-300:])
+    assert json.loads(stdout).get('reason') != 'workspace_busy', (returncode, stdout[:300], stderr[-300:])
     assert not locks(stub)
 
 
