@@ -108,9 +108,11 @@ then audits the project itself (the read-only, model-free static audit of the se
   usual paired baseline/candidate evaluation runs. The receipt carries `audit_hypothesis`,
   `static_convention_candidates` (the selection and the eligible conventions it left for a later
   run) and a `provenance` entry whose source is `static_audit`. It is a convention check, never a
-  diagnosis; nothing is applied, and the promotion rules are unchanged.
-- If none is eligible, the run ends with the existing `status: blocked`, `reason: no_outcome_evidence` and
-  no model call, and `findings_not_candidates.static_audit` states what the audit checked and why none became a
+  diagnosis; an installing run installs it like any other evaluated candidate, and it is never certified.
+- If none is eligible, an installing run goes on to the proposer and evaluates the candidate it stages. Only
+  a run that keeps its candidate a recommendation (a project `ahl.json`, a user-level scope or `--agent responses`)
+  ends with the existing `status: blocked`, `reason: no_outcome_evidence` and
+  no model call. In both cases `findings_not_candidates.static_audit` states what the audit checked and why none became a
   candidate. A `why` of `instruction_totals_unsettled` means the instruction chain could not be settled, so some
   conventions were not evaluated; it is not a finding that they are clean.
 - If the proposer declines the staged convention, so no trial is evaluated, the run carries the one
@@ -133,7 +135,8 @@ typed `reason` and the exact next step in `remediation`:
 | `history_not_found_for_worktree` | No session was recorded under this path and the project is a linked Git worktree, so the main checkout's history was not read. See [Try it in a worktree](#try-it-in-a-worktree). |
 | `no_outcome_evidence` | Sessions were captured and show findings, but no verified outcome relates them to a failure and no `--focus` or `--from-audit` hypothesis was supplied. No model call was made; `findings_not_candidates` counts why no finding became a candidate. |
 
-When you see `no_outcome_evidence`, add verified evidence (an executable-grader evaluation under `artifacts/`),
+Only a run that keeps its candidate a recommendation (a project `ahl.json`, a user-level scope or `--agent responses`) ends this way; an installing run
+proposes and evaluates a candidate itself. When you see `no_outcome_evidence`, add verified evidence (an executable-grader evaluation under `artifacts/`),
 run `ahl audit .`, or pass `--focus` with a hypothesis to test; rerunning unchanged repeats the same result at no cost.
 A run that did call the model and evaluated nothing is labelled `spent_without_evaluation`.
 

@@ -90,13 +90,13 @@ def assert_untouched(protocol, isolated):
     assert git(protocol.project, 'status', '--porcelain') == '' and len(git(protocol.project, 'worktree', 'list').splitlines()) == 1
 
 
-def test_first_use_with_recorded_history_ends_with_a_typed_reason_and_a_remediation_and_leaves_the_checkout_unchanged(protocol):
+def test_first_use_with_recorded_history_evaluates_a_candidate_itself_and_leaves_the_checkout_unchanged(protocol):
     isolated, receipt = protocol.step('first-use')
 
     assert_untouched(protocol, isolated)
     assert receipt['analysis']['findings'] > 0  # usable history: a bare no_change here would be the failure
-    assert (receipt['status'], receipt['reason']) == ('blocked', 'no_outcome_evidence')
-    assert receipt['remediation'] and receipt['next_steps'] and 'plan' not in receipt
+    # Regression (fixed-in: 0.232.0): history without a verified outcome ended blocked as no_outcome_evidence before any model call.
+    assert receipt['status'] == 'applied' and receipt['plan'] and receipt['application']['certification'] == 'not_established'
     assert {row['reason'] for row in receipt['history']['capture_reasons']} == {'source_project_path_differs'}
 
 

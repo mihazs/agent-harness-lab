@@ -108,14 +108,13 @@ def test_findings_without_verified_outcomes_stage_a_labelled_convention_candidat
     assert 'diagnosis' not in json.dumps(hypothesis)
 
 
-def test_findings_without_verified_outcomes_and_no_eligible_convention_end_with_a_typed_reason_and_no_model_call(first_use):
+def test_findings_without_verified_outcomes_and_no_eligible_convention_go_on_to_the_proposer_with_the_audit_cause_recorded(first_use):
     first_use.path.joinpath('AGENTS.md').write_text('short\n')
     first_use.mode('no_change')
     code, result, err = first_use.improve()
-    assert first_use.calls() == 0
-    assert (result['status'], result['reason']) == ('blocked', 'no_outcome_evidence')
-    assert 'outcome=blocked' in err and 'category="Blocked by missing prerequisite"' in err
-    assert result['remediation'] and result['changed_files'] == [] and 'spend_label' not in result
+    assert first_use.calls() == 1  # an installing run is not stopped for missing outcomes; this stub proposer declines
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
+    assert 'outcome=inconclusive' in err and result['changed_files'] == []
     explained = result['findings_not_candidates']
     assert explained['findings'] > 0 and explained['causes']['no_outcome_evidence'] == explained['findings']
     assert 'no_hypothesis_source' in explained['causes']
@@ -130,14 +129,14 @@ def test_unsettled_instruction_totals_end_with_their_own_typed_cause_and_list_on
     shutil.rmtree(first_use.path/'.git')
     first_use.mode('no_change')
     code, result, err = first_use.improve()
-    assert first_use.calls() == 0
-    assert (result['status'], result['reason']) == ('blocked', 'no_outcome_evidence')
+    assert first_use.calls() == 1
+    assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     audit = result['findings_not_candidates']['static_audit']
     assert audit['why'] == 'instruction_totals_unsettled' and audit['why'] != 'no_eligible_convention'
     assert 'project_root_unsettled' in audit['instruction_totals_reasons'] and audit['remediation']
     assert {'instruction_launch_lines_above_soft_budget', 'instruction_procedure_section_detected'} <= set(audit['unsettled'])
     assert not set(audit['unsettled']) & set(audit['checked']) and 'skill_routing_collision' in audit['checked']
-    assert 'outcome=blocked' in err and 'category="Blocked by missing prerequisite"' in err
+    assert 'outcome=inconclusive' in err
 
 
 def test_static_candidate_the_proposer_declines_is_labelled_spent_without_evaluation_with_unverified_spend(first_use):
