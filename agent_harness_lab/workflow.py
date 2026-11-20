@@ -570,6 +570,15 @@ def _targets_writable(project, names):
     return True
 
 
+# The proposer of an installing run: the evaluation, not the proposer, decides whether a change is kept, so a missing
+# verified outcome is no reason to stop. Completed by the proposal path and the no_change form.
+STAGE_A_CANDIDATE = """The operator asked for an improvement, and the evaluation stage decides whether your change is kept: a candidate
+that scores worse than the baseline is discarded, any other is installed with a rollback. Missing verified outcomes, unverified
+capture, ambiguous evidence or a baseline that passes the convention checks are therefore not reasons to stop: stage the smallest
+falsifiable candidate for the strongest observed pattern or the clearest gap that source inspection shows, and name its falsifier.
+Only when every change you can name would make the harness worse, write"""
+
+
 def _installs(args):
     """`ahl improve` on the project scope with a native CLI is the operator asking for the change. `ahl watch`, the
     programmatic entry, a user-level scope, the controlled Responses backend (its own certification track) and a project
@@ -925,7 +934,7 @@ Only modify {candidate} and create files in {proposal_folder}. Never modify base
 previous attempts, global skills, model settings, permissions, hooks or credentials. No commits,
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
-If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
+{STAGE_A_CANDIDATE if _installs(args) else 'If none is supported, write'} {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 {preparation.guidance()}
 Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
 {instruction_validation.PROPOSER_GUIDANCE}
@@ -935,7 +944,7 @@ Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparat
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 {MECHANISM_GUIDANCE}
-The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
+The parent will reject incomplete/changed inputs, regressions, {'' if _installs(args) else 'unsupported ties, '}and concurrent edits.
 '''
             if attempt:
                 prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'

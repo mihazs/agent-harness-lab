@@ -55,7 +55,8 @@ wins when it passes every task while the baseline fails a development task, or, 
 `partial_improvement`, when it fixes a development task and fails only tasks the
 baseline also fails; `application.basis` is then `improvement_observed`. A tie, where
 both arms pass every task, is installed too with the basis `no_regression_observed`,
-because only a baseline that scored better justifies no change; it claims no improvement. The install is the operator's request, never certification:
+because only a baseline that scored better justifies no change; it claims no improvement. The proposer of such a run is told
+that the evaluation decides, so evidence without a verified outcome is no longer a reason for it to return `no_change`. The install is the operator's request, never certification:
 the `decision` block and every evidence label are unchanged. A project `ahl.json`,
 a scope that includes user-level files, the controlled `--agent responses` backend, `ahl watch` and the programmatic entry keep
 the previous outcome: `inconclusive` with `candidate_requires_independent_certification`.

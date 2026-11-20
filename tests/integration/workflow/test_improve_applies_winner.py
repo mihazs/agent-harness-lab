@@ -68,3 +68,16 @@ def test_watch_and_the_programmatic_entry_keep_the_recommendation(cli):
     result = improve(base.args())
     assert (result['status'], result['recommendation']) == ('inconclusive', 'candidate_requires_independent_certification')
     assert (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_the_proposer_of_an_installing_run_is_told_that_the_evaluation_decides(cli, tmp_path):
+    # Regression (fixed-in: 0.232.0): with no verified outcome in the evidence the proposer stopped with no_change, so nothing was evaluated.
+    seen = tmp_path / 'prompts'
+    recording = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
+    assert recording != workflow_fixture.FAKE
+    _, _, base = cli(agent=recording)
+    assert 'the evaluation stage decides whether your change is kept' in seen.read_text() and 'If none is supported, write' not in seen.read_text()
+    seen.unlink()
+    (base.project / 'AGENTS.md').write_text('bad')
+    improve(base.args())  # a run that only recommends keeps the earlier instruction
+    assert 'If none is supported, write' in seen.read_text() and 'the evaluation stage decides' not in seen.read_text()
