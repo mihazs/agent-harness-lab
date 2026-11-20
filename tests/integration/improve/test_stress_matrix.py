@@ -216,7 +216,7 @@ def test_a_second_run_on_the_same_project_while_the_first_holds_it_ends_busy_and
     first = end_state(code, captured)
     returncode, stdout, stderr = json.loads(second.read_text())
     assert returncode == 1 and json.loads(stdout)['reason'] == 'workspace_busy', (returncode, stdout[:300], stderr[-300:])
-    assert first['reason'] != 'workspace_busy' and not locks(stub)
+    assert first.get('reason') != 'workspace_busy' and not locks(stub)
 
 
 def test_a_second_run_on_another_project_in_one_state_home_is_not_blocked_by_the_first(stub, capsys):
@@ -236,7 +236,7 @@ def test_a_run_killed_in_the_middle_leaves_no_lock_that_blocks_the_next_one(stub
     end_state(code, captured)
     assert not locks(stub)
     code, captured = improve(stub, capsys, {})
-    assert end_state(code, captured)['reason'] != 'workspace_busy'
+    assert end_state(code, captured).get('reason') != 'workspace_busy'
 
 
 def test_a_lock_left_by_a_dead_run_ends_busy_with_the_removal_step(stub, capsys):

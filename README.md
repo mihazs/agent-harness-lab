@@ -75,16 +75,20 @@ Running `analyze` first is optional.
 What `improve` and `watch` themselves write, and what AHL never writes (their agent is
 cooperative, not sandboxed):
 
-- `ahl improve .` writes private state only: staged baseline and candidate copies,
-  evaluation results, a change plan and a run lock. AHL itself never writes project
-  instructions, skills or hooks. A candidate that passes evaluation is reported for
-  independent certification; it is not applied.
+- `ahl improve .` stages baseline and candidate copies, evaluation results, a change
+  plan and a run lock as private state. When the evaluated candidate wins (it fixes
+  at least one task the baseline fails and loses none), `improve` installs it into
+  the project through a rollback journal and ends `applied`, with the changed files
+  and the `ahl rollback` command in the receipt. Installing is your request, not
+  certification: the receipt keeps every evidence label, and one run per task is
+  weak evidence. A project `ahl.json`, a `--scope` that includes user-level files,
+  and `ahl watch` keep the candidate as a recommendation that is not applied.
 - The agent that `improve` starts is cooperative. It is told to treat the project
   as read-only, but nothing enforces that; your agent's own permission settings
   decide whether it can write there. AHL rechecks the project harness before it
   recommends and rejects a stale result, but it does not revert such a change.
-- `ahl improve . --repair-contracts` is the one exception: it may apply a bounded
-  skill-header repair, without model calls and with a rollback journal. A project
+- `ahl improve . --repair-contracts` applies only a bounded skill-header repair,
+  without model calls and with the same rollback journal. A project
   `ahl.json` keeps even that repair recommendation-only. The default scope never
   reads or writes user-level files; only an explicit `--scope global` or
   `--scope project+global` with `--agent codex|claude`, or a default you saved
@@ -103,9 +107,9 @@ cooperative, not sandboxed):
 
 Already working inside an agent session? Invoke the installed
 `harness-self-improvement` skill and ask it to improve this project's harness.
-The skill describes an assisted evaluation-and-edit loop; it is distinct from the
-CLI's current recommendation-only controller. Supported autonomous application
-and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
+The skill describes an assisted evaluation-and-edit loop. The remaining work on
+application review and matching CLI/skill receipts is tracked in
+[#77](https://github.com/mihazs/agent-harness-lab/issues/77).
 
 ## Harness surfaces
 

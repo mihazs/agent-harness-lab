@@ -47,7 +47,16 @@ processes already running and other tools are not controlled.
 evaluation sessions, freezes inputs, executes paired tasks and writes a local
 `workflow.json`. A favorable behavioral comparison now also writes a versioned
 `change-plan.json` listing exact changed paths, hashes/modes and evaluation location.
-It remains inconclusive until the applicable certification prerequisites are met.
+`ahl improve` on the project scope then installs that candidate through the rollback
+journal and ends `applied`: `changed_files`, `deployment` and `rollback` name what
+changed and how to undo it, and `application` holds the re-read target receipt with
+`authority: operator_invocation` and `certification: not_established`. A candidate
+wins when it passes every task while the baseline fails a development task, or, as
+`partial_improvement`, when it fixes a development task and fails only tasks the
+baseline also fails. The install is the operator's request, never certification:
+the `decision` block and every evidence label are unchanged. A project `ahl.json`,
+a scope that includes user-level files, `ahl watch` and the programmatic entry keep
+the previous outcome: `inconclusive` with `candidate_requires_independent_certification`.
 After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
@@ -965,7 +974,7 @@ a guarded transaction that needs recovery exits 1 with its receipt.
 The policy permits one thing: a plan whose every operation is recomputed from the staged baseline bytes as the
 bounded skill-header repair above (BOM removal before a minimal header, mode preserved). Blockers are
 `behavioral_application_requires_live_certification` (a `behavioral_candidate` plan; no authorization,
-approval or saved prerequisite status changes this, and the favorable `ahl improve` branch is unchanged),
+approval or saved prerequisite status changes this; only the live `ahl improve` run installs its own winner),
 `repair_not_reproduced_by_independent_check` (a plan labelled as a repair whose bytes are not that repair),
 `configuration_requires_recommendation_only` (a project `ahl.json` exists), `unresolved_operation`, and
 `project_frozen_read_only`. A permitted, authorized plan is applied by `adopt_with_receipt()` under the project
@@ -1014,5 +1023,5 @@ validation, operation-level review and capture join are described above; a nativ
 of the trials and the composed-change interaction evaluation remain), skill lifecycle and
 routing utility (#78), native hooks (#80) and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)
-covers the cooperative receipt only. The behavioral gate
-has not been relaxed. No favorable smoke result or approval becomes certification.
+covers the cooperative receipt only. No favorable smoke result or approval becomes certification:
+an `applied` behavioral candidate is installed at the operator's request and stays uncertified.

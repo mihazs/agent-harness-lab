@@ -104,7 +104,7 @@ def frozen(run, attempt=0):
 @pytest.mark.parametrize('mode', ['digests-plain', 'digests', 'omitted'])  # plain: no imported helper; the others import one
 def test_wrong_authored_digests_are_ignored_and_counted_by_the_real_cli(stub, capsys, mode):
     code, receipt, run = stub.improve(capsys, mode)
-    assert (code, receipt['status']) == (3, 'inconclusive'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
     attempts = len(list(run.glob('preparation/evaluation-?')))
     assert receipt['authored_digest_ignored'] == (12 * attempts if mode.startswith('digests') else 0)  # 3 bundles + 9 controls per construction
     assert isinstance(receipt['evaluation_construction_seconds'], float)

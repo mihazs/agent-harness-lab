@@ -48,4 +48,4 @@ def test_an_evaluation_stopped_as_uninformative_also_carries_the_labels_of_its_u
 def test_a_graded_comparison_with_a_real_difference_carries_no_vacuity_block(stub, capsys):
     code, receipt, _, _ = stub.run(capsys, {})
     assert 'vacuity' not in receipt and receipt.get('reason') != 'evaluation_vacuous', receipt
-    assert receipt['recommendation'] == 'candidate_requires_independent_certification' and code == 3
+    assert (code, receipt['status']) == (0, 'applied') and receipt['application']['certification'] == 'not_established'

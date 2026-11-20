@@ -104,7 +104,7 @@ def test_first_use_with_a_hypothesis_ends_with_an_evidenced_candidate_that_is_ne
     isolated, receipt = protocol.step('first-use-hypothesis', '--focus', 'synthetic hypothesis')
 
     assert_untouched(protocol, isolated)
-    assert receipt['plan'] and receipt['recommendation'] == 'candidate_requires_independent_certification'
+    assert receipt['plan'] and receipt['status'] == 'applied' and 'recommendation' not in receipt  # the install happened in the disposable worktree
     assert 'improved' not in (receipt['status'], receipt.get('outcome')) and receipt['automatic_promotion'] is False
 
 

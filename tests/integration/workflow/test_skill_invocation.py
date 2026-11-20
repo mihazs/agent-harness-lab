@@ -166,7 +166,7 @@ class TestSkillInvocation:
             return execute(argv,cwd,timeout,stdin,**kwargs)
         with patch.object(cli,'evaluator',return_value=runner),patch.object(runner,'execute',side_effect=observed):
             code,stdout,_=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','30'])
-        assert (code,json.loads(stdout)['status']) == (3,'inconclusive')
+        assert (code,json.loads(stdout)['status']) == (0,'applied')
         marked=[(cwd,environment) for cwd,environment,_ in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
         assert len(marked) == 2
         for cwd,environment in marked:
@@ -279,14 +279,14 @@ class TestEntryReceiptParity:
         with timing():code,stdout,stderr=invoke([*prefix,str(fixture.project),'--agent','codex','--codex',agent,'--timeout','30'])
         receipt=json.loads(stdout);run=Path(receipt['output'])
         assert json.loads((run/'workflow.json').read_text()) == receipt
-        assert (fixture.project/'AGENTS.md').read_bytes() == initial
+        assert ((fixture.project/'AGENTS.md').read_bytes() == initial) == (receipt['status'] != 'applied')  # only an applied run changes the target
         return code,receipt,stderr,run
 
     @pytest.mark.parametrize('options,status',[
         pytest.param(dict(mode='no_change'),'inconclusive',id='no_history_no_change'),
         pytest.param(dict(agents='good'),'no_change',id='no_beneficial_change'),
-        pytest.param({},'inconclusive',id='candidate_requires_certification'),
-        pytest.param(dict(mode='refine'),'inconclusive',id='refined_candidate'),
+        pytest.param({},'applied',id='winning_candidate_installed'),
+        pytest.param(dict(mode='refine'),'applied',id='refined_candidate'),
         pytest.param(dict(runtime='missing'),'blocked',id='blocked_runtime'),
     ])
     def test_cli_and_skill_receipts_differ_only_in_documented_fields(self,options,status,make_fixture):

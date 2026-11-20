@@ -97,8 +97,9 @@ def test_findings_without_verified_outcomes_stage_a_labelled_convention_candidat
     hypothesis = result['audit_hypothesis']
     assert (hypothesis['hypothesis_source'], hypothesis['reason'], hypothesis['authority']) == ('static_convention', reason, 'none')
     assert hypothesis['selection'] == 'automatic_no_trace_candidate' and hypothesis['finding_id'] and hypothesis['convention_source']
-    assert result['status'] == 'inconclusive' and result['changed_files'] == []
-    assert {p: p.read_bytes() for p in before} == before
+    assert result['status'] == 'applied' and result['changed_files']
+    changed = {p.relative_to(first_use.path).as_posix() for p, data in before.items() if p.read_bytes() != data}
+    assert changed == set(result['changed_files'])  # exactly the journaled files moved
     trials = json.loads((Path(result['output'])/'evaluation-0/results.json').read_text())['trials']
     assert {t['version'] for t in trials} == {'baseline', 'candidate'}
     plan = json.loads((Path(result['output'])/'change-plan.json').read_text())

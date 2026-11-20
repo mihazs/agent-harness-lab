@@ -129,7 +129,7 @@ def test_a_construction_overrun_ends_with_the_typed_timeout_and_a_stage_breakdow
 def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_second_box_and_the_trials(stub, capsys):
     # --timeout 600: box 150s, trials allotment 240s; 160s overrun leaves about 440s, enough for a box plus the trials.
     code, receipt, run, rows = stub.run(capsys, dict(construct_overrun_once=160), '--timeout', '600')
-    assert (code, receipt['status']) == (3, 'inconclusive'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
     repair = receipt['evaluation_construction_repairs']
     assert [(r['reason'], r['outcome']) for r in repair] == [('evaluation_construction_timeout', 'repaired')]
     assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 6
@@ -177,7 +177,7 @@ def test_a_stub_that_fails_one_arm_differently_continues_to_a_refinement(stub, c
 
 def test_a_refinement_reuses_the_frozen_tasks_and_constructs_only_fresh_heldout_inputs(stub, capsys):
     code, receipt, run, rows = stub.run(capsys, dict(refine=True))
-    assert (code, receipt['status']) == (3, 'inconclusive'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
     first, second = kinds(rows, 'construction')
     assert (first['reused'], second['reused']) == (0, 2)
     built = kinds(rows, 'constructed')

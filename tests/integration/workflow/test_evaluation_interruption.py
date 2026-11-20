@@ -81,6 +81,6 @@ def test_a_rerun_after_an_interrupted_evaluation_is_a_new_run_that_leaves_the_fi
     first = Path(receipt['output'])
     first_before = tree(first)
     code, rerun = invoke(project)
-    assert (code, rerun['status']) == (3, 'inconclusive') and rerun['output'] != receipt['output']
+    assert (code, rerun['status']) == (0, 'applied') and rerun['output'] != receipt['output']
     assert (Path(rerun['output']) / 'change-plan.json').is_file() and tree(first) == first_before
-    assert (project.project / 'AGENTS.md').read_text() == 'bad' and rerun['changed_files'] == []
+    assert (project.project / 'AGENTS.md').read_text() != 'bad' and rerun['changed_files'] == ['AGENTS.md']

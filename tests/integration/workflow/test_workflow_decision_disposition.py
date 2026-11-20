@@ -44,7 +44,7 @@ class TestDefaultDecisionDisposition:
                          '--claude', 'missing', '--timeout', '30', '--output', str(output), *extra])
         return code, json.loads((output / 'workflow.json').read_text())
 
-    def assert_no_authority(self, result):
+    def assert_no_authority(self, result, applied=False):
         decision = result['decision']
         assert decision['profile'] == policy.SINGLE_RUN_PROFILE
         assert decision['evidence_scope'] == 'single_run_descriptive_only'
@@ -64,8 +64,9 @@ class TestDefaultDecisionDisposition:
             assert reason in decision['reasons']
         assert set(decision['unmet_prerequisites']) == set(result['implementation_prerequisites']['mandatory_certification'])
         assert result['automatic_promotion'] is False
-        assert result['changed_files'] == []
-        assert (self.project / 'AGENTS.md').read_text() == self.original
+        # an installed winner is the operator's request: the files moved, and the decision still carries no authority
+        assert (result['changed_files'], (self.project / 'AGENTS.md').read_text() != self.original) == (['AGENTS.md'], True) if applied else (
+            result['changed_files'] == [] and (self.project / 'AGENTS.md').read_text() == self.original)
         binding = decision['bindings']
         evaluation = Path(binding['evaluation'])
         assert 'evaluation_sha256' not in binding
@@ -78,10 +79,10 @@ class TestDefaultDecisionDisposition:
     def test_improved_candidate_explains_insufficient_single_run_evidence(self):
         self.original = 'bad'
         code, result = self.run_cli()
-        assert (code, result['status']) == (3, 'inconclusive')
-        assert result['recommendation'] == 'candidate_requires_independent_certification'
-        decision = self.assert_no_authority(result)
-        assert decision['disposition'] == 'insufficient_evidence'
+        assert (code, result['status']) == (0, 'applied')
+        assert 'recommendation' not in result and result['application']['certification'] == 'not_established'
+        decision = self.assert_no_authority(result, applied=True)
+        assert decision['disposition'] == 'insufficient_evidence'  # installed at the operator's request, still not certified
         assert decision['observed_pattern'] == 'candidate_passed_where_baseline_failed'
         assert decision['promotion']['status'] == 'inconclusive'
         assert decision['observed']['pairs'] == dict(candidate_only_passed=2, baseline_only_passed=0,
