@@ -133,8 +133,8 @@ def test_a_missing_evidence_id_the_brief_did_not_list_is_unrecognized(home):
 
 
 def test_a_run_that_never_called_the_model_carries_no_preparation_block(home):
-    for name in ('a', 'b', 'c'): home.codex(name)
+    for name in ('a', 'b', 'c'): home.codex(name, cwd=home.root/'elsewhere')  # no session of this project: blocked before preparation
     code, receipt, err = improve(home)
-    assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
+    assert (receipt['reason'], home.model_calls) == ('history_no_matching_sessions', 0)
     assert 'preparation' not in receipt and 'ahl: preparation ' not in err
 

@@ -59,7 +59,8 @@ holds an evidenced candidate (a `plan`) or a typed `reason` with a `remediation`
 - FAIL: `no_change` or any other end without a `reason` or without a `remediation`, findings that are never explained, or
   spent budget without the label.
 
-A candidate needs evidence the history may not hold yet. If the run ends with `no_outcome_evidence`, follow its `next_steps`; to
+A run in the disposable worktree proposes and evaluates a candidate itself, and installs it there only. If a run that keeps its candidate
+a recommendation ends with `no_outcome_evidence`, follow its `next_steps`; to
 see the evaluation machinery run anyway, add `--focus 'a hypothesis you want tested'` ([hypothesis probes](hypothesis-probes.md)).
 
 <a id="before-after"></a>
@@ -190,7 +191,7 @@ failing recorded sessions, a stub runtime and the same check around `ahl improve
 
 | Step id | Synthetic test |
 | --- | --- |
-| `first-use` | `test_first_use_with_recorded_history_ends_with_a_typed_reason_and_a_remediation_and_leaves_the_checkout_unchanged`, `test_first_use_with_a_hypothesis_ends_with_an_evidenced_candidate_that_is_never_called_improved` |
+| `first-use` | `test_first_use_with_recorded_history_evaluates_a_candidate_itself_and_leaves_the_checkout_unchanged`, `test_first_use_with_a_hypothesis_ends_with_an_evidenced_candidate_that_is_never_called_improved` |
 | `before-after` | `test_before_and_after_are_scored_on_one_frozen_set_of_inputs_and_two_different_arms`, `test_a_worse_candidate_carries_no_plan_and_no_recommendation`, `test_a_worse_candidate_ends_blocked_as_candidate_regressed_with_an_investigation_beside_the_receipt`, `test_a_candidate_that_is_not_worse_is_never_blocked_and_leaves_no_investigation` |
 | `no-fake-results` | `test_a_vacuous_evaluation_is_labelled_and_never_reported_as_an_improvement`, `test_every_reported_trial_count_traces_to_the_recorded_results_file` |
 | `incremental` | `test_an_edit_between_two_runs_reaches_the_second_baseline_and_never_the_real_checkout`, `test_a_second_run_names_the_first_run_and_says_what_became_of_its_candidate`, `test_a_second_run_that_evaluates_again_labels_the_earlier_score_historical_beside_its_own_fresh_trials`, `test_a_second_run_that_evaluates_nothing_reports_the_earlier_score_as_historical_only`, `test_a_candidate_the_first_run_measured_worse_is_not_evaluated_again_by_the_second`, `test_a_second_run_cannot_see_the_first_when_the_state_home_is_not_shared_between_the_checks` |

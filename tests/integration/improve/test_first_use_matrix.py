@@ -17,26 +17,26 @@ def home(tmp_path, monkeypatch):
     return Home(tmp_path, monkeypatch)
 
 
-def test_recurring_failures_without_outcomes_end_typed_and_spend_nothing(home):
+def test_recurring_failures_without_outcomes_go_on_to_preparation_instead_of_ending_blocked(home):
     """The field case: findings across sessions, zero verified outcomes, no hypothesis source."""
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home)
     assert receipt['analysis']['findings'] > 0
     assert_candidate_or_typed_reason(receipt)
-    assert (receipt['status'], receipt['reason']) == ('blocked', 'no_outcome_evidence')
-    assert 'no_outcome_evidence' in receipt['findings_not_candidates']['causes']
-    steps = receipt['next_steps']  # the evidence that would unlock a candidate, ranked, each with the command to run
-    assert steps and [row['rank'] for row in steps] == list(range(1, len(steps) + 1)) and all(row['command'] for row in steps)
-    assert home.model_calls == 0 and 'spend_label' not in receipt
+    # Regression (fixed-in: 0.232.0): this ended blocked as no_outcome_evidence before any model call, telling the operator to
+    # run an evaluation first. An installing run now asks the proposer, whose candidate the run evaluates itself.
+    assert (receipt['status'], receipt['reason']) == ('inconclusive', 'no_change_evidence_insufficient')  # this stub proposer declines
+    assert {'no_outcome_evidence', 'proposer_returned_no_change'} <= set(receipt['findings_not_candidates']['causes'])
+    assert home.model_calls == 1 and receipt['spend_label'] == 'spent_without_evaluation'
     assert receipt['changed_files'] == [] and receipt['automatic_promotion'] is False
 
 
-def test_a_single_failure_without_outcomes_ends_typed_and_spends_nothing(home):
+def test_a_single_failure_without_outcomes_goes_on_to_preparation(home):
     home.codex('only', calls=1)
     code, receipt, _ = improve(home)
     assert receipt['analysis']['findings'] == 1
     assert_candidate_or_typed_reason(receipt)
-    assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
+    assert (receipt['reason'], home.model_calls) == ('no_change_evidence_insufficient', 1)
 
 
 def test_failures_beside_a_user_focus_still_run_preparation_and_label_the_unevaluated_spend(home):
@@ -90,22 +90,22 @@ def test_a_verified_graded_outcome_lifts_the_gate_so_the_remediation_can_work(ho
     assert home.model_calls == 1
 
 
-def test_failures_beside_only_unknown_outcomes_end_typed_and_never_count_the_unknown_as_evidence(home):
+def test_failures_beside_only_unknown_outcomes_go_on_to_preparation_and_never_count_the_unknown_as_evidence(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     home.ungraded_evaluation()
     code, receipt, _ = improve(home)
     assert receipt['analysis']['evaluation_records'] == 1 and receipt['analysis']['findings'] > 0
     assert_candidate_or_typed_reason(receipt)
-    assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
+    assert (receipt['reason'], home.model_calls) == ('no_change_evidence_insufficient', 1)
 
 
-def test_sessions_outside_the_verified_version_range_end_typed_and_say_the_capture_is_unverified(home):
+def test_sessions_outside_the_verified_version_range_say_the_capture_is_unverified(home):
     for number in range(3): home.claude(number)
     code, receipt, _ = improve(home, '--source', 'claude')
     assert receipt['analysis']['findings'] > 0
     assert_candidate_or_typed_reason(receipt)
     assert receipt['findings_not_candidates']['causes']['capture_unverified'] == receipt['analysis']['findings']
-    assert home.model_calls == 0
+    assert home.model_calls == 1
 
 
 def test_sessions_under_another_path_end_with_the_existing_typed_reason_and_remediation(home):
@@ -115,12 +115,12 @@ def test_sessions_under_another_path_end_with_the_existing_typed_reason_and_reme
     assert receipt['remediation'] and home.model_calls == 0
 
 
-def test_mixed_runtimes_with_failures_end_typed_and_spend_nothing(home):
+def test_mixed_runtimes_with_failures_go_on_to_preparation(home):
     home.codex('a'); home.codex('b'); home.claude(1); home.claude(2)
     code, receipt, _ = improve(home)
     assert {row['format'] for row in json.loads(open(receipt['output'] + '/analysis.json').read())['sources']} >= {'codex', 'claude'}
     assert_candidate_or_typed_reason(receipt)
-    assert (receipt['reason'], home.model_calls) == ('no_outcome_evidence', 0)
+    assert (receipt['reason'], home.model_calls) == ('no_change_evidence_insufficient', 1)
 
 
 def test_failures_with_static_convention_findings_stage_a_labelled_hypothesis_and_spend_one_preparation_call(home):

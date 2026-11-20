@@ -428,7 +428,7 @@ A receipt that ends `no_outcome_evidence`, or a no-change proposal after prepara
 candidate identical to the baseline, `candidate_identical_to_baseline`), while `analysis.findings` is above zero, carries `findings_not_candidates`: `reason: findings_not_actionable`, the
 `findings` total, their `kinds`, and `causes`, a count per cause (`no_outcome_evidence`, `no_hypothesis_source`,
 `capture_unverified`, `proposer_returned_no_change`). Causes may overlap, so the counts are not a partition and are
-never an independence or severity claim. `ahl improve --history` returns `no_outcome_evidence` before any preparation call when no
+never an independence or severity claim. An installing `ahl improve --history` run goes on to preparation and evaluates its own candidate; the outcome evidence that was missing is that evaluation. Only a run that keeps its candidate a recommendation (a project `ahl.json`, a user-level scope or `--agent responses`) returns `no_outcome_evidence` before any preparation call when no
 verified executable-grader outcome exists and no hypothesis source was supplied (`--from-audit`, `--focus`, or an eligible static convention
 that a Codex or Claude run stages itself, see [static audit](static-audit.md#staging-static-conventions-on-a-first-run)); when that audit ran and
 staged nothing, `findings_not_candidates.static_audit` says why (`no_eligible_convention`, `instruction_totals_unsettled` or `audit_inventory_<reason>`).
@@ -606,7 +606,7 @@ provider-reported usage per request) are not covered.
 | `precision_target_infeasible` | Review the requested precision target and available budget. |
 | `preflight_budget_exhausted` | Review the preflight budget before retrying. |
 | `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
-| `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure and no hypothesis source was supplied, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
+| `no_outcome_evidence` | Findings exist but no verified outcome relates them to a failure, no hypothesis source was supplied and this run only recommends, so no model call was made. Add verified evidence (run ahl evaluate or a graded bank so outcomes exist), run ahl audit . for static convention findings, or pass --focus with a hypothesis to test; the receipt lists per cause why no finding became a candidate. |
 | `resume_busy` | Another run or resume holds this loop; wait for it to finish, then resume again. Nothing ran. |
 | `resume_inputs_changed` | Resume with the frozen inputs, baseline, mechanism queue and carried dispositions the run was frozen with, or start a new run; nothing ran. |
 | `resume_requires_intervention` | The run left no completed no-change proposal to finalize, so it cannot be resumed; rerun ahl improve PROJECT. |

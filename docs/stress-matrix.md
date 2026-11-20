@@ -55,7 +55,7 @@ the Claude runtime protocol.
 | Runtime timeout in construction | `timeout` | `budget_exhausted` / `evaluation_construction_timeout` | 1 |
 | Runtime killed, garbage, silent, oversized or crash in preparation or construction | five faults | `execution_error` / `execution_failed` | 1 |
 | Any runtime fault in every trial | six faults | `inconclusive` / `evaluation_uninformative` | 3 |
-| Corrupt session beside usable ones | truncated line, binary, empty file, NUL bytes, invalid UTF-8, rows that are not objects, one 20 MiB line | The corrupt session is skipped; analysis and verdict equal those of the usable sessions: `blocked` / `no_outcome_evidence`, no model call | 3 |
+| Corrupt session beside usable ones | truncated line, binary, empty file, NUL bytes, invalid UTF-8, rows that are not objects, one 20 MiB line | The corrupt session is skipped; analysis and verdict equal those of the usable sessions: preparation runs and the stub proposer declines, `inconclusive` / `no_change_evidence_insufficient` | 3 |
 | History of only corrupt sessions, or empty history | same files, or none | `blocked` / `history_no_matching_sessions` with a remediation, no model call | 3 |
 | Duplicated history | one session copied three times | One independent root, never three | 3 |
 | Symlinked instruction file | live, dangling, looping or pointing at a directory | `invalid_input` / `unsupported_instruction_layout`, no model call | 2 |

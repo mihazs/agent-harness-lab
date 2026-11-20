@@ -71,8 +71,9 @@ def test_a_codex_preparation_reports_token_usage_only_and_no_cost_line(home):
 
 
 def test_a_run_that_made_no_model_call_has_no_model_calls_and_no_cost_line(home):
+    for path in (home.root/'codex/sessions').glob('*.jsonl'): path.unlink()  # no session left: blocked before preparation
     code, receipt, err = improve(home)
-    assert home.model_calls == 0 and receipt['reason'] == 'no_outcome_evidence'
+    assert home.model_calls == 0 and receipt['reason'] == 'history_no_matching_sessions'
     assert 'model_calls' not in receipt and 'provider-reported' not in err
 
 

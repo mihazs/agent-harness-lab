@@ -27,11 +27,11 @@ def assert_labelled_single_pass(receipt):
     assert receipt['automatic_promotion'] is False and receipt['changed_files'] == []
 
 
-def test_recurring_failures_without_outcomes_end_typed_spend_nothing_and_say_the_loop_was_not_used(home):
+def test_recurring_failures_without_outcomes_go_on_to_preparation_and_say_the_loop_was_not_used(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home)
     assert_candidate_or_typed_reason(receipt)
-    assert (code, receipt['status'], receipt['reason'], home.model_calls) == (3, 'blocked', 'no_outcome_evidence', 0)
+    assert (code, receipt['status'], receipt['reason'], home.model_calls) == (3, 'inconclusive', 'no_change_evidence_insufficient', 1)
     assert_labelled_single_pass(receipt)
 
 
@@ -88,6 +88,6 @@ def test_failures_with_a_pinned_bank_and_no_outcome_evidence_stop_before_the_loo
 def test_single_pass_in_the_matrix_keeps_the_previous_typed_end_state_and_says_it_is_deprecated(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home, '--single-pass')
-    assert (receipt['status'], receipt['reason'], home.model_calls) == ('blocked', 'no_outcome_evidence', 0)
+    assert (receipt['status'], receipt['reason'], home.model_calls) == ('inconclusive', 'no_change_evidence_insufficient', 1)
     assert receipt['loop'] == entry.not_used('single_pass_requested') and receipt['loop']['deprecated'] is True
     assert json.loads((Path(receipt['output'])/'workflow.json').read_text())['loop'] == receipt['loop']

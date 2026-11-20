@@ -103,9 +103,9 @@ def test_a_corrupt_session_beside_usable_ones_changes_neither_the_analysis_nor_t
     (home.root / 'codex/sessions/broken.jsonl').write_bytes(CORRUPT[damage])
     code, captured = from_history(home, capsys)
     receipt = end_state(code, captured)
-    assert outcome(receipt) == ('blocked', 'no_outcome_evidence')
+    assert outcome(receipt) == ('inconclusive', 'no_change_evidence_insufficient')  # the stub proposer declines
     assert (receipt['analysis']['cases'], receipt['analysis']['reported_roots']) == (3, 3)
-    assert home.model_calls == 0
+    assert home.model_calls == 1
 
 
 @pytest.mark.parametrize('damage', CORRUPT)
@@ -132,7 +132,7 @@ def test_one_session_copied_three_times_counts_as_one_independent_root(home, cap
     code, captured = from_history(home, capsys)
     receipt = end_state(code, captured)
     assert receipt['analysis']['reported_roots'] == 1, receipt['analysis']
-    assert outcome(receipt) == ('blocked', 'no_outcome_evidence') and home.model_calls == 0
+    assert outcome(receipt) == ('inconclusive', 'no_change_evidence_insufficient') and home.model_calls == 1
 
 
 def build_instruction_file(stub, shape):
