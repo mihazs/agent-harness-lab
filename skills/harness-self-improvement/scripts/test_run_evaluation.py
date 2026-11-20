@@ -377,7 +377,11 @@ class TrialSurfaceTests(unittest.TestCase):
         mcp = Path(argv[argv.index('--mcp-config') + 1])
         self.assertEqual(json.loads(mcp.read_text()), {'mcpServers': {}})
         settings = Path(argv[argv.index('--settings') + 1])
-        self.assertEqual(json.loads(settings.read_text()), {'disableAllHooks': True})
+        staged = json.loads(settings.read_text())
+        self.assertIs(staged.pop('disableAllHooks'), True)
+        # fixed-in: 0.232.0. Without a write grant every Claude trial ended in permission_denied, so no candidate could score.
+        self.assertEqual(staged, {'permissions': {'defaultMode': 'acceptEdits'},
+                                  'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}})
         for staged in (mcp, settings):
             self.assertEqual(staged.parent, self.trial)
             self.assertFalse(staged.is_relative_to(self.workspace))

@@ -21,7 +21,10 @@ Each request is made only when a `surfaces.CAPABILITIES` row names it; a missing
 row means the request is not made.
 
 - Claude Code: `--setting-sources project`, `--strict-mcp-config` with an empty
-  `--mcp-config`, and `--settings` with `disableAllHooks`. The two staged JSON
+  `--mcp-config`, and `--settings` with `disableAllHooks`. The same settings file
+  requests `permissions.defaultMode: acceptEdits` and the runtime's command sandbox
+  with no unsandboxed fallback, the counterpart of Codex's `workspace-write`: without
+  it a `--print` trial is denied every edit and command. The two staged JSON
   files sit beside the workspace with mode `0600`.
 - Codex: a temporary `CODEX_HOME` holding only the copied `model` and
   `model_reasoning_effort` defaults and one trust entry for the trial workspace.

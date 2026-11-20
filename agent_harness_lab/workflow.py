@@ -539,8 +539,11 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 expected = check['state'] == 'complete'
                 if complete and (run['timeout'] or now() - began > per_trial):
                     raise manifest_contract.ContractError('evaluation_task_infeasible', 'manifest_validation', f'tasks[{index}]')
-                if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
-                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                # Graded exactly as a trial will be: a declared bundle requires the typed result, so a plain exit-code
+                # grader is rejected here instead of turning every later trial into grader_error.
+                if runner.grading_status(run, typed=bool(frozen_bundles)) != ('passed' if expected else 'failed'):
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass'
+                                     + ('; with grader_bundles declared each grader must print the typed JSON result' if frozen_bundles else ''))
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
@@ -1109,6 +1112,12 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
+            if grading is None:
+                evaluation_prompt += """
+Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
+switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
+outcome=boolean, grader_id and grader_version, exit 0 for true and 1 for false), and any other output is a grader error.
+"""
             if grading is not None:
                 evaluation_prompt += """
 Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
