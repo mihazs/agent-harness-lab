@@ -26,7 +26,12 @@ CLAUDE_REQUESTS = (
 )
 CODEX_REQUESTS = (('settings', 'temporary CODEX_HOME with model, effort and one workspace trust entry'),)
 CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
-                 'settings': ('claude-settings.json', {'disableAllHooks': True})}
+                 # Project-only setting sources leave --print in permission mode 'default', which denies every edit and
+                 # command, so no trial could change its workspace. This is the counterpart of Codex's workspace-write
+                 # sandbox: edits accepted, commands run only inside the runtime's sandbox, no unsandboxed fallback.
+                 'settings': ('claude-settings.json', {'disableAllHooks': True, 'permissions': {'defaultMode': 'acceptEdits'},
+                                                       'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True,
+                                                                   'allowUnsandboxedCommands': False}})}
 CODEX_KEYS = ('model', 'model_reasoning_effort')
 # The documented codex exec credential override; OPENAI_API_KEY is not documented for codex exec.
 CODEX_CREDENTIAL = 'CODEX_API_KEY'
@@ -67,7 +72,8 @@ def descriptor(runtime, copied_keys=()):
                      inherited=['authentication stored outside settings files',
                                 'project and managed permission rules and sandbox settings',
                                 'managed settings and managed hooks', 'environment variables'],
-                     unknown=['user CLAUDE.md and auto memory', 'user plugins and skills'])
+                     unknown=['user CLAUDE.md and auto memory', 'user plugins and skills'],
+                     sandbox='workspace-write requested through --settings, unobserved')
     else:
         value.update(excluded_requested=['user config.toml beyond the copied keys',
                                          'CODEX_HOME skills, agents, rules, hooks, memories and MCP servers',

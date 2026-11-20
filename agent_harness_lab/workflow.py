@@ -1109,6 +1109,12 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
+            if grading is None:
+                evaluation_prompt += """
+Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
+switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
+outcome=boolean, grader_id and grader_version, exit 0 for true and 1 for false), and any other output is a grader error.
+"""
             if grading is not None:
                 evaluation_prompt += """
 Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
