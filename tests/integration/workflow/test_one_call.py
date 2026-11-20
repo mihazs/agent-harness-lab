@@ -260,7 +260,7 @@ def test_blocked_preflight_gives_a_reason_specific_remediation(one):
     assert offline['remediation'] == REMEDIATION['configured_profile_does_not_allow_cooperative_improvement']
     assert ambiguous['remediation'] != offline['remediation']
     assert ambiguous['preflight_plan'] == dict(requested_runtime='auto', observed_runtimes=['codex', 'claude'],
-        configured_scope=None, limits=dict(seconds=2700, trials=config.DEFAULT_TRIALS),
+        configured_scope=None, limits=dict(seconds=2700, trials=config.UNCONFIGURED_TRIALS),
         runtime_selection=dict(policy='ask_once', runtime=None, host=None),
         choice=dict(option='--agent', values=['codex', 'claude'], remember_option='--remember-runtime'),
         next_step=ambiguous['remediation'], authorization=AUTHORIZATION, candidate_prepared=False, evidence_prepared=False, execution_authority=False)

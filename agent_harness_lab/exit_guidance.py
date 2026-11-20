@@ -53,6 +53,9 @@ REMEDIATION = {
     'evaluation_vacuous': 'The evaluation proved nothing: it had no eligible case, no trial, only unknown outcomes, no executed grader or two identical arms (see vacuity.labels in the receipt, and docs/vacuity-labels.md); fix the named cause, then rerun. No improvement is reported for it.',
     'refinement_budget_unavailable': 'The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun.',
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
+    'improvement_confirmation_unaffordable': 'The time or trial budget ran out before the fixed tasks could be run a second time, so nothing was installed; rerun with a larger --timeout.',
+    'improvement_confirmation_incomplete': 'The second run of the fixed tasks did not grade every trial as passed or failed, so it neither confirms nor refutes the fix and nothing was installed; read the confirm results file, then rerun.',
+    'improvement_not_confirmed': 'The candidate fixed a task in one run and the repeat of that task did not show the same fix, so nothing was installed; read confirmation in the receipt and both results files.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
     'missing_or_duplicate_trials': 'Review the trial records and restore complete, unique trial coverage.',
     'evaluation_manifest_changed': 'Review the changed evaluation manifest before starting a fresh evaluation.',
@@ -135,7 +138,7 @@ def guidance(result):
         category = {'empty': 'No data', 'incomplete': 'Inconclusive', 'observed': 'Evidence observed'}.get(evidence, 'Inconclusive')
     else:
         reason = result.get('reason')
-        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'candidate_identical_to_baseline')
+        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'improvement_not_confirmed', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
                     'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'area_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected',

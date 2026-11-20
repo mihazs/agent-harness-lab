@@ -173,7 +173,7 @@ class TestSkillInvocation:
             context=json.loads((cwd/'context.json').read_text())['invocation']
             assert environment['AHL_MANAGED_PREPARATION'] == context['parent_run_id']
             assert context['remaining_seconds'] <= 30
-            assert context['remaining_trials'] <= 24
+            assert context['remaining_trials'] <= 40  # the unconfigured ceiling (config.UNCONFIGURED_TRIALS)
             assert not context['execution_authority']
         # Trial children get only their own temporary CODEX_HOME, never the preparation marker.
         trials=[environment for _,environment,argv in calls if environment is not None and argv[0] == str(fixture.agent)
@@ -284,7 +284,7 @@ class TestEntryReceiptParity:
 
     @pytest.mark.parametrize('options,status',[
         pytest.param(dict(mode='no_change'),'inconclusive',id='no_history_no_change'),
-        pytest.param(dict(agents='good'),'applied',id='tie_installed_without_an_improvement_claim'),
+        pytest.param(dict(agents='good'),'no_change',id='no_beneficial_change'),
         pytest.param({},'applied',id='winning_candidate_installed'),
         pytest.param(dict(mode='refine'),'applied',id='refined_candidate'),
         pytest.param(dict(runtime='missing'),'blocked',id='blocked_runtime'),

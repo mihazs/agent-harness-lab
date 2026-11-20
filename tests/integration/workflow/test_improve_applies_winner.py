@@ -1,10 +1,12 @@
-"""`ahl improve` installs the evaluated winner through the rollback journal, on synthetic cooperative runs only.
+"""`ahl improve` installs a measured, repeated improvement through the rollback journal, on synthetic cooperative runs only.
 
 Regression (fixed-in: 0.232.0): the favorable branch always ended `inconclusive` with a recommendation, so no model-proposed
-change ever reached the project. The same fake agent plays proposer, construction and trials.
+change ever reached the project. Nothing else is installed: a tie and a fix seen in one run only both end `no_change`.
+The same fake agent plays proposer, construction and trials.
 """
 import json
 from contextlib import ExitStack
+from pathlib import Path
 
 import pytest
 
@@ -16,6 +18,11 @@ from tests.integration.workflow import test_workflow as workflow_fixture
 PARTIAL = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
                                         "'done' if good and not phase.endswith('heldout') or phase.endswith('regression')")
 assert PARTIAL != workflow_fixture.FAKE
+# The baseline fails only in the first evaluation run (six trials); in the repeat of the fixed tasks it passes: not confirmed.
+ONCE = workflow_fixture.FAKE.replace("else:\n phase=p('phase').read_text()",
+    "else:\n phase=p('phase').read_text(); count=p(@COUNTER@); seen=int(count.read_text()) if count.exists() else 0; count.write_text(str(seen+1))").replace(
+    "'done' if good or phase.endswith('regression')", "'done' if good or seen>=6 or phase.endswith('regression')")
+assert ONCE.count('seen') == 3
 
 
 @pytest.fixture
@@ -40,7 +47,9 @@ def test_the_evaluated_winner_is_installed_with_a_verified_receipt_and_a_working
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
     application = receipt['application']
     assert (application['status'], application['authority'], application['certification']) == ('applied_verified', 'operator_invocation', 'not_established')
-    assert application['basis'] == 'improvement_observed'
+    assert application['basis'] == 'improvement_confirmed'
+    confirmation = receipt['confirmation']  # the same flip in two runs, and nothing lost in either
+    assert (confirmation['runs'], confirmation['fixed'], confirmation['fixed_once']) == (2, ['development', 'heldout'], [])
     assert 'recommendation' not in receipt and receipt['automatic_promotion'] is False
     assert receipt['decision']['application_eligible'] is False  # the evidence labels are untouched by the install
     assert receipt['rollback'].startswith(f'ahl rollback {receipt["deployment"]} --project ')
@@ -55,11 +64,20 @@ def test_a_candidate_that_gains_one_task_and_loses_none_is_installed_as_a_partia
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
 
 
-def test_a_tie_is_installed_and_labelled_no_regression_observed(cli):
-    # "No change" is justified only when the baseline scored better; on a tie the candidate goes in without an improvement claim.
+def test_a_tie_installs_nothing_and_a_second_hypothesis_is_tried_first(cli):
+    # A candidate that showed no gain is not an improvement. The baseline passed what was built to break it, twice.
     code, receipt, base = cli(original='good')
-    assert (code, receipt['status'], receipt['application']['basis']) == (0, 'applied', 'no_regression_observed')
-    assert 'partial_improvement' not in receipt and (base.project / 'AGENTS.md').read_text() == 'good\n'
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+    assert receipt['hypotheses_not_reproduced'] == 2 and 'application' not in receipt and receipt['changed_files'] == []
+    assert (base.project / 'AGENTS.md').read_text() == 'good'
+    assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2  # a fresh evaluation per hypothesis
+
+
+def test_a_fix_seen_in_one_run_and_not_in_the_repeat_installs_nothing(cli, tmp_path):
+    code, receipt, base = cli(agent=ONCE.replace('@COUNTER@', repr(str(tmp_path / 'trials'))))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
+    assert receipt['confirmation']['fixed'] == [] and receipt['confirmation']['fixed_once'] == ['development', 'heldout']
+    assert 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
 
 
 def test_watch_and_the_programmatic_entry_keep_the_recommendation(cli):
@@ -70,14 +88,78 @@ def test_watch_and_the_programmatic_entry_keep_the_recommendation(cli):
     assert (base.project / 'AGENTS.md').read_text() == 'bad'
 
 
-def test_the_proposer_of_an_installing_run_is_told_that_the_evaluation_decides(cli, tmp_path):
-    # Regression (fixed-in: 0.232.0): with no verified outcome in the evidence the proposer stopped with no_change, so nothing was evaluated.
+def test_an_installing_run_asks_for_a_reproducible_claim_and_hands_only_the_claim_to_the_evaluation_author(cli, tmp_path):
+    # Regression (fixed-in: 0.232.0): with no verified outcome in the evidence the proposer stopped with no_change, and the
+    # evaluation author, who never saw the claim, built tasks the baseline already passed.
     seen = tmp_path / 'prompts'
     recording = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
     assert recording != workflow_fixture.FAKE
-    _, _, base = cli(agent=recording)
-    assert 'the evaluation stage decides whether your change is kept' in seen.read_text() and 'If none is supported, write' not in seen.read_text()
+    _, receipt, base = cli(agent=recording)
+    text = seen.read_text()
+    assert 'installed only when the baseline fails there' in text and 'If none is supported, write' not in text
+    assert "The proposer's untested claim is in" in text
+    claim = json.loads((Path(receipt['output']) / 'preparation/evaluation-0/hypothesis.json').read_text())
+    assert claim == dict(mechanisms=['synthetic'], falsifiers=['artifact check'])
     seen.unlink()
     (base.project / 'AGENTS.md').write_text('bad')
-    improve(base.args())  # a run that only recommends keeps the earlier instruction
-    assert 'If none is supported, write' in seen.read_text() and 'the evaluation stage decides' not in seen.read_text()
+    result = improve(base.args())  # a run that only recommends keeps the earlier instructions
+    text = seen.read_text()
+    assert 'If none is supported, write' in text and 'installed only when' not in text and 'untested claim' not in text
+    assert not (Path(result['output']) / 'preparation/evaluation-0/hypothesis.json').exists()
+
+
+def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path):
+    # Two claims are screened in one evaluation; the baseline fails the task of one only, so the other's change must go first.
+    seen = tmp_path / 'prompts'
+    screening = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
+        "'mechanisms':['synthetic']", "'mechanisms':['m1','m2']").replace(
+        "('development','regression','heldout'))", "('development','m2','regression','heldout'))").replace(
+        "tasks.append(dict(id=split,split=split,", "tasks.append(dict(id=split,split='development' if split=='m2' else split,").replace(
+        "phase.endswith('regression')", "phase.endswith(('regression','m2'))")  # a second development task, which the baseline passes
+    assert screening.count('m1') == 1 and screening.count("'m2'") == 4
+    code, receipt, base = cli(agent=screening)
+    assert (code, receipt['status'], receipt['confirmation']['fixed']) == (0, 'applied', ['development', 'heldout'])
+    assert 'were not reproduced: m2' in seen.read_text()  # the task named after the claim the baseline passed
+    assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2
+
+
+def test_after_a_tie_the_second_attempt_starts_from_the_baseline_again(cli):
+    # Regression (fixed-in: 0.232.0): the proposer edited the same folder twice, so a refuted change rode along with the next one.
+    appending = workflow_fixture.FAKE.replace(
+        r"(candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')",
+        r"open(candidate/'AGENTS.md','a').write('\nattempt%d\n'%c['attempt'])").replace(
+        ".read_text().strip() for name", ".read_text().split()[0] for name")  # an appended line keeps the arm passing: a tie
+    assert appending.count('attempt%d') == 1 and appending.count('split()[0]') == 1
+    _, receipt, _ = cli(agent=appending, original='good')
+    assert (receipt['status'], receipt['hypotheses_not_reproduced']) == ('no_change', 2)
+    first, second = ((Path(receipt['output']) / f'candidate-{n}/AGENTS.md').read_text() for n in (0, 1))
+    assert 'attempt0' in first and second == 'good\nattempt1\n'
+
+
+def test_a_candidate_rejected_by_the_structural_validation_gets_one_corrected_attempt(cli, tmp_path):
+    # Regression (fixed-in: 0.232.0): a skill with a dangling reference ended the installing run `blocked` before any evaluation.
+    seen = tmp_path / 'prompts'
+    skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
+    rejected = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
+        "if mode == 'skill_route':", "if c['attempt']==0:\n    (candidate/'.agents/skills/alpha').mkdir(parents=True); "
+        f"(candidate/'.agents/skills/alpha/SKILL.md').write_text({skill!r})\n   if mode == 'skill_route':")
+    assert rejected.count('missing.md') == 1
+    code, receipt, base = cli(agent=rejected)
+    assert 'was rejected before evaluation' in seen.read_text() and 'dangling_reference' in seen.read_text()
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md'])
+    assert not (base.project / '.agents').exists() and not (Path(receipt['output']) / 'candidate-0').exists()
+
+
+@pytest.mark.parametrize(('repeat', 'lost'), [
+    ("good or seen>=6 and phase.endswith('heldout') or", []),              # the baseline passes heldout in the repeat: not fixed again
+    ("good != (seen>=6 and phase.endswith('heldout')) or", ['heldout']),  # and the candidate fails it there: lost
+])
+def test_one_task_fixed_again_does_not_carry_a_task_that_was_not(cli, tmp_path, repeat, lost):
+    # Regression (fixed-in: 0.232.0): one task fixed in both runs installed the candidate although another fix did not repeat.
+    agent = ONCE.replace('@COUNTER@', repr(str(tmp_path / 'trials'))).replace('good or seen>=6 or', repeat)
+    assert repeat in agent
+    code, receipt, base = cli(agent=agent)
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
+    confirmation = receipt['confirmation']
+    assert (confirmation['fixed'], confirmation['fixed_once'], confirmation['lost']) == (['development'], ['heldout'], lost)
+    assert 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'

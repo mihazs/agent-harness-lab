@@ -53,10 +53,13 @@ changed and how to undo it, and `application` holds the re-read target receipt w
 `authority: operator_invocation` and `certification: not_established`. A candidate
 wins when it passes every task while the baseline fails a development task, or, as
 `partial_improvement`, when it fixes a development task and fails only tasks the
-baseline also fails; `application.basis` is then `improvement_observed`. A tie, where
-both arms pass every task, is installed too with the basis `no_regression_observed`,
-because only a baseline that scored better justifies no change; it claims no improvement. The proposer of such a run is told
-that the evaluation decides, so evidence without a verified outcome is no longer a reason for it to return `no_change`. The install is the operator's request, never certification:
+baseline also fails. Before installing, the tasks the candidate fixed are run again in both arms, and only a task
+fixed in both runs counts: `confirmation` lists `fixed` and `fixed_once`, and a run with none confirmed ends `no_change`
+with `improvement_not_confirmed`. The proposer of such a run must state its claim as a weak outcome that can be reproduced,
+and the evaluation author receives that claim (`hypothesis.json`, never the candidate) to build development tasks the
+baseline should fail, with acceptance criteria taken from the project's own sources. A tie, where both arms pass every
+task, means the claim was not reproduced: nothing is installed, one different claim is tried when the budget allows, and
+the run then ends `no_change` with `evaluation_no_improvement` and `hypotheses_not_reproduced`. The install is the operator's request, never certification:
 the `decision` block and every evidence label are unchanged. A project `ahl.json`,
 a scope that includes user-level files, the controlled `--agent responses` backend, `ahl watch` and the programmatic entry keep
 the previous outcome: `inconclusive` with `candidate_requires_independent_certification`.

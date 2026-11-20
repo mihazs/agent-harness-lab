@@ -174,6 +174,14 @@ else:
             run=dict(timeout=False, exit_code=0, stdout=json.dumps(event))
             self.assertEqual(trace_result(run, 'claude')[0], 'incomplete')
 
+    def test_claude_session_that_wakes_after_a_background_task_is_complete_when_every_result_succeeded(self):
+        # Regression (fixed-in: 0.232.0): a second successful result record made a finished stage end as execution_error.
+        from run_evaluation import trace_result
+        ok = json.dumps({'type':'result','subtype':'success','is_error':False,'usage':{'output_tokens':1}})
+        bad = json.dumps({'type':'result','subtype':'error_during_execution','is_error':True})
+        for text, expected in [(ok + '\n' + ok, 'completed'), (ok + '\n' + bad, 'incomplete'), (bad + '\n' + ok, 'incomplete')]:
+            self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=text), 'claude')[0], expected)
+
     def test_trace_records_split_on_line_feed_only(self):
         from run_evaluation import trace_result
         usage={'input_tokens':3}

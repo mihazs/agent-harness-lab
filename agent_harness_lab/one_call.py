@@ -39,6 +39,8 @@ def resolve(args, explicit):
     settings=resolved['settings']
     for name,value in resolved['options'].items():setattr(args,name,value)
     args.trial_limit = resolved['trial_limit']
+    if settings is None and getattr(args,'command',None)=='improve' and getattr(args,'scope','project')=='project' and args.agent!='responses':
+        args.trial_limit = config.UNCONFIGURED_TRIALS  # the same runs workflow._installs installs for; every other path keeps its ceiling
     args.project_settings = settings
     args.configuration_sha256 = resolved['configuration_sha256']
     args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')

@@ -174,7 +174,7 @@ def trace_result(run, agent="codex"):
     # still parsed before classifying, so parse errors and non-object records win exactly as before.
     non_object = error_event = False
     results = turns = 0
-    first_result_ok = False
+    first_result_ok = False  # stays False once any result record is not a success
     usage = None
     try:
         for line in jsonl_lines(run['stdout']):
@@ -188,9 +188,10 @@ def trace_result(run, agent="codex"):
             if agent == 'claude':
                 if kind == 'result':
                     results += 1
-                    if results == 1:
-                        first_result_ok = event.get('subtype') == 'success' and event.get('is_error') is False
-                        usage = event.get('usage')
+                    # A session that wakes again after a background task prints one more result record: complete when every one succeeded.
+                    ok = event.get('subtype') == 'success' and event.get('is_error') is False
+                    first_result_ok = ok if results == 1 else first_result_ok and ok
+                    usage = event.get('usage')  # shortcut: the last record's usage, not a sum; sum them if spend ever reads this for Claude
                 elif kind == 'error':
                     error_event = True
             elif kind == 'turn.completed':
@@ -203,7 +204,7 @@ def trace_result(run, agent="codex"):
     if non_object:
         return 'invalid_trace', None
     if agent == 'claude':
-        if results != 1 or not first_result_ok or error_event:
+        if not results or not first_result_ok or error_event:
             return 'incomplete', None
         return 'completed', usage
     if not turns or error_event:

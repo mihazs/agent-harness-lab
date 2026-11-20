@@ -532,6 +532,9 @@ provider-reported usage per request) are not covered.
 | `loop_requires_frozen_bank` | Pin a task bank in ahl.json (bank.path and bank.sha256, with development, calibration and certification or transfer tasks) and use the cooperative runtime it names, then rerun; the loop evaluates every round on one frozen bank, so it never falls back to a single pass. |
 | `refinement_budget_unavailable` | The remaining budget cannot cover a refinement attempt; raise it with --timeout, then rerun. |
 | `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
+| `improvement_confirmation_unaffordable` | The time or trial budget ran out before the fixed tasks could be run a second time, so nothing was installed; rerun with a larger --timeout. |
+| `improvement_confirmation_incomplete` | The second run of the fixed tasks did not grade every trial as passed or failed, so it neither confirms nor refutes the fix and nothing was installed; read the confirm results file, then rerun. |
+| `improvement_not_confirmed` | The candidate fixed a task in one run and the repeat of that task did not show the same fix, so nothing was installed; read confirmation in the receipt and both results files. |
 | `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
 | `instruction_markers_malformed` | Edit the instruction file so it has exactly one `<!-- agent-harness-lab:start ... -->` line followed later by one `<!-- agent-harness-lab:end -->` line, or delete both lines, then run: ahl update |
 | `instruction_symlink_refused` | Make the instruction file a regular file you own, or a symlink to a regular file you own that is not world-writable, then run: ahl update |
