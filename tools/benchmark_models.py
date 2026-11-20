@@ -390,7 +390,8 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
     tokenizer = AutoTokenizer.from_pretrained(str(model_path), revision=revision, local_files_only=True, trust_remote_code=False)
     model = AutoModelForSequenceClassification.from_pretrained(str(model_path), revision=revision,
-                local_files_only=True, trust_remote_code=False, use_safetensors=True).eval().to(device)
+                local_files_only=True, trust_remote_code=False, use_safetensors=True).eval()
+    if device != 'cpu': model = model.to(device)
     labels = {str(v).lower(): int(k) for k, v in model.config.id2label.items()}
     if 'entailment' not in labels:
         raise ValueError('NLI model must declare entailment in id2label')
@@ -398,11 +399,13 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
     probabilities = []
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start+batch_size]
-        inputs = tokenizer(batch, [question]*len(batch), padding=True, truncation=False, return_tensors='pt').to(device)
+        inputs = tokenizer(batch, [question]*len(batch), padding=True, truncation=False, return_tensors='pt')
+        if device != 'cpu': inputs = inputs.to(device)
         if inputs['input_ids'].shape[-1] > maximum:
             raise ValueError(f'NLI input exceeds local model context ({maximum} paired tokens); no truncation performed')
         with torch.inference_mode():
-            values = model(**inputs).logits.softmax(-1)[:, labels['entailment']].cpu()
+            values = model(**inputs).logits.softmax(-1)[:, labels['entailment']]
+        if device != 'cpu': values = values.cpu()
         probabilities.extend(values.tolist())
     return probabilities
 
@@ -414,8 +417,9 @@ def inference_device():
     import torch
     chosen = os.environ.get('AHL_DEVICE')
     if chosen: return chosen
-    if torch.cuda.is_available(): return 'cuda'
-    mps = getattr(torch.backends, 'mps', None)
+    cuda = getattr(torch, 'cuda', None)
+    if cuda is not None and cuda.is_available(): return 'cuda'
+    mps = getattr(getattr(torch, 'backends', None), 'mps', None)
     return 'mps' if mps is not None and mps.is_available() else 'cpu'
 
 
