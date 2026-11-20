@@ -56,6 +56,19 @@ def test_analysis_writes_a_redacted_adherence_artifact_and_a_counts_only_brief_s
     assert not re.search(r'[0-9a-f]{64}', json.dumps(section))
 
 
+def test_analysis_brief_locates_user_reactions_with_closed_vocabulary_tokens_and_counts_only(home):
+    capture(home, [('user', f'Start {SECRET}.'), ('call', 'Bash', dict(command='pytest -q')), ('call', 'Edit', dict(file_path=str(home / f'{SECRET}.py'))),
+                   ('user', f'No, revert {SECRET}.'), ('agent', 'Done.'), ('user', f'Now {SECRET} too.')])
+    _, brief = analyze(home)
+    section = brief['user_reactions']
+    assert (section['authority'], section['status'], section['sessions_read']) == ('descriptive_only', 'completed', 1)
+    assert section['rows'] == [
+        dict(reaction='followup_after_stop', after_tool='none', command_family='none', file_extensions=[], sessions=1, occurrences=1),
+        dict(reaction='revert_requested', after_tool='Edit', command_family='pytest', file_extensions=['py'], sessions=1, occurrences=1)]
+    assert 'user_reactions' not in brief['instruction_adherence']
+    assert SECRET not in json.dumps(brief) and str(home) not in json.dumps(brief) and not re.search(r'[0-9a-f]{16}', json.dumps(section))
+
+
 def test_analysis_of_a_path_only_attachment_reports_an_abstention_because_the_attached_text_is_not_known_to_be_the_rule_file(home):
     capture(home, [('memory', str(home / 'AGENTS.md')), ('user', 'go'), ('call', 'Bash', dict(command=FORBIDDEN))])
     folder, brief = analyze(home)
@@ -77,6 +90,7 @@ def test_analysis_of_explicit_events_reports_not_run_and_never_zero_findings(hom
     folder, brief = analyze(home, '--events', str(events))
     assert brief['instruction_adherence'] == dict(authority='descriptive_only', causal_diagnosis=False, status='not_run', reason='no_native_capture_path')
     assert not (folder / 'instruction-adherence.json').exists() and 'instruction_adherence' not in brief['sources']
+    assert (brief['user_reactions']['status'], brief['user_reactions']['reason'], 'rows' in brief['user_reactions']) == ('not_run', 'no_native_capture_path', False)
 
 
 def test_analysis_reports_the_typed_reason_when_no_native_capture_could_be_read(home):

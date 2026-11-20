@@ -212,11 +212,20 @@ def test_read_sessions_reads_at_most_the_file_bound_and_counts_the_rest(project,
     assert len(sessions) == 2 and skipped == dict(over_file_limit=2)
 
 
-def test_read_sessions_stops_at_the_total_byte_budget_but_always_tries_the_first_file(project, tmp_path, monkeypatch):
+def test_read_sessions_skips_captures_past_the_total_byte_budget_but_always_tries_the_first_file(project, tmp_path, monkeypatch):
     monkeypatch.setattr(native, 'MAX_TOTAL_BYTES', 1)
     files = [('claude', write(tmp_path / f'{n}.jsonl', claude(project, [('user', str(n))], session=f's{n}'))) for n in range(3)]
     sessions, skipped = native.read_sessions(files, project)
     assert len(sessions) == 1 and skipped == dict(over_byte_budget=2)
+
+
+def test_a_capture_over_the_remaining_byte_budget_is_skipped_and_the_smaller_ones_after_it_are_still_read(project, tmp_path, monkeypatch):
+    """Regression: the read stopped at the first capture over the budget, so a large recent session hid every older one."""
+    small = [('claude', write(tmp_path / f'{n}.jsonl', claude(project, [('user', str(n))], session=f's{n}'))) for n in range(3)]
+    large = ('claude', write(tmp_path / 'large.jsonl', claude(project, [('user', 'x' * 4000)], session='large')))
+    monkeypatch.setattr(native, 'MAX_TOTAL_BYTES', sum(os.lstat(path).st_size for _, path in small))
+    sessions, skipped = native.read_sessions([small[0], large, *small[1:]], project)
+    assert [s['session'] for s in sessions] == ['s0', 's1', 's2'] and skipped == dict(over_byte_budget=1)
 
 
 def test_read_sessions_refuses_a_capture_larger_than_the_byte_bound(project, tmp_path, monkeypatch):

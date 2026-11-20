@@ -19,7 +19,7 @@ import re
 import shlex
 import stat
 
-from . import instruction_adherence as adherence, instruction_rules as rules
+from . import instruction_adherence as adherence, instruction_rules as rules, user_reactions
 
 RUNTIMES = ('claude', 'codex')
 RULE_FILES = ('AGENTS.md', 'CLAUDE.md')
@@ -256,8 +256,9 @@ def read_sessions(files, project, harness=()):
         except OSError:
             size = 0  # read_session types it as unavailable
         if read and spent + size > MAX_TOTAL_BYTES:
-            skipped['over_byte_budget'] = len(files) - number
-            break
+            # Skip it and go on: the newest captures come first, so stopping here let a few large ones hide every older session.
+            skipped['over_byte_budget'] += 1
+            continue
         try:
             session = read_session(path, runtime, project, harness)
         except Skipped as error:
@@ -298,6 +299,7 @@ def for_analysis(args, data):
     """(section for the analysis brief, full report or None) over the native captures an analysis read.
 
     The section is counts only. A run that read no native capture says so (`not_run`); it never reports zero findings.
+    Its `user_reactions` entry (where users intervened, closed-vocabulary tokens and counts) becomes a sibling brief section.
     """
     project = Path(args.project).resolve()
     files = sorted(((source['format'], source['path']) for source in data.get('sources', [])
@@ -306,7 +308,7 @@ def for_analysis(args, data):
         files = [(args.format, str(args.events))]
     base = dict(authority='descriptive_only', causal_diagnosis=False)
     if not files:
-        return dict(base, status='not_run', reason='no_native_capture_path'), None
+        return dict(base, status='not_run', reason='no_native_capture_path', user_reactions=user_reactions.not_run('no_native_capture_path')), None
     harness = harness_files(project)
     # --history-from names the checkout whose sessions were read for this (worktree) project: they are recorded under that path.
     recorded_in = Path(args.history_from).resolve() if getattr(args, 'history_from', None) else project
@@ -314,7 +316,10 @@ def for_analysis(args, data):
     if not sessions:
         # A bound that stopped the read is not "unreadable": the untried captures may be fine.
         bounded = 'over_file_limit' in skipped or 'over_byte_budget' in skipped
-        return dict(base, status='not_run', reason='read_bound_reached' if bounded else 'no_readable_native_session', skipped=skipped), None
+        reason = 'read_bound_reached' if bounded else 'no_readable_native_session'
+        return dict(base, status='not_run', reason=reason, skipped=skipped, user_reactions=user_reactions.not_run(reason)), None
+    # Lifted by brief.build into a sibling section of the brief; it needs no parsed rule, so it survives a rejected adherence input.
+    base['user_reactions'] = user_reactions.summarize(sessions)
     try:
         report = adherence.build(adherence.load_sessions(dict(profile=adherence.SESSIONS_PROFILE, sessions=sessions)), harness)
     except ValueError:

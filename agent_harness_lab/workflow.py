@@ -581,6 +581,8 @@ what the task and the repository's files make obvious, so claim only weak outcom
 do not give: a requirement the project's own checks, documentation or history enforce and an agent would not find unprompted.
 Write each mechanism as an observable weak outcome in a concrete situation, and each falsifier as what an agent under the
 baseline does if you are wrong.
+Prefer weak outcomes located by the brief's user_reactions rows (where users had to intervene), then inspect that area of the
+project's sources to say what went wrong; a row is where, not why.
 A skill may reference only files inside its own folder; a candidate that breaks that is rejected before evaluation.
 Only when every change you can name would make the harness worse, write"""
 # The second attempt of an installing run after a tie: the claim did not reproduce, so refining the same change proves nothing.
