@@ -674,8 +674,10 @@ something the project does not itself state or enforce is not a weakness. Do not
 """
 
 
-# At most six observations per arm of each fixed task; with one task, 6 of 6 against 2 of 6 is the weakest gap that passes.
+# Six fresh repeats per arm of each fixed task, at most two tasks (the trial budget). With one task, 6 of 6 against 2 of 6
+# is the weakest gap that passes at 0.05; with two, each is tested at 0.025.
 CONFIRM_RUNS = 6
+CONFIRM_TASKS = 2
 CONFIRM_ALPHA = 0.05
 
 
@@ -1526,14 +1528,21 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if _installs(args):
                 # One run per arm is one observation and agents vary between runs, so the fixed tasks are run again until
                 # the candidate's pass rate beats the baseline's by a one-sided exact test, or that can no longer happen.
-                fixed = _flips(trials)[0]  # only these are repeated: the claim under test is the fix
+                # Only fresh repeats count: the first run was selected for having flipped, so pooling it would bias the test.
+                # Each task gets CONFIRM_RUNS fresh repeats and its own one-sided exact test at alpha split across the tasks
+                # (Bonferroni). A verdict is read early only when no remaining outcome could change it, so stopping early never
+                # raises the false-positive rate.
+                fixed = set(sorted(_flips(trials)[0])[:CONFIRM_TASKS])  # only these are repeated: the claim under test is the fix
                 keep = lambda rows, key: [row for row in rows if row[key] in fixed]
                 write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
                     grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
                     **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in fixed}} if 'grader_bundles' in manifest else {})))
-                counts = dict(candidate=len(fixed), baseline=0, observations=len(fixed))  # the first run: every fixed task flipped
-                outcome = None
-                for run in range(1, CONFIRM_RUNS):
+                level = CONFIRM_ALPHA / len(fixed)
+                counts = {task: dict(candidate=0, baseline=0) for task in fixed}
+                verdict, outcome = {}, None
+                for run in range(1, CONFIRM_RUNS + 1):
+                    pending = sorted(task for task in fixed if task not in verdict)
+                    if not pending: break
                     if 2 * len(fixed) > trials_left or remaining() <= 0:
                         outcome = 'improvement_confirmation_unaffordable'
                         break
@@ -1550,23 +1559,19 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                             or grader_fingerprint(manifest_path) != grader_before):  # an ungraded or unfaithful repeat proves nothing
                         outcome = 'improvement_confirmation_incomplete'
                         break
-                    for version in ('candidate', 'baseline'):
-                        counts[version] += sum(t['version'] == version and t['status'] == 'passed' for t in repeat['trials'])
-                    counts['observations'] += len(fixed)
-                    p_value = _one_sided_exact(counts['candidate'], counts['baseline'], counts['observations'])
-                    left = (CONFIRM_RUNS - 1 - run) * len(fixed)  # the best case: every later candidate trial passes, no baseline one
-                    if p_value <= CONFIRM_ALPHA:
-                        outcome = 'confirmed'
-                        break
-                    if _one_sided_exact(counts['candidate'] + left, counts['baseline'], counts['observations'] + left) > CONFIRM_ALPHA:
-                        outcome = 'improvement_not_confirmed'
-                        break
-                else:
-                    outcome = 'improvement_not_confirmed'
-                n = counts['observations']
-                result['confirmation'] = dict(runs=n // max(1, len(fixed)), tasks=sorted(fixed), candidate_passed=counts['candidate'],
-                    baseline_passed=counts['baseline'], observations_per_arm=n, alpha=CONFIRM_ALPHA,
-                    p_value=round(_one_sided_exact(counts['candidate'], counts['baseline'], n), 4), outcome=outcome)
+                    for t in repeat['trials']:
+                        if t['task'] in counts and t['status'] == 'passed': counts[t['task']][t['version']] += 1
+                    left = CONFIRM_RUNS - run
+                    for task in pending:
+                        c, b = counts[task]['candidate'], counts[task]['baseline']
+                        if _one_sided_exact(c, b + left, CONFIRM_RUNS) <= level: verdict[task] = True   # holds whatever comes next
+                        elif _one_sided_exact(c + left, b, CONFIRM_RUNS) > level: verdict[task] = False  # cannot be reached any more
+                confirmed = sorted(task for task, ok in verdict.items() if ok)
+                if outcome is None:
+                    outcome = 'confirmed' if confirmed else 'improvement_not_confirmed'
+                result['confirmation'] = dict(repeats_per_task=CONFIRM_RUNS, alpha=CONFIRM_ALPHA, per_task_alpha=round(level, 4),
+                    tasks={task: dict(counts[task], verdict={True: 'confirmed', False: 'not_confirmed'}.get(verdict.get(task), 'undecided'))
+                           for task in sorted(fixed)}, confirmed=confirmed, outcome=outcome)
                 if outcome != 'confirmed':
                     result.pop('partial_improvement', None)
                     result.update(status='budget_exhausted' if outcome == 'improvement_confirmation_unaffordable' else

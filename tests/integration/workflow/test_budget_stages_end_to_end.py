@@ -132,7 +132,7 @@ def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_se
     assert (code, receipt['status']) == (0, 'applied'), receipt
     repair = receipt['evaluation_construction_repairs']
     assert [(r['reason'], r['outcome']) for r in repair] == [('evaluation_construction_timeout', 'repaired')]
-    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 10  # six, then both fixed tasks again in both arms
+    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 30  # six, then six fresh repeats of both fixed tasks in both arms
 
 
 def test_a_second_overrun_after_the_one_repair_ends_the_run_with_the_typed_reason(stub, capsys):

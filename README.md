@@ -77,10 +77,11 @@ cooperative, not sandboxed):
 
 - `ahl improve .` stages baseline and candidate copies, evaluation results, a change
   plan and a run lock as private state. When the baseline fails a task built to reproduce a
-  claimed weakness and the candidate fixes it, `improve` repeats the fixed tasks (at most six runs in all) and, when the
-  candidate's pass rate beats the baseline's by a one-sided exact test (p at most 0.05), installs the evaluated candidate into
-  the project through a rollback journal and ends `applied`, with the changed files and the `ahl rollback` command in the
-  receipt; `confirmation` holds the pooled pass counts and the p-value.
+  claimed weakness and the candidate fixes it, `improve` repeats up to two of the fixed tasks on fresh runs (the first, selected
+  run does not count) and, when for at least one task the candidate's pass rate beats the baseline's by a one-sided exact test
+  (p at most 0.05 split across the tasks), installs the evaluated candidate into the project through a rollback journal and
+  ends `applied`, with the changed files and the `ahl rollback` command in the receipt; `confirmation` holds each task's pass
+  counts and verdict.
   A tie installs nothing: a second claim is tried, then the run ends `no_change`. A fix the repeats do not
   show ends `no_change` as `improvement_not_confirmed`.
   Installing is your request, not
