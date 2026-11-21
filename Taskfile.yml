@@ -905,18 +905,15 @@ tasks:
         vars:
           KERNEL_TEST_FILTER: preservation_qualification
   test:sandbox:kernel:
-    desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
+    desc: Run native kernel canaries in disposable foreground user scopes (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
-    vars:
-      SCOPE_ID:
-        sh: cat /proc/sys/kernel/random/uuid
     env:
       PYTHONPATH: ''
       AHL_TEST_SYSTEMD_SCOPE: '1'
       AHL_TEST_CGROUP_ROOT: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests/integration/sandbox/test_sandbox_kernel.py -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+      - '{{.PYTHON | shellQuote}} {{printf "%s/scripts/run_kernel_scopes.py" .ROOT_DIR | shellQuote}} {{.ROOT_DIR | shellQuote}} {{.PYTHON | shellQuote}} {{default "" .KERNEL_TEST_FILTER | shellQuote}}'
   test:sandbox:permission-audit:
     desc: Run bounded permission-audit protocol and integration controls without requesting kernel execution
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
