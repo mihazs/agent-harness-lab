@@ -1472,7 +1472,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 # A separate namespace: the plan below still binds the primary run through `options`.
                 second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
                     'output': str(output / f'evaluation-{attempt}-confirm'), 'parent_deadline': time.monotonic() + remaining()})
-                progress('evaluation', attempt=attempt + 1, run=2)
+                progress('evaluation_repeat', attempt=attempt + 1)
                 with manifest_contract.boundary('evaluation'), stages.charge('trials'):
                     runner.evaluate(second)
                 repeat = json.loads((Path(second.output) / 'results.json').read_text())
