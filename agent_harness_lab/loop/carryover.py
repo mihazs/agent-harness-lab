@@ -12,6 +12,9 @@ earlier candidate (a changed component). Anything unknown reopens too. Carried s
 marked truncated, and a pruned entry is never read as a success or an independence label.
 """
 from agent_harness_lab import incremental
+import hashlib
+import json
+import re
 
 from .controller import CARRIED
 from .errors import LoopError
@@ -19,6 +22,31 @@ from .receipt import CARRY_PROFILE as PROFILE, MAX_CARRIED as MAX_MECHANISMS, MA
 
 KEEP = ('applied', 'ignored', 'no_candidate')  # #806 relations after which the earlier dispositions still describe this harness
 _SETTLED = ('accepted', 'improved')  # a mechanism whose candidate was kept is done, not carried
+
+
+def evidence_versions(brief):
+    """Fingerprint distinct observed rows with references; missing or ambiguous evidence is unknown."""
+    coverage = brief.get('coverage') if isinstance(brief, dict) else None
+    if not isinstance(coverage, dict) or coverage.get('incomplete') is not False: return {}
+    rows = brief.get('mechanisms') if isinstance(brief, dict) else None
+    if not isinstance(rows, list) or len(rows) > MAX_MECHANISMS: return {}
+    versions, seen = {}, set()
+    for row in rows:
+        if not isinstance(row, dict): continue
+        name, refs = row.get('mechanism_id'), row.get('evidence_refs')
+        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_./:-]{1,128}', name): continue
+        if name in seen:
+            versions.pop(name, None); continue
+        seen.add(name)
+        errors = row.get('errors')
+        if (not isinstance(refs, list) or type(errors) is not int or errors < 1 or len(refs) != errors
+                or row.get('counts_are_lower_bounds') is not False
+                or any(not isinstance(ref, dict) or not all(isinstance(ref.get(key), str) and ref[key] for key in ('case_id', 'event_id')) for ref in refs)
+                or len({(ref['case_id'], ref['event_id']) for ref in refs}) != errors): continue
+        try: encoded = [json.dumps([ref['case_id'], ref['event_id']], separators=(',', ':'), allow_nan=False).encode() for ref in refs]
+        except (TypeError, ValueError): continue
+        versions[name] = sorted(hashlib.sha256(item).hexdigest() for item in encoded)
+    return versions
 
 
 def previous_block(receipt):
@@ -58,7 +86,7 @@ def carry(previous, run, relation, frozen_inputs):
                 recommendation_only=True, automatic_promotion=False)
 
 
-def read(state, original, frozen_inputs):
+def read(state, original, frozen_inputs, evidence=None):
     """The carry-over of this run from the previous run incremental.begin found, or None for a first run.
 
     state is the incremental state, original this run's harness file states and frozen_inputs this run's digest. Returns
@@ -75,7 +103,17 @@ def read(state, original, frozen_inputs):
     previous = previous_block(prior['receipt'])
     if previous is None: return unavailable('previous_run_not_a_loop', previous_run=prior['run'], relation=relation)
     block = carry(previous, prior['run'], relation, frozen_inputs)
-    return dict(block=block, dispositions=block['mechanisms']['carried'])
+    versions = previous.get('mechanism_evidence') or {}
+    evidence = evidence or {}
+    held = block['mechanisms']['carried']
+    changed = sorted(name for name in held if name in evidence and name in versions and set(evidence[name]) - set(versions[name]))
+    unknown = sorted(name for name in held if name not in changed and (name not in evidence or name not in versions or set(versions[name]) - set(evidence[name])))
+    if unknown: block['mechanisms']['evidence_unknown'] = unknown
+    if changed:
+        block['mechanisms']['carried'] = {name: value for name, value in held.items() if name not in changed}
+        block['mechanisms']['reopened'] = changed
+        block['status'], block['reason'] = 'reopened', 'mechanism_evidence_changed'
+    return dict(block=block, dispositions=block['mechanisms']['carried'], evidence={name: versions[name] for name in held if name in versions})
 
 
 def finish(block, loop):

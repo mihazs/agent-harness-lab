@@ -27,6 +27,14 @@ def stack():
 @pytest.fixture(autouse=True)
 def three_mechanisms(monkeypatch):
     monkeypatch.setattr(loop_improve, 'mechanisms', lambda args: ['m1', 'm2', 'm3'])
+    evidence = {'event': 'one'}
+    versions = loop_improve.carryover.evidence_versions
+    def synthetic_versions(_brief):
+        rows = [dict(mechanism_id=name, errors=1, counts_are_lower_bounds=False,
+                     evidence_refs=[dict(case_id='synthetic', event_id=evidence['event'])]) for name in ('m1', 'm2', 'm3')]
+        return versions(dict(coverage=dict(incomplete=False), mechanisms=rows))
+    monkeypatch.setattr(loop_improve.carryover, 'evidence_versions', synthetic_versions)
+    return evidence
 
 
 def project_of(stack, monkeypatch, **options):
@@ -102,6 +110,31 @@ def test_regressed_then_rerun_does_not_offer_the_rejected_mechanism_again_withou
     assert (carry['status'], carry['relation'], carry['previous_stop']) == ('carried', 'no_candidate', 'regression') and stages(second) == DISPOSED
 
 
+def test_new_evidence_reopens_a_rejected_mechanism(stack, monkeypatch, three_mechanisms):
+    project, _ = regressed_run(stack, monkeypatch)
+    three_mechanisms['event'] = 'two'
+    project.write({0: dict(harness=li.NOTHING)})
+    _, second, _ = project.invoke('--accept-score', '0.9')
+    carry = second['loop']['carry_over']
+    assert carry['reason'] == 'mechanism_evidence_changed'
+    assert carry['mechanisms']['reopened'] == ['m1']
+    assert [call['mechanism'] for call in project.calls()] == ['m1', 'm1']
+    assert second['loop']['before']['evaluation_id'] == 'evaluation-0'
+
+
+def test_returning_old_evidence_after_a_missing_capture_does_not_reopen(stack, monkeypatch, three_mechanisms):
+    project, _ = regressed_run(stack, monkeypatch)
+    project.write({})
+    three_mechanisms['event'] = None
+    _, second, _ = project.invoke('--accept-score', '0.9')
+    assert second['loop']['carry_over']['mechanisms']['evidence_unknown'] == ['m1']
+    calls = len(project.calls())
+    three_mechanisms['event'] = 'one'
+    _, third, _ = project.invoke('--accept-score', '0.9')
+    assert third['loop']['carry_over']['mechanisms']['carried']['m1'] == 'rejected'
+    assert len(project.calls()) == calls
+
+
 def test_a_harness_edited_between_runs_reopens_the_mechanisms_and_the_baseline_is_evaluated_fresh(stack, monkeypatch):
     project, first = regressed_run(stack, monkeypatch)
     project.write({0: dict(harness=li.NOTHING)})
@@ -135,6 +168,18 @@ def test_changed_frozen_inputs_make_the_earlier_scores_not_comparable_omit_the_d
     assert second['loop']['frozen_inputs_sha256'] != first['loop']['frozen_inputs_sha256']
     assert (carry['status'], carry['reason'], carry['comparable'], carry['historical']['comparison']) == ('reopened', 'frozen_inputs_changed', False, 'not_comparable')
     assert (carry['delta'], carry['delta_reason'], 'fresh_baseline_minus_historical_best' in carry) == ('omitted', 'frozen_inputs_changed', False)
+    assert carry['mechanisms']['reopened'] == ['m1'] and [call['mechanism'] for call in project.calls()] == ['m1', 'm1']
+
+
+def test_runtime_changed_in_place_makes_prior_scores_not_comparable(stack, monkeypatch):
+    project, first = regressed_run(stack, monkeypatch)
+    agent = project.fixture.agent
+    agent.write_text(agent.read_text() + '\n# synthetic runtime revision\n')
+    project.write({0: dict(harness=li.NOTHING)})
+    _, second, _ = project.invoke('--accept-score', '0.9')
+    carry = second['loop']['carry_over']
+    assert second['loop']['frozen_inputs_sha256'] != first['loop']['frozen_inputs_sha256']
+    assert (carry['historical']['comparison'], carry['delta_reason']) == ('not_comparable', 'frozen_inputs_changed')
     assert carry['mechanisms']['reopened'] == ['m1'] and [call['mechanism'] for call in project.calls()] == ['m1', 'm1']
 
 

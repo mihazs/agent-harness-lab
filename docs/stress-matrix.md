@@ -88,7 +88,7 @@ Each of these ended typed but wrongly, or untyped, and now has a regression test
 
 - Only the cooperative Codex and Claude runtimes are injected; the controlled Responses route is not.
 - The captured output of a cooperative runtime has no size cap in the runner. The matrix injects 24 MiB, not an unbounded stream.
-- A lock left by an `ahl` process that was itself killed is not reclaimed automatically; the typed `workspace_busy` receipt names the removal step.
+- A same-boot lock left by a killed `ahl` process is not reclaimed automatically; the typed `workspace_busy` receipt requires reconciling its process, children and pending requests. A v2 lock from a verified previous Linux boot can be reclaimed after a reboot.
 - A broken symlink inside a skill bundle is not covered by the instruction-file check.
 - Real wall-clock budgets pin typedness only, because where a small budget runs out depends on the machine.
 - Real-runtime and real-project runs are field validation, outside this suite.

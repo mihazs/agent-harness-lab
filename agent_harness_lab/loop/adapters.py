@@ -14,6 +14,7 @@ from contextlib import nullcontext
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import shutil
 
@@ -66,7 +67,7 @@ def scoring_manifest(path):
     """
     path = Path(path)
     try:
-        manifest = json.loads(path.read_text())
+        manifest = json.loads(integrity.read_regular(path, 8*1024*1024))
         experiment = manifest.get('experiment')
         if 'protected_access' in manifest or isinstance(experiment, dict) and experiment.get('profile') == 'certification': raise ValueError
         if not isinstance(manifest['tasks'], list): raise ValueError
@@ -78,8 +79,10 @@ def scoring_manifest(path):
         if 'grader_self_tests' in kept: kept['grader_self_tests'] = [item for item in kept['grader_self_tests'] if isinstance(item, dict) and item.get('task') in ids]
         if 'grader_bundles' in kept: kept['grader_bundles'] = {name: item for name, item in kept['grader_bundles'].items() if name in ids}
         target, text = path.with_name(SCORING_MANIFEST), json.dumps(kept, indent=2, sort_keys=True) + '\n'
-        if target.exists() and target.read_text() != text: raise ValueError  # the frozen scoring bank is never rewritten
-        target.write_text(text)
+        if os.path.lexists(target):
+            if integrity.read_regular(target, 8*1024*1024) != text.encode(): raise ValueError
+        else:
+            target.write_text(text)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         raise LoopError('loop_port_invalid', 'bank', 'declared') from error
     return target, len(manifest['tasks']) - len(tasks)
@@ -92,10 +95,34 @@ class ExecutorRunner:
     """
     def __init__(self, evaluate, agent, binary, **options):
         self.evaluate, self.agent, self.binary, self.options = evaluate, agent, binary, options
+        self._runtime_cache = None
+        self._runtime_generation = 0
+
+    def _runtime_file(self):
+        """Return the executable and its digest, rehashing when its file identity changes."""
+        from .cold_resume import runtime_sha256
+        binary = shutil.which(self.binary)
+        if binary is None: raise ValueError('runtime executable unavailable')
+        path = Path(binary).resolve()
+        def identity():
+            info = path.stat()
+            return (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        observed = identity()
+        if self._runtime_cache is None or self._runtime_cache[0] != observed:
+            contents = runtime_sha256(path)
+            if identity() != observed: raise ValueError('runtime executable changed while hashing')
+            self._runtime_cache = observed, contents
+            self._runtime_generation += 1
+        return path, self._runtime_cache[1]
+
+    def runtime_executable_sha256(self):
+        return self._runtime_file()[1]
 
     def runtime_sha256(self):
-        """The launch identity both arms share, read now so a changed agent or executable changes the frozen inputs."""
-        return before_after.launch_sha256(self.agent, shutil.which(self.binary) or self.binary, self.options.get('inherit_env', False), self.options.get('with_user_harness', False))
+        """Bind the launch configuration and executable contents."""
+        path, contents = self._runtime_file()
+        return digest(dict(profile='ahl-loop-runtime-v2', launch=before_after.launch_sha256(self.agent, path, self.options.get('inherit_env', False), self.options.get('with_user_harness', False)),
+                           executable_sha256=contents))
 
     def run(self, arms, snapshots, manifest, out):
         options = dict(self.options)
@@ -171,9 +198,11 @@ class FrozenBankEvaluator:
         against = self.bases.get(snapshot, self.baseline)
         arm, arms = ('candidate', ('baseline', 'candidate')) if paired else ('baseline', ('baseline',))
         before = self._observe()
+        runtime_generation = getattr(self.runner, '_runtime_generation', None)
         ran = before == self.identity  # inputs that already differ would spend trials on a comparison that cannot be valid
         result = self._run(arms, {'baseline': against if paired else snapshot, 'candidate': snapshot}, index) if ran else dict(trials=[], elapsed_seconds=0.0)
-        unchanged = not ran or self._observe() == before and result.get('inputs_unchanged') is True  # a run that moved an input leaves them unknown
+        unchanged = not ran or (self._observe() == before and getattr(self.runner, '_runtime_generation', None) == runtime_generation
+                                and result.get('inputs_unchanged') is True)  # a run that moved an input leaves them unknown
         observed = before if unchanged else before_after.frozen_inputs()
         trials = result.get('trials')
         ids = dict(self.tasks)
