@@ -92,6 +92,14 @@ def test_the_prompt_line_lists_the_reused_ids_and_reserved_names_but_never_fixtu
     assert 'tampered' not in line and str(first) not in line
 
 
+def test_the_prompt_line_asks_for_as_many_fresh_tasks_as_fit_in_the_five_task_cap(world):
+    # Regression (fixed-in: 0.233.0): a refinement author wrote three fresh tasks beside four reused ones and the merged
+    # evaluation, seven tasks, was rejected ("generated evaluations require 3-5 tasks").
+    first, _, _, plan = world
+    assert f'exactly {max(1, 5 - len(plan["tasks"]))} of them' in reuse.prompt_line(plan)
+    assert 'exactly 1 of them' in reuse.prompt_line(dict(plan, tasks=plan['tasks'] * 4))
+
+
 @pytest.mark.parametrize('names', [
     pytest.param(['grade.py'], id='reserved-file'),
     pytest.param(['development'], id='reserved-directory'),
