@@ -674,9 +674,10 @@ something the project does not itself state or enforce is not a weakness. Do not
 """
 
 
-# Six fresh repeats per arm of each fixed task, at most two tasks (the trial budget). With one task, 6 of 6 against 2 of 6
-# is the weakest gap that passes at 0.05; with two, each is tested at 0.025.
-CONFIRM_RUNS = 6
+# Twelve fresh repeats per arm of each fixed task, at most two tasks (the trial budget). Agents are noisy: a live baseline
+# passed a reproduced weak outcome about half the time, and six repeats could not separate 6 of 6 from 3 of 6. With twelve,
+# 12 of 12 against 7 of 12 passes at 0.05 (power about 0.87 against a baseline passing 55%; null false positives <= 0.03).
+CONFIRM_RUNS = 12
 CONFIRM_TASKS = 2
 CONFIRM_ALPHA = 0.05
 

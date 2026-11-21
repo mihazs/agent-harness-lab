@@ -54,14 +54,14 @@ changed and how to undo it, and `application` holds the re-read target receipt w
 wins when it passes every task while the baseline fails a development task, or, as
 `partial_improvement`, when it fixes a development task and fails only tasks the
 baseline also fails. Before installing, up to two of the tasks the candidate fixed (the first two by name) are run again in
-both arms on up to six fresh repeats. The first run was selected for having flipped, so it does not count. Each task gets its
+both arms on up to twelve fresh repeats. The first run was selected for having flipped, so it does not count. Each task gets its
 own one-sided exact test of the candidate's pass rate against the baseline's, at 0.05 divided by the number of tasks, and the
 candidate is installed when at least one task passes it, so a baseline that fails only some of the time does not block a
 fix the candidate always shows. A task's verdict is read early only when no remaining outcome could change it. `confirmation`
 holds `repeats_per_task`, `alpha`, `per_task_alpha`, `tasks` (each task's `candidate` and `baseline` pass counts and its
 `verdict`: `confirmed`, `not_confirmed` or `undecided`), `confirmed` and `outcome`, and a run with no confirmed task ends
-`no_change` with `improvement_not_confirmed`. Each repeat costs two trials per task, so six repeats of two tasks need 24
-trials of the shared budget. The proposer of such a run must state its claim as a weak outcome that can be reproduced,
+`no_change` with `improvement_not_confirmed`. Each repeat costs two trials per task, so twelve repeats of two tasks need 48
+trials of the shared budget (an installing run has 80). The proposer of such a run must state its claim as a weak outcome that can be reproduced,
 and the evaluation author receives that claim (`hypothesis.json`, never the candidate) to build development tasks the
 baseline should fail, with acceptance criteria taken from the project's own sources. A tie, where both arms pass every
 task, means the claim was not reproduced: nothing is installed, one different claim is tried when the budget allows, and
