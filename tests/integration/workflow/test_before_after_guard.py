@@ -184,4 +184,6 @@ def test_the_cli_carries_the_declared_margin_into_the_receipt(tmp_path, capsys):
         code = main(['improve', str(base.project), '--agent', 'codex', '--codex', str(base.agent), '--claude', 'missing',
                      '--timeout', '30', '--regression-margin', '0.8', '--output', str(tmp_path / 'run')])
     receipt = json.loads(capsys.readouterr().out)
-    assert (code, receipt['reason'], receipt['before_after']['margin'], receipt['before_after']['adoption_blocked']) == (1, 'evaluation_run_failed', 0.8, False)
+    # inside the declared margin the loss does not block, and a measured run that gained nothing is a no_change verdict (fixed-in: 0.233.1)
+    assert (code, receipt['reason'], receipt['before_after']['margin'], receipt['before_after']['adoption_blocked']) == (0, 'evaluation_no_improvement', 0.8, False)
+    assert receipt['candidate_lost'] and receipt['baseline_at_least_as_good'] is True

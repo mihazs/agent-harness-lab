@@ -174,7 +174,8 @@ class TestDefaultDecisionDisposition:
         self.original = 'bad'
         (self.project / 'mode').write_text('worse')
         code, result = self.run_cli()
-        assert (code, result['status']) == (1, 'evaluation_failed')
+        # both arms failed the same tasks: a measured no-gain verdict, not a failure (fixed-in: 0.233.1)
+        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
         assert 'recommendation' not in result
         assert 'plan' not in result
         decision = self.assert_no_authority(result)
@@ -197,7 +198,7 @@ class TestDefaultDecisionDisposition:
         self.agent.write_text(SYMLINKING.replace("mode=(project/'mode').read_text() if (project/'mode').exists() else 'ok'", "mode='worse'"))
         self.original = 'bad'
         code, result = self.run_cli()
-        assert (code, result['status']) == (1, 'evaluation_failed')
+        assert (code, result['status']) == (0, 'no_change')
         assert result['decision']['bindings']['attempt'] == 1
 
     def test_block_marks_when_a_later_attempt_stopped_before_evaluation(self):
