@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.232.2
+
+### Patch Changes
+
+- e4be794: An installing `ahl improve` run now sends a grader self-test failure (and other defects its own graders show) back to the evaluation author as a repair pass, naming the task, the control and the grader's bounded output, instead of ending `invalid_input`. An installing run builds its refinement evaluation afresh instead of reusing frozen tasks, so a control the baseline fails is not carried over and the refinement gets the same repairs. In a trial whose fixture is a git repository, the harness files AHL stages (instructions, skills, the trial plugin) are kept out of `git status`, so a grader that checks for a clean tree no longer fails both arms. When the first candidate of an installing run fixed a task and lost none while the authored regression controls failed in both arms, the second attempt keeps that candidate, does not propose again and builds the evaluation afresh with the invalid controls named (`controls_rebuilt`). An installing run no longer needs the same flip in two runs: it repeats up to two of the tasks the candidate fixed on up to six fresh repeats (the selected first run does not count) and installs when, for at least one task, the candidate's pass rate beats the baseline's by a one-sided exact test at 0.05 split across the tasks, so an intermittent baseline weakness no longer blocks a fix; `confirmation` now holds each task's pass counts and verdict instead of `fixed`, `fixed_once` and `lost`.
+
 ## 0.232.1
 
 ### Patch Changes
