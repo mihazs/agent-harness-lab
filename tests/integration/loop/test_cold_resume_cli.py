@@ -79,6 +79,16 @@ def test_cold_resume_reuses_the_validated_runtime_hash(monkeypatch):
         assert len(calls) == 1
 
 
+def test_cold_resume_keeps_the_user_harness_opt_in_of_the_interrupted_run(monkeypatch):
+    with ExitStack() as stack:
+        project = li.LoopProject(stack, monkeypatch, loop={'alpha': 0.999}, script={0: dict(harness=li.EVERYTHING)})
+        with monkeypatch.context() as interrupted:
+            interrupted.setattr(controller._Loop, 'next_candidate', lambda self: (_ for _ in ()).throw(KeyboardInterrupt()))
+            _, first, _ = project.invoke('--accept-score', '0.1', '--with-user-harness')
+        code, resumed, _ = project.invoke('--resume', Path(first['output']).name)
+        assert code == 0 and resumed['loop']['stop_criterion'] == 'acceptance_score_reached'
+
+
 def test_cold_resume_refuses_runtime_changed_after_validation(monkeypatch):
     from agent_harness_lab.loop import cold_resume
     with ExitStack() as stack:

@@ -15,7 +15,7 @@ from .spec import LoopSpec
 
 
 OPTIONS = ('agent', 'codex', 'claude', 'timeout', 'trial_limit', 'construction_fraction', 'focus', 'area',
-           'scope', 'inherit_env', 'sandbox_graders', 'cgroup_root', 'image_root', 'image_sha256', 'disk_bytes', 'permission_audit',
+           'scope', 'inherit_env', 'with_user_harness', 'sandbox_graders', 'cgroup_root', 'image_root', 'image_sha256', 'disk_bytes', 'permission_audit',
            'configuration_sha256')
 
 
@@ -130,7 +130,7 @@ def read(output, project):
             or context['scope_source'] not in ('default', 'command_line', 'user_configuration')
             or type(options['timeout']) not in (int, float) or options['timeout'] != spec.limit_seconds
             or type(options['trial_limit']) is not int or options['trial_limit'] < spec.limit_trials
-            or type(options['inherit_env']) is not bool or type(options['sandbox_graders']) is not bool
+            or type(options['inherit_env']) is not bool or type(options['with_user_harness']) is not bool or type(options['sandbox_graders']) is not bool
             or not isinstance(options['area'], list) or not all(isinstance(area, str) for area in options['area'])
             or options['focus'] is not None and not isinstance(options['focus'], str)
             or not isinstance(context['explicit'], list) or not all(isinstance(item, str) for item in context['explicit'])
@@ -187,7 +187,7 @@ def read(output, project):
             or _hash_file(bank_dir / 'loop-scoring-manifest.json') != context['scoring_sha256']):
         raise ValueError('frozen scoring manifests changed')
     from .adapters import ExecutorRunner
-    backend = ExecutorRunner(None, context['selected_agent'], context['binary'], inherit_env=options['inherit_env'])
+    backend = ExecutorRunner(None, context['selected_agent'], context['binary'], inherit_env=options['inherit_env'], with_user_harness=options['with_user_harness'])
     if backend.runtime_executable_sha256() != context['runtime_binary_sha256']:
         raise ValueError('frozen runtime executable changed')
     runner_path = (assets() / 'skills/harness-self-improvement/scripts/run_evaluation.py').resolve()
@@ -229,7 +229,7 @@ def resume(args, output):
         if grading.get(name) is not None: grading[name] = Path(grading[name])
     backend = saved['backend']
     backend.evaluate = runner.evaluate
-    backend.options = dict(inherit_env=args.inherit_env, config=args.project / 'ahl.json',
+    backend.options = dict(inherit_env=args.inherit_env, with_user_harness=args.with_user_harness, config=args.project / 'ahl.json',
                            deadline=lambda: time.monotonic() + max(0.0, stages.remaining()), **grading)
     baseline_digest = context['baseline_sha256']
     folders = {baseline_digest: baseline}
