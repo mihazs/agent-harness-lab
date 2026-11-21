@@ -307,3 +307,12 @@ def test_a_candidate_that_misses_a_reproduced_weakness_is_refined_against_the_sa
     assert receipt['evaluation_reused'] == {'attempt': 0, 'reason': 'refined_candidate'}, receipt
     assert [p.name for p in Path(receipt['output']).glob('preparation/evaluation-?')] == ['evaluation-0']
     assert (code, receipt['status']) == (0, 'applied') and receipt['confirmation']['outcome'] == 'confirmed'
+
+
+def test_a_measured_candidate_that_fixed_nothing_then_a_declining_proposer_ends_no_change(cli):
+    # Regression (fixed-in: 0.232.4): the run ended inconclusive (no_change_evidence_insufficient) although its own evaluation
+    # had measured the candidate: it fixed nothing the baseline failed, so no change is justified.
+    from tests.integration.workflow.test_before_after_guard import LATE_STOP
+    code, receipt, base = cli(agent=LATE_STOP, mode='late_stop')
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['baseline_at_least_as_good'] is True and (base.project / 'AGENTS.md').read_text() == 'bad'
