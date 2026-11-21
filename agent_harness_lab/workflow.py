@@ -392,6 +392,35 @@ def merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grad
     args._evaluation_reuse = dict(attempt=attempt, **facts)
 
 
+def _author_defect(message, hint=None):
+    """A validation defect the author can fix: the message stays the typed exit text, the hint goes back to the author."""
+    error = ValueError(message)
+    error.hint = hint or message
+    return error
+
+
+def _selftest_rejected(task, state, observed, tail=''):
+    """The grader self-test failure, carrying task, control state and what happened (the grader's own last output, bounded)."""
+    return _author_defect('Grader self-test rejected: broken/partial must fail and complete must pass',
+        f"The grader for task {task} {observed} on the {state} control; it must exit {0 if state == 'complete' else 1} there "
+        f"(0 passes, 1 fails; broken and partial controls must fail, complete must pass)."
+        + (f' The last output of that grader, which is your own program: {tail[-400:]!r}' if tail.strip() else ''))
+
+
+def _repair_request(error, reused):
+    """(receipt, instruction) when another construction pass can fix this defect, else None: a shape defect the contract calls
+    repairable, or one the controller found by running the author's graders (not on a refinement, whose merged tasks are frozen)."""
+    typed = isinstance(error, manifest_contract.ContractError)
+    if typed and error.stage != 'manifest_validation':
+        return (error.receipt(), error.repair_instruction()) if error.repairable else None
+    if reused or typed and error.origin != manifest_contract.AGENT or not typed and not hasattr(error, 'hint'):
+        return None
+    return (error.receipt() if typed else {'reason': 'manifest_validation_rejected', 'stage': 'manifest_validation', 'file': manifest_contract.FILE,
+                                           'field': None, 'origin': manifest_contract.AGENT, 'next_step': error.hint},  # a repair-log reason, never an exit reason
+            'The controller ran your graders against your controls and rejected the evaluation. ' + (error.render() if typed else error.hint)
+            + ' Fix only this defect in /work, keep everything else, and finish.')
+
+
 def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None, bank_sha256=None):
     def check_owned():
         if expected_snapshot is not None:
@@ -428,7 +457,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     planned = 2 * len(tasks) if experiment_spec is None and bank_sha256 is None else 1  # both arms run every generated task
     if experiment_spec is None:
         if (bank_sha256 is None and not 3 <= len(tasks) <= 5) or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
-            raise ValueError('Provide development, regression, and heldout coverage; generated evaluations require 3–5 tasks')
+            raise _author_defect('Provide development, regression, and heldout coverage; generated evaluations require 3–5 tasks')
     else:
         from .evaluation.plan import ExperimentSpec
         if type(experiment_spec) is not ExperimentSpec:raise ValueError('validated fixed experiment required')
@@ -516,7 +545,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 if complete and now() - began >= per_trial:
                     raise manifest_contract.ContractError('evaluation_task_infeasible', 'manifest_validation', f'tasks[{index}]')
                 if grade['status'] != ('passed' if check['state'] == 'complete' else 'failed'):
-                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                    raise _selftest_rejected(task['id'], check['state'], f"reported {grade['status']}")
                 if control_custody is not None:
                     try:control_custody.after_control(grade)
                     except ValueError:return None
@@ -549,7 +578,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 if complete and (run['timeout'] or now() - began > per_trial):
                     raise manifest_contract.ContractError('evaluation_task_infeasible', 'manifest_validation', f'tasks[{index}]')
                 if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
-                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                    raise _selftest_rejected(task['id'], check['state'], 'timed out or did not run' if run['timeout'] or run['exit_code'] is None
+                                             else f"exited {run['exit_code']}", run['stderr'] + run['stdout'])
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
@@ -1175,6 +1205,18 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             result.update(compared)
             break
         progress('evaluation', attempt=attempt + 1)
+        validated = []  # an installing run validates inside its construction loop, where the author can repair
+        def validate():
+            if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
+                raise ValueError('Evaluation construction changed frozen harness inputs')
+            options, fresh = dict(grader_backend=grading), set(used_heldout)
+            if bank is not None: options['bank_sha256'] = args.project_settings['bank']['sha256']
+            try:
+                with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
+                    return (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **options)
+            except ValueError:
+                used_heldout.intersection_update(fresh)  # a repair pass may keep the held-out fixture a failed validation fingerprinted
+                raise
         if bank is not None:
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
@@ -1294,21 +1336,20 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                         controller_grader=False, grading=grading is not None)
                     args._authored_digest_ignored += ignored
                     if reused: merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading)  # only fresh held-out tasks were written
+                    if _installs(args):  # the author can fix what running its own graders shows: the same repair budget
+                        if made and made[-1]['stage'] == 'evaluation_construction': made[-1]['outcome'] = 'repaired'  # its shape defect is gone
+                        validated.append(validate())
                     break
-                except manifest_contract.ContractError as error:
+                except ValueError as error:  # a ContractError is one
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
-                    if not error.repairable or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0: raise  # an installing run may repair two defects in turn
-                    made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
-                    suffix = '\n' + error.repair_instruction()
+                    request = _repair_request(error, reused)
+                    if request is None or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0: raise  # an installing run may repair two defects in turn
+                    made.append(dict(request[0], attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
+                    suffix = '\n' + request[1]
             if result['status'] in ('execution_error', 'budget_exhausted'):
                 break
             if made: made[-1]['outcome'] = 'repaired'
-        if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
-            raise ValueError('Evaluation construction changed frozen harness inputs')
-        validation_options = dict(grader_backend=grading)
-        if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
-        with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
-            checked = (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
+        checked = validated[0] if validated else validate()
         if bank is None and not attempt:
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
         if instruction is not None:
