@@ -24,6 +24,10 @@ def _stdout(args):
     return getattr(args, 'command', None) in ('improve', 'watch')
 
 
+# Stages whose every line is an event a reader counts (one per repeat run); the one-second throttle never drops them.
+EVERY_LINE = frozenset({'evaluation_repeat'})
+
+
 def _progress_reporter(stream=None, clock=None):
     stream = sys.stderr if stream is None else stream
     clock = time.perf_counter if clock is None else clock
@@ -34,7 +38,7 @@ def _progress_reporter(stream=None, clock=None):
         if any(type(value) is not int or value < 0 for value in counts.values()):
             raise ValueError('progress accepts aggregate counts only')
         now = clock()
-        if stage == last_stage and now - last_time < 1:
+        if stage == last_stage and stage not in EVERY_LINE and now - last_time < 1:
             return
         details = ' '.join(f'{key}={value}' for key, value in counts.items())
         print(f'ahl: {stage} {details} elapsed={now-started:.1f}s', file=stream, flush=True)

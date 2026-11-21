@@ -674,9 +674,10 @@ something the project does not itself state or enforce is not a weakness. Do not
 """
 
 
-# Six fresh repeats per arm of each fixed task, at most two tasks (the trial budget). With one task, 6 of 6 against 2 of 6
-# is the weakest gap that passes at 0.05; with two, each is tested at 0.025.
-CONFIRM_RUNS = 6
+# Twelve fresh repeats per arm of each fixed task, at most two tasks (the trial budget). Agents are noisy: a live baseline
+# passed a reproduced weak outcome about half the time, and six repeats could not separate 6 of 6 from 3 of 6. With twelve,
+# 12 of 12 against 7 of 12 passes at 0.05 (power about 0.87 against a baseline passing 55%; null false positives <= 0.03).
+CONFIRM_RUNS = 12
 CONFIRM_TASKS = 2
 CONFIRM_ALPHA = 0.05
 
@@ -1004,6 +1005,7 @@ def _improve(args):
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
+    refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
     final_attempt = None
     proposed = None
     grader_changed = False
@@ -1020,7 +1022,8 @@ def _improve(args):
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
-        preparation_trials = 1 if bank is not None else 2
+        pruned = bool(prune) or refine_frozen  # judged on attempt 0's frozen tasks, so no evaluation is constructed for it
+        preparation_trials = 1 if bank is not None or pruned else 2
         if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
             break
@@ -1037,7 +1040,7 @@ def _improve(args):
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
-        evaluation = prepare / f'evaluation-{attempt}'
+        evaluation = prepare / f'evaluation-{0 if pruned else attempt}'
         manifest_path = evaluation / 'manifest.json'
         progress('candidate_preparation', attempt=attempt + 1)
         if rebuild_controls:
@@ -1146,7 +1149,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         proposed = candidate_states(candidate, original)
         # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
         instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
-                                                  deadline=started+args.timeout)
+                                                  deadline=started+args.timeout, lenient=_installs(args))
         check_scope(args, proposed, original)
         check_configuration(args)
         if proposed == original:
@@ -1243,7 +1246,13 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             except ValueError:
                 used_heldout.intersection_update(fresh)  # a repair pass may keep the held-out fixture a failed validation fingerprinted
                 raise
-        if bank is not None:
+        if pruned:
+            # Attempt 0 validated these tasks, graders and controls, and the proposer saw development and regression outcomes only,
+            # so the held-out freshness rule does not apply. The manifest stays byte for byte as frozen; only the staged paths may differ.
+            frozen_paths = json.loads(manifest_path.read_text())
+            if sorted(frozen_paths.get('harness_paths', [])) != sorted(paths): write_json(manifest_path, dict(frozen_paths, harness_paths=sorted(paths)))
+            result['evaluation_reused'] = {'attempt': 0, 'reason': 'refined_candidate' if refine_frozen else 'pruned_candidate'}  # a literal, not an exit reason: exit reasons need a remediation entry
+        elif bank is not None:
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
             from .config import evaluation_settings
@@ -1376,7 +1385,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if result['status'] in ('execution_error', 'budget_exhausted'):
                 break
             if made: made[-1]['outcome'] = 'repaired'
-        checked = validated[0] if validated else validate()
+        if not pruned: checked = validated[0] if validated else validate()
         if bank is None and not attempt and not _installs(args):
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
         # An installing run builds its refinement evaluation afresh: a frozen control the baseline fails would be carried
@@ -1476,7 +1485,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             vacuity=labels,
             areas=dict(declared=[entry['id'] for entry in args.project_settings['areas']], selected=list(getattr(args, 'area', None) or ()))
                 if bank is not None and args.project_settings.get('areas') else None,
-            bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
+            bindings=dict(attempt=attempt, evaluation=str(options.output), manifest=manifest_path.parent.name, manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
@@ -1631,6 +1640,13 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and not attempt and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
+        # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
+        # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
+        # evaluation might not reproduce the weakness again and would judge the next change on nothing.
+        reproduced = {t['task'] for t in trials if (t['version'], t['status']) == ('baseline', 'failed') and t['split'] != 'regression'}
+        if (_installs(args) and bank is None and not attempt and not rebuild_controls and evaluated['inputs_unchanged'] and controls_pass
+                and reproduced - fixed and not lost):
+            refine_frozen = True
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
     if client is not None:

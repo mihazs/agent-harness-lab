@@ -132,7 +132,7 @@ def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_se
     assert (code, receipt['status']) == (0, 'applied'), receipt
     repair = receipt['evaluation_construction_repairs']
     assert [(r['reason'], r['outcome']) for r in repair] == [('evaluation_construction_timeout', 'repaired')]
-    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 30  # six, then six fresh repeats of both fixed tasks in both arms
+    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 42  # six, then nine fresh repeats of both fixed tasks in both arms (9 of 9 against none is read as confirmed)
 
 
 def test_a_second_overrun_after_the_one_repair_ends_the_run_with_the_typed_reason(stub, capsys):
@@ -258,5 +258,7 @@ def test_an_installing_run_builds_its_refinement_evaluation_afresh(stub, capsys)
     # Regression (fixed-in: 0.232.2): the refinement reused a frozen regression task that the baseline itself failed, and
     # a refinement got no validation repair, so a real run ended invalid_input.
     code, receipt, run, rows = stub.run(capsys, dict(refine=True))
-    first, second = kinds(rows, 'construction')
-    assert (first['reused'], second['reused']) == (0, 0), receipt
+    # This stub's first candidate also misses the reproduced weakness, so the refinement is judged on the same frozen tasks
+    # (fixed-in: 0.232.3) and nothing reused is merged into a new construction.
+    assert [row['reused'] for row in kinds(rows, 'construction')] == [0], receipt
+    assert receipt['evaluation_reused'] == {'attempt': 0, 'reason': 'refined_candidate'}

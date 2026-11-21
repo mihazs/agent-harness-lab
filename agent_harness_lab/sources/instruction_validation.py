@@ -679,7 +679,20 @@ def review(document, removal=None, composed_with=(), loading=None):
     return value
 
 
-def hook(args, baseline, candidate, original, proposed, proposal, agent, *, deadline=None):
+def _completed_profile(plan, runtime):
+    """The plan with its runtime profile completed from the controller's own pinned runtime. A proposer cannot know the
+    pinned version, so a profile that names only task_cwd is filled in here; a profile naming another runtime is left as
+    it is, and validation then refuses it."""
+    if not isinstance(plan, dict) or not isinstance(plan.get('profile'), dict) or runtime is None: return plan
+    pin = instructions.CLAUDE if runtime == 'claude-code' else instructions.CODEX
+    profile = dict(plan['profile'])
+    if profile.get('runtime', runtime) != runtime: return plan
+    profile.setdefault('schema_version', 1); profile.setdefault('runtime', pin[0]); profile.setdefault('version', pin[1])
+    if runtime == 'codex': profile.setdefault('fallback_filenames', [])
+    return dict(plan, profile=profile)
+
+
+def hook(args, baseline, candidate, original, proposed, proposal, agent, *, deadline=None, lenient=False):
     """Workflow validation hook. None when the candidate changes no nested instruction or rule file and declares
     no plan, so root-only edits keep their previous path; otherwise a validation document. Sets the scope that
     one_call.check_scope enforces."""
@@ -687,6 +700,11 @@ def hook(args, baseline, candidate, original, proposed, proposal, agent, *, dead
     plan = proposal.get('instruction_plan') if isinstance(proposal, dict) else None
     nested = [name for name in changed_paths(original, proposed) if name not in surfaces.ROOT_INSTRUCTIONS]
     if plan is None and not nested: return None
+    plan = _completed_profile(plan, RUNTIMES.get(agent))
+    if not nested and lenient:
+        # Root instructions need no plan; for an installing run an unusable one the proposer added anyway is ignored.
+        try: parse_plan(plan)
+        except (ValueError, TypeError, KeyError): return None
     document = validate(baseline, candidate, plan, runtime=RUNTIMES.get(agent), project=args.project, deadline=deadline)
     args._instruction_scope = document.get('scope')
     return document

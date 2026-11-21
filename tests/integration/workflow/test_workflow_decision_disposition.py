@@ -72,7 +72,8 @@ class TestDefaultDecisionDisposition:
         assert 'evaluation_sha256' not in binding
         assert binding['results_sha256'] == hashlib.sha256((evaluation / 'results.json').read_bytes()).hexdigest()
         assert binding['describes_final_attempt'] == (binding['attempt'] == binding['final_attempt'])
-        assert binding['manifest_sha256'] == hashlib.sha256((evaluation.parent / 'preparation' / f"evaluation-{binding['attempt']}"
+        # a refined candidate may be judged on an earlier attempt's frozen tasks, so the binding names the evaluation it used
+        assert binding['manifest_sha256'] == hashlib.sha256((evaluation.parent / 'preparation' / binding['manifest']
                                          / 'manifest.json').read_bytes()).hexdigest()
         return decision
 
