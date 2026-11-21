@@ -28,9 +28,11 @@ if p('context.json').exists():
         tasks, controls, bundles = [], [], {{}}
         for split in ('development', 'regression', 'heldout'):
             fixture = evaluation / split; fixture.mkdir(); (fixture / 'seed').write_text(c['harness_paths'][0] + split + str(c['attempt']))
+            if mode == 'hardlinked-fixture': import os; os.link(fixture / 'seed', fixture / 'seed-link')  # what `git clone` of a local repository does
             bundle = evaluation / ('oracle-' + split); bundle.mkdir()
             (bundle / 'helper.py').write_text("def passed(workspace):\n    return (workspace / 'artifact').read_text() == 'done'\n")
             note = "import pathlib, sys\nopen(pathlib.Path(sys.argv[0]).parent / 'note', 'w').write('x')\n" if mode == 'writes-bundle' else ''
+            note += "import pathlib, sys\nopen(pathlib.Path(sys.argv[1]) / 'index.lock', 'w').write('x')\n" if mode == 'writes-workspace' else ''
             (bundle / 'grade.py.txt').write_text(note + (
                 "import json, pathlib, sys\n"
                 + ("ok = (pathlib.Path(sys.argv[1]) / 'artifact').read_text() == 'done'\n" if mode.endswith('-plain') else
@@ -129,3 +131,19 @@ def test_a_blocked_result_before_any_construction_still_carries_the_construction
     code, receipt, _ = stub.improve(capsys, 'omitted', '--history', events=False)  # no captured sessions: blocked before preparation
     assert (code, receipt['status']) == (3, 'blocked'), receipt
     assert (receipt['authored_digest_ignored'], receipt['evaluation_construction_seconds']) == (0, 0.0)
+
+
+def test_a_grader_that_writes_into_the_tree_it_inspects_does_not_end_the_run(stub, capsys):
+    # Regression (fixed-in: 0.233.0): git and build tools write into the fixture they inspect, and the self-test then
+    # rejected the control as changed after freeze. The grader now sees a copy; the frozen control stays byte-identical.
+    code, receipt, run = stub.improve(capsys, 'writes-workspace')
+    assert receipt.get('reason') != 'grader_input_changed_after_freeze' and receipt['status'] != 'invalid_input', receipt
+    evaluation = run / 'preparation/evaluation-0'
+    assert not list(evaluation.rglob('index.lock')) and not list(evaluation.glob('.selftest-*'))
+
+
+def test_a_fixture_with_hardlinked_files_is_accepted_after_the_controller_unlinks_them(stub, capsys):
+    # Regression (fixed-in: 0.233.0): `git clone` hardlinks object files and the run ended run_input_rejected.
+    code, receipt, run = stub.improve(capsys, 'hardlinked-fixture')
+    assert receipt.get('reason') != 'run_input_rejected' and receipt['status'] != 'invalid_input', receipt
+    assert all(path.stat().st_nlink == 1 for path in (run / 'preparation/evaluation-0').rglob('seed*') if path.is_file())

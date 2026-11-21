@@ -521,7 +521,12 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     try:control_custody.after_control(grade)
                     except ValueError:return None
             else:
-                argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
+                # The grader sees a throwaway copy: git and build tools write into the tree they inspect (index refresh, caches),
+                # and that is no defect of a grader whose frozen program and bundle stay untouched.
+                graded = path.parent / f'.selftest-{index}-{check["state"]}'
+                shutil.rmtree(graded, ignore_errors=True)
+                shutil.copytree(workspace, graded, symlinks=True)
+                argv = [a.replace('{workspace}', str(graded)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
                 available = remaining()
                 if available <= 0:
                     raise TimeoutError('Improvement budget exhausted before grader self-test')
@@ -530,7 +535,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 available = remaining()
                 if available <= 0:
                     raise TimeoutError('Improvement budget exhausted before grader self-test')
-                run = runner.execute(argv, path.parent, cap, env=runner.native_environment('grader'))
+                try: run = runner.execute(argv, path.parent, cap, env=runner.native_environment('grader'))
+                finally: shutil.rmtree(graded, ignore_errors=True)
                 if any(file_state(p) != value for p, value in before.items()):
                     raise ValueError('Grader modified its own frozen program during self-test')
                 # The cheap place to find a grader that writes into frozen inputs: before any trial runs.
@@ -653,6 +659,16 @@ def _installs(args):
     ahl.json (recommendation-only by declaration) keep every candidate a recommendation."""
     return (getattr(args, 'command', None) == 'improve' and not getattr(args, 'project_settings', None)
             and getattr(args, 'scope', 'project') == 'project' and args.agent != 'responses')
+
+
+def _unlink_shared_files(root):
+    """Give every hardlinked regular file under root its own inode, content unchanged. `git clone` of a local repository
+    hardlinks its objects, which evaluation inputs may not contain; symlinks and special files stay rejected."""
+    for path in sorted(Path(root).rglob('*')):
+        if path.is_file() and not path.is_symlink() and path.stat().st_nlink > 1:
+            temporary = path.with_name(path.name + '.ahl-unlink')
+            shutil.copy2(path, temporary)
+            os.replace(temporary, path)
 
 
 def adopt(project, baseline, candidate, original, proposed, scoped=False):
@@ -1227,6 +1243,8 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                 break
             if grading is None:
                 evaluation_prompt += """
+Fixtures may not contain symlinks, hardlinks or special files: copy repositories with `git clone --no-hardlinks`.
+Give each task exactly three grader_self_tests entries: one broken, one partial and one complete, never two of a state.
 Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
 switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
 outcome=boolean, grader_id and grader_version, exit 0 for true and 1 for false), and any other output is a grader error.
@@ -1269,6 +1287,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 if runner.trace_result(check, agent)[0] != 'completed':
                     result['status'] = 'execution_error'
                     break
+                _unlink_shared_files(evaluation)
                 try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
                     # Authored digests are never an integrity claim: dropped here, the controller freezes its own.
                     authored, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,
@@ -1278,7 +1297,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     break
                 except manifest_contract.ContractError as error:
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
-                    if not error.repairable or made or remaining() <= 0: raise
+                    if not error.repairable or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0: raise  # an installing run may repair two defects in turn
                     made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = '\n' + error.repair_instruction()
             if result['status'] in ('execution_error', 'budget_exhausted'):
@@ -1453,7 +1472,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 # A separate namespace: the plan below still binds the primary run through `options`.
                 second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
                     'output': str(output / f'evaluation-{attempt}-confirm'), 'parent_deadline': time.monotonic() + remaining()})
-                progress('evaluation', attempt=attempt + 1, run=2)
+                progress('evaluation_repeat', attempt=attempt + 1)
                 with manifest_contract.boundary('evaluation'), stages.charge('trials'):
                     runner.evaluate(second)
                 repeat = json.loads((Path(second.output) / 'results.json').read_text())
