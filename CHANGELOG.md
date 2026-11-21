@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.232.0
+
+### Minor Changes
+
+- ff012a9: `ahl improve` now installs the evaluated winning candidate into the project through the rollback journal and ends `applied`, instead of always ending `inconclusive` with a recommendation. A candidate that fixes a task and loses none counts as a winner even when other tasks still fail. A project `ahl.json`, a user-level scope and `ahl watch` keep the recommendation.
+
+### Patch Changes
+
+- 574a996: `ahl improve --correction-excerpts` (off by default) gives the proposer session up to 12 bounded, scrubbed excerpts of your own recorded user messages from this project in which you corrected the agent, written to the private `user-corrections.json`, and also reads sessions of unverified runtime versions for them. Without the flag no user text reaches any run artifact.
+- 143569b: `ahl improve --history` no longer ends `blocked` with `no_outcome_evidence` before any model call when the history has findings and no verified outcome: an installing run goes on to propose and evaluate a candidate itself. Runs that keep the candidate a recommendation are unchanged.
+- 573668c: `ahl improve` installs only a measured, repeated improvement. The evaluation author now receives the proposer's claim (never the candidate) and builds tasks to reproduce it from the project's own sources; the tasks a candidate fixed are run again and must be fixed twice; a tie installs nothing and one different claim is tried instead.
+- 574a996: The analysis brief gains a `user_reactions` section: where users intervened (steering mid-work, a follow-up after the agent stopped, a revert, reopen or restated instruction), located by the agent's last tool, command family and file extensions, as closed-vocabulary tokens and counts only. The proposer of an installing `ahl improve` run is told to start from those rows. A session capture over the remaining byte budget is now skipped instead of ending the read, so a few large recent sessions no longer hide every older one.
+
 ## 0.231.3
 
 ### Patch Changes
