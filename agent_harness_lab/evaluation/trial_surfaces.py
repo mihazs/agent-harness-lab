@@ -25,6 +25,9 @@ CLAUDE_REQUESTS = (
     ('hooks', 'disableAllHooks through --settings', ('--settings', '{settings}')),
 )
 CODEX_REQUESTS = (('settings', 'temporary CODEX_HOME with model, effort and one workspace trust entry'),)
+# Claude Code ships plugins of its own ('@builtin'); project-only setting sources do not turn them off, enabledPlugins does.
+# Observed at 2.1.326; a session's init event lists what actually loaded (see observed_runtime_surfaces).
+CLAUDE_BUILTIN_PLUGINS = ('cc-plugin-agents-md', 'cc-plugin-telemetry', 'cc-plugin-privacy', 'cc-plugin-plugin-authoring')
 CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
                  # Project-only setting sources leave --print in permission mode 'default', which denies every edit and
                  # command, so no trial could change its workspace. This is the counterpart of Codex's workspace-write
@@ -200,6 +203,8 @@ def claude_arguments(trial, *, readable=(), user_harness=False):
             value = json.loads(json.dumps(value))
             if user_harness:
                 del value['disableAllHooks']
+            else:
+                value['enabledPlugins'] = {f'{name}@builtin': False for name in CLAUDE_BUILTIN_PLUGINS}
             if readable:
                 value['permissions']['allow'] = [f'Read(/{Path(path).resolve()}/**)' for path in readable]  # '//' = absolute
         staged[name] = trial / filename
@@ -211,6 +216,19 @@ def claude_arguments(trial, *, readable=(), user_harness=False):
         if made['requested']:
             argv += [part.format(**{key: str(path) for key, path in staged.items()}) for part in fragment]
     return argv
+
+
+def observed_runtime_surfaces(trace):
+    """What a Claude Code session reports it loaded (its init event): plugin sources and MCP server names, or None when
+    the trace has no init event. An observation of the runtime's own report, not an isolation proof."""
+    for line in (trace or '').splitlines():
+        try: event = json.loads(line)
+        except ValueError: continue
+        if isinstance(event, dict) and event.get('type') == 'system' and event.get('subtype') == 'init':
+            plugins = [row.get('source') or row.get('name') for row in event.get('plugins') or [] if isinstance(row, dict)]
+            servers = [row.get('name') for row in event.get('mcp_servers') or [] if isinstance(row, dict)]
+            return dict(plugins=sorted(str(name) for name in plugins), mcp_servers=sorted(str(name) for name in servers))
+    return None
 
 
 def _toml(value):

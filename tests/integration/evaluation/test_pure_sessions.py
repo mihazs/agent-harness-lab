@@ -195,3 +195,17 @@ def test_a_pure_codex_preparation_session_keeps_only_the_users_model_choice(tmp_
     (tmp_path / '.codex').mkdir()
     (tmp_path / '.codex/config.toml').write_text('model = "synthetic-model"\nmodel_reasoning_effort = "high"\n[mcp_servers.x]\ncommand = "y"\n')
     assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'synthetic-model', 'model_reasoning_effort': 'high'}
+
+
+def test_pure_claude_sessions_also_switch_off_the_runtimes_own_plugins_and_report_what_loaded(tmp_path):
+    # Regression (fixed-in: 0.233.0): a live pure session still loaded four '@builtin' plugins of Claude Code itself.
+    from agent_harness_lab.evaluation import trial_surfaces
+    trial_surfaces.claude_arguments(tmp_path)
+    settings = json.loads((tmp_path / 'claude-settings.json').read_text())
+    assert settings['enabledPlugins'] == {f'{name}@builtin': False for name in trial_surfaces.CLAUDE_BUILTIN_PLUGINS}
+    user = tmp_path / 'user'; user.mkdir()
+    trial_surfaces.claude_arguments(user, user_harness=True)
+    assert 'enabledPlugins' not in json.loads((user / 'claude-settings.json').read_text())  # the user's harness keeps them
+    init = json.dumps({'type': 'system', 'subtype': 'init', 'plugins': [{'name': 'p', 'source': 'p@builtin'}], 'mcp_servers': [{'name': 'm'}]})
+    assert trial_surfaces.observed_runtime_surfaces('noise\n' + init) == dict(plugins=['p@builtin'], mcp_servers=['m'])
+    assert trial_surfaces.observed_runtime_surfaces('') is None

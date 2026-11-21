@@ -387,6 +387,7 @@ class TrialSurfaceTests(unittest.TestCase):
         settings = Path(argv[argv.index('--settings') + 1])
         staged = json.loads(settings.read_text())
         self.assertIs(staged.pop('disableAllHooks'), True)
+        self.assertTrue(all(enabled is False for enabled in staged.pop('enabledPlugins').values()))  # the runtime's own plugins too
         # fixed-in: 0.232.0. Without a write grant every Claude trial ended in permission_denied, so no candidate could score.
         self.assertEqual(staged, {'permissions': {'defaultMode': 'acceptEdits'},
                                   'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}})
@@ -710,7 +711,7 @@ class TrialWorkspaceTests(unittest.TestCase):
 
     def test_user_harness_opt_in_is_recorded_and_changes_only_the_codex_home(self):
         # fixed-in: 0.233.0. Trials ran in a home without the saved login, and the user's harness could not be included.
-        (self.user_codex / 'auth.json').write_text('{"canary": "synthetic-login-canary"}')
+        (self.user_codex / 'auth.json').write_text('{"canary": "runner-login-canary"}')
         for flag, label, shared in (([], 'excluded', False), (['--with-user-harness'], 'included', True)):
             with self.subTest(label=label):
                 shutil.rmtree(self.root / 'out', ignore_errors=True)
@@ -725,8 +726,8 @@ class TrialWorkspaceTests(unittest.TestCase):
                     self.assertEqual(seen['CODEX_HOME'], str(self.user_codex if shared else case / 'codex-home'))
                     self.assertEqual(trial['environment']['credentials'], 'not_staged' if shared else 'subscription_login_copied')
                 self.assertFalse(list((self.root / 'out').rglob('auth.json')))  # no copy outlives its trial
-                self.assertEqual((self.user_codex / 'auth.json').read_text(), '{"canary": "synthetic-login-canary"}')
-                self.assertNotIn('synthetic-login-canary', (self.root / 'out/results.json').read_text())
+                self.assertEqual((self.user_codex / 'auth.json').read_text(), '{"canary": "runner-login-canary"}')
+                self.assertNotIn('runner-login-canary', (self.root / 'out/results.json').read_text())
 
     def test_user_harness_opt_in_needs_a_native_agent(self):
         result = subprocess.run([sys.executable, str(RUNNER), '--manifest', str(self.root / 'manifest.json'), '--baseline', str(self.root / 'baseline'),

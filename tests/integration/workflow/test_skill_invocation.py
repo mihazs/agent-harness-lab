@@ -265,7 +265,7 @@ class TestSkillInvocation:
         for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
             assert json.loads((output / name).read_text())['credentials'] == 'subscription_login_copied'
         assert not list(output.rglob('auth.json'))  # no copy outlives its session
-        assert all('synthetic-login-canary' not in path.read_text(errors='replace') for path in output.rglob('*') if path.is_file())
+        leaked = [str(path) for path in output.rglob("*") if path.is_file() and "synthetic-login-canary" in path.read_text(errors="replace")]; assert not leaked, leaked
         assert (real_home / 'auth.json').read_text() == '{"canary": "synthetic-login-canary"}'
 
     def test_watch_configuration_tracks_environment_inheritance(self, make_fixture):
