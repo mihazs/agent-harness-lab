@@ -282,6 +282,21 @@ def stage_harness(root, workspace, paths):
     return dict(profile=PROFILE, included=included, absent=absent, observed_loading='unknown')
 
 
+def bridge_agents_md(workspace):
+    """Make a pure Claude trial read the AGENTS.md files the harness under test holds. Claude Code loads CLAUDE.md, not
+    AGENTS.md, and with user settings excluded nothing bridges the two, so both arms ran without the instructions being
+    compared. Beside every AGENTS.md without a sibling CLAUDE.md a trial-only CLAUDE.md imports it; identical in both
+    arms. Returns the relative paths written."""
+    written = []
+    for agents in sorted(Path(workspace).rglob('AGENTS.md')):
+        if '.git' in agents.relative_to(workspace).parts or not agents.is_file() or agents.is_symlink(): continue
+        claude = agents.with_name('CLAUDE.md')
+        if claude.exists() or claude.is_symlink(): continue
+        claude.write_text('@AGENTS.md\n')
+        written.append(claude.relative_to(workspace).as_posix())
+    return written
+
+
 def hide_from_git(workspace, paths):
     """Keep what the trial staged out of `git status` when the fixture is a repository, so a grader that checks for a
     clean tree sees only the agent's work. Untracked paths go to .git/info/exclude; a tracked file the staging replaced is

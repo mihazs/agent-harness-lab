@@ -935,6 +935,10 @@ def _evaluate(args):
             from agent_harness_lab.evaluation.trial_surfaces import hide_from_git
             staged = [*harness_paths, *(['.harness-trial'] if agent == 'claude' else []),
                       *([] if agent == 'claude' else [f'.agents/skills/{skill}' for skill in skills])]
+            if agent == 'claude' and not with_user_harness:
+                from agent_harness_lab.evaluation.trial_surfaces import bridge_agents_md
+                record['agents_md_bridge'] = bridge_agents_md(workspace)  # the user's own setup bridges it otherwise
+                staged += record['agents_md_bridge']
             hide_from_git(workspace, staged)
         environment = None
         if offline or controlled:
