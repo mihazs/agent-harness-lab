@@ -1533,20 +1533,21 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 # (Bonferroni). A verdict is read early only when no remaining outcome could change it, so stopping early never
                 # raises the false-positive rate.
                 fixed = set(sorted(_flips(trials)[0])[:CONFIRM_TASKS])  # only these are repeated: the claim under test is the fix
-                keep = lambda rows, key: [row for row in rows if row[key] in fixed]
-                write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
-                    grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
-                    **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in fixed}} if 'grader_bundles' in manifest else {})))
                 level = CONFIRM_ALPHA / len(fixed)
                 counts = {task: dict(candidate=0, baseline=0) for task in fixed}
-                verdict, outcome = {}, None
+                verdict, outcome, repeats = {}, None, 0
                 for run in range(1, CONFIRM_RUNS + 1):
                     pending = sorted(task for task in fixed if task not in verdict)
                     if not pending: break
-                    if 2 * len(fixed) > trials_left or remaining() <= 0:
+                    if 2 * len(pending) > trials_left or remaining() <= 0:
                         outcome = 'improvement_confirmation_unaffordable'
                         break
-                    trials_left -= 2 * len(fixed)
+                    trials_left -= 2 * len(pending)
+                    keep = lambda rows, key: [row for row in rows if row[key] in pending]  # a decided task is not run again
+                    write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
+                        grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
+                        **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in pending}} if 'grader_bundles' in manifest else {})))
+                    repeats = run
                     # A separate namespace: the plan below still binds the primary run through `options`.
                     second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
                         'output': str(output / f'evaluation-{attempt}-confirm-{run}'), 'parent_deadline': time.monotonic() + remaining()})
@@ -1569,7 +1570,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 confirmed = sorted(task for task, ok in verdict.items() if ok)
                 if outcome is None:
                     outcome = 'confirmed' if confirmed else 'improvement_not_confirmed'
-                result['confirmation'] = dict(repeats_per_task=CONFIRM_RUNS, alpha=CONFIRM_ALPHA, per_task_alpha=round(level, 4),
+                result['confirmation'] = dict(repeats_per_task=CONFIRM_RUNS, repeats_run=repeats, alpha=CONFIRM_ALPHA, per_task_alpha=round(level, 4),
                     tasks={task: dict(counts[task], verdict={True: 'confirmed', False: 'not_confirmed'}.get(verdict.get(task), 'undecided'))
                            for task in sorted(fixed)}, confirmed=confirmed, outcome=outcome)
                 if outcome != 'confirmed':

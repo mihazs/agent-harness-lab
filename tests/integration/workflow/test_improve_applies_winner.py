@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_harness_lab import config, workflow
+from agent_harness_lab import workflow
 from agent_harness_lab.cli import main
 from agent_harness_lab.workflow import improve
 from tests.integration.workflow import test_workflow as workflow_fixture
@@ -138,7 +138,7 @@ def test_an_installing_run_asks_for_a_reproducible_claim_and_hands_only_the_clai
 
 def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path, monkeypatch):
     # Two claims are screened in one evaluation; the baseline fails the task of one only, so the other's change must go first.
-    monkeypatch.setattr(config, 'UNCONFIGURED_TRIALS', 48)  # two evaluations, then six fresh repeats of two tasks in both arms
+    # the default UNCONFIGURED_TRIALS covers two evaluations and six fresh repeats of two tasks tasks in both arms
     seen = tmp_path / 'prompts'
     screening = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
         "'mechanisms':['synthetic']", "'mechanisms':['m1','m2']").replace(

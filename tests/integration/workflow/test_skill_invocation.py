@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 import agent_harness_lab
-from agent_harness_lab import cli,entry_parity,workflow
+from agent_harness_lab import cli,config,entry_parity,workflow
 from agent_harness_lab.one_call import invocation_context
 from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
@@ -173,7 +173,7 @@ class TestSkillInvocation:
             context=json.loads((cwd/'context.json').read_text())['invocation']
             assert environment['AHL_MANAGED_PREPARATION'] == context['parent_run_id']
             assert context['remaining_seconds'] <= 30
-            assert context['remaining_trials'] <= 40  # the unconfigured ceiling (config.UNCONFIGURED_TRIALS)
+            assert context['remaining_trials'] <= config.UNCONFIGURED_TRIALS
             assert not context['execution_authority']
         # Trial children get only their own temporary CODEX_HOME, never the preparation marker.
         trials=[environment for _,environment,argv in calls if environment is not None and argv[0] == str(fixture.agent)

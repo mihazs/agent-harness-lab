@@ -20,7 +20,7 @@ PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9.
 MAX_PLUGIN_CHECKOUTS = 32
 DEFAULT_TRIALS = 20
 # An installing run (no ahl.json) screens several claims, prunes the unreproduced ones and repeats the fixed tasks before installing.
-UNCONFIGURED_TRIALS = 40
+UNCONFIGURED_TRIALS = 64  # room for two attempts and six fresh repeats of two fixed tasks
 
 
 def plugin_checkouts(value):
