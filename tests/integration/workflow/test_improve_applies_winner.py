@@ -316,3 +316,12 @@ def test_a_measured_candidate_that_fixed_nothing_then_a_declining_proposer_ends_
     code, receipt, base = cli(agent=LATE_STOP, mode='late_stop')
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
     assert receipt['baseline_at_least_as_good'] is True and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_measured_run_whose_candidate_matches_a_failing_baseline_ends_with_a_verdict(cli):
+    # Regression (fixed-in: 0.233.1): a measured comparison with no gain ended evaluation_failed, neither a change nor a
+    # justified no change. Mode 'worse' makes the candidate fail what the baseline fails.
+    from tests.integration.workflow.test_before_after_guard import WORSE
+    code, receipt, base = cli(agent=WORSE, mode='worse')
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['baseline_at_least_as_good'] is True and (base.project / 'AGENTS.md').read_text() == 'bad'

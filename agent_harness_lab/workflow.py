@@ -1750,6 +1750,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
         from .evaluation import before_after
         before_after.attach(result, output, dict(single_run, bindings=bindings), margin=getattr(args, 'regression_margin', None))
+        if (_installs(args) and result.get('status') == 'evaluation_failed' and single_run['inputs_unchanged']
+                and bindings['describes_final_attempt']
+                and all(t.get('status') in ('passed', 'failed') for t in single_run['trials'])):
+            # A measured comparison that the guard did not find worse is a verdict, not a failure: the candidate showed no
+            # confirmed gain, so no change is installed. Regression tasks the baseline itself failed are named, never counted.
+            fixed, lost = _flips(single_run['trials'])
+            invalid = sorted(t['task'] for t in single_run['trials']
+                             if (t['version'], t['split'], t['status']) == ('baseline', 'regression', 'failed'))
+            result.update(status='no_change', reason='improvement_not_confirmed' if fixed else 'evaluation_no_improvement',
+                          baseline_at_least_as_good=not fixed, **({'candidate_lost': sorted(lost)} if lost else {}),
+                          **({'invalid_controls': invalid} if invalid else {}))
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
             and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])):
         # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
