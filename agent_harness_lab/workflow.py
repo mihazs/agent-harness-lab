@@ -657,6 +657,11 @@ PRUNE = """The baseline passed these development tasks, so the weak outcomes the
 only the changes for the weak outcomes that were reproduced, and list only those mechanisms in proposal.json.
 Do not read previous evaluation directories or held-out results.
 """
+# The second evaluation of an installing run whose candidate fixed a task and lost none, while the authored controls failed on the baseline.
+CONTROLS_INVALID = """These regression tasks of your earlier evaluation failed on the baseline harness, so they are not valid controls: {ids}.
+Regression tasks must pass under the baseline harness (behaviour that works today). Build regression tasks whose graders the baseline
+passes, and keep the development tasks reproducing the same weak outcomes.
+"""
 # What the evaluation author of an installing run is told about the proposer's claim; the candidate itself stays hidden.
 REPRODUCE = """The proposer's untested claim is in {hypothesis}: the weak outcomes it says the baseline harness produces and
 what would falsify each. This file is the one exception to the rule above about proposals. Build the development tasks to
@@ -983,6 +988,7 @@ def _improve(args):
     not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
+    rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
     final_attempt = None
     proposed = None
     grader_changed = False
@@ -1019,7 +1025,11 @@ def _improve(args):
         evaluation = prepare / f'evaluation-{attempt}'
         manifest_path = evaluation / 'manifest.json'
         progress('candidate_preparation', attempt=attempt + 1)
-        if controlled:
+        if rebuild_controls:
+            # The candidate stays as frozen and the proposer does not run: only the evaluation's controls are built again.
+            write_json(proposal_path, proposals[-1])
+            result['controls_rebuilt'] = dict(invalid=rebuild_controls, attempt=attempt)
+        elif controlled:
             context = role_views['proposer']
             if attempt:
                 context = prepare / f'proposer-context-{attempt}'
@@ -1108,8 +1118,9 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
-        proposals.append(proposal)
-        returned.append(proposal)
+        if not rebuild_controls:  # the proposer returned once
+            proposals.append(proposal)
+            returned.append(proposal)
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(brief.no_change_result(data))
@@ -1280,6 +1291,7 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                 write_json(evaluation / 'hypothesis.json', {name: [str(item)[:2000] for item in _listed(proposal, name)][:12]
                                                            for name in ('mechanisms', 'falsifiers')})
                 evaluation_prompt += REPRODUCE.format(hypothesis=evaluation / 'hypothesis.json')
+                if rebuild_controls: evaluation_prompt += CONTROLS_INVALID.format(ids=', '.join(rebuild_controls))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1577,6 +1589,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.update(status='no_change',reason='evaluation_no_improvement')
             if not_reproduced or _installs(args): result['hypotheses_not_reproduced'] = len(not_reproduced) + 1
             break
+        # Controls the baseline itself fails prove nothing, yet the candidate fixed a task and lost none: build the controls
+        # again around the same candidate rather than propose again. The gates of the second attempt are its own.
+        fixed, lost = _flips(trials)
+        outcome = {(t['task'], t['version']): t['status'] for t in trials}
+        broken = sorted(t['task'] for t in trials if (t['version'], t['split']) == ('baseline', 'regression') and t['status'] != 'passed')
+        if (_installs(args) and bank is None and not attempt and evaluated['inputs_unchanged'] and fixed and not lost
+                and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
+            rebuild_controls = broken
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
     if client is not None:

@@ -59,7 +59,9 @@ with `improvement_not_confirmed`. The proposer of such a run must state its clai
 and the evaluation author receives that claim (`hypothesis.json`, never the candidate) to build development tasks the
 baseline should fail, with acceptance criteria taken from the project's own sources. A tie, where both arms pass every
 task, means the claim was not reproduced: nothing is installed, one different claim is tried when the budget allows, and
-the run then ends `no_change` with `evaluation_no_improvement` and `hypotheses_not_reproduced`. The install is the operator's request, never certification:
+the run then ends `no_change` with `evaluation_no_improvement` and `hypotheses_not_reproduced`. When instead the first candidate fixed a task
+and lost none, but regression controls the baseline itself failed (so they failed in both arms) left nothing decided, the second attempt does not
+propose again: it keeps that candidate, builds the evaluation afresh with those controls named as invalid, and records them in `controls_rebuilt`. The install is the operator's request, never certification:
 the `decision` block and every evidence label are unchanged. A project `ahl.json`,
 a scope that includes user-level files, the controlled `--agent responses` backend, `ahl watch` and the programmatic entry keep
 the previous outcome: `inconclusive` with `candidate_requires_independent_certification`.
