@@ -521,7 +521,12 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     try:control_custody.after_control(grade)
                     except ValueError:return None
             else:
-                argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
+                # The grader sees a throwaway copy: git and build tools write into the tree they inspect (index refresh, caches),
+                # and that is no defect of a grader whose frozen program and bundle stay untouched.
+                graded = path.parent / f'.selftest-{index}-{check["state"]}'
+                shutil.rmtree(graded, ignore_errors=True)
+                shutil.copytree(workspace, graded, symlinks=True)
+                argv = [a.replace('{workspace}', str(graded)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
                 available = remaining()
                 if available <= 0:
                     raise TimeoutError('Improvement budget exhausted before grader self-test')
@@ -530,7 +535,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 available = remaining()
                 if available <= 0:
                     raise TimeoutError('Improvement budget exhausted before grader self-test')
-                run = runner.execute(argv, path.parent, cap, env=runner.native_environment('grader'))
+                try: run = runner.execute(argv, path.parent, cap, env=runner.native_environment('grader'))
+                finally: shutil.rmtree(graded, ignore_errors=True)
                 if any(file_state(p) != value for p, value in before.items()):
                     raise ValueError('Grader modified its own frozen program during self-test')
                 # The cheap place to find a grader that writes into frozen inputs: before any trial runs.
