@@ -55,8 +55,9 @@ def cli(tmp_path, capsys):
     with ExitStack() as cleanups:
         base = workflow_fixture.WorkflowTests(cleanups.callback)
 
-        def go(command='improve', *extra, agent=None, original=None):
+        def go(command='improve', *extra, agent=None, original=None, mode=None):
             if agent is not None: base.agent.write_text(agent)
+            if mode is not None: (base.project / 'mode').write_text(mode)
             if original is not None: (base.project / 'AGENTS.md').write_text(original)
             code = main([command, str(base.project), '--agent', 'codex', '--codex', str(base.agent), '--claude', 'missing',
                          '--timeout', '30', '--output', str(tmp_path / command), *extra])
@@ -297,3 +298,12 @@ def test_user_text_reaches_the_proposer_only_as_scrubbed_excerpts_and_only_with_
         assert holders == [] and 'holds short quoted user messages' not in prompts and 'user-corrections file named below' not in prompts
         assert (output / 'user-corrections.json').exists() == flag and ('user_corrections' in brief['sources']) == flag
         assert brief['user_reactions'].get('excerpts') == (0 if flag else None)
+
+
+def test_a_candidate_that_misses_a_reproduced_weakness_is_refined_against_the_same_frozen_tasks(cli):
+    # Regression (fixed-in: 0.232.3): the refinement built a fresh evaluation that no longer reproduced the weakness, so the
+    # refined change was judged on tasks the baseline already passed. Mode 'refine' stages a wrong change first, then the fix.
+    code, receipt, base = cli(mode='refine')
+    assert receipt['evaluation_reused'] == {'attempt': 0, 'reason': 'refined_candidate'}, receipt
+    assert [p.name for p in Path(receipt['output']).glob('preparation/evaluation-?')] == ['evaluation-0']
+    assert (code, receipt['status']) == (0, 'applied') and receipt['confirmation']['outcome'] == 'confirmed'
