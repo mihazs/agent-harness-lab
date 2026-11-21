@@ -4,6 +4,7 @@ import contextlib
 import errno
 import hashlib
 import json
+import math
 import os
 import random
 from pathlib import Path
@@ -671,6 +672,18 @@ Add at least one heldout task that is a different instance of one of those situa
 acceptance criterion from the project's own sources (its instructions, documentation, checks and code), never from the claim:
 something the project does not itself state or enforce is not a weakness. Do not make a task hard in any other way.
 """
+
+
+# At most six observations per arm of each fixed task; with one task, 6 of 6 against 2 of 6 is the weakest gap that passes.
+CONFIRM_RUNS = 6
+CONFIRM_ALPHA = 0.05
+
+
+def _one_sided_exact(candidate, baseline, n):
+    """Fisher's exact test, one-sided: the chance that the candidate passes at least `candidate` of its `n` trials when both
+    arms share one pass rate and `candidate + baseline` passes were seen in all."""
+    total = candidate + baseline
+    return sum(math.comb(total, k) * math.comb(2 * n - total, n - k) for k in range(candidate, min(total, n) + 1)) / math.comb(2 * n, n)
 
 
 def _listed(proposal, name):
@@ -1511,38 +1524,53 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.pop('partial_improvement', None)
                 continue
             if _installs(args):
-                # One run per arm is one observation, and agents vary between runs. An install needs the same flip twice.
+                # One run per arm is one observation and agents vary between runs, so the fixed tasks are run again until
+                # the candidate's pass rate beats the baseline's by a one-sided exact test, or that can no longer happen.
                 fixed = _flips(trials)[0]  # only these are repeated: the claim under test is the fix
-                if 2 * len(fixed) > trials_left:
-                    result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
-                    break
-                if remaining() <= 0:
-                    result.update(status='budget_exhausted', reason='improvement_confirmation_unaffordable')
-                    break
-                trials_left -= 2 * len(fixed)
                 keep = lambda rows, key: [row for row in rows if row[key] in fixed]
                 write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
                     grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
                     **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in fixed}} if 'grader_bundles' in manifest else {})))
-                # A separate namespace: the plan below still binds the primary run through `options`.
-                second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
-                    'output': str(output / f'evaluation-{attempt}-confirm'), 'parent_deadline': time.monotonic() + remaining()})
-                progress('evaluation_repeat', attempt=attempt + 1)
-                with manifest_contract.boundary('evaluation'), stages.charge('trials'):
-                    runner.evaluate(second)
-                repeat = json.loads((Path(second.output) / 'results.json').read_text())
-                protected[evaluation] = runner.digest(evaluation)
-                if not all(t['status'] in ('passed', 'failed') for t in repeat['trials']):  # an ungraded repeat confirms and refutes nothing
+                counts = dict(candidate=len(fixed), baseline=0, observations=len(fixed))  # the first run: every fixed task flipped
+                outcome = None
+                for run in range(1, CONFIRM_RUNS):
+                    if 2 * len(fixed) > trials_left or remaining() <= 0:
+                        outcome = 'improvement_confirmation_unaffordable'
+                        break
+                    trials_left -= 2 * len(fixed)
+                    # A separate namespace: the plan below still binds the primary run through `options`.
+                    second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
+                        'output': str(output / f'evaluation-{attempt}-confirm-{run}'), 'parent_deadline': time.monotonic() + remaining()})
+                    progress('evaluation_repeat', attempt=attempt + 1, run=run)
+                    with manifest_contract.boundary('evaluation'), stages.charge('trials'):
+                        runner.evaluate(second)
+                    repeat = json.loads((Path(second.output) / 'results.json').read_text())
+                    protected[evaluation] = runner.digest(evaluation)
+                    if (not all(t['status'] in ('passed', 'failed') for t in repeat['trials']) or not repeat['inputs_unchanged']
+                            or grader_fingerprint(manifest_path) != grader_before):  # an ungraded or unfaithful repeat proves nothing
+                        outcome = 'improvement_confirmation_incomplete'
+                        break
+                    for version in ('candidate', 'baseline'):
+                        counts[version] += sum(t['version'] == version and t['status'] == 'passed' for t in repeat['trials'])
+                    counts['observations'] += len(fixed)
+                    p_value = _one_sided_exact(counts['candidate'], counts['baseline'], counts['observations'])
+                    left = (CONFIRM_RUNS - 1 - run) * len(fixed)  # the best case: every later candidate trial passes, no baseline one
+                    if p_value <= CONFIRM_ALPHA:
+                        outcome = 'confirmed'
+                        break
+                    if _one_sided_exact(counts['candidate'] + left, counts['baseline'], counts['observations'] + left) > CONFIRM_ALPHA:
+                        outcome = 'improvement_not_confirmed'
+                        break
+                else:
+                    outcome = 'improvement_not_confirmed'
+                n = counts['observations']
+                result['confirmation'] = dict(runs=n // max(1, len(fixed)), tasks=sorted(fixed), candidate_passed=counts['candidate'],
+                    baseline_passed=counts['baseline'], observations_per_arm=n, alpha=CONFIRM_ALPHA,
+                    p_value=round(_one_sided_exact(counts['candidate'], counts['baseline'], n), 4), outcome=outcome)
+                if outcome != 'confirmed':
                     result.pop('partial_improvement', None)
-                    result.update(status='budget_exhausted' if remaining() <= 0 else 'incomplete', reason='improvement_confirmation_incomplete')
-                    break
-                again, lost_again = _flips(repeat['trials'])
-                result['confirmation'] = dict(runs=2, fixed=sorted(fixed & again), fixed_once=sorted(fixed - again),
-                                              lost=sorted(lost_again), evaluation=second.output)
-                if (not repeat['inputs_unchanged'] or not fixed & again or lost_again or fixed - again
-                        or grader_fingerprint(manifest_path) != grader_before):
-                    result.pop('partial_improvement', None)
-                    result.update(status='no_change', reason='improvement_not_confirmed')
+                    result.update(status='budget_exhausted' if outcome == 'improvement_confirmation_unaffordable' else
+                                  'incomplete' if outcome == 'improvement_confirmation_incomplete' else 'no_change', reason=outcome)
                     break
             removal = result.get('instruction_removal') if instruction is not None else None
             if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':

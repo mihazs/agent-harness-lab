@@ -53,9 +53,13 @@ changed and how to undo it, and `application` holds the re-read target receipt w
 `authority: operator_invocation` and `certification: not_established`. A candidate
 wins when it passes every task while the baseline fails a development task, or, as
 `partial_improvement`, when it fixes a development task and fails only tasks the
-baseline also fails. Before installing, the tasks the candidate fixed are run again in both arms, and only a task
-fixed in both runs counts: `confirmation` lists `fixed` and `fixed_once`, and a run with none confirmed ends `no_change`
-with `improvement_not_confirmed`. The proposer of such a run must state its claim as a weak outcome that can be reproduced,
+baseline also fails. Before installing, the tasks the candidate fixed are run again in both arms, up to six runs in all,
+and the pass counts of all runs are pooled per arm (the first run counts as a pass for the candidate and a failure for the
+baseline on each fixed task). The candidate is installed when a one-sided exact test of its pass rate against the baseline's
+gives p at most 0.05, so a baseline that fails only some of the time does not block a fix the candidate always shows; the
+runs stop early once even all-favourable remaining runs could not reach that. `confirmation` holds `runs`, `tasks`,
+`candidate_passed`, `baseline_passed`, `observations_per_arm`, `alpha`, `p_value` and `outcome`, and a run that is not
+confirmed ends `no_change` with `improvement_not_confirmed`. The proposer of such a run must state its claim as a weak outcome that can be reproduced,
 and the evaluation author receives that claim (`hypothesis.json`, never the candidate) to build development tasks the
 baseline should fail, with acceptance criteria taken from the project's own sources. A tie, where both arms pass every
 task, means the claim was not reproduced: nothing is installed, one different claim is tried when the budget allows, and

@@ -60,7 +60,7 @@ def test_controls_the_baseline_fails_are_rebuilt_around_the_same_candidate(fixtu
     assert (output / 'candidate-1/AGENTS.md').read_text() == (output / 'candidate-0/AGENTS.md').read_text() == 'good\n'
     claim = json.loads((output / 'preparation/evaluation-1/hypothesis.json').read_text())
     assert claim == dict(mechanisms=['synthetic'], falsifiers=['artifact check'])
-    assert receipt['confirmation']['fixed'] == ['development', 'heldout'] and (fixture.project / 'AGENTS.md').read_text() == 'good\n'
+    assert receipt['confirmation']['tasks'] == ['development', 'heldout'] and (fixture.project / 'AGENTS.md').read_text() == 'good\n'
     assert len(receipt['mechanism_coverage']['admission']) == 1  # one proposal, not two copies of it
 
 
