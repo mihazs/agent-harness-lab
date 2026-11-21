@@ -692,7 +692,7 @@ def _completed_profile(plan, runtime):
     return dict(plan, profile=profile)
 
 
-def hook(args, baseline, candidate, original, proposed, proposal, agent, *, deadline=None):
+def hook(args, baseline, candidate, original, proposed, proposal, agent, *, deadline=None, lenient=False):
     """Workflow validation hook. None when the candidate changes no nested instruction or rule file and declares
     no plan, so root-only edits keep their previous path; otherwise a validation document. Sets the scope that
     one_call.check_scope enforces."""
@@ -701,8 +701,8 @@ def hook(args, baseline, candidate, original, proposed, proposal, agent, *, dead
     nested = [name for name in changed_paths(original, proposed) if name not in surfaces.ROOT_INSTRUCTIONS]
     if plan is None and not nested: return None
     plan = _completed_profile(plan, RUNTIMES.get(agent))
-    if not nested:
-        # Root instructions need no plan; an unusable one the proposer added anyway is ignored, not a reason to block.
+    if not nested and lenient:
+        # Root instructions need no plan; for an installing run an unusable one the proposer added anyway is ignored.
         try: parse_plan(plan)
         except (ValueError, TypeError, KeyError): return None
     document = validate(baseline, candidate, plan, runtime=RUNTIMES.get(agent), project=args.project, deadline=deadline)

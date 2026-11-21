@@ -1149,7 +1149,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         proposed = candidate_states(candidate, original)
         # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
         instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
-                                                  deadline=started+args.timeout)
+                                                  deadline=started+args.timeout, lenient=_installs(args))
         check_scope(args, proposed, original)
         check_configuration(args)
         if proposed == original:

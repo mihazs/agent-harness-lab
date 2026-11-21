@@ -28,4 +28,5 @@ def test_an_unusable_plan_beside_a_root_only_change_is_ignored(tmp_path):
     args = SimpleNamespace(project=tmp_path)
     plan = dict(schema_version=1, profile=dict(task_cwd='.'), task_paths=['.'], required=[dict(id='rule', text='one line')])
     original, proposed = {'AGENTS.md': ('a', 0o644)}, {'AGENTS.md': ('b', 0o644)}
-    assert validation.hook(args, tmp_path, tmp_path, original, proposed, dict(instruction_plan=plan), 'claude') is None
+    assert validation.hook(args, tmp_path, tmp_path, original, proposed, dict(instruction_plan=plan), 'claude', lenient=True) is None
+    assert validation.hook(args, tmp_path, tmp_path, original, proposed, dict(instruction_plan=plan), 'claude')['status'] == 'blocked'  # a recommending run keeps the block
