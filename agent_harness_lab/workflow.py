@@ -1350,8 +1350,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 break
             if made: made[-1]['outcome'] = 'repaired'
         checked = validated[0] if validated else validate()
-        if bank is None and not attempt:
+        if bank is None and not attempt and not _installs(args):
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
+        # An installing run builds its refinement evaluation afresh: a frozen control the baseline fails would be carried
+        # over, and a fresh construction gets the same validation repairs as the first.
         if instruction is not None:
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
             instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
