@@ -257,7 +257,16 @@ def native_environment(agent, inherit=False, environ=None):
         for enabled, names in providers.items():
             if source.get(enabled) in ('1', 'true'):
                 auth |= {enabled} | names
+    if agent == 'claude' and claude_subscription_login(source):
+        auth -= {'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'}  # a key overrides the subscription login and bills the API
     return {key: value for key, value in source.items() if key in common or key in auth}
+
+
+def claude_subscription_login(environ=None):
+    """True when Claude Code holds a saved subscription login (its OAuth credentials file); only the file's presence is read."""
+    source = os.environ if environ is None else environ
+    folder = Path(source.get('CLAUDE_CONFIG_DIR') or Path(source.get('HOME') or Path.home()) / '.claude')
+    return (folder / '.credentials.json').is_file()
 
 
 def environment_receipt(environment, inherited, run_root, credentials=None):
@@ -287,7 +296,19 @@ def preparation_command(agent, binary, plugin, skills, stage, parent_id, inherit
         return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(stage, readable=readable), environment
     isolated = trial_surfaces.codex_environment(stage, stage, {}, environment)  # config.toml is ignored; the home holds the login
     homes = trial_surfaces.home_skills(isolated) if isolated.get('CODEX_HOME') != environment.get('CODEX_HOME') else None
-    return agent_command(agent, binary, None, skills, skill_homes=homes, pure=True), isolated
+    argv = agent_command(agent, binary, None, skills, skill_homes=homes, pure=True)
+    # --ignore-user-config drops the user's model choice too; keep only that, passed explicitly.
+    chosen = [part for key, value in sorted(codex_defaults(environment).items()) for part in ('-c', f'{key}={json.dumps(value)}')]
+    return argv[:-1] + chosen + argv[-1:], isolated
+
+
+def codex_defaults(environ=None):
+    """The model and reasoning effort the user chose in their Codex config.toml; nothing else is read."""
+    source = os.environ if environ is None else environ
+    path = Path(source.get('CODEX_HOME') or Path(source.get('HOME') or Path.home()) / '.codex') / 'config.toml'
+    try: raw = tomllib.loads(path.read_text())
+    except (OSError, ValueError): return {}
+    return {key: raw[key] for key in ('model', 'model_reasoning_effort') if isinstance(raw.get(key), str)}
 
 
 def execute_session(argv, cwd, timeout, stdin=None, *, env):

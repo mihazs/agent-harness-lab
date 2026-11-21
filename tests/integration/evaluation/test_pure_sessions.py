@@ -180,3 +180,18 @@ def test_a_claude_session_stages_no_login_and_reports_not_staged(runner, tmp_pat
     _, environment = prepare(runner, tmp_path, 'claude')
     _, credentials = runner.execute_session([sys.executable, '-c', 'pass'], tmp_path, 30, env=environment)
     assert credentials == 'not_staged'
+
+
+def test_claude_api_keys_are_dropped_when_a_subscription_login_exists(tmp_path, runner):
+    # Regression (fixed-in: 0.233.0): an exported ANTHROPIC_API_KEY overrode the subscription login and billed the API.
+    (tmp_path / '.claude').mkdir(); (tmp_path / '.claude/.credentials.json').write_text('{}')
+    environ = dict(HOME=str(tmp_path), PATH='/usr/bin', ANTHROPIC_API_KEY='synthetic-key', ANTHROPIC_AUTH_TOKEN='synthetic-token')
+    assert not {'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'} & set(runner.native_environment('claude', environ=environ))
+    (tmp_path / '.claude/.credentials.json').unlink()
+    assert runner.native_environment('claude', environ=environ)['ANTHROPIC_API_KEY'] == 'synthetic-key'  # no login: the key is the only way in
+
+
+def test_a_pure_codex_preparation_session_keeps_only_the_users_model_choice(tmp_path, runner):
+    (tmp_path / '.codex').mkdir()
+    (tmp_path / '.codex/config.toml').write_text('model = "synthetic-model"\nmodel_reasoning_effort = "high"\n[mcp_servers.x]\ncommand = "y"\n')
+    assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'synthetic-model', 'model_reasoning_effort': 'high'}
