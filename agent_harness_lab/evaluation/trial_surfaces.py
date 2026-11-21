@@ -25,6 +25,9 @@ CLAUDE_REQUESTS = (
     ('hooks', 'disableAllHooks through --settings', ('--settings', '{settings}')),
 )
 CODEX_REQUESTS = (('settings', 'temporary CODEX_HOME with model, effort and one workspace trust entry'),)
+# Claude Code ships plugins of its own ('@builtin'); project-only setting sources do not turn them off, enabledPlugins does.
+# Observed at 2.1.326; a session's init event lists what actually loaded (see observed_runtime_surfaces).
+CLAUDE_BUILTIN_PLUGINS = ('cc-plugin-agents-md', 'cc-plugin-telemetry', 'cc-plugin-privacy', 'cc-plugin-plugin-authoring')
 CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
                  # Project-only setting sources leave --print in permission mode 'default', which denies every edit and
                  # command, so no trial could change its workspace. This is the counterpart of Codex's workspace-write
@@ -37,6 +40,7 @@ CODEX_KEYS = ('model', 'model_reasoning_effort')
 CODEX_CREDENTIAL = 'CODEX_API_KEY'
 # The Codex CLI's own version banner; only that runtime's credential behaviour is judged.
 CODEX_BANNER = re.compile(r'codex-cli \d')
+CODEX_LOGIN = 'auth.json'
 
 
 def _row(runtime, surface, item):
@@ -55,16 +59,26 @@ def requests(runtime):
     return rows
 
 
-def descriptor(runtime, copied_keys=()):
-    """Path-free record of what a trial requests, inherits and leaves unknown; never an isolation claim."""
-    made = requests(runtime)
-    documented = all(row['requested'] and row['status'] == 'verified' for row in made)
+def descriptor(runtime, copied_keys=(), *, user_harness=False, credentials='not_staged'):
+    """Path-free record of what a trial requests, inherits and leaves unknown; never an isolation claim.
+
+    With user_harness the trial runs under the user's installed harness: nothing is requested to be excluded."""
+    made = [] if user_harness else requests(runtime)
+    documented = bool(made) and all(row['requested'] and row['status'] == 'verified' for row in made)
     value = dict(profile=PROFILE, executor='cooperative native CLI; no role isolation claim', runtime=runtime,
                  pinned_version=surfaces.PINS[runtime], requests=made, observed=False,
                  status='requested_documented_unobserved' if documented else 'inherited_unverified',
+                 user_harness='included' if user_harness else 'excluded',
                  included='fixture plus selected harness_paths at their relative paths',
                  security_isolation=False, network_isolation=False, full_certification=False)
-    if runtime == CLAUDE:
+    if runtime == CLAUDE and user_harness:
+        value.update(excluded_requested=[],
+                     inherited=['user and local settings, permission rules, hooks, env and apiKeyHelper',
+                                'user, project and plugin MCP servers', 'user plugins and skills', 'user CLAUDE.md and auto memory',
+                                'authentication stored outside settings files', 'managed settings and managed hooks',
+                                'environment variables'],
+                     unknown=[], sandbox='workspace-write requested through --settings, unobserved')
+    elif runtime == CLAUDE:
         value.update(excluded_requested=['user settings', 'local settings',
                                          'user and local permission rules and sandbox settings',
                                          'user and local settings env and apiKeyHelper',
@@ -74,28 +88,101 @@ def descriptor(runtime, copied_keys=()):
                                 'managed settings and managed hooks', 'environment variables'],
                      unknown=['user CLAUDE.md and auto memory', 'user plugins and skills'],
                      sandbox='workspace-write requested through --settings, unobserved')
+    elif user_harness:
+        value.update(excluded_requested=[],
+                     inherited=['the real CODEX_HOME: config.toml, skills, agents, rules, hooks, memories, MCP servers and authentication',
+                                'environment variables', 'system configuration layers', 'HOME .agents/skills'],
+                     unknown=[], sandbox='workspace-write', copied_config_keys=[],
+                     trusted_projects='as the user configuration says', credentials='not_staged')
     else:
         value.update(excluded_requested=['user config.toml beyond the copied keys',
                                          'CODEX_HOME skills, agents, rules, hooks, memories and MCP servers',
-                                         'CODEX_HOME authentication'],
+                                         'CODEX_HOME saved authentication beyond the copied subscription login'],
                      inherited=['environment variables', 'system configuration layers', 'HOME .agents/skills'],
                      unknown=['hooks without trust entries'],
                      sandbox='workspace-write', copied_config_keys=sorted(copied_keys),
-                     trusted_projects='trial workspace only', credentials='not_staged')
+                     trusted_projects='trial workspace only', credentials=credentials)
     return value
 
 
-def codex_authentication(version, environ):
-    """How a trial can authenticate once its temporary CODEX_HOME holds no saved login; 'unavailable' blocks the run.
+def codex_login(environ):
+    """The saved `codex login` (subscription) file under the real CODEX_HOME named by environ, or None.
 
-    Saved `codex login` credentials live in the real CODEX_HOME, which a trial never names, so only the documented
-    CODEX_API_KEY override can reach it. A runtime whose --version is not the Codex CLI banner stays 'unknown'.
+    Only environ is consulted, never the process home, so a caller that passes {} can never reach a real login."""
+    home = environ.get('CODEX_HOME') or (Path(environ['HOME']) / '.codex' if environ.get('HOME') else None)
+    path = Path(home) / CODEX_LOGIN if home else None
+    return path if path is not None and path.is_file() else None
+
+
+def codex_authentication(version, environ, user_harness=False):
+    """How a Codex session can authenticate: 'subscription_login' when the user's saved login exists (it is copied into
+    the temporary CODEX_HOME, no API cost), else the documented CODEX_API_KEY override; 'unavailable' blocks the run.
+
+    A runtime whose --version is not the Codex CLI banner stays 'unknown' when neither exists.
     """
     if not requests(CODEX)[0]['requested']:
+        return 'inherited'
+    if codex_login(environ) is not None:
+        return 'subscription_login'
+    if user_harness:  # the real CODEX_HOME may keep its login elsewhere (keyring); that run is not blocked here
         return 'inherited'
     if environ.get(CODEX_CREDENTIAL):
         return 'environment_variable_unobserved'
     return 'unavailable' if CODEX_BANNER.match(version.strip()) else 'unknown'
+
+
+# temporary CODEX_HOME -> the real login file it may borrow; and -> sha256 of the bytes copied while a session runs.
+# The bytes themselves are never kept.
+_LOGINS, _COPIES = {}, {}
+
+
+def _write_private(path, data, flags):
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | flags, 0o600), 'wb') as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(data)
+
+
+def stage_codex_login(environment):
+    """Copy the user's saved login into the session's temporary CODEX_HOME with mode 0600, for one run.
+
+    Returns the receipt status only: 'subscription_login_copied', or 'not_staged' when the environment has no
+    temporary home that may borrow a login or the real file cannot be read."""
+    home = environment.get('CODEX_HOME')
+    real = _LOGINS.get(home)
+    if real is None:
+        return 'not_staged'
+    try:
+        data = real.read_bytes()
+        _write_private(Path(home) / CODEX_LOGIN, data, os.O_TRUNC)
+    except OSError:
+        (Path(home) / CODEX_LOGIN).unlink(missing_ok=True)
+        return 'not_staged'
+    _COPIES[home] = hashlib.sha256(data).hexdigest()
+    return 'subscription_login_copied'
+
+
+def settle_codex_login(environment):
+    """After a run: take a token the run refreshed back into the real login, but only when the real file is still what
+    was copied; always delete the temporary copy. Returns the receipt status; no content is read into a message."""
+    home = environment.get('CODEX_HOME')
+    digest, real = _COPIES.pop(home, None), _LOGINS.get(home)
+    if digest is None:
+        return 'not_staged'
+    copy, status = Path(home) / CODEX_LOGIN, 'subscription_login_copied'
+    temporary = real.with_name(real.name + '.ahl-refresh')
+    try:
+        refreshed = copy.read_bytes()
+        if hashlib.sha256(refreshed).hexdigest() != digest and hashlib.sha256(real.read_bytes()).hexdigest() == digest \
+                and isinstance(json.loads(refreshed), dict):
+            _write_private(temporary, refreshed, os.O_TRUNC)
+            os.replace(temporary, real)
+            status = 'subscription_login_refreshed'
+    except (OSError, ValueError):
+        pass  # shortcut: a failed write-back keeps the real login as it was; the next run copies it again
+    finally:
+        temporary.unlink(missing_ok=True)
+        copy.unlink(missing_ok=True)
+    return status
 
 
 def _private_json(path, value):
@@ -103,12 +190,27 @@ def _private_json(path, value):
     path.chmod(0o600)
 
 
-def claude_arguments(trial):
-    """Stage the empty MCP and hook-disabling settings beside the workspace; return the gated flags."""
+def claude_arguments(trial, *, readable=(), user_harness=False):
+    """Stage the empty MCP and hook-disabling settings beside the workspace; return the gated flags.
+
+    readable: directories a session may read with the file tools (Read allow rules, never write access).
+    user_harness: keep only the write grant, so the user's settings, plugins, hooks and MCP servers load."""
     staged = {}
     for name, (filename, value) in CLAUDE_STAGED.items():
+        if user_harness and name == 'mcp':
+            continue
+        if name == 'settings':
+            value = json.loads(json.dumps(value))
+            if user_harness:
+                del value['disableAllHooks']
+            else:
+                value['enabledPlugins'] = {f'{name}@builtin': False for name in CLAUDE_BUILTIN_PLUGINS}
+            if readable:
+                value['permissions']['allow'] = [f'Read(/{Path(path).resolve()}/**)' for path in readable]  # '//' = absolute
         staged[name] = trial / filename
         _private_json(staged[name], value)
+    if user_harness:
+        return ['--settings', str(staged['settings'])]
     argv = []
     for (surface, item, fragment), made in zip(CLAUDE_REQUESTS, requests(CLAUDE)):
         if made['requested']:
@@ -116,12 +218,29 @@ def claude_arguments(trial):
     return argv
 
 
+def observed_runtime_surfaces(trace):
+    """What a Claude Code session reports it loaded (its init event): plugin sources and MCP server names, or None when
+    the trace has no init event. An observation of the runtime's own report, not an isolation proof."""
+    for line in (trace or '').splitlines():
+        try: event = json.loads(line)
+        except ValueError: continue
+        if isinstance(event, dict) and event.get('type') == 'system' and event.get('subtype') == 'init':
+            plugins = [row.get('source') or row.get('name') for row in event.get('plugins') or [] if isinstance(row, dict)]
+            servers = [row.get('name') for row in event.get('mcp_servers') or [] if isinstance(row, dict)]
+            return dict(plugins=sorted(str(name) for name in plugins), mcp_servers=sorted(str(name) for name in servers))
+    return None
+
+
 def _toml(value):
     return json.dumps(value, ensure_ascii=False)
 
 
 def codex_environment(trial, workspace, defaults, environ):
-    """A temporary CODEX_HOME with only the copied defaults and one trust entry for this workspace."""
+    """A temporary CODEX_HOME with only the copied defaults and one trust entry for this workspace.
+
+    When environ names a saved subscription login the home may borrow it: stage_codex_login copies it in for the length of
+    one run and settle_codex_login takes a refreshed token back and deletes the copy. A borrowable login also drops
+    CODEX_API_KEY from the child environment: the key would override the login and bill the API."""
     if not requests(CODEX)[0]['requested']:
         return dict(environ)
     copied = {key: defaults[key] for key in CODEX_KEYS if isinstance(defaults.get(key), str)}
@@ -134,7 +253,11 @@ def codex_environment(trial, workspace, defaults, environ):
         raise ValueError('temporary Codex configuration did not round-trip')
     (home / 'config.toml').write_text(text)
     (home / 'config.toml').chmod(0o600)
-    return {**{key: value for key, value in environ.items() if key != 'CODEX_HOME'}, 'CODEX_HOME': str(home)}
+    real, dropped = codex_login(environ), {'CODEX_HOME'}
+    if real is not None:
+        _LOGINS[str(home)] = real.resolve()
+        dropped.add(CODEX_CREDENTIAL)
+    return {**{key: value for key, value in environ.items() if key not in dropped}, 'CODEX_HOME': str(home)}
 
 
 def stage_harness(root, workspace, paths):

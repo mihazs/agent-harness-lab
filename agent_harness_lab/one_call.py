@@ -54,6 +54,8 @@ def preflight(args):
         return 'history_source_ai_memory_unsupported'
     if args.agent == 'responses' and getattr(args, 'inherit_env', False):
         return 'responses_inherit_env_unsupported'
+    if args.agent == 'responses' and getattr(args, 'with_user_harness', False):
+        return 'responses_user_harness_unsupported'
     settings = getattr(args, 'project_settings', None)
     if getattr(args, 'area', None) and (not settings or pinned_bank(args) is None):
         return 'area_selection_requires_pinned_bank'

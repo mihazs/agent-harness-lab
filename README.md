@@ -207,7 +207,10 @@ Read the [full output, controls and interpretation](docs/getting-started.md).
   behavior and outcomes are preserved.
 - Keep private traces, project identities, history-derived findings, credentials and
   trial workspaces out of commits and public issues. Normalization is not sanitization.
-- Agent-backed workflows use your runtime configuration and may incur model costs.
+- Agent-backed workflows drive your installed Claude Code or Codex CLI under your
+  subscription login and may use up its quota. Preparation sessions and trials run without your
+  user settings, plugins, hooks and MCP servers; `--with-user-harness` runs the trials of both
+  arms with them instead ([trial isolation](skills/harness-self-improvement/references/isolation.md)).
   Installation starts no background monitor.
 
 [Evaluation contracts and pending safeguards](docs/evaluation-foundation.md) ·

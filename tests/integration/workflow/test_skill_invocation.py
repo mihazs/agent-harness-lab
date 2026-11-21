@@ -207,8 +207,10 @@ class TestSkillInvocation:
         assert len(preparations) == 2
         assert len(graders) >= 15  # Nine self-tests and six baseline/candidate graders.
         assert all(env is not None and 'AHL_TEST_CANARY' not in env and 'CODEX_API_KEY' not in env for env in graders)
+        # Preparation sessions are pure: a temporary CODEX_HOME of their own, never the user's.
         assert all(('AHL_TEST_CANARY' in env) == inherit and env['CODEX_API_KEY'] == 'synthetic-key'
-                   and env['CODEX_HOME'] == synthetic['CODEX_HOME'] for env in preparations)
+                   and env['CODEX_HOME'] != synthetic['CODEX_HOME'] and Path(env['CODEX_HOME']).parent.name.endswith('.session')
+                   for env in preparations)
         result = json.loads(stdout)
         for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
             env_receipt = json.loads((Path(result['output']) / name).read_text())
@@ -220,6 +222,51 @@ class TestSkillInvocation:
         receipt = json.loads(evaluation.read_text())
         assert receipt['runtime']['environment_inherited'] is inherit
         assert all(trial['environment']['inherited'] is inherit for trial in receipt['trials'])
+
+    @pytest.mark.parametrize('prefix', [['improve'], ['skills','invoke']])
+    @pytest.mark.parametrize('with_harness', [False, True], ids=['pure', 'user-harness'])
+    def test_user_harness_opt_in_reaches_trials_and_never_preparation(self, prefix, with_harness, make_fixture):
+        # fixed-in: 0.233.0. Preparation sessions loaded the user's CODEX_HOME and trials could not use the subscription login.
+        fixture = make_fixture(); runner = cli.evaluator(); execute = runner.execute; sessions = []
+        real_home = fixture.root / 'synthetic-codex-home'; real_home.mkdir()
+        (real_home / 'auth.json').write_text('{"canary": "synthetic-login-canary"}')
+        synthetic = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture.root), 'CODEX_API_KEY': 'synthetic-key', 'CODEX_HOME': str(real_home)}
+        def observed(argv, cwd, timeout, stdin=None, **kwargs):
+            environment = kwargs.get('env')
+            if environment is not None and argv[0] == str(fixture.agent) and '--version' not in argv:
+                login = Path(environment['CODEX_HOME']) / 'auth.json'
+                sessions.append((argv, environment, login.is_file() and login.read_text() == (real_home / 'auth.json').read_text(),
+                                 login.is_file() and login.stat().st_mode & 0o777))
+            return execute(argv, cwd, timeout, stdin, **kwargs)
+        options = ['--with-user-harness'] if with_harness else []
+        with patch.dict(os.environ, synthetic, clear=True), patch.object(cli, 'evaluator', return_value=runner), \
+                patch.object(runner, 'execute', side_effect=observed):
+            code, stdout, _ = invoke([*prefix, str(fixture.project), '--agent', 'codex', '--codex',
+                                      str(fixture.agent), '--timeout', '30', *options])
+        assert code in (0, 3)
+        preparations = [row for row in sessions if 'AHL_MANAGED_PREPARATION' in row[1]]
+        trials = [row for row in sessions if 'AHL_MANAGED_PREPARATION' not in row[1]]
+        assert len(preparations) == 2 and trials
+        for argv, environment, copied, mode in preparations:  # always pure, with the login copied in for the run
+            assert {'--ignore-user-config', '--ignore-rules'} <= set(argv)
+            assert environment['CODEX_HOME'] != str(real_home) and 'CODEX_API_KEY' not in environment
+            assert (copied, mode) == (True, 0o600)
+        for argv, environment, copied, mode in trials:
+            assert not {'--ignore-user-config', '--ignore-rules'} & set(argv) and 'CODEX_API_KEY' not in environment
+            assert (environment['CODEX_HOME'] == str(real_home)) == with_harness
+            assert copied and (with_harness or mode == 0o600)  # the user's own file is in place, or the 0600 copy
+        output = Path(json.loads(stdout)['output'])
+        label = 'included' if with_harness else 'excluded'
+        evaluation = json.loads((output / 'evaluation-0/results.json').read_text())
+        assert (evaluation['runtime']['user_harness'], evaluation['isolation']['user_harness']) == (label, label)
+        assert {trial['user_harness'] for trial in evaluation['trials']} == {label}
+        expected = 'not_staged' if with_harness else 'subscription_login_copied'
+        assert {trial['environment']['credentials'] for trial in evaluation['trials']} == {expected}
+        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
+            assert json.loads((output / name).read_text())['credentials'] == 'subscription_login_copied'
+        assert not list(output.rglob('auth.json'))  # no copy outlives its session
+        leaked = [str(path) for path in output.rglob("*") if path.is_file() and "synthetic-login-canary" in path.read_text(errors="replace")]; assert not leaked, leaked
+        assert (real_home / 'auth.json').read_text() == '{"canary": "synthetic-login-canary"}'
 
     def test_watch_configuration_tracks_environment_inheritance(self, make_fixture):
         args = make_fixture().args()

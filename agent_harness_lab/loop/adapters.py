@@ -95,7 +95,7 @@ class ExecutorRunner:
 
     def runtime_sha256(self):
         """The launch identity both arms share, read now so a changed agent or executable changes the frozen inputs."""
-        return before_after.launch_sha256(self.agent, shutil.which(self.binary) or self.binary, self.options.get('inherit_env', False))
+        return before_after.launch_sha256(self.agent, shutil.which(self.binary) or self.binary, self.options.get('inherit_env', False), self.options.get('with_user_harness', False))
 
     def run(self, arms, snapshots, manifest, out):
         options = dict(self.options)
