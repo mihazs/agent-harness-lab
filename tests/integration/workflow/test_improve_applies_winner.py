@@ -136,20 +136,41 @@ def test_an_installing_run_asks_for_a_reproducible_claim_and_hands_only_the_clai
     assert not (Path(result['output']) / 'preparation/evaluation-0/hypothesis.json').exists()
 
 
-def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path, monkeypatch):
-    # Two claims are screened in one evaluation; the baseline fails the task of one only, so the other's change must go first.
-    # the default UNCONFIGURED_TRIALS covers two evaluations and twelve fresh repeats of two tasks in both arms
-    seen = tmp_path / 'prompts'
-    screening = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
+def screening_agent(seen):
+    """Two claims are screened in one evaluation, and the baseline passes the second claim's development task."""
+    agent = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
         "'mechanisms':['synthetic']", "'mechanisms':['m1','m2']").replace(
         "('development','regression','heldout'))", "('development','m2','regression','heldout'))").replace(
         "tasks.append(dict(id=split,split=split,", "tasks.append(dict(id=split,split='development' if split=='m2' else split,").replace(
         "phase.endswith('regression')", "phase.endswith(('regression','m2'))")  # a second development task, which the baseline passes
-    assert screening.count('m1') == 1 and screening.count("'m2'") == 4
-    code, receipt, base = cli(agent=screening)
+    assert agent.count('m1') == 1 and agent.count("'m2'") == 4
+    return agent
+
+
+def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path, monkeypatch):
+    # Two claims are screened in one evaluation; the baseline fails the task of one only, so the other's change must go first.
+    # the default UNCONFIGURED_TRIALS covers two evaluations and twelve fresh repeats of two tasks in both arms
+    seen = tmp_path / 'prompts'
+    code, receipt, base = cli(agent=screening_agent(seen))
     assert (code, receipt['status'], receipt['confirmation']['confirmed']) == (0, 'applied', ['development', 'heldout'])
     assert 'were not reproduced: m2' in seen.read_text()  # the task named after the claim the baseline passed
-    assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2
+    # Regression (fixed-in: 0.232.3): the pruned candidate is judged on the first attempt's frozen, validated tasks, so one pass built them.
+    assert seen.read_text().count('independent evaluation-construction session') == 1
+    assert [path.name for path in Path(receipt['output']).glob('preparation/evaluation-?')] == ['evaluation-0']
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='pruned_candidate')
+    assert sorted(path.name for path in Path(receipt['output']).glob('evaluation-[01]')) == ['evaluation-0', 'evaluation-1']  # both candidates ran
+
+
+def test_a_pruned_candidate_is_not_lost_to_an_evaluation_the_second_author_would_have_broken(cli, tmp_path):
+    # Regression (fixed-in: 0.232.3): the second attempt of a prune built a new evaluation, and a regression control that failed there
+    # (here the complete control, which its own grader rejects) ended the run `evaluation_failed` although attempt 0 was a clean win.
+    # An author that would break only on attempt 1 is never asked again.
+    broken = screening_agent(tmp_path / 'prompts').replace("(control/'artifact').write_text('wrong' if state=='broken' else 'done')",
+        "(control/'artifact').write_text('wrong' if state=='broken' or c['attempt']==1 and split=='regression' and state=='complete' else 'done')")
+    assert broken.count("c['attempt']==1") == 1
+    code, receipt, base = cli(agent=broken)
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md'])
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='pruned_candidate') and (base.project / 'AGENTS.md').read_text() == 'good\n'
 
 
 def test_after_a_tie_the_second_attempt_starts_from_the_baseline_again(cli):

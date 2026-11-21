@@ -65,7 +65,7 @@ trials of the shared budget (an installing run has 80). The proposer of such a r
 and the evaluation author receives that claim (`hypothesis.json`, never the candidate) to build development tasks the
 baseline should fail, with acceptance criteria taken from the project's own sources. A tie, where both arms pass every
 task, means the claim was not reproduced: nothing is installed, one different claim is tried when the budget allows, and
-the run then ends `no_change` with `evaluation_no_improvement` and `hypotheses_not_reproduced`. When instead the first candidate fixed a task
+the run then ends `no_change` with `evaluation_no_improvement` and `hypotheses_not_reproduced`. When the baseline failed the tasks of only some of several claims, the second attempt proposes again with only the reproduced changes and judges that pruned candidate on the first attempt's frozen, already validated tasks and controls, without constructing another evaluation (`evaluation_reused`: `attempt` 0, `reason` `pruned_candidate`); the confirmation repeats are unchanged. When instead the first candidate fixed a task
 and lost none, but regression controls the baseline itself failed (so they failed in both arms) left nothing decided, the second attempt does not
 propose again: it keeps that candidate, builds the evaluation afresh with those controls named as invalid, and records them in `controls_rebuilt`. The install is the operator's request, never certification:
 the `decision` block and every evidence label are unchanged. A project `ahl.json`,

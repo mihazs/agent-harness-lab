@@ -1021,7 +1021,8 @@ def _improve(args):
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
-        preparation_trials = 1 if bank is not None else 2
+        pruned = bool(prune)  # the pruned candidate is judged on attempt 0's frozen tasks, so no evaluation is constructed for it
+        preparation_trials = 1 if bank is not None or pruned else 2
         if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
             break
@@ -1038,7 +1039,7 @@ def _improve(args):
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
-        evaluation = prepare / f'evaluation-{attempt}'
+        evaluation = prepare / f'evaluation-{0 if pruned else attempt}'
         manifest_path = evaluation / 'manifest.json'
         progress('candidate_preparation', attempt=attempt + 1)
         if rebuild_controls:
@@ -1244,7 +1245,13 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             except ValueError:
                 used_heldout.intersection_update(fresh)  # a repair pass may keep the held-out fixture a failed validation fingerprinted
                 raise
-        if bank is not None:
+        if pruned:
+            # Attempt 0 validated these tasks, graders and controls, and the proposer saw development and regression outcomes only,
+            # so the held-out freshness rule does not apply. The manifest stays byte for byte as frozen; only the staged paths may differ.
+            frozen_paths = json.loads(manifest_path.read_text())
+            if sorted(frozen_paths.get('harness_paths', [])) != sorted(paths): write_json(manifest_path, dict(frozen_paths, harness_paths=sorted(paths)))
+            result['evaluation_reused'] = {'attempt': 0, 'reason': 'pruned_candidate'}  # a literal, not an exit reason: exit reasons need a remediation entry
+        elif bank is not None:
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
             from .config import evaluation_settings
@@ -1377,7 +1384,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if result['status'] in ('execution_error', 'budget_exhausted'):
                 break
             if made: made[-1]['outcome'] = 'repaired'
-        checked = validated[0] if validated else validate()
+        if not pruned: checked = validated[0] if validated else validate()
         if bank is None and not attempt and not _installs(args):
             reuse = refinement_reuse.plan(evaluation, checked)  # a refinement keeps these frozen tasks, graders and controls
         # An installing run builds its refinement evaluation afresh: a frozen control the baseline fails would be carried
