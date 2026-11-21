@@ -661,6 +661,16 @@ def _installs(args):
             and getattr(args, 'scope', 'project') == 'project' and args.agent != 'responses')
 
 
+def _unlink_shared_files(root):
+    """Give every hardlinked regular file under root its own inode, content unchanged. `git clone` of a local repository
+    hardlinks its objects, which evaluation inputs may not contain; symlinks and special files stay rejected."""
+    for path in sorted(Path(root).rglob('*')):
+        if path.is_file() and not path.is_symlink() and path.stat().st_nlink > 1:
+            temporary = path.with_name(path.name + '.ahl-unlink')
+            shutil.copy2(path, temporary)
+            os.replace(temporary, path)
+
+
 def adopt(project, baseline, candidate, original, proposed, scoped=False):
     """Journal a directly authorized owned patch; behavioral controller is gated."""
     receipt = adopt_with_receipt(project, baseline, candidate, original, proposed, scoped)
@@ -1233,6 +1243,7 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                 break
             if grading is None:
                 evaluation_prompt += """
+Fixtures may not contain symlinks, hardlinks or special files: copy repositories with `git clone --no-hardlinks`.
 Give each task exactly three grader_self_tests entries: one broken, one partial and one complete, never two of a state.
 Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
 switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
@@ -1276,6 +1287,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 if runner.trace_result(check, agent)[0] != 'completed':
                     result['status'] = 'execution_error'
                     break
+                _unlink_shared_files(evaluation)
                 try:  # Shape defects cost seconds: check right after the agent writes, before any other stage.
                     # Authored digests are never an integrity claim: dropped here, the controller freezes its own.
                     authored, ignored = manifest_contract.check_file(manifest_path, stage='evaluation_construction', strip_digests=True,

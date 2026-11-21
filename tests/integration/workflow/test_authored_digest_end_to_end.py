@@ -28,6 +28,7 @@ if p('context.json').exists():
         tasks, controls, bundles = [], [], {{}}
         for split in ('development', 'regression', 'heldout'):
             fixture = evaluation / split; fixture.mkdir(); (fixture / 'seed').write_text(c['harness_paths'][0] + split + str(c['attempt']))
+            if mode == 'hardlinked-fixture': import os; os.link(fixture / 'seed', fixture / 'seed-link')  # what `git clone` of a local repository does
             bundle = evaluation / ('oracle-' + split); bundle.mkdir()
             (bundle / 'helper.py').write_text("def passed(workspace):\n    return (workspace / 'artifact').read_text() == 'done'\n")
             note = "import pathlib, sys\nopen(pathlib.Path(sys.argv[0]).parent / 'note', 'w').write('x')\n" if mode == 'writes-bundle' else ''
@@ -139,3 +140,10 @@ def test_a_grader_that_writes_into_the_tree_it_inspects_does_not_end_the_run(stu
     assert receipt.get('reason') != 'grader_input_changed_after_freeze' and receipt['status'] != 'invalid_input', receipt
     evaluation = run / 'preparation/evaluation-0'
     assert not list(evaluation.rglob('index.lock')) and not list(evaluation.glob('.selftest-*'))
+
+
+def test_a_fixture_with_hardlinked_files_is_accepted_after_the_controller_unlinks_them(stub, capsys):
+    # Regression (fixed-in: 0.233.0): `git clone` hardlinks object files and the run ended run_input_rejected.
+    code, receipt, run = stub.improve(capsys, 'hardlinked-fixture')
+    assert receipt.get('reason') != 'run_input_rejected' and receipt['status'] != 'invalid_input', receipt
+    assert all(path.stat().st_nlink == 1 for path in (run / 'preparation/evaluation-0').rglob('seed*') if path.is_file())
