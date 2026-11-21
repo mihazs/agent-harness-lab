@@ -182,6 +182,12 @@ def main(argv=None):
     if argv and argv[0] == 'score-sessions':
         from agent_harness_lab.telemetry.session_signals_cli import main as score_sessions_main
         return score_sessions_main(argv[1:])
+    if argv and argv[0] == 'trace-import':
+        from agent_harness_lab.interop.cli import main as trace_import_main
+        return trace_import_main(argv[1:])
+    if argv and argv[0] == 'trace-export':
+        from agent_harness_lab.interop.export_cli import main as trace_export_main
+        return trace_export_main(argv[1:])
     if argv and argv[0] == 'adapters':
         from agent_harness_lab.evaluation.adapter_cli import main as adapters_main
         return adapters_main(argv[1:])
@@ -254,6 +260,8 @@ def main(argv=None):
         'compare':'Render one baseline/candidate experiment record as a static offline HTML review page',
         'score':'Report one recorded paired experiment per declared capability area with an evidence state per area; offline, read-only',
         'score-sessions':'Export content-free advisory session signals from a native capture; offline',
+        'trace-import':'Convert one named external trajectory (ATIF-v1.8) into private AHL metadata events and a loss report; offline, outcome and lineage stay unknown',
+        'trace-export':'Export selected metadata as private local OTLP JSON logs; offline, outcome and lineage stay unknown',
         'adapters':'Stage one reviewed presentation adapter version under a controller-owned manifest, or roll it back; offline, no hook or runtime',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
