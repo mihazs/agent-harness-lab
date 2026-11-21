@@ -572,11 +572,58 @@ def _targets_writable(project, names):
 
 # The proposer of an installing run: the evaluation, not the proposer, decides whether a change is kept, so a missing
 # verified outcome is no reason to stop. Completed by the proposal path and the no_change form.
-STAGE_A_CANDIDATE = """The operator asked for an improvement, and the evaluation stage decides whether your change is kept: a candidate
-that scores worse than the baseline is discarded, any other is installed with a rollback. Missing verified outcomes, unverified
-capture, ambiguous evidence or a baseline that passes the convention checks are therefore not reasons to stop: stage the smallest
-falsifiable candidate for the strongest observed pattern or the clearest gap that source inspection shows, and name its falsifier.
+STAGE_A_CANDIDATE = """The operator asked for a measured improvement. A separate session will build tasks that try to reproduce, under
+the baseline, each weak outcome you name, and your change is installed only when the baseline fails there and your candidate
+passes, in two runs. Missing verified outcomes, unverified capture or ambiguous evidence are therefore not reasons to stop.
+Name up to three distinct weak outcomes, each with its own smallest change and its own mechanism_id, so that one evaluation
+screens them all; a change whose weak outcome the baseline does not show is removed afterwards. A capable agent already follows
+what the task and the repository's files make obvious, so claim only weak outcomes that need knowledge the baseline instructions
+do not give: a requirement the project's own checks, documentation or history enforce and an agent would not find unprompted.
+Write each mechanism as an observable weak outcome in a concrete situation, and each falsifier as what an agent under the
+baseline does if you are wrong.
+A skill may reference only files inside its own folder; a candidate that breaks that is rejected before evaluation.
 Only when every change you can name would make the harness worse, write"""
+# The second attempt of an installing run after a tie: the claim did not reproduce, so refining the same change proves nothing.
+NOT_REPRODUCED = """Your first hypothesis was not reproduced: the baseline passed every development task built for it (see
+{feedback}). The candidate is the baseline again. Choose a different weak outcome with stronger support and stage
+the smallest change for it. Do not read previous evaluation directories or held-out results.
+"""
+# The second attempt after the parent's structural validation rejected the first candidate before any evaluation.
+REJECTED = """Your first candidate was rejected before evaluation by the parent's validation of skill bundles and agent definitions:
+{finding}
+The candidate is the baseline again. Stage the same weak outcomes again with changes that pass that validation: a skill may
+reference only files inside its own folder, and no change may add hooks, permissions, tools or MCP servers.
+"""
+# The second attempt after a screen in which only some claims reproduced: nothing unproven may ride along with the proven fix.
+PRUNE = """The baseline passed these development tasks, so the weak outcomes they were built for were not reproduced: {tasks}
+(see {feedback}; task ids start with the mechanism_id they test). The candidate is the baseline again. Stage again, unchanged,
+only the changes for the weak outcomes that were reproduced, and list only those mechanisms in proposal.json.
+Do not read previous evaluation directories or held-out results.
+"""
+# What the evaluation author of an installing run is told about the proposer's claim; the candidate itself stays hidden.
+REPRODUCE = """The proposer's untested claim is in {hypothesis}: the weak outcomes it says the baseline harness produces and
+what would falsify each. This file is the one exception to the rule above about proposals. Build the development tasks to
+reproduce those weak outcomes: situations in which an agent under the baseline fails if the claim is true, one development
+task per mechanism, its id starting with that mechanism_id. Do not tell the agent in the task what the claim says it will miss.
+Add at least one heldout task that is a different instance of one of those situations. Regression tasks cover behaviour that works today. Take every
+acceptance criterion from the project's own sources (its instructions, documentation, checks and code), never from the claim:
+something the project does not itself state or enforce is not a weakness. Do not make a task hard in any other way.
+"""
+
+
+def _listed(proposal, name):
+    value = proposal.get(name)
+    return value if isinstance(value, list) else []
+
+
+def _flips(trials):
+    """(fixed, lost): tasks the baseline failed and the candidate passed, and the reverse, in one run. Regression tasks
+    are controls, so a flip there is never counted as fixed."""
+    status = {(t['task'], t['version']): t['status'] for t in trials}
+    tasks = {t['task']: t['split'] for t in trials}
+    pair = lambda task: (status.get((task, 'baseline')), status.get((task, 'candidate')))
+    return ({task for task, split in tasks.items() if split != 'regression' and pair(task) == ('failed', 'passed')},
+            {task for task in tasks if pair(task) == ('passed', 'failed')})
 
 
 def _installs(args):
@@ -866,7 +913,9 @@ def _improve(args):
     proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
     model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
-    basis = None  # why the favorable branch was taken: improvement_observed or no_regression_observed
+    not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
+    rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
+    prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     final_attempt = None
     proposed = None
     grader_changed = False
@@ -893,6 +942,10 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
+        if not_reproduced or prune or rejected:
+            # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
+            shutil.rmtree(candidate)
+            shutil.copytree(baseline, candidate)
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -945,10 +998,13 @@ Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparat
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 {MECHANISM_GUIDANCE}
-The parent will reject incomplete/changed inputs, regressions, {'' if _installs(args) else 'unsupported ties, '}and concurrent edits.
+The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
-                prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
+                prompt += (REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
+                           NOT_REPRODUCED.format(feedback=output / 'feedback-0.json') if not_reproduced else
+                           PRUNE.format(feedback=output / 'feedback-0.json', tasks=', '.join(prune)) if prune else
+                           f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n')
             command = runner.agent_command(agent, binary, plugin, ('harness-self-improvement',))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
@@ -1018,6 +1074,9 @@ The parent will reject incomplete/changed inputs, regressions, {'' if _installs(
                    or skill_validation.review_tree(baseline, candidate, original, proposed,
                                                     allowed_paths(args) is not None).outcome())
         if stopped is not None:
+            if _installs(args) and bank is None and not attempt and remaining() >= stages.allotted('refinement') and trials_left >= 12:
+                rejected = stopped  # a structural defect of the candidate is the proposer's to correct once, not the end of the run
+                continue
             result.update(stopped)
             break
         paths = [] if controlled else original.keys() | proposed.keys()
@@ -1137,6 +1196,11 @@ trials. The parent checks grader controls, freezes inputs, executes both version
 Time box: this construction pass is stopped after {max(0, int(box))} seconds and {max(0, int(remaining()))} seconds remain in the whole
 improvement budget; write manifest.json early, then refine. An overrun ends the pass as evaluation_construction_timeout.
 """ + (refinement_reuse.prompt_line(reused) if reused else '') + manifest_contract.contract_text(controller_grader=False) + '\n'
+            if _installs(args) and not reused:
+                # Strings only, bounded: the claim to reproduce, never the candidate that answers it.
+                write_json(evaluation / 'hypothesis.json', {name: [str(item)[:2000] for item in _listed(proposal, name)][:12]
+                                                           for name in ('mechanisms', 'falsifiers')})
+                evaluation_prompt += REPRODUCE.format(hypothesis=evaluation / 'hypothesis.json')
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1343,11 +1407,48 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
                     baseline, frozen, project=args.project, deadline=started+args.timeout):
                 raise ValueError('Instruction context changed during evaluation; result is stale')
-        # A tie is installed only where a winner would be: the baseline did not score better, so "no change" is not
-        # justified, and the receipt says no_regression_observed instead of claiming an improvement.
-        if evaluated['inputs_unchanged'] and controls_pass and (candidate_pass and (improvement or _installs(args)) or partial):
-            basis = 'improvement_observed' if improvement or partial else 'no_regression_observed'
+        if evaluated['inputs_unchanged'] and controls_pass and (candidate_pass and improvement or partial):
             if partial: result['partial_improvement'] = partial
+            unreproduced = sorted(t['task'] for t in trials if (t['version'], t['split'], t['status']) == ('baseline', 'development', 'passed'))
+            if (_installs(args) and bank is None and not attempt and unreproduced and len(_listed(proposal, 'mechanisms')) > 1
+                    and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * (len(manifest['tasks']) + 1) + 4):
+                prune = unreproduced
+                result.pop('partial_improvement', None)
+                continue
+            if _installs(args):
+                # One run per arm is one observation, and agents vary between runs. An install needs the same flip twice.
+                fixed = _flips(trials)[0]  # only these are repeated: the claim under test is the fix
+                if 2 * len(fixed) > trials_left:
+                    result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
+                    break
+                if remaining() <= 0:
+                    result.update(status='budget_exhausted', reason='improvement_confirmation_unaffordable')
+                    break
+                trials_left -= 2 * len(fixed)
+                keep = lambda rows, key: [row for row in rows if row[key] in fixed]
+                write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
+                    grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
+                    **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in fixed}} if 'grader_bundles' in manifest else {})))
+                # A separate namespace: the plan below still binds the primary run through `options`.
+                second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
+                    'output': str(output / f'evaluation-{attempt}-confirm'), 'parent_deadline': time.monotonic() + remaining()})
+                progress('evaluation', attempt=attempt + 1, run=2)
+                with manifest_contract.boundary('evaluation'), stages.charge('trials'):
+                    runner.evaluate(second)
+                repeat = json.loads((Path(second.output) / 'results.json').read_text())
+                protected[evaluation] = runner.digest(evaluation)
+                if not all(t['status'] in ('passed', 'failed') for t in repeat['trials']):  # an ungraded repeat confirms and refutes nothing
+                    result.pop('partial_improvement', None)
+                    result.update(status='budget_exhausted' if remaining() <= 0 else 'incomplete', reason='improvement_confirmation_incomplete')
+                    break
+                again, lost_again = _flips(repeat['trials'])
+                result['confirmation'] = dict(runs=2, fixed=sorted(fixed & again), fixed_once=sorted(fixed - again),
+                                              lost=sorted(lost_again), evaluation=second.output)
+                if (not repeat['inputs_unchanged'] or not fixed & again or lost_again or fixed - again
+                        or grader_fingerprint(manifest_path) != grader_before):
+                    result.pop('partial_improvement', None)
+                    result.update(status='no_change', reason='improvement_not_confirmed')
+                    break
             removal = result.get('instruction_removal') if instruction is not None else None
             if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
                 # Removed active guidance is recommended only under faithful passing behavioral controls.
@@ -1384,7 +1485,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['recommendation'] = 'candidate_requires_independent_certification'
             break
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
+            if (_installs(args) and bank is None and not attempt and remaining() >= stages.allotted('refinement')
+                    and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):  # preparation, both arms, and a repeat of two fixed tasks
+                # The baseline passed what was built to break it: the claim is refuted, not the harness proven. Try another claim.
+                not_reproduced.append(attempt)
+                reuse = None
+                continue
             result.update(status='no_change',reason='evaluation_no_improvement')
+            if not_reproduced or _installs(args): result['hypotheses_not_reproduced'] = len(not_reproduced) + 1
             break
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
@@ -1420,13 +1528,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if applied['status'] != 'no_change':
             del result['recommendation']
             result.update(status='applied', changed_files=[operation['path'] for operation in applied['operations']],
-                          application=dict(applied, basis=basis, authority='operator_invocation', certification='not_established'),
+                          application=dict(applied, basis='improvement_confirmed', authority='operator_invocation', certification='not_established'),
                           deployment=applied['deployment'],
                           rollback=f'ahl rollback {applied["deployment"]} --project {shlex.quote(str(args.project))}')
-    if basis == 'no_regression_observed' and result.get('recommendation') == 'candidate_requires_independent_certification':
-        # A tie that could not be installed supports no recommendation either.
-        for name in ('recommendation', 'blocked_prerequisites', 'plan', 'plan_sha256'): result.pop(name, None)
-        result.update(status='no_change', reason='evaluation_no_improvement')
     result['automatic_promotion']=False
     first_use.spend_label(result, args, prepared=prepared, evaluated=ran_trials)
     if model_calls: result['model_calls'] = model_calls

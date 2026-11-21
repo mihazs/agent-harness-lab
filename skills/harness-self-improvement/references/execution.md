@@ -441,7 +441,8 @@ Known grader files inside a fixture are rejected before execution.
 The automatic controller requires development, regression and held-out tasks plus
 broken/partial/complete grader self-tests. Candidate preparation and evaluation construction use separate fresh sessions;
 the latter is not supplied the patch. It permits at most four planning sessions
-across two attempts and 20 task trials in one whole-run budget, with fresh held-out inputs on
+across two attempts and one shared trial budget (40 for a run with no `ahl.json`, which also repeats the tasks a
+candidate fixed before installing; 20 from the `ahl.json` template), with fresh held-out inputs on
 refinement. Frozen candidate bytes and the original target state are rechecked
 before adoption. These controls establish observed acceptance under cooperative
 conditions; they are not a proof that a generated grader captures all semantics.

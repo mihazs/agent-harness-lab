@@ -198,6 +198,9 @@ class TraceResultTests(unittest.TestCase):
         run = dict(timeout=False, exit_code=0, stdout=json.dumps(claude[0]))
         self.assertEqual(trace_result(run, 'claude'), ('completed', first))
         run['stdout'] += '\n' + json.dumps(dict(claude[0], usage=second))
+        # Regression (fixed-in: 0.232.0): a session that woke after a background task prints a second successful result.
+        self.assertEqual(trace_result(run, 'claude'), ('completed', second))
+        run['stdout'] += '\n' + json.dumps(dict(claude[0], subtype='error_during_execution', is_error=True))
         self.assertEqual(trace_result(run, 'claude'), ('incomplete', None))
 
     def test_parse_errors_after_a_non_object_still_surface_in_order(self):

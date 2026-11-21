@@ -376,7 +376,7 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
         else:
             from sentence_transformers import SentenceTransformer
             encoder = SentenceTransformer(str(model_path), revision=revision, local_files_only=True,
-                                          trust_remote_code=False, device='cpu')
+                                          trust_remote_code=False, device=inference_device())
             check_embedding_inputs(encoder, texts, batch_size)
             x_train = encoder.encode([r['text'] for r in train], batch_size=batch_size)
             x_all = encoder.encode(texts, batch_size=batch_size)
@@ -386,10 +386,12 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
     if method != 'nli' or not question:
         raise ValueError('NLI requires an atomic --question')
     import torch
+    device = inference_device()
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
     tokenizer = AutoTokenizer.from_pretrained(str(model_path), revision=revision, local_files_only=True, trust_remote_code=False)
     model = AutoModelForSequenceClassification.from_pretrained(str(model_path), revision=revision,
                 local_files_only=True, trust_remote_code=False, use_safetensors=True).eval()
+    if device != 'cpu': model = model.to(device)
     labels = {str(v).lower(): int(k) for k, v in model.config.id2label.items()}
     if 'entailment' not in labels:
         raise ValueError('NLI model must declare entailment in id2label')
@@ -398,12 +400,27 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start+batch_size]
         inputs = tokenizer(batch, [question]*len(batch), padding=True, truncation=False, return_tensors='pt')
+        if device != 'cpu': inputs = inputs.to(device)
         if inputs['input_ids'].shape[-1] > maximum:
             raise ValueError(f'NLI input exceeds local model context ({maximum} paired tokens); no truncation performed')
         with torch.inference_mode():
             values = model(**inputs).logits.softmax(-1)[:, labels['entailment']]
+        if device != 'cpu': values = values.cpu()
         probabilities.extend(values.tolist())
     return probabilities
+
+
+def inference_device():
+    """Where local model inference runs: AHL_DEVICE when set, else an available accelerator (CUDA or ROCm builds of
+    torch, then Apple MPS), else the CPU. Only the optional local-model benchmark runs a model on this machine."""
+    import os
+    import torch
+    chosen = os.environ.get('AHL_DEVICE')
+    if chosen: return chosen
+    cuda = getattr(torch, 'cuda', None)
+    if cuda is not None and cuda.is_available(): return 'cuda'
+    mps = getattr(getattr(torch, 'backends', None), 'mps', None)
+    return 'mps' if mps is not None and mps.is_available() else 'cpu'
 
 
 def main():

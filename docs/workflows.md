@@ -75,7 +75,7 @@ The command automatically:
 5. **Installs the winning candidate.** A winner needs a reproduced baseline development failure that the
    candidate fixes, no task the baseline passed and the candidate fails, passing baseline regression controls,
    and unchanged inputs. `ahl improve` installs it through a rollback journal and ends `applied`;
-   a tie is installed too, labelled `no_regression_observed` and never as an improvement. That is not
+   the fix must repeat in a second run of the fixed tasks, and a tie installs nothing. That is not
    certification: role isolation, audited lineage, repeated certification and effective runtime verification
    stay unavailable and are reported as such. A project `ahl.json` keeps the winner a recommendation.
    Ties, incomplete results, and failed checks leave project files unchanged.
