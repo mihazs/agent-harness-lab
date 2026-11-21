@@ -518,6 +518,10 @@ def _evaluate(args):
             chain_paths(task['cwd'])
         if task['split'] not in ('development', 'regression', 'heldout'):
             raise ValueError('invalid split')
+        if task['split'] == 'heldout':
+            application_modules()
+            from agent_harness_lab.evaluation.hypothesis_probe import is_probe
+            if is_probe(fixture): raise ValueError('synthetic probes cannot be held-out tasks')
         if not task['grader'] or not all(isinstance(a, str) for a in task['grader']):
             raise ValueError('grader must be a nonempty argv list')
         if any('{workspace}' in a and a != '{workspace}' for a in task['grader']):
