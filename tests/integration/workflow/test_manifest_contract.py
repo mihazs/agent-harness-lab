@@ -334,3 +334,22 @@ def test_cli_prints_a_typed_reason_and_never_a_bare_exception_message(wf, raised
     err = capsys.readouterr().err
     assert f'ahl: {expected}:' in err and "ahl: 'digest'" not in err
     assert 'origin=' in err and 'Next:' in err
+
+
+def test_an_installing_run_repairs_two_defects_in_turn_and_a_run_that_only_recommends_one(wf, tmp_path, capsys):
+    # Regression (fixed-in: 0.233.0): a second defect in the authored manifest (after a first repair) ended the run
+    # invalid_input although the evaluation was one correction away.
+    from agent_harness_lab.cli import main
+    two = (AGENT.replace("if mode=='twice' or", "if mode=='twice' or mode=='two-defects' and int(seen.read_text() if seen.exists() else 0)<2 or")
+           .replace("seen.write_text('1')", "seen.write_text(str(int(seen.read_text() if seen.exists() else 0)+1))"))
+    assert two != AGENT and two.count("'two-defects'") == 1
+    wf.agent.write_text(two)
+    (wf.project / 'repair-mode').write_text('two-defects')
+    main(['improve', str(wf.project), '--agent', 'codex', '--codex', str(wf.agent), '--claude', 'missing',
+                 '--timeout', '60', '--output', str(tmp_path / 'run')])
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt['status'] != 'invalid_input', receipt
+    assert len(receipt['evaluation_construction_repairs']) == 2 and receipt['status'] == 'applied'
+    (wf.project / 'AGENTS.md').write_text('bad')  # the first run installed its winner
+    with pytest.raises(contract.ContractError):
+        improve(wf.args())  # the programmatic entry keeps one repair

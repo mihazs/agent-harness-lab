@@ -1227,6 +1227,7 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                 break
             if grading is None:
                 evaluation_prompt += """
+Give each task exactly three grader_self_tests entries: one broken, one partial and one complete, never two of a state.
 Graders report by exit code alone: 0 for pass, 1 for fail. Declare no grader_bundles here: a declared bundle
 switches every grader to a typed result (one JSON object on stdout with schema_version=1, valid=true,
 outcome=boolean, grader_id and grader_version, exit 0 for true and 1 for false), and any other output is a grader error.
@@ -1278,7 +1279,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     break
                 except manifest_contract.ContractError as error:
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
-                    if not error.repairable or made or remaining() <= 0: raise
+                    if not error.repairable or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0: raise  # an installing run may repair two defects in turn
                     made.append(dict(error.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = '\n' + error.repair_instruction()
             if result['status'] in ('execution_error', 'budget_exhausted'):
