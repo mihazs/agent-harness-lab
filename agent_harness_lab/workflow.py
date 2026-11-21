@@ -1144,6 +1144,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(brief.no_change_result(data))
+            if _installs(args) and attempt and single_run is not None and single_run['inputs_unchanged'] and not _flips(single_run['trials'])[0]:
+                # An installing run already measured a candidate: it fixed nothing the baseline failed, so the baseline scored
+                # at least as well. That justifies no change; it is a measured result, not missing evidence.
+                result.update(status='no_change', reason='evaluation_no_improvement', baseline_at_least_as_good=True)
             if result['reason'] == 'no_change_evidence_insufficient':
                 result['next_steps'] = getattr(args,'_analysis_next_steps',[])
             first_use.attach(result, data, args, prepared=True)

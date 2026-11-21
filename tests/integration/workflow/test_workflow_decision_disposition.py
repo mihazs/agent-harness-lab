@@ -204,7 +204,8 @@ class TestDefaultDecisionDisposition:
         self.original = 'bad'
         (self.project / 'mode').write_text('late_stop')
         code, result = self.run_cli()
-        assert (code, result['status'], result['reason']) == (3, 'inconclusive', 'no_change_evidence_insufficient')
+        # an installing run already measured the candidate, which fixed nothing: no change is justified (fixed-in: 0.232.4)
+        assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
         decision = self.assert_no_authority(result)
         assert (decision['bindings']['attempt'], decision['bindings']['final_attempt']) == (0, 1)
         assert decision['bindings']['describes_final_attempt'] is False
