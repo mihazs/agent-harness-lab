@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.233.0
+
+### Minor Changes
+
+- fbb4da0: Add `ahl trace-import --format atif --input FILE --output NEW_DIRECTORY`, a bounded offline importer that converts one named ATIF-v1.8 trajectory into content-free AHL telemetry events (`events.v2.jsonl`, source format `atif`) and a loss report (`conversion-report.json`) in a new private directory. A field-level mapping table (`agent_harness_lab/interop/mapping.py`, rendered in `docs/atif-import-reference.md`) decides what each field becomes: step order, timestamps, roles, token counts (uncached input is prompt minus cached, and is withheld when the cached share is absent), digested tool names, call identifiers, model and agent, and declared embedded-subagent parent links. Message bodies, reasoning, tool arguments and results, costs, `final_metrics` totals and every `extra` object are dropped and counted by path, never recorded. Imported evidence leaves the task outcome `unknown` and lineage unverified: nothing in a trajectory, including forged grade labels in `extra`, can create a verified result or independence. Unsupported schema versions, malformed or oversized structure, duplicate keys, nonfinite numbers, invalid timestamps and reference cycles are rejected with a typed reason and nothing is written; unmatched, duplicate or unreferenced calls and unsupported media, file-path subagent references and continuation references are represented as explicit incomplete evidence and never opened, fetched or followed. Part of #38; the OpenTelemetry serialization and any ATIF export remain follow-up slices.
+- 8849174: Resume interrupted loop runs from verified frozen inputs and durable checkpoints without repeating unresolved requests. The built-in CLI cannot yet consume provider reconciliation results, and same-boot stale project locks require manual reconciliation.
+- d1ece15: Select declared capability areas in `ahl evaluate` and report a per-area regression gate for configured paired runs. Both `evaluate` and `improve` accept comma-separated area IDs as well as repeated flags.
+- fbb4da0: Export explicitly selected AHL metadata as private local OTLP JSON logs with a loss report.
+- 1c609b0: AHL's own preparation sessions (the proposer and the evaluation author) now run as pure as the trials: Claude Code gets project-only setting sources, a strict empty MCP config, hooks disabled and a staged write grant with read access to the run directory and the project, plus only AHL's own plugin; Codex gets a temporary `CODEX_HOME` with `--ignore-user-config` and `--ignore-rules`. Codex sessions, preparation and trials, use your saved subscription login instead of requiring `CODEX_API_KEY`: `auth.json` is copied into the temporary home with mode `0600` for the length of the run and deleted after it, a token the run refreshed is written back atomically only when the real file is still what was copied, and receipts record only `subscription_login_copied`, `subscription_login_refreshed` or `not_staged`. A saved login takes precedence over `CODEX_API_KEY`, which is removed from the session environment so it cannot bill the API. New opt-in `--with-user-harness` on `ahl improve`, `ahl watch` and `ahl skills invoke` runs the trials of both arms under your installed harness (Claude Code keeps your settings, plugins, hooks and MCP servers; Codex keeps the real `CODEX_HOME`) for a more precise evaluation; preparation stays pure, and the run and every trial record `user_harness`.
+- 4a8041f: Add `ahl hypothesis-probe` for bounded, synthetic baseline/candidate comparisons of supported shell recovery patterns. Results describe one cooperative synthetic pair and do not establish original session outcomes or authorize promotion.
+
+### Patch Changes
+
+- 3491ec0: Preserve evaluation preflight failures instead of reporting missing trials.
+- b6a220d: Keep history index reads from creating a missing protected-access dependency lock.
+  Report comparison eligibility as unknown when the index has not assessed the comparison gates.
+- b146589: In an installing `ahl improve` run, each failed development or regression trial in the refinement feedback carries `agent_final_message`, what the trial agent said it did (bounded, untrusted), so a refining proposer can see why its change missed a reproduced weakness.A measured installing run whose candidate fixed nothing and whose refining proposer then declines ends `no_change` (`evaluation_no_improvement`, `baseline_at_least_as_good`) instead of `inconclusive`.
+
 ## 0.232.3
 
 ### Patch Changes
