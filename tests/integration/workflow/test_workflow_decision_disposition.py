@@ -162,6 +162,7 @@ class TestDefaultDecisionDisposition:
         (self.project / 'AGENTS.md').write_text('good')
         code, result = self.run_cli()
         assert (code, result['status'], result['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+        assert result.get('remediation')
         assert 'recommendation' not in result and 'application' not in result
         assert 'blocked_prerequisites' not in result
         decision = self.assert_no_authority(result)

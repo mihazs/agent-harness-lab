@@ -621,7 +621,9 @@ provider-reported usage per request) are not covered.
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
 | `responses_user_harness_unsupported` | Remove --with-user-harness when using the Responses runtime. |
 | `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
-| `area_selection_undeclared` | Pass --area to ahl improve with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
+| `area_selection_undeclared` | Select a declared area with --area, or declare it in ahl.json with an id, a label and a description, then rerun. |
+| `area_selection_requires_config` | Supply --config with a pinned bank and declared areas, or omit --area, then rerun. |
+| `area_selection_frozen_plan` | Create a new experiment plan for the selected task set, or omit --area, then rerun. |
 | `area_selection_empty` | Tag at least one executable, non-quarantined bank task with each selected area, or select an area that has one, then rerun. |
 | `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude; add --remember-runtime only if the user asked to remember the choice (ahl config show or clear manages it). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |

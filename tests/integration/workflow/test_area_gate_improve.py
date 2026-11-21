@@ -143,8 +143,9 @@ def test_an_undeclared_area_stops_before_any_model_call_and_names_the_position(t
 
 
 @pytest.mark.parametrize('route', ROUTES)
-def test_a_repeated_area_is_a_typed_error_naming_the_position(tagged, route, capsys):
-    code = refused(tagged, route, '--area', 'coding', '--area', 'coding')
+@pytest.mark.parametrize('options', [('--area', 'coding', '--area', 'coding'), ('--area', 'coding,coding')])
+def test_a_repeated_area_is_a_typed_error_naming_the_position(tagged, route, options, capsys):
+    code = refused(tagged, route, *options)
     captured = capsys.readouterr()
     assert code == 2 and 'area_duplicate' in captured.err + captured.out and '--area[1]' in captured.err + captured.out
 

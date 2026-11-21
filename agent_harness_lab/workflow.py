@@ -1637,7 +1637,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 not_reproduced.append(attempt)
                 reuse = None
                 continue
-            result.update(status='no_change',reason='evaluation_no_improvement')
+            from .exit_guidance import REMEDIATION
+            result.update(status='no_change',reason='evaluation_no_improvement',remediation=REMEDIATION['evaluation_no_improvement'])
             if not_reproduced or _installs(args): result['hypotheses_not_reproduced'] = len(not_reproduced) + 1
             break
         # Controls the baseline itself fails prove nothing, yet the candidate fixed a task and lost none: build the controls

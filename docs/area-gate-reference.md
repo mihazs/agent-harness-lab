@@ -6,7 +6,7 @@ steps are in [aim an improvement at chosen areas](gate-adoption-per-area.md).
 ## `--area`
 
 ```text
-ahl improve [PROJECT] --area ID [--area ID ...]
+ahl improve [PROJECT] --area ID[,ID...] [--area ID ...]
 ```
 
 | Rule | Detail |
@@ -27,8 +27,14 @@ Typed reasons, all project declaration defects that name a position and never a 
 | `area_selection_requires_pinned_bank` | `--area` without a pinned bank. |
 | `area_selection_requires_development_regression_and_heldout` | The selected tasks lack a development, calibration or held-out task. |
 
-`ahl evaluate` is the low-level manifest runner and has no `--area`; select tasks with
-`ahl improve --area` or by listing them in the manifest you pass it.
+`ahl evaluate --config FILE --area ID [--area ID ...]` selects the exported manifest's
+tasks tagged with any selected area and sizes the trial ceiling to the selection. The
+configuration must pin the bank used to produce the manifest. Selection is rejected if
+it would narrow an already frozen experiment plan; create a new plan for that task set.
+The original manifest is never rewritten. Without `--area`, all manifest tasks run.
+Repeat `--area` or separate IDs with commas on both commands. The receipt records `area_selection` and, for paired runs with declared areas, `area_gate`.
+Changed inputs, unqualified isolation and sequential runs are not measured by this gate. A scored regression returns
+`area_regressed` and writes `investigation.json`; this gate grants no adoption authority.
 
 ## The gate block
 
@@ -82,6 +88,7 @@ failure or independence.
 | --- | --- |
 | `ahl improve` (the default loop, on a pinned bank) | Each paired evaluation adds an `area_gates` entry and sets `regressed_areas` on its round; a non-empty list is the `area` regression, which stops the loop with the criterion `regression` whatever the policy or the pooled score. The run ends status `not_accepted`, reason `loop_regression`, exit 3, and `loop.remediation` (also `exit_receipt.next_step`) names the `regressed_areas` and `area_gates` evidence. |
 | `ahl improve --single-pass` | `area_gate` in the receipt. A run that ended `evaluation_failed` on its final attempt becomes `blocked` / `area_regressed` (exit 3) with an `investigation.json` and no recommendation. A pooled `candidate_regressed` keeps its own reason. |
+| `ahl evaluate` | A paired configured run writes `area_gate` to `results.json`; a scored regression blocks the run with exit 3. |
 | `ahl score --area` | The report adds `multiplicity` (the number of declared areas examined) and prints it in Markdown, when it is narrowed to fewer areas than are declared. |
 
 `area_regressed` and the `area_gate` block belong to the single pass only, and `loop_regression`

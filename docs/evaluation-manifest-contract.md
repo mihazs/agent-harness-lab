@@ -62,6 +62,8 @@ reason is in the [exit reason table](analysis.md#exit-reasons-and-next-actions).
 | `score_area_undeclared` | project declaration defect | no |
 | `area_selection_undeclared` | project declaration defect | no |
 | `area_selection_empty` | project declaration defect | no |
+| `area_selection_requires_config` | project declaration defect | no |
+| `area_selection_frozen_plan` | project declaration defect | no |
 
 An unexpected `KeyError`, `TypeError`, `AttributeError` or `IndexError` inside a stage is
 caught at the stage boundary and reported as `internal_contract_error` with the stage

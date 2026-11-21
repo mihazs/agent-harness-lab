@@ -87,3 +87,12 @@ def select_tasks(tasks, declared, selected):
     chosen = [task for task in tasks if set(task.get('areas', ())) & set(selected) and task.get('review_status') != 'quarantined']
     if not chosen: raise ContractError('area_selection_empty', 'improve_selection', '--area', 'bank.json')
     return [task['task_id'] for task in chosen], dict(Counter(task['partition'] for task in chosen))
+
+
+def select_manifest_tasks(tasks, declared, selected):
+    """Select exported tasks without altering their order, tags or the frozen input manifest."""
+    check_selection(selected, declared, stage='evaluation_selection')
+    chosen = [task for task in tasks if set(task.get('areas', ())) & set(selected)]
+    if not chosen:
+        raise ContractError('area_selection_empty', 'evaluation_selection', '--area', 'manifest.json')
+    return chosen

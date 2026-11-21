@@ -9,6 +9,35 @@ DECLARED = ['coding', 'ux-ui']
 OUTCOME = {'P': True, 'F': False, '?': None}
 
 
+def test_scheduled_pairs_preserve_repetitions_and_leave_missing_or_duplicate_outcomes_unknown():
+    tasks = [dict(id='t', root='root', split='development', areas=['coding'])]
+    scheduled = [dict(task='t', repetition=repeat, version=arm) for repeat in (0, 1) for arm in ('baseline', 'candidate')]
+    trials = [dict(row, status='passed', split='development') for row in scheduled[:3]]
+    trials.append(dict(trials[0]))
+    found = area_gate.scheduled_pairs(tasks, scheduled, trials)
+    assert [(row['repeat'], row['baseline'], row['candidate']) for row in found] == [(0, None, True), (1, True, None)]
+
+
+
+@pytest.mark.parametrize('options', [dict(inputs_unchanged=False), dict(require_qualified=True)])
+def test_untrusted_inputs_or_unqualified_isolation_cannot_become_area_evidence(options):
+    tasks = [dict(id='t', root='root', split='development', areas=['coding'])]
+    scheduled = [dict(task='t', repetition=0, version=arm) for arm in ('baseline', 'candidate')]
+    trials = [dict(row, status='passed', split='development') for row in scheduled]
+    pairs = area_gate.scheduled_pairs(tasks, scheduled, trials, **options)
+    assert area_gate.gate(pairs, ['coding'])['status'] == 'not_measured'
+
+
+
+def test_invalid_controller_grade_cannot_count_as_an_area_regression():
+    tasks = [dict(id='t', root='root', split='development', areas=['coding'])]
+    scheduled = [dict(task='t', repetition=0, version=arm) for arm in ('baseline', 'candidate')]
+    trials = [dict(scheduled[0], status='passed', split='development'),
+              dict(scheduled[1], status='failed', split='development', controller_grade=dict(valid=False, outcome=False))]
+    pairs = area_gate.scheduled_pairs(tasks, scheduled, trials)
+    assert pairs[0]['candidate'] is None
+    assert area_gate.gate(pairs, ['coding'], min_roots=1)['status'] == 'not_measured'
+
 def pairs(rows):
     """One pair per task from 'name area[,area] baseline candidate' rows; outcomes spell pass (P), fail (F) or unknown (?)."""
     found = []
