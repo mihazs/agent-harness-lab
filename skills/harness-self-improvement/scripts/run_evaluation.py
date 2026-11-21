@@ -829,6 +829,12 @@ def _evaluate(args):
             availability.append(skill_availability('skills', skill, {
                 f.relative_to(target).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
                 for f in target.rglob('*') if f.is_file()}))
+        if harness_paths or skills or agent == 'claude':
+            application_modules()
+            from agent_harness_lab.evaluation.trial_surfaces import hide_from_git
+            staged = [*harness_paths, *(['.harness-trial'] if agent == 'claude' else []),
+                      *([] if agent == 'claude' else [f'.agents/skills/{skill}' for skill in skills])]
+            hide_from_git(workspace, staged)
         environment = None
         if offline or controlled:
             argv = task['offline_executor'] if offline else None

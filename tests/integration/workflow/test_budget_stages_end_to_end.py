@@ -132,7 +132,7 @@ def test_an_overrun_is_repaired_once_when_the_remaining_budget_still_covers_a_se
     assert (code, receipt['status']) == (0, 'applied'), receipt
     repair = receipt['evaluation_construction_repairs']
     assert [(r['reason'], r['outcome']) for r in repair] == [('evaluation_construction_timeout', 'repaired')]
-    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 10  # six, then both fixed tasks again in both arms
+    assert [row['repair'] for row in kinds(rows, 'construction')] == [False, True] and len(kinds(rows, 'trial')) == 30  # six, then six fresh repeats of both fixed tasks in both arms
 
 
 def test_a_second_overrun_after_the_one_repair_ends_the_run_with_the_typed_reason(stub, capsys):
@@ -175,9 +175,11 @@ def test_a_stub_that_fails_one_arm_differently_continues_to_a_refinement(stub, c
     assert len(kinds(rows, 'construction')) == 2 and (run / 'preparation/evaluation-1').is_dir()
 
 
-def test_a_refinement_reuses_the_frozen_tasks_and_constructs_only_fresh_heldout_inputs(stub, capsys):
+def test_a_refinement_reuses_the_frozen_tasks_and_constructs_only_fresh_heldout_inputs(stub, capsys, monkeypatch):
+    # Reuse serves runs that only recommend; an installing run builds its refinement afresh (see the test below).
+    monkeypatch.setattr(workflow, '_installs', lambda args: False)
     code, receipt, run, rows = stub.run(capsys, dict(refine=True))
-    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (code, receipt['status']) == (3, 'inconclusive'), receipt
     first, second = kinds(rows, 'construction')
     assert (first['reused'], second['reused']) == (0, 2)
     built = kinds(rows, 'constructed')
@@ -192,7 +194,9 @@ def test_a_refinement_reuses_the_frozen_tasks_and_constructs_only_fresh_heldout_
     assert assert_breakdown(receipt)['stages']['refinement']['spent_seconds'] >= 0
 
 
-def test_a_refinement_that_would_alter_a_reused_path_or_pass_off_a_reused_split_is_rejected(stub, capsys):
+def test_a_refinement_that_would_alter_a_reused_path_or_pass_off_a_reused_split_is_rejected(stub, capsys, monkeypatch):
+    # Reuse serves runs that only recommend; an installing run builds its refinement afresh (see the test below).
+    monkeypatch.setattr(workflow, '_installs', lambda args: False)
     stub.mode.write_text(json.dumps(dict(refine=True)))
     text = stub.bin.joinpath(stub.runtime).read_text()
     stub.bin.joinpath(stub.runtime).write_text(text.replace("for split in (('heldout',) if reuse else", "for split in (('heldout', 'development') if reuse else"))
@@ -248,3 +252,11 @@ def test_the_toolkit_copy_leaves_bytecode_caches_out_so_two_routes_start_from_id
     _, _, run, _ = stub.run(capsys, {})
     toolkit = run / 'preparation/.harness-toolkit/skills/harness-self-improvement'
     assert (toolkit / 'SKILL.md').is_file() and not list(toolkit.rglob('__pycache__')) and not list(toolkit.rglob('*.pyc'))
+
+
+def test_an_installing_run_builds_its_refinement_evaluation_afresh(stub, capsys):
+    # Regression (fixed-in: 0.232.2): the refinement reused a frozen regression task that the baseline itself failed, and
+    # a refinement got no validation repair, so a real run ended invalid_input.
+    code, receipt, run, rows = stub.run(capsys, dict(refine=True))
+    first, second = kinds(rows, 'construction')
+    assert (first['reused'], second['reused']) == (0, 0), receipt

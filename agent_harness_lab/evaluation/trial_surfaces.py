@@ -159,6 +159,25 @@ def stage_harness(root, workspace, paths):
     return dict(profile=PROFILE, included=included, absent=absent, observed_loading='unknown')
 
 
+def hide_from_git(workspace, paths):
+    """Keep what the trial staged out of `git status` when the fixture is a repository, so a grader that checks for a
+    clean tree sees only the agent's work. Untracked paths go to .git/info/exclude; a tracked file the staging replaced is
+    marked skip-worktree. Nothing is committed and the fixture's history is unchanged."""
+    git = Path(workspace) / '.git'
+    if not git.is_dir() or not paths:
+        return
+    (git / 'info').mkdir(exist_ok=True)
+    with (git / 'info' / 'exclude').open('a') as exclude:
+        exclude.write(''.join('/' + path.strip('/') + '\n' for path in paths))
+    import subprocess
+    tracked = subprocess.run(['git', '-C', str(workspace), 'ls-files', '-z', '--', *paths], capture_output=True, timeout=30,
+                             env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(workspace)})
+    names = [name for name in tracked.stdout.decode(errors='replace').split('\0') if name]
+    if tracked.returncode == 0 and names:
+        subprocess.run(['git', '-C', str(workspace), 'update-index', '--skip-worktree', '--', *names], capture_output=True, timeout=30,
+                       env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(workspace)})
+
+
 def harness_skill_availability(record):
     """Skill bundles named by a stage_harness record: present with the staged files' hashes, or absent when
     the version lacks the entry point. Only `.claude/skills/<name>/` and `.agents/skills/<name>/` count."""

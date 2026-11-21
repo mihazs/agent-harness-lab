@@ -1,7 +1,7 @@
 """`ahl improve` installs a measured, repeated improvement through the rollback journal, on synthetic cooperative runs only.
 
 Regression (fixed-in: 0.232.0): the favorable branch always ended `inconclusive` with a recommendation, so no model-proposed
-change ever reached the project. Nothing else is installed: a tie and a fix seen in one run only both end `no_change`.
+change ever reached the project. Nothing else is installed: a tie and a fix the repeats do not reproduce both end `no_change`.
 The same fake agent plays proposer, construction and trials.
 """
 import json
@@ -21,11 +21,32 @@ from tests.support.native_session_fixture import claude, write
 PARTIAL = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
                                         "'done' if good and not phase.endswith('heldout') or phase.endswith('regression')")
 assert PARTIAL != workflow_fixture.FAKE
-# The baseline fails only in the first evaluation run (six trials); in the repeat of the fixed tasks it passes: not confirmed.
-ONCE = workflow_fixture.FAKE.replace("else:\n phase=p('phase').read_text()",
-    "else:\n phase=p('phase').read_text(); count=p(@COUNTER@); seen=int(count.read_text()) if count.exists() else 0; count.write_text(str(seen+1))").replace(
-    "'done' if good or phase.endswith('regression')", "'done' if good or seen>=6 or phase.endswith('regression')")
-assert ONCE.count('seen') == 3
+# Every trial reads `seen`, the number of trials that ran before it in all runs: the first evaluation run is six trials and a
+# repeat of one fixed task is two, one per arm, so with one fixed task repeat number `(seen - 6) // 2` counts from 0.
+COUNTED = workflow_fixture.FAKE.replace("else:\n phase=p('phase').read_text()",
+    "else:\n phase=p('phase').read_text(); count=p(@COUNTER@); seen=int(count.read_text()) if count.exists() else 0; count.write_text(str(seen+1))")
+assert COUNTED.count('seen') == 2
+PASSES = "'done' if good or phase.endswith('regression')"
+assert workflow_fixture.FAKE.count(PASSES) == 1
+
+
+def counted(tmp_path, passes):
+    """The fake agent whose trial passes when `passes`, an expression over `good` (the candidate arm), `phase` and `seen`, holds."""
+    agent = COUNTED.replace('@COUNTER@', repr(str(tmp_path / 'trials'))).replace(PASSES, f"'done' if ({passes}) or phase.endswith('regression')")
+    assert passes in agent
+    return agent
+
+
+# The baseline fails only in the first evaluation run; in every repeat of the fixed tasks it passes: not confirmed.
+ONCE = 'good or seen>=6'
+# Both tasks flip in the first run; in the repeats the baseline passes the held-out task for good and still fails development.
+HELDOUT_ONCE = "good or seen>=6 and phase.endswith('heldout')"
+# Only the development task is fixed; the candidate fails the held-out task as the baseline does.
+ONE = "good and not phase.endswith('heldout')"
+
+
+def repeats(receipt):
+    return sorted(Path(receipt['output']).glob('evaluation-*-confirm-*'))
 
 
 @pytest.fixture
@@ -51,8 +72,10 @@ def test_the_evaluated_winner_is_installed_with_a_verified_receipt_and_a_working
     application = receipt['application']
     assert (application['status'], application['authority'], application['certification']) == ('applied_verified', 'operator_invocation', 'not_established')
     assert application['basis'] == 'improvement_confirmed'
-    confirmation = receipt['confirmation']  # the same flip in two runs, and nothing lost in either
-    assert (confirmation['runs'], confirmation['fixed'], confirmation['fixed_once']) == (2, ['development', 'heldout'], [])
+    confirmation = receipt['confirmation']  # six fresh repeats of both fixed tasks: the candidate passed all, the baseline none
+    assert (confirmation['outcome'], confirmation['confirmed'], confirmation['repeats_per_task']) == ('confirmed', ['development', 'heldout'], 6)
+    assert (confirmation['alpha'], confirmation['per_task_alpha']) == (0.05, 0.025) and len(repeats(receipt)) == 6
+    assert confirmation['tasks'] == {task: dict(candidate=6, baseline=0, verdict='confirmed') for task in ('development', 'heldout')}
     assert 'recommendation' not in receipt and receipt['automatic_promotion'] is False
     assert receipt['decision']['application_eligible'] is False  # the evidence labels are untouched by the install
     assert receipt['rollback'].startswith(f'ahl rollback {receipt["deployment"]} --project ')
@@ -76,11 +99,13 @@ def test_a_tie_installs_nothing_and_a_second_hypothesis_is_tried_first(cli):
     assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2  # a fresh evaluation per hypothesis
 
 
-def test_a_fix_seen_in_one_run_and_not_in_the_repeat_installs_nothing(cli, tmp_path):
-    code, receipt, base = cli(agent=ONCE.replace('@COUNTER@', repr(str(tmp_path / 'trials'))))
+def test_a_fix_the_baseline_also_passes_in_the_repeats_installs_nothing(cli, tmp_path):
+    code, receipt, base = cli(agent=counted(tmp_path, ONCE))
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
-    assert receipt['confirmation']['fixed'] == [] and receipt['confirmation']['fixed_once'] == ['development', 'heldout']
-    assert 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
+    confirmation = receipt['confirmation']  # 6 of 6 against 2 of 6 would pass at 0.05 but not at 0.025, so both are out of reach after two repeats
+    assert (confirmation['outcome'], confirmation['confirmed']) == ('improvement_not_confirmed', [])
+    assert confirmation['tasks'] == {task: dict(candidate=2, baseline=2, verdict='not_confirmed') for task in ('development', 'heldout')}
+    assert len(repeats(receipt)) == 2 and 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
 
 
 def test_watch_and_the_programmatic_entry_keep_the_recommendation(cli):
@@ -111,8 +136,9 @@ def test_an_installing_run_asks_for_a_reproducible_claim_and_hands_only_the_clai
     assert not (Path(result['output']) / 'preparation/evaluation-0/hypothesis.json').exists()
 
 
-def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path):
+def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_installed(cli, tmp_path, monkeypatch):
     # Two claims are screened in one evaluation; the baseline fails the task of one only, so the other's change must go first.
+    # the default UNCONFIGURED_TRIALS covers two evaluations and six fresh repeats of two tasks tasks in both arms
     seen = tmp_path / 'prompts'
     screening = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)").replace(
         "'mechanisms':['synthetic']", "'mechanisms':['m1','m2']").replace(
@@ -121,7 +147,7 @@ def test_a_claim_the_baseline_does_not_show_is_pruned_before_anything_is_install
         "phase.endswith('regression')", "phase.endswith(('regression','m2'))")  # a second development task, which the baseline passes
     assert screening.count('m1') == 1 and screening.count("'m2'") == 4
     code, receipt, base = cli(agent=screening)
-    assert (code, receipt['status'], receipt['confirmation']['fixed']) == (0, 'applied', ['development', 'heldout'])
+    assert (code, receipt['status'], receipt['confirmation']['confirmed']) == (0, 'applied', ['development', 'heldout'])
     assert 'were not reproduced: m2' in seen.read_text()  # the task named after the claim the baseline passed
     assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2
 
@@ -153,19 +179,60 @@ def test_a_candidate_rejected_by_the_structural_validation_gets_one_corrected_at
     assert not (base.project / '.agents').exists() and not (Path(receipt['output']) / 'candidate-0').exists()
 
 
-@pytest.mark.parametrize(('repeat', 'lost'), [
-    ("good or seen>=6 and phase.endswith('heldout') or", []),              # the baseline passes heldout in the repeat: not fixed again
-    ("good != (seen>=6 and phase.endswith('heldout')) or", ['heldout']),  # and the candidate fails it there: lost
-])
-def test_one_task_fixed_again_does_not_carry_a_task_that_was_not(cli, tmp_path, repeat, lost):
+def test_a_fix_the_candidate_does_not_keep_in_the_repeats_installs_nothing(cli, tmp_path):
     # Regression (fixed-in: 0.232.0): one task fixed in both runs installed the candidate although another fix did not repeat.
-    agent = ONCE.replace('@COUNTER@', repr(str(tmp_path / 'trials'))).replace('good or seen>=6 or', repeat)
-    assert repeat in agent
-    code, receipt, base = cli(agent=agent)
+    # Here the one fixed task is failed by the candidate in every fresh repeat, as the baseline fails it, so the first run was chance.
+    code, receipt, base = cli(agent=counted(tmp_path, f"{ONE} and seen<6"))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
+    assert receipt['confirmation']['tasks'] == {'development': dict(candidate=0, baseline=0, verdict='not_confirmed')}
+    assert len(repeats(receipt)) == 3 and 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_baseline_that_passes_every_repeat_stops_the_confirmation_early(cli, tmp_path):
+    # Regression (fixed-in: 0.232.2): a verdict is read as soon as no remaining outcome can change it; one fixed task against a
+    # baseline that passes each fresh repeat cannot reach 0.05 after three of six repeats, whatever the other three bring.
+    code, receipt, base = cli(agent=counted(tmp_path, f"{ONE} or seen>=6"))
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
     confirmation = receipt['confirmation']
-    assert (confirmation['fixed'], confirmation['fixed_once'], confirmation['lost']) == (['development'], ['heldout'], lost)
-    assert 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
+    assert confirmation['tasks'] == {'development': dict(candidate=3, baseline=3, verdict='not_confirmed')}
+    assert len(repeats(receipt)) == 3 < 6 and 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_an_intermittent_baseline_weakness_no_longer_blocks_a_fix_the_candidate_always_shows(cli, tmp_path):
+    # Regression (fixed-in: 0.232.2): the baseline failed the fixed task in the first run and passed it in two of the repeats, so
+    # the fix could never pass "fixed twice in a row". Over six fresh repeats the candidate passes 6 and the baseline 2: p = 0.0303.
+    code, receipt, base = cli(agent=counted(tmp_path, f"{ONE} or 6<=seen<10"))
+    assert (code, receipt['status']) == (0, 'applied')
+    confirmation = receipt['confirmation']
+    assert (confirmation['outcome'], confirmation['confirmed'], confirmation['per_task_alpha']) == ('confirmed', ['development'], 0.05)
+    assert confirmation['tasks'] == {'development': dict(candidate=6, baseline=2, verdict='confirmed')} and len(repeats(receipt)) == 6
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_fix_the_baseline_never_shows_is_confirmed_once_a_failing_last_repeat_could_not_undo_it(cli, tmp_path):
+    # Five of five against none stays at p <= 0.05 even when the sixth repeat is the worst case, 5 of 6 against 1 of 6 (p = 0.04).
+    code, receipt, base = cli(agent=PARTIAL)
+    assert (code, receipt['status'], receipt['confirmation']['outcome']) == (0, 'applied', 'confirmed')
+    assert receipt['confirmation']['tasks'] == {'development': dict(candidate=5, baseline=0, verdict='confirmed')} and len(repeats(receipt)) == 5
+
+
+def test_two_tasks_fixed_once_confirm_only_the_one_the_baseline_fails_in_the_repeats(cli, tmp_path):
+    # Pooling the tasks let a task the baseline passes in every repeat ride along with a real fix; each now has its own test.
+    code, receipt, base = cli(agent=counted(tmp_path, HELDOUT_ONCE))
+    assert (code, receipt['status']) == (0, 'applied')
+    confirmation = receipt['confirmation']
+    assert (confirmation['outcome'], confirmation['confirmed']) == ('confirmed', ['development'])
+    assert {task: row['verdict'] for task, row in confirmation['tasks'].items()} == dict(development='confirmed', heldout='not_confirmed')
+    assert confirmation['tasks']['development'] == dict(candidate=6, baseline=0, verdict='confirmed')
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_the_exact_test_matches_hand_computed_one_sided_fisher_values():
+    assert workflow._one_sided_exact(3, 0, 3) == 1 / 20 == 0.05  # 1 of the 20 ways three passes fall among six trials
+    assert workflow._one_sided_exact(1, 0, 1) == 0.5
+    assert workflow._one_sided_exact(5, 1, 5) == 6 / 252
+    assert workflow._one_sided_exact(6, 2, 6) == 28 / 924  # the weakest gap that passes for one task
+    assert workflow._one_sided_exact(0, 0, 4) == 1.0  # no passes at all say nothing
 
 
 CANARY = 'zz-canary-private'

@@ -27,11 +27,11 @@ if p('context.json').exists():
     else:
         tasks, controls, bundles = [], [], {{}}
         for split in ('development', 'regression', 'heldout'):
-            fixture = evaluation / split; fixture.mkdir(); (fixture / 'seed').write_text(c['harness_paths'][0] + split + str(c['attempt']))
+            fixture = evaluation / split; fixture.mkdir(exist_ok=True); (fixture / 'seed').write_text(c['harness_paths'][0] + split + str(c['attempt']))
             if mode == 'hardlinked-fixture': import os; os.link(fixture / 'seed', fixture / 'seed-link')  # what `git clone` of a local repository does
-            bundle = evaluation / ('oracle-' + split); bundle.mkdir()
+            bundle = evaluation / ('oracle-' + split); bundle.mkdir(exist_ok=True)
             (bundle / 'helper.py').write_text("def passed(workspace):\n    return (workspace / 'artifact').read_text() == 'done'\n")
-            note = "import pathlib, sys\nopen(pathlib.Path(sys.argv[0]).parent / 'note', 'w').write('x')\n" if mode == 'writes-bundle' else ''
+            note = "import pathlib, sys\nopen(pathlib.Path(sys.argv[0]).parent / 'note', 'a').write('x')\n" if mode == 'writes-bundle' else ''
             note += "import pathlib, sys\nopen(pathlib.Path(sys.argv[1]) / 'index.lock', 'w').write('x')\n" if mode == 'writes-workspace' else ''
             (bundle / 'grade.py.txt').write_text(note + (
                 "import json, pathlib, sys\n"
@@ -44,7 +44,7 @@ if p('context.json').exists():
                 grader=[sys.executable, str(bundle / 'grade.py.txt'), '{{workspace}}', str(bundle / 'expected.json')]))
             bundles[split] = dict(path='oracle-' + split, digest='0' * 64) if mode.startswith('digests') else dict(path='oracle-' + split)
             for state in ('broken', 'partial', 'complete'):
-                control = evaluation / (split + '-' + state); control.mkdir()
+                control = evaluation / (split + '-' + state); control.mkdir(exist_ok=True)
                 (control / 'artifact').write_text('done' if state == 'complete' else 'wrong')
                 controls.append(dict(task=split, state=state, fixture=control.name, **({{'digest': 'f' * 64}} if mode.startswith('digests') else {{}})))
         (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'], skills=[], tasks=tasks,

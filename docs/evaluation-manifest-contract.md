@@ -67,7 +67,7 @@ An unexpected `KeyError`, `TypeError`, `AttributeError` or `IndexError` inside a
 caught at the stage boundary and reported as `internal_contract_error` with the stage
 name; no result text is an exception message. Semantic rejections after the shape check
 (a self-test that does not fail a broken control, overlapping fixtures) remain
-`invalid_input` and are not repaired.
+`invalid_input`; only an installing run repairs the ones its graders show (see below).
 
 `evaluation_construction_timeout` and `evaluation_task_infeasible` come from the stage
 budgets: a construction pass that overruns its time box, and a task whose `complete`
@@ -122,6 +122,13 @@ in `workflow.json` (reason, stage, file, field, origin, outcome `repaired` or
 carries `authored_digest_ignored` and `evaluation_construction_seconds` (0 when the
 construction stage never ran), so a rejected manifest shows what it cost. A second defect ends the run with its typed reason. Sealed closed-input
 stages and bank conversion allow no second pass.
+
+An installing `ahl improve` run (project scope, native CLI) also sends the author back what
+running its own graders showed: a self-test that does not fail a broken or partial control or
+pass the complete one (the receipt names the task, the control and the grader's last 400
+characters of output), an infeasible task, a changed grader input or missing split coverage.
+It is recorded with reason `manifest_validation_rejected` or the typed reason, and draws on the
+same two-repair budget as the shape repairs; every other entry point keeps one repair and its old exit.
 
 ## Recover from a rejected manifest
 

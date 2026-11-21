@@ -141,7 +141,7 @@ After dispatch, quote `loop.stop_criterion`, `loop.acceptance_source`, `loop.rem
 (deprecated: the previous improve-first pass, removed after one release, whose receipt says `loop.status: not_used`).
 A receipt whose `loop.status` is `not_used` made a single pass: report that, with its `loop.reason`.
 A single pass that ends `applied` installed its evaluated candidate in the project: relay `changed_files`, `partial_improvement` when present
-and the `rollback` command as printed, say that `application.certification` is `not_established`, and name the tasks in `confirmation.fixed`, which the baseline failed and the candidate passed in two runs.
+and the `rollback` command as printed, say that `application.certification` is `not_established`, and name the tasks in `confirmation.confirmed`, with each one's `confirmation.tasks.<task>.candidate` and `.baseline` pass counts out of `confirmation.repeats_per_task` fresh repeats.
 
 ## Report integrity
 
