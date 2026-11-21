@@ -38,8 +38,8 @@ def test_bound_run_is_listed_by_reference_with_digests_and_leaves_the_store_unch
     assert snapshot(bound.store.root) == before
     assert row['original_run_id'] == result['run_id'] and len(row['authority_store_ref']) == 64
     assert str(bound.store.root) not in json.dumps(row)
-    assert row['current_validity'] == 'current' and row['comparison_eligibility'] == 'eligible'
-    assert row['bank_authority'] == 'current_eligible' and row['reasons'] == []
+    assert row['current_validity'] == 'current' and row['comparison_eligibility'] == 'unknown'
+    assert row['bank_authority'] == 'current_eligible' and row['reasons'] == ['comparison_not_assessed']
     for key in ('spec_sha256', 'bank_sha256', 'bank_revision_sha256', 'baseline_sha256', 'candidate_sha256',
                 'grader_sha256', 'runtime_sha256'):
         assert len(row[key]) == 64

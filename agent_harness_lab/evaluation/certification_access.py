@@ -493,7 +493,7 @@ def begin_construction(path,role,input_pin,*,parent=None,parents=None):
 
 def construction_record(path,ident):
     sha256(ident)
-    with _locked(path) as (_,state):
+    with _locked(path,read_only=True) as (_,state):
         value=state.get('constructions',{}).get(ident)
         if value is None: raise ValueError('unknown canonical construction')
         return deepcopy(value)

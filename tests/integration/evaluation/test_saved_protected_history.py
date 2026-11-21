@@ -129,3 +129,55 @@ def test_derived_saved_history_whose_derivation_link_changed_is_rejected_without
     before = state(history.store_root)
     assert analyze_rejected(history, run_id) == 2
     assert state(history.store_root) == before
+
+
+@pytest.mark.parametrize('fixture_name', ['saved', 'derived'])
+def test_history_index_does_not_recreate_a_missing_protected_lock(request, fixture_name):
+    from agent_harness_lab.memory.history_index import list_histories
+
+    history, run_id = request.getfixturevalue(fixture_name)
+    lock = history.store_root / 'protected-access.lock'
+    before = state(history.store_root)
+    [row] = [item for item in list_histories([history.store_root])['histories'] if item['original_run_id'] == run_id]
+    assert row['current_validity'] == 'current'
+    assert state(history.store_root) == before
+    lock.unlink()
+    before = state(history.store_root)
+    [row] = [item for item in list_histories([history.store_root])['histories'] if item['original_run_id'] == run_id]
+    assert row['original_run_id'] == run_id
+    assert row['current_validity'] == 'unreadable'
+    assert not lock.exists()
+    assert state(history.store_root) == before
+
+
+def test_history_index_does_not_recreate_lock_lost_before_live_check(saved, monkeypatch):
+    from agent_harness_lab.evaluation.oracle_history import HistoryStore
+    from agent_harness_lab.memory.history_index import list_histories
+
+    history, run_id = saved
+    lock = history.store_root / 'protected-access.lock'
+    original = HistoryStore._historical_plan
+    def remove_after_plan(self, *args, **kwargs):
+        result = original(self, *args, **kwargs)
+        lock.unlink()
+        return result
+    monkeypatch.setattr(HistoryStore, '_historical_plan', remove_after_plan)
+    [row] = list_histories([history.store_root])['histories']
+    assert row['original_run_id'] == run_id
+    assert row['current_validity'] == 'authority_not_current'
+    assert not lock.exists()
+
+
+def test_construction_readback_does_not_recreate_a_missing_dependency_lock(tmp_path):
+    from agent_harness_lab.evaluation.certification_access import begin_construction, construction_record
+
+    ledger = tmp_path/'protected-access.json'
+    ident = begin_construction(ledger, 'final_bank_author', 'a'*64)
+    lock = ledger.with_suffix('.lock')
+    assert construction_record(ledger, ident)['state'] == 'pending'
+    lock.unlink()
+    before = state(tmp_path)
+    with pytest.raises(ValueError, match='existing protected-access dependency lock'):
+        construction_record(ledger, ident)
+    assert not lock.exists()
+    assert state(tmp_path) == before

@@ -185,13 +185,14 @@ class HistoryStore(PrivateJournal):
         try: return Path(record(self.case(run_id)/'manifest.json', 1024*1024)[0]['bank_authority']['bank_path']).parents[2]
         except (ValueError, OSError, KeyError, TypeError, IndexError): return None
 
-    def opened(self, run_id, *, read_only=False):
-        return self._opened(run_id,current_bank=True,read_only=read_only)
+    def opened(self, run_id, *, read_only=False, dependency_read_only=False):
+        return self._opened(run_id,current_bank=True,read_only=read_only,dependency_read_only=dependency_read_only)
 
-    def _opened(self, run_id, *, current_bank, read_only=False):
+    def _opened(self, run_id, *, current_bank, read_only=False, dependency_read_only=False):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
+        # Saved analysis restricts profiles; the history index only requires dependency locks to preexist.
         if read_only and (type(version) is not int or version not in (1, 2)):
             raise ValueError('read-only saved analysis supports only fixed history, optionally bound to its bank or its protected access and derivation')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
@@ -224,12 +225,12 @@ class HistoryStore(PrivateJournal):
             from .certification_access import validate_derivations
             derivation,derivation_pin=record(case/'derivation.json',1024*1024)
             if derivation_pin!=inputs['derivation_binding_sha256']: raise ValueError('historical derivation binding changed')
-            validate_derivations(self.access_ledger().path,derivation,read_only=read_only)
+            validate_derivations(self.access_ledger().path,derivation,read_only=read_only or dependency_read_only)
         if 'protected_access_sha256' in inputs:
             receipt, receipt_hash = record(case/'protected-access.json',1024*1024)
             if receipt_hash != inputs['protected_access_sha256'] or receipt.get('run_id') != run_id:
                 raise ValueError('managed access frozen binding changed')
-            self.access_ledger().validate_managed_history(receipt,read_only=read_only)
+            self.access_ledger().validate_managed_history(receipt,read_only=read_only or dependency_read_only)
             binding = receipt['binding']
             if (binding['plan_sha256'] != spec.digest or binding['manifest_sha256'] != manifest_hash
                     or binding['oracle_sha256'] != spec.grader_hash or binding['runtime_sha256'] != spec.runtime_hash):
@@ -268,7 +269,8 @@ class HistoryStore(PrivateJournal):
             if (binding_hash!=inputs['cohort_binding_sha256']
                     or binding.get('manifest_path')!=str(case/'cohort-manifest.json')):
                 raise ValueError('frozen preservation qualification binding changed')
-            cohort_history.validate(binding,source,spec,inputs['bank_tasks'],current=current_bank)
+            cohort_history.validate(binding,source,spec,inputs['bank_tasks'],current=current_bank,
+                                    dependency_read_only=read_only or dependency_read_only)
         elif spec.cohort_manifest_sha256 is not None:
             raise ValueError('preservation plans require explicit controller qualification binding')
         if version==5:
@@ -321,8 +323,8 @@ class HistoryStore(PrivateJournal):
             for value in (*binding['fixtures'].values(),*binding['seed_states'].values()):sha256(value)
         return case,events,inputs,spec
 
-    def checked(self, run_id, *, read_only=False):
-        case,events,inputs,spec = self.opened(run_id,read_only=read_only)
+    def checked(self, run_id, *, read_only=False, dependency_read_only=False):
+        case,events,inputs,spec = self.opened(run_id,read_only=read_only,dependency_read_only=dependency_read_only)
         validity = 'invalidated' if any(self.oracle_events(b)[-1][0]['state'] != 'active' for b in inputs['dependencies']) else 'current'
         if events[-1][0]['state'] != 'sealed': return case,events,inputs,spec,None,'incomplete'
         result = self._sealed(case,events,inputs,spec)
@@ -406,8 +408,8 @@ class HistoryStore(PrivateJournal):
             from .resource_cache_attestation import bind
             return bind(artifact,checked[3],checked[4],custody,attestations)
 
-    def _historical_plan(self,run_id,*,event_sha256=None):
-        case,events,inputs,spec = self._opened(run_id,current_bank=False)
+    def _historical_plan(self,run_id,*,event_sha256=None,dependency_read_only=False):
+        case,events,inputs,spec = self._opened(run_id,current_bank=False,dependency_read_only=dependency_read_only)
         if spec.sequential is not None:raise ValueError('stopped sequential runs are not full-schedule correction replay inputs')
         if event_sha256 is not None:
             sha256(event_sha256)
