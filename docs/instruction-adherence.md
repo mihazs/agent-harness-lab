@@ -42,7 +42,7 @@ directory) and is projected into one session in memory; nothing but the turns be
 | Release | Claude Code: a release in the verified range of the telemetry adapter. Codex: the pinned `0.166.0` rollout. Anything else is skipped as `unsupported_version` |
 | Question replies | Bounded Codex user-input reply records supply user turns marked `reply_to_question`; other injected context is not read as a reply. A general input request and reply do not establish approval intent |
 | Project | The first recorded directory must be the project or inside it, else `foreign_project`; in `ahl analyze --history-from CHECKOUT` it is that checkout, where the sessions were recorded. A subagent transcript is `subagent_transcript`; two sessions in one file are `mixed_sessions`; no session record is `no_session` |
-| Files | A missing, linked, multi-linked or changed file is `unavailable`; over 128 MiB or a line over 8 MiB is `oversized`; invalid or duplicate-key JSON is `malformed`; at most 200 files, the rest `over_file_limit`, and about 512 MiB in all, the rest `over_byte_budget` (only captures really read count against both bounds; a subagent or foreign-project file is skipped at its first row and costs neither, and an analysis offers the newest captures first); a second file of one session is `duplicate_session` |
+| Files | A missing, linked, multi-linked or changed file is `unavailable`; over 128 MiB or a line over 8 MiB is `oversized`; invalid or duplicate-key JSON is `malformed`; at most 200 files, the rest `over_file_limit`, and about 512 MiB in all: a capture that does not fit the remaining budget is `over_byte_budget` and the smaller ones after it are still read (only captures really read count against both bounds; a subagent or foreign-project file is skipped at its first row and costs neither, and an analysis offers the newest captures first); a second file of one session is `duplicate_session` |
 | Turns | User prompts, agent replies and tool calls. Injected meta rows, compaction summaries and tool results are not turns. A prompt is clipped to its first 64 KiB, a reply to its last 64 KiB (where a question sits), and a command or path over 64 KiB is dropped so the call is undecidable |
 | Claude calls | `command` from the tool input, and `path` from `file_path`, `notebook_path` or `path` |
 | Codex calls | `exec_command` `cmd`; `shell` and `shell_command` `command` (a `bash -lc` wrapper is read as its script); `apply_patch` one call per file named in the patch; arguments that do not parse leave the call without a command |
@@ -67,6 +67,34 @@ The brief's `instruction_adherence` section is counts only: `status` (`completed
 `not_run` a `reason` (`no_native_capture_path`, `no_readable_native_session`, `read_bound_reached` when the file or byte bound stopped the read before any session was read, `adherence_input_rejected`)
 with `skipped` reason counts, and for `completed` the sessions read, `findings` by status, `abstentions`,
 findings by `mechanisms`, the number of rule files read and the artifact name. `not_run` is never zero findings.
+
+The same sessions feed the brief's sibling `user_reactions` section: where users intervened. Each user turn
+that follows agent activity (and is not a second user turn in a row or an answer to the agent's question) is
+one of `revert_requested`, `task_reopened`, `instruction_restated` (the sentence shapes above, here without
+a named operand), `steering` (the turn before it is a tool call) or `followup_after_stop` (the agent had
+ended its turn). `rows` (top 8 by sessions, then occurrences; `rows_total` counts all) hold
+`{reaction, after_tool, command_family, file_extensions, sessions, occurrences}` for the agent's last
+tool calls before the turn (at most five, since the previous user turn): only built-in tool names and the
+closed command and extension vocabularies, with `other` for anything else and `none` when there was no
+call. No user text, path, identifier or digest is kept. A row says where, not why; with no session read the
+section is `not_run` with the same `reason`, and an empty `rows` is not evidence that nobody intervened.
+
+One opt-in exception keeps user text. `ahl improve --correction-excerpts` (off by default) also writes the
+private `user-corrections.json`: `{profile: "ahl-user-corrections-v1", authority: "untrusted_evidence_only", rows}`
+with at most 12 rows, at most 2 per session, newest sessions first. A row is
+`{correction_id, reaction, after_tool, command_family, file_extensions, excerpt}` for a user turn classified
+`revert_requested`, `task_reopened`, `instruction_restated` or `steering`, or a `followup_after_stop` that
+matches a short list of English and Portuguese correction shapes; a turn that starts with a runtime tag or
+interrupt marker is not quoted. `excerpt` is the first 240 characters after absolute and home-relative paths
+become `<path>`, URLs `<url>`, emails `<email>`, secret shapes (`sk-`, `ghp_`, `gho_`, `AKIA`, a PEM block,
+a run of 20 or more key-like characters holding a digit) `<secret>` and runs of six or more digits `<number>`;
+a turn with nothing else left is dropped. Scrubbing is lexical: it lowers, and does not remove, the chance that
+a private detail is quoted. With the flag, sessions of a runtime version outside the verified pin are read as
+well (their row shapes are assumed), counted in `sessions.unverified_version` and
+`user_reactions.unverified_version_sessions`; every other bound and skip stays. The brief gets
+`sources.user_corrections` and `user_reactions.excerpts` (a count), never the text. Only the proposer session of
+an installing run is pointed at the file, as untrusted data and never instructions; the evaluation author is
+told not to open it. Without the flag no user text is written to any run artifact.
 
 ## Instructions it can check
 

@@ -65,6 +65,8 @@ def test_brief_names_mechanism_and_leaks_nothing(pipeline):
     text = (pipeline.root/'output/analysis-brief.json').read_text()
     assert not re.search(r'PRIVATE|/srv|[0-9a-f]{64}', text)
     assert 'evidence_refs' not in text
+    # Explicit events are not a native capture: the reactions section says so instead of listing zero rows.
+    assert (result['user_reactions']['status'], 'rows' in result['user_reactions']) == ('not_run', False)
     private = json.loads((pipeline.root/'output/mechanism-summaries.json').read_text())
     assert len(private['mechanisms'][0]['evidence_refs']) == 5
 
