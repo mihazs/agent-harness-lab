@@ -102,3 +102,11 @@ without runtime credentials; `--inherit-env` does not apply to graders. Trial
 grader receipts record their environment names and digests.
 These processes retain access to host files and network; this does not establish
 isolation and does not change unknown boundary qualification.
+
+Native sessions run under your own CLI subscription login, not an API key. AHL's
+preparation sessions are always pure (project-only Claude Code settings, no user MCP
+servers or hooks; a temporary Codex home with user config and rules ignored), and a
+Codex session borrows a `0600` copy of your saved login for the length of the run.
+`--with-user-harness` on `ahl improve`, `ahl watch` and `ahl skills invoke` runs the
+trials of both arms under your installed harness instead; the trial receipts record
+it. See [trial isolation](../skills/harness-self-improvement/references/isolation.md).

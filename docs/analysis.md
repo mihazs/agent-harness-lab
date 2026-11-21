@@ -619,6 +619,7 @@ provider-reported usage per request) are not covered.
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `global_scope_model_evaluation_unavailable` | Model-driven evaluation of the user-level harness is not available; rerun with --repair-contracts to repair user-level skill headers deterministically, or evaluate the project harness with the default --scope project. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
+| `responses_user_harness_unsupported` | Remove --with-user-harness when using the Responses runtime. |
 | `score_area_undeclared` | Pass --area with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
 | `area_selection_undeclared` | Pass --area to ahl improve with an id declared in the ahl.json areas, or declare the area there with an id, a label and a description, then rerun. |
 | `area_selection_empty` | Tag at least one executable, non-quarantined bank task with each selected area, or select an area that has one, then rerun. |

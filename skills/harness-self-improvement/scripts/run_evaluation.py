@@ -212,7 +212,7 @@ def trace_result(run, agent="codex"):
     return 'completed', usage
 
 
-def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
+def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None, pure=False):
     if agent == 'claude':
         argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
                 '--no-session-persistence']
@@ -222,7 +222,7 @@ def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
     homes = (Path.home() / '.agents/skills', Path.home() / '.codex/skills') if skill_homes is None else skill_homes
     disabled = [dict(path=str(home / skill), enabled=False) for skill in skills
                 for home in homes if (home / skill).exists()]
-    argv = [binary, 'exec', '--ephemeral', '--skip-git-repo-check',
+    argv = [binary, 'exec', '--ephemeral', *(['--ignore-user-config', '--ignore-rules'] if pure else []), '--skip-git-repo-check',
             '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
     if disabled:
         argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
@@ -260,28 +260,69 @@ def native_environment(agent, inherit=False, environ=None):
     return {key: value for key, value in source.items() if key in common or key in auth}
 
 
-def environment_receipt(environment, inherited, run_root):
+def environment_receipt(environment, inherited, run_root, credentials=None):
     def digest(values):
         return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     normalized = {key: value.replace(str(run_root), '<run>') for key, value in environment.items()}
     if normalized.get('AHL_MANAGED_PREPARATION') == Path(run_root).name:
         normalized['AHL_MANAGED_PREPARATION'] = '<run>'
     return dict(names=sorted(environment), sha256=digest(environment), comparison_sha256=digest(normalized),
-                inherited=inherited)
+                inherited=inherited, **({} if credentials is None else dict(credentials=credentials)))
 
 
-def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None):
+def preparation_command(agent, binary, plugin, skills, stage, parent_id, inherit=False, readable=()):
+    """Argv and environment of one pure AHL preparation session (proposer or evaluation author); purity is not optional.
+
+    Claude gets the trial isolation staged in `stage` beside the session's work directory: project-only setting sources,
+    a strict empty MCP config, hooks disabled, a write grant, and Read access to `readable`; `plugin` is AHL's own.
+    Codex gets a temporary CODEX_HOME holding only the user's subscription login, with user config and rules ignored.
+    Run it with execute_session. --with-user-harness applies to trials, never here.
+    """
+    application_modules()
+    from agent_harness_lab.evaluation import trial_surfaces
+    environment = managed_environment(parent_id, agent, inherit)
+    stage.mkdir(parents=True, mode=0o700)
+    if agent == 'claude':
+        environment.pop('CODEX_HOME', None)
+        return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(stage, readable=readable), environment
+    isolated = trial_surfaces.codex_environment(stage, stage, {}, environment)  # config.toml is ignored; the home holds the login
+    homes = trial_surfaces.home_skills(isolated) if isolated.get('CODEX_HOME') != environment.get('CODEX_HOME') else None
+    return agent_command(agent, binary, None, skills, skill_homes=homes, pure=True), isolated
+
+
+def execute_session(argv, cwd, timeout, stdin=None, *, env):
+    """execute() for a native session: the user's subscription login sits in its temporary CODEX_HOME only while it runs.
+
+    Returns (result, credentials), the credentials being a receipt status: 'subscription_login_copied',
+    'subscription_login_refreshed' (the run refreshed a token and the real login was unchanged) or 'not_staged'."""
+    application_modules()
+    from agent_harness_lab.evaluation import trial_surfaces
+    trial_surfaces.stage_codex_login(env)
+    try:
+        run = execute(argv, cwd, timeout, stdin, env=env)
+    finally:
+        credentials = trial_surfaces.settle_codex_login(env)
+    return run, credentials
+
+
+def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None, user_harness=False):
     """Argv and environment for one cooperative trial with the gated user-layer exclusions requested.
 
     Claude gets project-only setting sources, a strict empty MCP config and hook-disabling flag settings;
-    Codex gets a temporary CODEX_HOME. Neither the real CODEX_HOME nor ~/.claude is named in either.
+    Codex gets a temporary CODEX_HOME with the user's subscription login copied in. Neither the real CODEX_HOME nor ~/.claude
+    is named in either. With user_harness the trial runs under the user's installed harness instead: Claude keeps only the
+    write grant, Codex keeps the real CODEX_HOME. A saved Codex login always wins over CODEX_API_KEY, which would bill the API.
     """
     application_modules()
     from agent_harness_lab.evaluation import trial_surfaces
     environ = dict(os.environ if environ is None else environ)
     if agent == 'claude':
         environ.pop('CODEX_HOME', None)
-        return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(trial), environ
+        return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(trial, user_harness=user_harness), environ
+    if user_harness:
+        if trial_surfaces.codex_login(environ) is not None:
+            environ.pop(trial_surfaces.CODEX_CREDENTIAL, None)
+        return agent_command(agent, binary, None, skills), environ
     environment = trial_surfaces.codex_environment(trial, workspace, defaults, environ)
     staged = environment.get('CODEX_HOME') != environ.get('CODEX_HOME')
     homes = trial_surfaces.home_skills(environ) if staged else None
@@ -303,11 +344,15 @@ def _evaluate(args):
         raise ValueError('parent deadline must be a finite monotonic timestamp')
     inherit_env = getattr(args, 'inherit_env', False)
     if type(inherit_env) is not bool: raise ValueError('environment inheritance must be explicit')
+    with_user_harness = getattr(args, 'with_user_harness', False)
+    if type(with_user_harness) is not bool: raise ValueError('user harness inclusion must be explicit')
     sandbox_graders = getattr(args, 'sandbox_graders', False)
     if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
     controlled = args.agent == 'responses'
     if inherit_env and args.agent not in ('codex', 'claude'):
         raise ValueError('--inherit-env applies only to cooperative native agents')
+    if with_user_harness and args.agent not in ('codex', 'claude'):
+        raise ValueError('--with-user-harness applies only to cooperative native agents')
     supplied_client = getattr(args,'inference_client',None)
     supplied_backend = getattr(args,'sandbox_backend',None)
     if not controlled and (supplied_client is not None or supplied_backend is not None):
@@ -648,7 +693,7 @@ def _evaluate(args):
         application_modules()
         from agent_harness_lab.evaluation import trial_surfaces
         authentication = trial_surfaces.codex_authentication(
-            version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ)
+            version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ, with_user_harness)
         if authentication == 'unavailable':
             blocked = 'codex_credentials_unavailable'
     output.mkdir(parents=True, exist_ok=False)
@@ -663,9 +708,12 @@ def _evaluate(args):
         results['runtime']['codex_authentication'] = authentication
     if agent in ('codex', 'claude'):
         results['runtime']['environment_inherited'] = inherit_env
+        results['runtime']['user_harness'] = 'included' if with_user_harness else 'excluded'
         application_modules()
         from agent_harness_lab.evaluation import trial_surfaces
-        results['isolation'] = trial_surfaces.descriptor('claude-code' if agent == 'claude' else 'codex', config)
+        results['isolation'] = trial_surfaces.descriptor(
+            'claude-code' if agent == 'claude' else 'codex', config, user_harness=with_user_harness,
+            credentials='subscription_login_copied' if authentication == 'subscription_login' else 'not_staged')
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
     if precision_report is not None:
@@ -840,7 +888,7 @@ def _evaluate(args):
             argv = task['offline_executor'] if offline else None
         else:
             argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config,
-                                              native_environment(agent, inherit_env))
+                                              native_environment(agent, inherit_env), with_user_harness)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if record['skill_preload_requested'] else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -898,7 +946,8 @@ def _evaluate(args):
             run['timeout'] = run['status'] == 'timeout'
         else:
             record['environment'] = environment_receipt(environment, inherit_env, output)
-            run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
+            record['user_harness'] = 'included' if with_user_harness else 'excluded'
+            run, record['environment']['credentials'] = execute_session(argv, workspace, min(timeout, remaining), prompt, env=environment)
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
@@ -1064,6 +1113,7 @@ def main():
     parser.add_argument('--codex', default='codex', help='Codex executable name/path for --agent codex (default: %(default)s)')
     parser.add_argument('--claude', default='claude', help='Claude Code executable name/path for --agent claude (default: %(default)s)')
     parser.add_argument('--inherit-env', action='store_true', help='Pass the host environment to native trials; records this opt-in and exposes host secrets')
+    parser.add_argument('--with-user-harness', action='store_true', help='Run native trials of both arms under your installed harness (user settings, plugins, hooks, MCP servers, CODEX_HOME) instead of the pure project-only default; records this opt-in')
     parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative codex/claude trials; does not isolate the agent CLI')
     parser.add_argument('--inference-settings', type=Path, help='Existing private Responses settings JSON referencing a credential file and shared request/tool caps; required only with --agent responses')
     parser.add_argument('--cgroup-root', type=Path, help='Existing delegated cgroup v2 subtree for isolated roles/graders; required with --agent responses')

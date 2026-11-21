@@ -59,9 +59,12 @@ as `inherited_unverified` until a native run confirms them. Claude Code keeps
 authentication stored outside settings files and managed layers, but user and
 local settings, with their permission rules, sandbox settings, `env` and
 `apiKeyHelper`, are not loaded. Put the permissions your trusted fixtures need in
-the fixture's `.claude/settings.json` or in managed settings. The Codex home holds
-no saved login, so a Codex run needs `CODEX_API_KEY`; without it the Codex CLI
-run blocks as `codex_credentials_unavailable` before any trial. Do not loosen
+the fixture's `.claude/settings.json` or in managed settings. The Codex home gets a
+`0600` copy of your saved subscription login (`auth.json` under the real `CODEX_HOME`)
+for the length of each run, so no API key is needed; `CODEX_API_KEY` is the alternative
+when there is no saved login, and without either the Codex CLI run blocks as
+`codex_credentials_unavailable` before any trial. `--with-user-harness` runs both arms
+under your installed harness instead. Do not loosen
 permissions to make a candidate pass. This is not network isolation or a hostile-agent security
 boundary. Do not provide tasks requiring live external mutations. A candidate must
 not change graders. Keep fixtures free of reference solutions; the parent manages

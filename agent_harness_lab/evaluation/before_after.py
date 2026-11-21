@@ -56,10 +56,12 @@ def schedule_sha256(tasks, repeats=1, seed=None):
     return digest(dict(tasks=[task['id'] for task in tasks], repeats=repeats, seed=seed))
 
 
-def launch_sha256(agent, executable, inherit_env=False):
-    """Identity of the launch configuration both arms shared; it binds neither the served model nor the runtime build."""
+def launch_sha256(agent, executable, inherit_env=False, with_user_harness=False):
+    """Identity of the launch configuration both arms shared; it binds neither the served model nor the runtime build.
+
+    The user-harness opt-in joins the identity only when set, so every earlier digest stays valid."""
     return digest(dict(profile='ahl-launch-configuration-v1', agent=agent, executable=str(Path(executable).resolve()),
-                       inherit_env=bool(inherit_env)))
+                       inherit_env=bool(inherit_env), **({'with_user_harness': True} if with_user_harness else {})))
 
 
 def bank_sha256(manifest, folder):

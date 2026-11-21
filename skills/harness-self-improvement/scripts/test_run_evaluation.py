@@ -474,6 +474,7 @@ class TrialSurfaceTests(unittest.TestCase):
         from agent_harness_lab import surfaces
         from agent_harness_lab.evaluation import trial_surfaces
         banner = 'codex-cli 0.166.0\n'
+        (self.user_codex / 'auth.json').unlink()  # the saved login is its own status, below
         self.assertEqual(trial_surfaces.codex_authentication(banner, self.environ), 'unavailable')
         self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, CODEX_API_KEY='')), 'unavailable')
         self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, OPENAI_API_KEY='synthetic')),
@@ -486,6 +487,26 @@ class TrialSurfaceTests(unittest.TestCase):
                         or 'temporary CODEX_HOME' not in row.item)
         with patch.object(surfaces, 'CAPABILITIES', without):
             self.assertEqual(trial_surfaces.codex_authentication(banner, self.environ), 'inherited')
+
+
+    def test_codex_authentication_reports_the_saved_subscription_login_before_any_key(self):
+        from agent_harness_lab.evaluation import trial_surfaces
+        banner = 'codex-cli 0.166.0\n'
+        self.assertEqual(trial_surfaces.codex_authentication(banner, self.environ), 'subscription_login')
+        self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, CODEX_API_KEY='synthetic')),
+                         'subscription_login')
+        self.assertEqual(trial_surfaces.codex_authentication('codex-test 1.0', self.environ), 'subscription_login')
+
+    def test_codex_trial_borrows_the_login_for_the_run_only(self):
+        from agent_harness_lab.evaluation import trial_surfaces
+        argv, environment = self.runner.trial_command('codex', 'codex', None, (), self.trial, self.workspace, {},
+                                                      dict(self.environ, CODEX_API_KEY='synthetic'))
+        self.assertNotIn('CODEX_API_KEY', environment)
+        self.assertEqual(trial_surfaces.stage_codex_login(environment), 'subscription_login_copied')
+        copy = Path(environment['CODEX_HOME']) / 'auth.json'
+        self.assertEqual((copy.read_text(), copy.stat().st_mode & 0o777), ('{"synthetic": "credential"}', 0o600))
+        self.assertEqual(trial_surfaces.settle_codex_login(environment), 'subscription_login_copied')
+        self.assertFalse(copy.exists())
 
 
 class TrialWorkspaceTests(unittest.TestCase):
@@ -686,6 +707,33 @@ class TrialWorkspaceTests(unittest.TestCase):
             result, data = self.run_isolated()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(data['runtime']['codex_authentication'], 'unknown')
+
+    def test_user_harness_opt_in_is_recorded_and_changes_only_the_codex_home(self):
+        # fixed-in: 0.233.0. Trials ran in a home without the saved login, and the user's harness could not be included.
+        (self.user_codex / 'auth.json').write_text('{"canary": "synthetic-login-canary"}')
+        for flag, label, shared in (([], 'excluded', False), (['--with-user-harness'], 'included', True)):
+            with self.subTest(label=label):
+                shutil.rmtree(self.root / 'out', ignore_errors=True)
+                result, data = self.run_isolated(extra_args=flag)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((data['runtime']['user_harness'], data['isolation']['user_harness']), (label, label))
+                self.assertEqual(data['runtime']['codex_authentication'], 'subscription_login')
+                for trial in data['trials']:
+                    self.assertEqual(trial['user_harness'], label)
+                    case = self.root / 'out' / trial['version'] / 'case'
+                    seen = json.loads((case / 'workspace/env.json').read_text())
+                    self.assertEqual(seen['CODEX_HOME'], str(self.user_codex if shared else case / 'codex-home'))
+                    self.assertEqual(trial['environment']['credentials'], 'not_staged' if shared else 'subscription_login_copied')
+                self.assertFalse(list((self.root / 'out').rglob('auth.json')))  # no copy outlives its trial
+                self.assertEqual((self.user_codex / 'auth.json').read_text(), '{"canary": "synthetic-login-canary"}')
+                self.assertNotIn('synthetic-login-canary', (self.root / 'out/results.json').read_text())
+
+    def test_user_harness_opt_in_needs_a_native_agent(self):
+        result = subprocess.run([sys.executable, str(RUNNER), '--manifest', str(self.root / 'manifest.json'), '--baseline', str(self.root / 'baseline'),
+                                 '--candidate', str(self.root / 'candidate'), '--output', str(self.root / 'out'), '--agent', 'offline',
+                                 '--with-user-harness'], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--with-user-harness applies only to cooperative native agents', result.stderr)
 
     def test_claude_run_records_unverified_isolation(self):
         self.use_claude_fake()

@@ -71,12 +71,12 @@ class PreparationProposer:
                                                          mechanism=mechanism, loop=True, invocation=invocation))
         proposal_path = folder/'proposal.json'
         prompt = self.prompt(mechanism, folder, candidate, proposal_path)
-        command = runner.agent_command(ctx['agent'], ctx['binary'], ctx['plugin'], ('harness-self-improvement',))
-        environment = runner.managed_environment(output.name, ctx['agent'], getattr(args, 'inherit_env', False))
-        workflow.write_json(output/f'preparation-{attempt}.environment.json', runner.environment_receipt(environment, getattr(args, 'inherit_env', False), output))
+        command, environment = runner.preparation_command(ctx['agent'], ctx['binary'], ctx['plugin'], ('harness-self-improvement',), output/f'preparation-{attempt}.session',
+                                                          output.name, getattr(args, 'inherit_env', False), readable=(output, args.project))
         workflow.check_mechanism_summaries(args, output)
         with workflow.writable_candidate(candidate):
-            run = runner.execute(command, prepare, stages.remaining(), prompt, env=environment)
+            run, credentials = runner.execute_session(command, prepare, stages.remaining(), prompt, env=environment)
+        workflow.write_json(output/f'preparation-{attempt}.environment.json', runner.environment_receipt(environment, getattr(args, 'inherit_env', False), output, credentials))
         workflow.check_mechanism_summaries(args, output)
         (output/f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
         (output/f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
@@ -177,7 +177,7 @@ def run(args, context):
     spec = entry.spec_for(args, args._loop)
     manifest = dict(context['bank_manifest'], skills=[], harness_paths=sorted(context['allowed']))
     workflow.write_json(context['manifest_path'], manifest)
-    options = dict(inherit_env=getattr(args, 'inherit_env', False), config=args.project/'ahl.json', deadline=lambda: time.monotonic() + max(0.0, stages.remaining()), **context['grading'])
+    options = dict(inherit_env=getattr(args, 'inherit_env', False), with_user_harness=getattr(args, 'with_user_harness', False), config=args.project/'ahl.json', deadline=lambda: time.monotonic() + max(0.0, stages.remaining()), **context['grading'])
     backend = ExecutorRunner(runner.evaluate, context['agent'], context['binary'], **options)
     baseline_digest = integrity.digest(context['baseline'])
     folders = {baseline_digest: context['baseline']}
