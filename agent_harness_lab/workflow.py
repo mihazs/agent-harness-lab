@@ -1280,6 +1280,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if stopped is not None:
             if _installs(args) and bank is None and attempt == base and remaining() >= stages.allotted('refinement') and trials_left >= 12:
                 rejected = stopped  # a structural defect of the candidate is the proposer's to correct once, not the end of the run
+                if not attempt: base = 1  # nothing was measured: the corrected candidate keeps its own refinement
                 continue
             result.update(stopped)
             break
@@ -1774,8 +1775,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
         # evaluation might not reproduce the weakness again and would judge the next change on nothing.
         reproduced = {t['task'] for t in trials if (t['version'], t['status']) == ('baseline', 'failed') and t['split'] != 'regression'}
-        if (_installs(args) and bank is None and attempt == base and not rebuild_controls and evaluated['inputs_unchanged'] and controls_pass
-                and reproduced - fixed and not lost):
+        if (_installs(args) and bank is None and attempt == base and not rebuild_controls and evaluated['inputs_unchanged']
+                and (controls_pass and reproduced - fixed and not lost or fixed and lost)):
+            # A candidate that fixed the weakness but broke what worked is refined too: keep the fix, stop the loss.
             refine_frozen = True
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()

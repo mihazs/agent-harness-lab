@@ -419,3 +419,22 @@ def test_a_pruning_proposer_that_declines_does_not_discard_the_measured_fix(cli,
     assert 'your candidate fixed them, so\nthose weak outcomes were reproduced: development' in seen.read_text()
     assert (code, receipt['status'], receipt.get('prune_declined')) == (0, 'applied', True), receipt
     assert 'development' in receipt['confirmation']['confirmed']
+
+
+def test_a_candidate_that_fixes_the_weakness_but_breaks_a_control_is_refined_on_the_frozen_tasks(cli):
+    # Regression (fixed-in: 0.233.4): live, the first candidate was rejected by structural validation, the second fixed the
+    # reproduced tasks but broke a regression control, and the run stopped with most of its budget left: the rejection had used
+    # the refinement attempt, and a broken control never led to a refinement. The change is now refined on the frozen tasks.
+    skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
+    half = "p('AGENTS.md').exists() and p('AGENTS.md').read_text().strip()=='half'"
+    agent = (workflow_fixture.FAKE
+             .replace("if mode == 'skill_route':", "if c['attempt']==0:\n    (candidate/'.agents/skills/alpha').mkdir(parents=True); "
+                      f"(candidate/'.agents/skills/alpha/SKILL.md').write_text({skill!r})\n   if mode == 'skill_route':")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'half' if mode=='refine' and c['attempt']==1")
+             .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      f"p('artifact').write_text('done' if good or (({half}) != phase.endswith('regression')) else 'wrong')"))
+    assert agent.count("=='half'") == 1 and agent.count("'half' if mode") == 1 and agent.count('missing.md') == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    assert receipt.get('evaluation_reused') == dict(attempt=1, reason='refined_candidate'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
