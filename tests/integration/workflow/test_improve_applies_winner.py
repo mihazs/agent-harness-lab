@@ -391,3 +391,18 @@ def test_a_pruned_candidate_goes_to_the_repeats_even_when_the_baseline_passes_it
     assert receipt['evaluation_reused'] == dict(attempt=0, reason='pruned_candidate')
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert 'development' in receipt['confirmation']['confirmed']
+
+
+def test_a_declined_first_proposal_leaves_the_retry_its_own_refinement(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, the first proposer declined, the retry's candidate reproduced the weakness without
+    # fixing it, and the run ended no_change with most of its budget left: the retry had used up the one refinement attempt.
+    seen = tmp_path / 'prompts'
+    agent = (workflow_fixture.FAKE.replace("if mode=='no_change':", "if mode=='refine' and c['attempt']==0:")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'worse' if mode=='refine' and c['attempt']==1")
+             .replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)"))
+    assert agent.count("c['attempt']==1") == 1 and agent.count("mode=='refine' and c['attempt']==0:") == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    prompts = seen.read_text()
+    assert 'An earlier session declined to propose' in prompts and 'refine once' in prompts
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'

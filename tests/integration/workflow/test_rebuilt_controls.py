@@ -5,7 +5,6 @@ attempt proposed again; the new candidate lost a control and the one that had fi
 """
 import json
 from contextlib import ExitStack
-from pathlib import Path
 
 import pytest
 
