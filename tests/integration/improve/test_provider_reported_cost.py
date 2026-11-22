@@ -12,7 +12,7 @@ from tests.support import loop_improve as li
 from tests.support.first_use_history import Home, improve
 
 FIGURES = dict(duration_ms=4200, num_turns=3, total_cost_usd=0.0123, usage=dict(input_tokens=11, output_tokens=7))
-LINE = 'ahl: provider-reported cost: preparation-0=0.0123 usd (unverified)'
+LINE = 'ahl: provider-reported cost: preparation-0=0.0123 usd, preparation-1=0.0123 usd (unverified)'  # the stub declines, so it is asked twice
 
 
 @pytest.fixture
@@ -29,11 +29,12 @@ def outcome_line(err):
 def test_a_claude_preparation_that_reports_its_figures_carries_them_in_the_receipt_and_the_terminal(home):
     home.closes_with(**FIGURES)
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis', agent='claude')
-    (call,) = receipt['model_calls']
-    assert (call['stage'], call['attempt']) == ('preparation', 0)
-    assert call['provider_reported'] == dict(profile='ahl-provider-reported-v1', source='provider_reported_unverified', controller_verified=False,
-                                             certification_authority=False, duration_ms=4200, num_turns=3, reported_cost=0.0123,
-                                             reported_cost_unit='usd', usage=dict(input_tokens=11, output_tokens=7))
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert [(call['stage'], call['attempt']) for call in receipt['model_calls']] == [('preparation', 0), ('preparation', 1)]
+    for call in receipt['model_calls']:
+        assert call['provider_reported'] == dict(profile='ahl-provider-reported-v1', source='provider_reported_unverified', controller_verified=False,
+                                                 certification_authority=False, duration_ms=4200, num_turns=3, reported_cost=0.0123,
+                                                 reported_cost_unit='usd', usage=dict(input_tokens=11, output_tokens=7))
     assert receipt['spend_label'] == 'spent_without_evaluation' and receipt['status'] == 'inconclusive'
     assert err.splitlines().count(LINE) == 1 and err.index(LINE) < err.index('ahl: outcome=')
     assert 'trials_spent=unknown cost=unknown' in outcome_line(err)  # AHL itself still measures no money
@@ -51,22 +52,26 @@ def test_a_claude_preparation_without_a_cost_has_the_other_figures_and_no_termin
 def test_a_claude_preparation_with_no_figures_has_a_call_entry_and_no_block_rather_than_zeros(home):
     home.closes_with()
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis', agent='claude')
-    assert receipt['model_calls'] == [dict(stage='preparation', attempt=0)]
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert receipt['model_calls'] == [dict(stage='preparation', attempt=0), dict(stage='preparation', attempt=1)]
     assert 'provider-reported' not in err and '"reported_cost": 0' not in json.dumps(receipt)
 
 
 def test_a_malformed_cost_never_becomes_a_number_in_the_receipt_or_the_terminal(home):
     home.closes_with(total_cost_usd='0.0123 dollars', duration_ms=-1, num_turns='3', usage='lots')
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis', agent='claude')
-    assert receipt['model_calls'] == [dict(stage='preparation', attempt=0)]
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert receipt['model_calls'] == [dict(stage='preparation', attempt=0), dict(stage='preparation', attempt=1)]
     assert 'provider-reported' not in err
 
 
 def test_a_codex_preparation_reports_token_usage_only_and_no_cost_line(home):
     code, receipt, err = improve(home, '--focus', 'synthetic hypothesis')
-    (call,) = receipt['model_calls']
-    assert call['provider_reported']['usage'] == dict(output_tokens=1)
-    assert not {'reported_cost', 'duration_ms', 'num_turns'} & call['provider_reported'].keys()
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert len(receipt['model_calls']) == 2
+    for call in receipt['model_calls']:
+        assert call['provider_reported']['usage'] == dict(output_tokens=1)
+        assert not {'reported_cost', 'duration_ms', 'num_turns'} & call['provider_reported'].keys()
     assert 'provider-reported cost' not in err and 'cost=unknown' in outcome_line(err)
 
 

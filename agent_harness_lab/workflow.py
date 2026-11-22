@@ -707,6 +707,13 @@ NOT_REPRODUCED = """Your first hypothesis was not reproduced: the baseline passe
 {feedback}). The candidate is the baseline again. Choose a different weak outcome with stronger support and stage
 the smallest change for it. Do not read previous evaluation directories or held-out results.
 """
+# The second attempt after the first proposer of an installing run declined before anything was measured.
+DECLINED = """An earlier session declined to propose, saying: {reason}
+That judgement was made without any measurement, and the evaluation, not the proposer, decides whether a change is kept: a
+candidate that does not beat the baseline is simply not installed. Stage the candidate you consider strongest now: the weak
+outcome with the best support (a user correction, an observed pattern, or a project requirement the instructions do not
+carry), with its smallest change, mechanism and falsifier. Writing no_change again ends the run without an evaluation.
+"""
 # The second attempt after the parent's structural validation rejected the first candidate before any evaluation.
 REJECTED = """Your first candidate was rejected before evaluation by the parent's validation of skill bundles and agent definitions:
 {finding}
@@ -1071,6 +1078,7 @@ def _improve(args):
     model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
     not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
+    declined = None  # the first proposer's no_change reason in an installing run: one more proposer is asked for a candidate
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
@@ -1102,7 +1110,7 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
-        if not_reproduced or prune or rejected:
+        if not_reproduced or prune or rejected or declined:
             # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
             shutil.rmtree(candidate)
             shutil.copytree(baseline, candidate)
@@ -1165,7 +1173,8 @@ Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
-                prompt += (REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
+                prompt += (DECLINED.format(reason=declined) if declined else
+                           REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
                            NOT_REPRODUCED.format(feedback=output / 'feedback-0.json') if not_reproduced else
                            PRUNE.format(feedback=output / 'feedback-0.json', tasks=', '.join(prune)) if prune else
                            f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
@@ -1210,6 +1219,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if not rebuild_controls:  # the proposer returned once
             proposals.append(proposal)
             returned.append(proposal)
+        if (proposal.get('status') == 'no_change' and _installs(args) and bank is None and not attempt
+                and remaining() >= stages.allotted('refinement') and trials_left >= 12):
+            # Declining before anything was measured proves nothing about the harness: ask once more, for a candidate.
+            declined = str(proposal.get('reason') or '')[:2000]
+            continue
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(brief.no_change_result(data))

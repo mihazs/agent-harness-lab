@@ -31,7 +31,8 @@ def test_recurring_failures_without_outcomes_go_on_to_preparation_and_say_the_lo
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home)
     assert_candidate_or_typed_reason(receipt)
-    assert (code, receipt['status'], receipt['reason'], home.model_calls) == (3, 'inconclusive', 'no_change_evidence_insufficient', 1)
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert (code, receipt['status'], receipt['reason'], home.model_calls) == (3, 'inconclusive', 'no_change_evidence_insufficient', 2)
     assert_labelled_single_pass(receipt)
 
 
@@ -48,7 +49,8 @@ def test_history_without_findings_is_labelled_and_never_called_fine_in_default_m
 def test_a_focus_that_reaches_preparation_still_ends_with_its_labelled_unevaluated_spend_in_default_mode(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home, '--focus', 'synthetic hypothesis')
-    assert home.model_calls == 1 and receipt['status'] == 'inconclusive' and receipt['spend_label'] == 'spent_without_evaluation'
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert home.model_calls == 2 and receipt['status'] == 'inconclusive' and receipt['spend_label'] == 'spent_without_evaluation'
     assert_candidate_or_typed_reason(receipt)
     assert_labelled_single_pass(receipt)
 
@@ -88,6 +90,7 @@ def test_failures_with_a_pinned_bank_and_no_outcome_evidence_stop_before_the_loo
 def test_single_pass_in_the_matrix_keeps_the_previous_typed_end_state_and_says_it_is_deprecated(home):
     for name in ('a', 'b', 'c'): home.codex(name)
     code, receipt, _ = improve(home, '--single-pass')
-    assert (receipt['status'], receipt['reason'], home.model_calls) == ('inconclusive', 'no_change_evidence_insufficient', 1)
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert (receipt['status'], receipt['reason'], home.model_calls) == ('inconclusive', 'no_change_evidence_insufficient', 2)
     assert receipt['loop'] == entry.not_used('single_pass_requested') and receipt['loop']['deprecated'] is True
     assert json.loads((Path(receipt['output'])/'workflow.json').read_text())['loop'] == receipt['loop']

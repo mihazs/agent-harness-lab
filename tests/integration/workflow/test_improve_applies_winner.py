@@ -335,3 +335,15 @@ def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(
     cli(agent=recording)
     assert 'never require concurrent or background processes' in seen.read_text()
     assert 'must never forbid a step the grader requires' in seen.read_text()  # a live task forbade the install its grader needed
+
+
+def test_a_first_proposer_that_declines_before_anything_was_measured_is_asked_once_more(cli, tmp_path):
+    # Regression (fixed-in: 0.233.2): a live installing run ended inconclusive because the first proposer wrote no_change;
+    # nothing had been evaluated, so the no change was not a result.
+    seen = tmp_path / 'prompts'
+    late = (workflow_fixture.FAKE.replace("if mode=='no_change':", "if mode=='no_change' and c['attempt']==0:")
+            .replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)"))
+    assert late.count("c['attempt']==0:") == 1
+    code, receipt, base = cli(agent=late, mode='no_change')
+    assert 'An earlier session declined to propose' in seen.read_text()
+    assert (code, receipt['status']) == (0, 'applied'), receipt
