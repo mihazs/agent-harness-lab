@@ -389,7 +389,7 @@ class TrialSurfaceTests(unittest.TestCase):
         self.assertIs(staged.pop('disableAllHooks'), True)
         self.assertTrue(all(enabled is False for enabled in staged.pop('enabledPlugins').values()))  # the runtime's own plugins too
         # fixed-in: 0.232.0. Without a write grant every Claude trial ended in permission_denied, so no candidate could score.
-        self.assertEqual(staged, {'permissions': {'defaultMode': 'acceptEdits'},
+        self.assertEqual(staged, {'permissions': {'defaultMode': 'acceptEdits', 'allow': ['Bash']},
                                   'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}})
         for staged in (mcp, settings):
             self.assertEqual(staged.parent, self.trial)

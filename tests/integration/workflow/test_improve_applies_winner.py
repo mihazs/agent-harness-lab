@@ -341,6 +341,8 @@ def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(
     assert 'must never forbid a step the grader requires' in seen.read_text()  # a live task forbade the install its grader needed
     # Regression (fixed-in: 0.233.5): a live task required git worktree add, which the trial sandbox makes impossible.
     assert 'never require git worktree add' in seen.read_text()
+    # Regression (fixed-in: 0.233.6): a live sweep found substring word bans, bare FAIL graders and corrections replayed as the prompt.
+    assert 'Match banned terms on word boundaries' in seen.read_text() and 'never put the corrective instruction' in seen.read_text()
 
 
 def test_a_first_proposer_that_declines_before_anything_was_measured_is_asked_once_more(cli, tmp_path):

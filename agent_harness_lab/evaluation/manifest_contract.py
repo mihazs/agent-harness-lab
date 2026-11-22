@@ -120,6 +120,9 @@ def check_authored(manifest, *, stage, controller_grader=True, grading=True):
         if controller_grader and 'grader' in task: fail('evaluation_manifest_controller_field_supplied', f'tasks[{index}].grader')
         for name in ('id', 'fixture'):
             if not isinstance(task[name], str) or not task[name]: fail('evaluation_manifest_field_invalid', f'tasks[{index}].{name}')
+        # The trial runner makes a directory per task id: a path separator or a duplicate is the author's to fix, not a crash.
+        if '/' in task['id'] or '\\' in task['id'] or task['id'] in ('.', '..'):
+            fail('evaluation_manifest_field_invalid', f'tasks[{index}].id')
         if task['split'] not in SPLITS: fail('evaluation_manifest_field_invalid', f'tasks[{index}].split')
         if 'prompt' in required and (not isinstance(task['prompt'], str) or not task['prompt']):
             fail('evaluation_manifest_field_invalid', f'tasks[{index}].prompt')
