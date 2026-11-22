@@ -65,7 +65,7 @@ def test_claude_preparation_session_is_pure_and_keeps_only_ahls_own_plugin(runne
     assert json.loads(Path(option(argv, '--mcp-config')).read_text()) == {'mcpServers': {}}
     settings = json.loads(Path(option(argv, '--settings')).read_text())
     assert settings['disableAllHooks'] is True and settings['permissions']['defaultMode'] == 'acceptEdits'
-    assert settings['permissions']['allow'] == [f'Read(/{tmp_path / "run"}/**)', f'Read(/{tmp_path / "project"}/**)']
+    assert settings['permissions']['allow'] == ['Bash', f'Read(/{tmp_path / "run"}/**)', f'Read(/{tmp_path / "project"}/**)']
     for flag in ('--bare', '--disable-slash-commands'):  # --bare drops the subscription login; the second hides AHL's skill
         assert flag not in argv
     assert Path(option(argv, '--settings')).parent == tmp_path / 'run/session'  # beside the run, never in the project
@@ -113,7 +113,7 @@ def test_user_harness_claude_trial_keeps_the_write_grant_and_nothing_else(runner
                                              user_harness=True)
     assert not {'--setting-sources', '--strict-mcp-config', '--mcp-config', '--bare'} & set(argv)
     settings = json.loads(Path(option(argv, '--settings')).read_text())
-    assert 'disableAllHooks' not in settings and settings['permissions'] == {'defaultMode': 'acceptEdits'}
+    assert 'disableAllHooks' not in settings and settings['permissions'] == {'defaultMode': 'acceptEdits', 'allow': ['Bash']}
     assert settings['sandbox']['enabled'] is True and option(argv, '--plugin-dir') == str(tmp_path / 'plugin')
     assert 'CODEX_HOME' not in environment
 

@@ -743,7 +743,7 @@ passes, and keep the development tasks reproducing the same weak outcomes.
 REPRODUCE = """The proposer's untested claim is in {hypothesis}: the weak outcomes it says the baseline harness produces and
 what would falsify each. This file is the one exception to the rule above about proposals. Build the development tasks to
 reproduce those weak outcomes: situations in which an agent under the baseline fails if the claim is true, one development
-task per mechanism, its id starting with that mechanism_id. Do not tell the agent in the task what the claim says it will miss.
+task per mechanism, its id starting with that mechanism_id (every character other than letters, digits, '-' and '_' replaced by '-'). Do not tell the agent in the task what the claim says it will miss.
 Add at least one heldout task that is a different instance of one of those situations. Regression tasks cover behaviour that works today. Take every
 acceptance criterion from the project's own sources (its instructions, documentation, checks and code), never from the claim:
 something the project does not itself state or enforce is not a weakness. Do not make a task hard in any other way.
@@ -1416,6 +1416,13 @@ the environment, not the harness, and both arms fail it.
 Trials run in a sandbox where .git/config, .git/hooks, .git/worktrees and .git/modules are read-only (commits, branches
 and rebases work): never require git worktree add, git config or remote changes, upstream tracking (push -u), installed
 hooks or submodules.
+The task text must state every end state the grader checks, and a grader must never require a value only an action
+impossible in the trial would produce (a pipeline run, a publish, a deploy, a registry): do not seed that output as the oracle.
+Graders print the failed check on stdout (never a bare FAIL). Match banned terms on word boundaries and only where the task
+asks for a claim, never inside provenance text or a statement that something is unavailable. State in the task text any order,
+structure or convention the grader checks, and resolve composed configuration (extends, anchors, includes) before reading it.
+A stand-in command the agent polls must finish on its first call, so no task invites sleeping. Rebuild the situation before a
+user's correction: never put the corrective instruction itself in the task text, or a baseline that follows instructions passes.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
 an installed tool), and everything the grader checks must be reachable offline from the fixture itself.
 Fixtures must be subdirectories here and graders must be outside every fixture/control directory.

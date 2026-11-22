@@ -32,7 +32,9 @@ CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
                  # Project-only setting sources leave --print in permission mode 'default', which denies every edit and
                  # command, so no trial could change its workspace. This is the counterpart of Codex's workspace-write
                  # sandbox: edits accepted, commands run only inside the runtime's sandbox, no unsandboxed fallback.
-                 'settings': ('claude-settings.json', {'disableAllHooks': True, 'permissions': {'defaultMode': 'acceptEdits'},
+                 # Without a Bash allow rule, any command the runtime's parser cannot clear (a compound `a && git commit`, a
+                 # heredoc, an f-string brace) is refused non-interactively; the sandbox, not the parser, confines the trial.
+                 'settings': ('claude-settings.json', {'disableAllHooks': True, 'permissions': {'defaultMode': 'acceptEdits', 'allow': ['Bash']},
                                                        'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True,
                                                                    'allowUnsandboxedCommands': False}})}
 CODEX_KEYS = ('model', 'model_reasoning_effort')
@@ -206,7 +208,7 @@ def claude_arguments(trial, *, readable=(), user_harness=False):
             else:
                 value['enabledPlugins'] = {f'{name}@builtin': False for name in CLAUDE_BUILTIN_PLUGINS}
             if readable:
-                value['permissions']['allow'] = [f'Read(/{Path(path).resolve()}/**)' for path in readable]  # '//' = absolute
+                value['permissions']['allow'] += [f'Read(/{Path(path).resolve()}/**)' for path in readable]  # '//' = absolute
         staged[name] = trial / filename
         _private_json(staged[name], value)
     if user_harness:
