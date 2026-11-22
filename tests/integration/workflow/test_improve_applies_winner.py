@@ -347,3 +347,14 @@ def test_a_first_proposer_that_declines_before_anything_was_measured_is_asked_on
     code, receipt, base = cli(agent=late, mode='no_change')
     assert 'An earlier session declined to propose' in seen.read_text()
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_fixed_held_out_task_counts_as_a_gain_to_confirm_in_an_installing_run(cli):
+    # Regression (fixed-in: 0.233.2): a live candidate passed every task and fixed the held-out task the baseline failed, but
+    # only development tasks counted, so the run called the claim unreproduced and discarded the candidate.
+    heldout_only = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
+                                                 "'done' if good or not phase.endswith('heldout')")
+    assert heldout_only != workflow_fixture.FAKE
+    code, receipt, base = cli(agent=heldout_only)
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert receipt['confirmation']['confirmed'] == ['heldout']

@@ -1604,14 +1604,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
+        # An installing run counts a fixed held-out task too: the fresh repeats, not this one run, decide whether it holds.
+        gain_splits = ('development', 'heldout') if _installs(args) else ('development',)
         improvement = any(t['status'] == 'failed' for t in trials
-                          if t['version'] == 'baseline' and t['split'] == 'development')
+                          if t['version'] == 'baseline' and t['split'] in gain_splits)
         # A candidate that fixed a failing development task and failed only what the baseline also fails scored higher
         # with nothing lost. That is a gain to keep, not a failed evaluation to refine away.
         partial = None
         if not candidate_pass and all(t['status'] in ('passed', 'failed') for t in trials):
             passed = {version: {t['task'] for t in trials if t['version'] == version and t['status'] == 'passed'} for version in ('baseline', 'candidate')}
-            gained = sorted(passed['candidate'] - passed['baseline'] - {t['task'] for t in trials if t['split'] != 'development'})
+            gained = sorted(passed['candidate'] - passed['baseline'] - {t['task'] for t in trials if t['split'] not in gain_splits})
             if gained and passed['baseline'] <= passed['candidate']:
                 partial = dict(gained=gained, still_failing=sorted({t['task'] for t in trials} - passed['candidate']))
         if evaluated['inputs_unchanged'] and (candidate_pass or partial) and controls_pass:
