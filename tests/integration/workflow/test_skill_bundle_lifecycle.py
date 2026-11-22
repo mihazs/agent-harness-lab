@@ -229,3 +229,14 @@ def test_shadowing_is_judged_against_the_candidate_and_skips_updates(project):
     assert reasons(stage.review())[ALPHA] == ('update', ('orphan_asset',))
     stage.remove(f'{ALPHA}/SKILL.md'); stage.remove(f'{ALPHA}/references/guide.md'); stage.remove(f'{ALPHA}/references/more.md')
     assert reasons(stage.review())['pkg/.claude/skills/alpha'] == ('create', ())
+
+
+def test_an_update_is_blocked_only_by_defects_the_baseline_bundle_did_not_have(project):
+    # Regression (fixed-in: 0.233.7): live, a project skill already linked to project files outside its folder, so every edit
+    # of it was rejected as reference_escapes_bundle and the proposer moved its guidance elsewhere.
+    write(project, f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + 'See [the app](../../../apps/web/README.md).\n')
+    stage = Stage(project)
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + 'See [the app](../../../apps/web/README.md).\nNew rule.\n')
+    assert reasons(stage.review()) == {ALPHA: ('update', ())}
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + 'See [the app](../../../apps/web/README.md).\n[gone](references/missing.md)\n')
+    assert reasons(stage.review())[ALPHA] == ('update', ('dangling_reference',))  # a defect the edit adds still blocks
