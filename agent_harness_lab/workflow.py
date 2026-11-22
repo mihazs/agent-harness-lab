@@ -1715,6 +1715,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                            for task in sorted(fixed)}, confirmed=confirmed, outcome=outcome)
                 if outcome != 'confirmed':
                     result.pop('partial_improvement', None)
+                    gains, losses = _flips(trials)
+                    unfixed = {t['task'] for t in trials if (t['version'], t['status']) == ('baseline', 'failed') and t['split'] != 'regression'} - gains
+                    if (outcome == 'improvement_not_confirmed' and bank is None and attempt == base and unfixed and not losses
+                            and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+                        # The fix did not hold, but a weakness the baseline failed is still unfixed: refine against the same frozen
+                        # tasks rather than stop. The next attempt is confirmed or rejected on its own repeats.
+                        refine_frozen = True
+                        continue
                     result.update(status='budget_exhausted' if outcome == 'improvement_confirmation_unaffordable' else
                                   'incomplete' if outcome == 'improvement_confirmation_incomplete' else 'no_change', reason=outcome)
                     break
