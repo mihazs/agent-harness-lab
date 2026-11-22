@@ -112,7 +112,8 @@ def test_findings_without_verified_outcomes_and_no_eligible_convention_go_on_to_
     first_use.path.joinpath('AGENTS.md').write_text('short\n')
     first_use.mode('no_change')
     code, result, err = first_use.improve()
-    assert first_use.calls() == 1  # an installing run is not stopped for missing outcomes; this stub proposer declines
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert first_use.calls() == 2  # an installing run is not stopped for missing outcomes; this stub proposer declines
     assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     assert 'outcome=inconclusive' in err and result['changed_files'] == []
     explained = result['findings_not_candidates']
@@ -129,7 +130,8 @@ def test_unsettled_instruction_totals_end_with_their_own_typed_cause_and_list_on
     shutil.rmtree(first_use.path/'.git')
     first_use.mode('no_change')
     code, result, err = first_use.improve()
-    assert first_use.calls() == 1
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert first_use.calls() == 2
     assert (result['status'], result['reason']) == ('inconclusive', 'no_change_evidence_insufficient')
     audit = result['findings_not_candidates']['static_audit']
     assert audit['why'] == 'instruction_totals_unsettled' and audit['why'] != 'no_eligible_convention'

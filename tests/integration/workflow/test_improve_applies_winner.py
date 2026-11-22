@@ -325,3 +325,36 @@ def test_a_measured_run_whose_candidate_matches_a_failing_baseline_ends_with_a_v
     code, receipt, base = cli(agent=WORSE, mode='worse')
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
     assert receipt['baseline_at_least_as_good'] is True and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(cli, tmp_path):
+    # Regression (fixed-in: 0.233.2): a live author built a task whose grader required work done while a suite ran in the
+    # background; no one-shot trial can do that, so both arms failed it by construction and the run ended no_change.
+    seen = tmp_path / 'prompts'
+    recording = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
+    cli(agent=recording)
+    assert 'never require concurrent or background processes' in seen.read_text()
+    assert 'must never forbid a step the grader requires' in seen.read_text()  # a live task forbade the install its grader needed
+
+
+def test_a_first_proposer_that_declines_before_anything_was_measured_is_asked_once_more(cli, tmp_path):
+    # Regression (fixed-in: 0.233.2): a live installing run ended inconclusive because the first proposer wrote no_change;
+    # nothing had been evaluated, so the no change was not a result.
+    seen = tmp_path / 'prompts'
+    late = (workflow_fixture.FAKE.replace("if mode=='no_change':", "if mode=='no_change' and c['attempt']==0:")
+            .replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)"))
+    assert late.count("c['attempt']==0:") == 1
+    code, receipt, base = cli(agent=late, mode='no_change')
+    assert 'An earlier session declined to propose' in seen.read_text()
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_fixed_held_out_task_counts_as_a_gain_to_confirm_in_an_installing_run(cli):
+    # Regression (fixed-in: 0.233.2): a live candidate passed every task and fixed the held-out task the baseline failed, but
+    # only development tasks counted, so the run called the claim unreproduced and discarded the candidate.
+    heldout_only = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
+                                                 "'done' if good or not phase.endswith('heldout')")
+    assert heldout_only != workflow_fixture.FAKE
+    code, receipt, base = cli(agent=heldout_only)
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert receipt['confirmation']['confirmed'] == ['heldout']

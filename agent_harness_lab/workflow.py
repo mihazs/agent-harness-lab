@@ -469,17 +469,23 @@ def _selftest_rejected(task, state, observed, tail=''):
         + (f' The last output of that grader, which is your own program: {tail[-400:]!r}' if tail.strip() else ''))
 
 
+# Validation messages that report a changed frozen input rather than an authoring mistake; those are never repaired.
+TAMPERING = ('differs from actual author output', 'changed frozen', 'modified its own frozen', 'modified the baseline', 'integrity mismatch')
+
+
 def _repair_request(error, reused):
     """(receipt, instruction) when another construction pass can fix this defect, else None: a shape defect the contract calls
     repairable, or one the controller found by running the author's graders (not on a refinement, whose merged tasks are frozen)."""
     typed = isinstance(error, manifest_contract.ContractError)
     if typed and error.stage != 'manifest_validation':
         return (error.receipt(), error.repair_instruction()) if error.repairable else None
-    if reused or typed and error.origin != manifest_contract.AGENT or not typed and not hasattr(error, 'hint'):
+    # Any other rejection of the authored manifest is the author's to fix, unless it reports tampering with frozen inputs.
+    hint = getattr(error, 'hint', None) or (str(error) if not typed and not any(mark in str(error) for mark in TAMPERING) else None)
+    if reused or typed and error.origin != manifest_contract.AGENT or not typed and not hint:
         return None
     return (error.receipt() if typed else {'reason': 'manifest_validation_rejected', 'stage': 'manifest_validation', 'file': manifest_contract.FILE,
-                                           'field': None, 'origin': manifest_contract.AGENT, 'next_step': error.hint},  # a repair-log reason, never an exit reason
-            'The controller ran your graders against your controls and rejected the evaluation. ' + (error.render() if typed else error.hint)
+                                           'field': None, 'origin': manifest_contract.AGENT, 'next_step': hint},  # a repair-log reason, never an exit reason
+            'The controller checked your evaluation and rejected it. ' + (error.render() if typed else hint)
             + ' Fix only this defect in /work, keep everything else, and finish.')
 
 
@@ -706,6 +712,13 @@ def _correction_excerpts(args, output):
 NOT_REPRODUCED = """Your first hypothesis was not reproduced: the baseline passed every development task built for it (see
 {feedback}). The candidate is the baseline again. Choose a different weak outcome with stronger support and stage
 the smallest change for it. Do not read previous evaluation directories or held-out results.
+"""
+# The second attempt after the first proposer of an installing run declined before anything was measured.
+DECLINED = """An earlier session declined to propose, saying: {reason}
+That judgement was made without any measurement, and the evaluation, not the proposer, decides whether a change is kept: a
+candidate that does not beat the baseline is simply not installed. Stage the candidate you consider strongest now: the weak
+outcome with the best support (a user correction, an observed pattern, or a project requirement the instructions do not
+carry), with its smallest change, mechanism and falsifier. Writing no_change again ends the run without an evaluation.
 """
 # The second attempt after the parent's structural validation rejected the first candidate before any evaluation.
 REJECTED = """Your first candidate was rejected before evaluation by the parent's validation of skill bundles and agent definitions:
@@ -1071,6 +1084,7 @@ def _improve(args):
     model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
     not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
+    declined = None  # the first proposer's no_change reason in an installing run: one more proposer is asked for a candidate
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
@@ -1102,7 +1116,7 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
-        if not_reproduced or prune or rejected:
+        if not_reproduced or prune or rejected or declined:
             # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
             shutil.rmtree(candidate)
             shutil.copytree(baseline, candidate)
@@ -1165,7 +1179,8 @@ Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
-                prompt += (REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
+                prompt += (DECLINED.format(reason=declined) if declined else
+                           REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
                            NOT_REPRODUCED.format(feedback=output / 'feedback-0.json') if not_reproduced else
                            PRUNE.format(feedback=output / 'feedback-0.json', tasks=', '.join(prune)) if prune else
                            f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
@@ -1210,6 +1225,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if not rebuild_controls:  # the proposer returned once
             proposals.append(proposal)
             returned.append(proposal)
+        if (proposal.get('status') == 'no_change' and _installs(args) and bank is None and not attempt
+                and remaining() >= stages.allotted('refinement') and trials_left >= 12):
+            # Declining before anything was measured proves nothing about the harness: ask once more, for a candidate.
+            declined = str(proposal.get('reason') or '')[:2000]
+            continue
         if proposal.get('status') == 'no_change':
             from .diagnostics import brief
             result.update(brief.no_change_result(data))
@@ -1374,6 +1394,12 @@ Work only within {evaluation}. No edits elsewhere, global settings, commits, pub
 deployment or model trials. Do not invoke ahl improve/watch recursively or spawn child agents.
 Construct {manifest_path} for the evaluator. Use skills=[] and harness_paths={sorted(paths)!r}.
 Make 3–5 isolated tasks spanning development/regression/heldout; include a known successful control.
+Every task must be achievable by one non-interactive agent session that runs its tool calls one after another, inside
+the per-trial limit (180 seconds unless the manifest declares less): never require concurrent or background processes, work done while a command runs,
+wall-clock timing, network access, credentials, a human reply or another agent. A task no agent can pass in the trial measures
+the environment, not the harness, and both arms fail it.
+The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
+an installed tool), and everything the grader checks must be reachable offline from the fixture itself.
 Fixtures must be subdirectories here and graders must be outside every fixture/control directory.
 Grade observable output/state, never source-word presence or an agent's own claims. Use synthetic
 stand-ins when production access would be needed. No credentials or production mutations.
@@ -1584,14 +1610,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
+        # An installing run counts a fixed held-out task too: the fresh repeats, not this one run, decide whether it holds.
+        gain_splits = ('development', 'heldout') if _installs(args) else ('development',)
         improvement = any(t['status'] == 'failed' for t in trials
-                          if t['version'] == 'baseline' and t['split'] == 'development')
+                          if t['version'] == 'baseline' and t['split'] in gain_splits)
         # A candidate that fixed a failing development task and failed only what the baseline also fails scored higher
         # with nothing lost. That is a gain to keep, not a failed evaluation to refine away.
         partial = None
         if not candidate_pass and all(t['status'] in ('passed', 'failed') for t in trials):
             passed = {version: {t['task'] for t in trials if t['version'] == version and t['status'] == 'passed'} for version in ('baseline', 'candidate')}
-            gained = sorted(passed['candidate'] - passed['baseline'] - {t['task'] for t in trials if t['split'] != 'development'})
+            gained = sorted(passed['candidate'] - passed['baseline'] - {t['task'] for t in trials if t['split'] not in gain_splits})
             if gained and passed['baseline'] <= passed['candidate']:
                 partial = dict(gained=gained, still_failing=sorted({t['task'] for t in trials} - passed['candidate']))
         if evaluated['inputs_unchanged'] and (candidate_pass or partial) and controls_pass:

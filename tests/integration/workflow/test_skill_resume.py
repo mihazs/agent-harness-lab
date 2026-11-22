@@ -99,7 +99,8 @@ def test_checkpoint_cannot_escape_project_scope(project):
 
 def test_resume_rejects_changed_completed_proposal(project):
     output=interrupted(project)
-    proposal=output/'preparation/proposal-0/proposal.json'
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2); the checkpoint pins the last proposal
+    proposal=output/'preparation/proposal-1/proposal.json'
     proposal.write_text('{"status":"no_change","reason":"rewritten"}')
     with pytest.raises(SystemExit) as error:
         run(['skills','invoke',str(project.project),'--resume',output.name])

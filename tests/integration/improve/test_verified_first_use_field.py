@@ -23,4 +23,5 @@ def test_verified_recurring_failures_and_static_findings_explain_no_candidate_an
     assert len(analysis['sources']) == 3 and all(source['adapter'] == 'verified_native' for source in analysis['sources'])
     assert receipt['audit_hypothesis']['hypothesis_source'] == 'static_convention'
     assert_candidate_or_typed_reason(receipt)
-    assert home.model_calls == 1 and receipt['spend_label'] == 'spent_without_evaluation'
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert home.model_calls == 2 and receipt['spend_label'] == 'spent_without_evaluation'

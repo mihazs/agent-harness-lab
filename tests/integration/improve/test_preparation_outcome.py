@@ -34,7 +34,8 @@ def test_recurring_failures_with_static_findings_that_spend_preparation_say_what
     """The field failure: usable history and static findings, preparation spent budget, nothing was evaluated."""
     staged(home)
     code, receipt, err = improve(home)
-    assert receipt['analysis']['findings'] > 0 and home.model_calls == 1
+    # a declining first proposer of an installing run is asked once more (fixed-in: 0.233.2)
+    assert receipt['analysis']['findings'] > 0 and home.model_calls == 2
     assert_candidate_or_typed_reason(receipt)
     assert receipt['spend_label'] == 'spent_without_evaluation' and 'label=spent_without_evaluation' in err
     assert receipt['preparation']['outcome'] == 'no_hypothesis'  # the scripted proposer named no typed reason
