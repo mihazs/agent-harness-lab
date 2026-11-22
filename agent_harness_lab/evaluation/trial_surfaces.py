@@ -347,3 +347,19 @@ def ambient_skill_roots(agent, environ):
     if agent == 'codex':
         return {'user': home_skills(environ)[0]}
     return None
+
+
+def strip_runtime_markers(workspace):
+    """Remove the empty `.claude/.cc-writes` directories Claude Code leaves wherever it writes, and a `.claude` they leave empty.
+
+    They are runtime bookkeeping, not the agent's work: a grader that lists new files must not see them. Only empty
+    directories are removed, so nothing the agent or the fixture wrote is lost. Returns the removed paths."""
+    removed = []
+    for marker in sorted(Path(workspace).rglob('.cc-writes'), reverse=True):
+        rel = marker.relative_to(workspace)
+        if '.git' in rel.parts or marker.parent.name != '.claude' or marker.is_symlink() or not marker.is_dir() or any(marker.iterdir()):
+            continue
+        marker.rmdir(); removed.append(rel.as_posix())
+        if not any(marker.parent.iterdir()):
+            marker.parent.rmdir(); removed.append(rel.parent.as_posix())
+    return removed

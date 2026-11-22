@@ -1413,6 +1413,9 @@ Every task must be achievable by one non-interactive agent session that runs its
 the per-trial limit (180 seconds unless the manifest declares less): never require concurrent or background processes, work done while a command runs,
 wall-clock timing, network access, credentials, a human reply or another agent. A task no agent can pass in the trial measures
 the environment, not the harness, and both arms fail it.
+Trials run in a sandbox where .git/config, .git/hooks, .git/worktrees and .git/modules are read-only (commits, branches
+and rebases work): never require git worktree add, git config or remote changes, upstream tracking (push -u), installed
+hooks or submodules.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
 an installed tool), and everything the grader checks must be reachable offline from the fixture itself.
 Fixtures must be subdirectories here and graders must be outside every fixture/control directory.

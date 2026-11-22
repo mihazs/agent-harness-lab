@@ -1019,6 +1019,8 @@ def _evaluate(args):
             if agent == 'claude':
                 from agent_harness_lab.evaluation.trial_surfaces import observed_runtime_surfaces
                 record['observed_surfaces'] = observed_runtime_surfaces(check['stdout'])  # what the session says it loaded
+                from agent_harness_lab.evaluation.trial_surfaces import strip_runtime_markers
+                record['runtime_markers_removed'] = strip_runtime_markers(workspace)  # before any grader lists the workspace
         record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
         if record['status'] == 'completed' and verify_inputs(record):
             remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
