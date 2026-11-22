@@ -438,3 +438,15 @@ def test_a_candidate_that_fixes_the_weakness_but_breaks_a_control_is_refined_on_
     assert receipt.get('evaluation_reused') == dict(attempt=1, reason='refined_candidate'), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_two_held_out_tasks_may_share_one_fixture(cli):
+    # Regression (fixed-in: 0.233.4): live, two held-out tasks used identical copies of one project snapshot with different
+    # prompts; the freshness check compared each against the set it was filling and rejected the first evaluation.
+    shared = (workflow_fixture.FAKE
+              .replace("('development','regression','heldout'))", "('development','regression','heldout','h2'))")
+              .replace("tasks.append(dict(id=split,split=split,", "tasks.append(dict(id=split,split='heldout' if split=='h2' else split,")
+              .replace("(folder/'phase').write_text(str(c['attempt'])+split)", "(folder/'phase').write_text(str(c['attempt'])+('heldout' if split=='h2' else split))"))
+    assert shared.count("'h2'") == 3, shared.count("'h2'")
+    code, receipt, base = cli(agent=shared)
+    assert (code, receipt['status']) == (0, 'applied'), receipt

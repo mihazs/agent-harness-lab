@@ -506,8 +506,9 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise ValueError('Evaluation manifest must be an object')
     if bank_sha256 is not None and manifest.get('bank_digest') != bank_sha256:
         raise ValueError('configured bank digest differs from frozen evaluation')
-    # A bank may declare shared fixtures within one held-out partition.
-    prior_heldout = set(used_heldout) if bank_sha256 is not None else used_heldout
+    # Held-out tasks of one evaluation may share a fixture (one project snapshot, different prompts); only inputs an earlier
+    # evaluation already used are stale.
+    prior_heldout = set(used_heldout)
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
     experiment=manifest.get('experiment',{})
