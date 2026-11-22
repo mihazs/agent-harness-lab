@@ -506,8 +506,9 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise ValueError('Evaluation manifest must be an object')
     if bank_sha256 is not None and manifest.get('bank_digest') != bank_sha256:
         raise ValueError('configured bank digest differs from frozen evaluation')
-    # A bank may declare shared fixtures within one held-out partition.
-    prior_heldout = set(used_heldout) if bank_sha256 is not None else used_heldout
+    # Held-out tasks of one evaluation may share a fixture (one project snapshot, different prompts); only inputs an earlier
+    # evaluation already used are stale.
+    prior_heldout = set(used_heldout)
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
     experiment=manifest.get('experiment',{})
@@ -1099,7 +1100,7 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
-    for attempt in range(1 if bank is not None else 3):
+    for attempt in range(1 if bank is not None else 4):  # at most a decline and a rejection before the measured attempt and its refinement
         if attempt > base + 1:
             break
         final_attempt = attempt
@@ -1280,6 +1281,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if stopped is not None:
             if _installs(args) and bank is None and attempt == base and remaining() >= stages.allotted('refinement') and trials_left >= 12:
                 rejected = stopped  # a structural defect of the candidate is the proposer's to correct once, not the end of the run
+                base = attempt + 1  # nothing was measured: the corrected candidate keeps its own refinement
                 continue
             result.update(stopped)
             break
@@ -1713,6 +1715,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                            for task in sorted(fixed)}, confirmed=confirmed, outcome=outcome)
                 if outcome != 'confirmed':
                     result.pop('partial_improvement', None)
+                    gains, losses = _flips(trials)
+                    unfixed = {t['task'] for t in trials if (t['version'], t['status']) == ('baseline', 'failed') and t['split'] != 'regression'} - gains
+                    if (outcome == 'improvement_not_confirmed' and bank is None and attempt == base and unfixed and not losses
+                            and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+                        # The fix did not hold, but a weakness the baseline failed is still unfixed: refine against the same frozen
+                        # tasks rather than stop. The next attempt is confirmed or rejected on its own repeats.
+                        refine_frozen = True
+                        continue
                     result.update(status='budget_exhausted' if outcome == 'improvement_confirmation_unaffordable' else
                                   'incomplete' if outcome == 'improvement_confirmation_incomplete' else 'no_change', reason=outcome)
                     break
@@ -1774,8 +1784,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
         # evaluation might not reproduce the weakness again and would judge the next change on nothing.
         reproduced = {t['task'] for t in trials if (t['version'], t['status']) == ('baseline', 'failed') and t['split'] != 'regression'}
-        if (_installs(args) and bank is None and attempt == base and not rebuild_controls and evaluated['inputs_unchanged'] and controls_pass
-                and reproduced - fixed and not lost):
+        if (_installs(args) and bank is None and attempt == base and not rebuild_controls and evaluated['inputs_unchanged']
+                and (controls_pass and reproduced - fixed and not lost or fixed and lost)):
+            # A candidate that fixed the weakness but broke what worked is refined too: keep the fix, stop the loss.
             refine_frozen = True
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()

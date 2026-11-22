@@ -205,7 +205,9 @@ def test_a_fix_the_candidate_does_not_keep_in_the_repeats_installs_nothing(cli, 
     # Regression (fixed-in: 0.232.0): one task fixed in both runs installed the candidate although another fix did not repeat.
     # Here the one fixed task is failed by the candidate in every fresh repeat, as the baseline fails it, so the first run was chance.
     code, receipt, base = cli(agent=counted(tmp_path, f"{ONE} and seen<6"))
-    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
+    # Since 0.233.4 the held-out task the baseline fails is still unfixed, so the change is refined once; the refinement gains nothing.
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='refined_candidate')
     assert receipt['confirmation']['tasks'] == {'development': dict(candidate=0, baseline=0, verdict='not_confirmed')}
     assert len(repeats(receipt)) == 9 and 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
 
@@ -214,7 +216,9 @@ def test_a_baseline_that_passes_every_repeat_stops_the_confirmation_early(cli, t
     # Regression (fixed-in: 0.232.2): a verdict is read as soon as no remaining outcome can change it; one fixed task against a
     # baseline that passes each fresh repeat cannot reach 0.05 after nine of twelve repeats, whatever the other three bring.
     code, receipt, base = cli(agent=counted(tmp_path, f"{ONE} or seen>=6"))
-    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'improvement_not_confirmed')
+    # Since 0.233.4 the held-out task the baseline fails is still unfixed, so the change is refined once; the refinement gains nothing.
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement')
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='refined_candidate')
     confirmation = receipt['confirmation']
     assert confirmation['tasks'] == {'development': dict(candidate=9, baseline=9, verdict='not_confirmed')}
     assert len(repeats(receipt)) == 9 < 12 and 'application' not in receipt and (base.project / 'AGENTS.md').read_text() == 'bad'
@@ -419,3 +423,70 @@ def test_a_pruning_proposer_that_declines_does_not_discard_the_measured_fix(cli,
     assert 'your candidate fixed them, so\nthose weak outcomes were reproduced: development' in seen.read_text()
     assert (code, receipt['status'], receipt.get('prune_declined')) == (0, 'applied', True), receipt
     assert 'development' in receipt['confirmation']['confirmed']
+
+
+def test_a_candidate_that_fixes_the_weakness_but_breaks_a_control_is_refined_on_the_frozen_tasks(cli):
+    # Regression (fixed-in: 0.233.4): live, the first candidate was rejected by structural validation, the second fixed the
+    # reproduced tasks but broke a regression control, and the run stopped with most of its budget left: the rejection had used
+    # the refinement attempt, and a broken control never led to a refinement. The change is now refined on the frozen tasks.
+    skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
+    half = "p('AGENTS.md').exists() and p('AGENTS.md').read_text().strip()=='half'"
+    agent = (workflow_fixture.FAKE
+             .replace("if mode == 'skill_route':", "if c['attempt']==0:\n    (candidate/'.agents/skills/alpha').mkdir(parents=True); "
+                      f"(candidate/'.agents/skills/alpha/SKILL.md').write_text({skill!r})\n   if mode == 'skill_route':")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'half' if mode=='refine' and c['attempt']==1")
+             .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      f"p('artifact').write_text('done' if good or (({half}) != phase.endswith('regression')) else 'wrong')"))
+    assert agent.count("=='half'") == 1 and agent.count("'half' if mode") == 1 and agent.count('missing.md') == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    assert receipt.get('evaluation_reused') == dict(attempt=1, reason='refined_candidate'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_two_held_out_tasks_may_share_one_fixture(cli):
+    # Regression (fixed-in: 0.233.4): live, two held-out tasks used identical copies of one project snapshot with different
+    # prompts; the freshness check compared each against the set it was filling and rejected the first evaluation.
+    shared = (workflow_fixture.FAKE
+              .replace("('development','regression','heldout'))", "('development','regression','heldout','h2'))")
+              .replace("tasks.append(dict(id=split,split=split,", "tasks.append(dict(id=split,split='heldout' if split=='h2' else split,")
+              .replace("(folder/'phase').write_text(str(c['attempt'])+split)", "(folder/'phase').write_text(str(c['attempt'])+('heldout' if split=='h2' else split))"))
+    assert shared.count("'h2'") == 3, shared.count("'h2'")
+    code, receipt, base = cli(agent=shared)
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_fix_that_fails_confirmation_is_refined_while_a_reproduced_weakness_is_unfixed(cli, tmp_path):
+    # Regression (fixed-in: 0.233.4): live, a candidate's one fix was a fluke (the baseline passed the repeats) while another
+    # task the baseline failed stayed unfixed; the run stopped with most of its budget left instead of refining.
+    runs = tmp_path / 'mid-dev-runs'
+    mid = "p('AGENTS.md').exists() and p('AGENTS.md').read_text().strip()=='mid'"
+    first = (f"(lambda n: (open({str(runs)!r},'w').write(str(n)), n)[1])"
+             f"((int(open({str(runs)!r}).read()) if __import__('os').path.exists({str(runs)!r}) else 0) + 1) == 1")
+    agent = (workflow_fixture.FAKE
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'mid' if mode=='refine' and c['attempt']==0")
+             .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      f"p('artifact').write_text('done' if good or phase.endswith('regression') or ({mid}) and phase.endswith('development') and {first} else 'wrong')"))
+    assert agent.count("=='mid'") == 1 and agent.count("'mid' if mode") == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    assert receipt.get('evaluation_reused') == dict(attempt=0, reason='refined_candidate'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refinement(cli):
+    # Regression (fixed-in: 0.233.4): live, the first proposer declined, the second candidate was rejected by structural
+    # validation, and the third fixed one task but broke another with no refinement left.
+    skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
+    half = "p('AGENTS.md').exists() and p('AGENTS.md').read_text().strip()=='half'"
+    agent = (workflow_fixture.FAKE
+             .replace("if mode=='no_change':", "if mode=='refine' and c['attempt']==0:")
+             .replace("if mode == 'skill_route':", "if c['attempt']==1:\n    (candidate/'.agents/skills/alpha').mkdir(parents=True); "
+                      f"(candidate/'.agents/skills/alpha/SKILL.md').write_text({skill!r})\n   if mode == 'skill_route':")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'half' if mode=='refine' and c['attempt']==2")
+             .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      f"p('artifact').write_text('done' if good or (({half}) != phase.endswith('regression')) else 'wrong')"))
+    assert agent.count("c['attempt']==2") == 1 and agent.count('missing.md') == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    assert receipt.get('evaluation_reused') == dict(attempt=2, reason='refined_candidate'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
