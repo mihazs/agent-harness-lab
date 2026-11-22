@@ -472,3 +472,21 @@ def test_a_fix_that_fails_confirmation_is_refined_while_a_reproduced_weakness_is
     assert receipt.get('evaluation_reused') == dict(attempt=0, reason='refined_candidate'), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refinement(cli):
+    # Regression (fixed-in: 0.233.4): live, the first proposer declined, the second candidate was rejected by structural
+    # validation, and the third fixed one task but broke another with no refinement left.
+    skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
+    half = "p('AGENTS.md').exists() and p('AGENTS.md').read_text().strip()=='half'"
+    agent = (workflow_fixture.FAKE
+             .replace("if mode=='no_change':", "if mode=='refine' and c['attempt']==0:")
+             .replace("if mode == 'skill_route':", "if c['attempt']==1:\n    (candidate/'.agents/skills/alpha').mkdir(parents=True); "
+                      f"(candidate/'.agents/skills/alpha/SKILL.md').write_text({skill!r})\n   if mode == 'skill_route':")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'half' if mode=='refine' and c['attempt']==2")
+             .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      f"p('artifact').write_text('done' if good or (({half}) != phase.endswith('regression')) else 'wrong')"))
+    assert agent.count("c['attempt']==2") == 1 and agent.count('missing.md') == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    assert receipt.get('evaluation_reused') == dict(attempt=2, reason='refined_candidate'), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt

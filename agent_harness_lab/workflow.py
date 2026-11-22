@@ -1100,7 +1100,7 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
-    for attempt in range(1 if bank is not None else 3):
+    for attempt in range(1 if bank is not None else 4):  # at most a decline and a rejection before the measured attempt and its refinement
         if attempt > base + 1:
             break
         final_attempt = attempt
@@ -1281,7 +1281,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if stopped is not None:
             if _installs(args) and bank is None and attempt == base and remaining() >= stages.allotted('refinement') and trials_left >= 12:
                 rejected = stopped  # a structural defect of the candidate is the proposer's to correct once, not the end of the run
-                if not attempt: base = 1  # nothing was measured: the corrected candidate keeps its own refinement
+                base = attempt + 1  # nothing was measured: the corrected candidate keeps its own refinement
                 continue
             result.update(stopped)
             break
