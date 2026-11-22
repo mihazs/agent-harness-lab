@@ -358,3 +358,64 @@ def test_a_fixed_held_out_task_counts_as_a_gain_to_confirm_in_an_installing_run(
     code, receipt, base = cli(agent=heldout_only)
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert receipt['confirmation']['confirmed'] == ['heldout']
+
+
+def test_a_control_the_baseline_fails_and_the_candidate_passes_does_not_withhold_a_confirmed_gain(cli):
+    # Regression (fixed-in: 0.233.3): a live candidate fixed the reproduced weakness in development and held-out and also
+    # passed a regression control the baseline failed; "every baseline control must pass" withheld the decision and the
+    # refinement's fresh tasks no longer reproduced the weakness. Only a control the candidate broke is a regression.
+    all_need_the_fix = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')", "'done' if good")
+    assert all_need_the_fix != workflow_fixture.FAKE
+    code, receipt, base = cli(agent=all_need_the_fix)
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert set(receipt['confirmation']['confirmed']) <= {'development', 'heldout'} and receipt['confirmation']['confirmed']
+
+
+def test_a_control_the_candidate_breaks_still_blocks(cli):
+    breaks_control = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
+                                                   "'done' if (good and not phase.endswith('regression')) or (not good and phase.endswith('regression'))")
+    code, receipt, base = cli(agent=breaks_control)
+    assert receipt['status'] != 'applied' and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_pruned_candidate_goes_to_the_repeats_even_when_the_baseline_passes_its_single_rerun(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, the pruned candidate's one rerun on the frozen tasks found an intermittent baseline
+    # passing the task attempt 0 showed fixed, and that single run ended the claim as a tie. The repeats decide instead.
+    counter = tmp_path / 'baseline-dev-runs'
+    rule = "'done' if good or phase.endswith(('regression','m2')) else 'wrong'"
+    agent = screening_agent(tmp_path / 'prompts')
+    assert agent.count(rule) == 1
+    lucky = ("('done' if (lambda n: (open(@C,'w').write(str(n)), n)[1])((int(open(@C).read()) if __import__('os').path.exists(@C) else 0) + 1) == 2 else 'wrong')"
+             " if not good and phase.endswith('development') else " + rule).replace('@C', repr(str(counter)))
+    code, receipt, base = cli(agent=agent.replace(rule, lucky))
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='pruned_candidate')
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert 'development' in receipt['confirmation']['confirmed']
+
+
+def test_a_declined_first_proposal_leaves_the_retry_its_own_refinement(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, the first proposer declined, the retry's candidate reproduced the weakness without
+    # fixing it, and the run ended no_change with most of its budget left: the retry had used up the one refinement attempt.
+    seen = tmp_path / 'prompts'
+    agent = (workflow_fixture.FAKE.replace("if mode=='no_change':", "if mode=='refine' and c['attempt']==0:")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'worse' if mode=='refine' and c['attempt']==1")
+             .replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)"))
+    assert agent.count("c['attempt']==1") == 1 and agent.count("mode=='refine' and c['attempt']==0:") == 1
+    code, receipt, base = cli(agent=agent, mode='refine')
+    prompts = seen.read_text()
+    assert 'An earlier session declined to propose' in prompts and 'refine once' in prompts
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_pruning_proposer_that_declines_does_not_discard_the_measured_fix(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, attempt 0's candidate fixed a task the baseline failed; asked to drop only the
+    # changes for the claims the baseline passed, the proposer wrote no_change and the run ended inconclusive. The measured
+    # candidate is judged on the frozen tasks instead.
+    seen = tmp_path / 'prompts'
+    agent = screening_agent(seen).replace("if mode=='no_change':", "if mode=='no_change' or c['attempt']==1:")
+    assert agent.count("c['attempt']==1:") == 1
+    code, receipt, base = cli(agent=agent)
+    assert 'your candidate fixed them, so\nthose weak outcomes were reproduced: development' in seen.read_text()
+    assert (code, receipt['status'], receipt.get('prune_declined')) == (0, 'applied', True), receipt
+    assert 'development' in receipt['confirmation']['confirmed']
