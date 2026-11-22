@@ -325,3 +325,12 @@ def test_a_measured_run_whose_candidate_matches_a_failing_baseline_ends_with_a_v
     code, receipt, base = cli(agent=WORSE, mode='worse')
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
     assert receipt['baseline_at_least_as_good'] is True and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(cli, tmp_path):
+    # Regression (fixed-in: 0.233.2): a live author built a task whose grader required work done while a suite ran in the
+    # background; no one-shot trial can do that, so both arms failed it by construction and the run ended no_change.
+    seen = tmp_path / 'prompts'
+    recording = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
+    cli(agent=recording)
+    assert 'never require concurrent or background processes' in seen.read_text()

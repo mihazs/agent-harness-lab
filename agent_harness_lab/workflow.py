@@ -1374,6 +1374,10 @@ Work only within {evaluation}. No edits elsewhere, global settings, commits, pub
 deployment or model trials. Do not invoke ahl improve/watch recursively or spawn child agents.
 Construct {manifest_path} for the evaluator. Use skills=[] and harness_paths={sorted(paths)!r}.
 Make 3–5 isolated tasks spanning development/regression/heldout; include a known successful control.
+Every task must be achievable by one non-interactive agent session that runs its tool calls one after another, inside
+the per-trial limit (180 seconds unless the manifest declares less): never require concurrent or background processes, work done while a command runs,
+wall-clock timing, network access, credentials, a human reply or another agent. A task no agent can pass in the trial measures
+the environment, not the harness, and both arms fail it.
 Fixtures must be subdirectories here and graders must be outside every fixture/control directory.
 Grade observable output/state, never source-word presence or an agent's own claims. Use synthetic
 stand-ins when production access would be needed. No credentials or production mutations.
