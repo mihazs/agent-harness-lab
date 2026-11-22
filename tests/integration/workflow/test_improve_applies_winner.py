@@ -406,3 +406,16 @@ def test_a_declined_first_proposal_leaves_the_retry_its_own_refinement(cli, tmp_
     assert 'An earlier session declined to propose' in prompts and 'refine once' in prompts
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_pruning_proposer_that_declines_does_not_discard_the_measured_fix(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, attempt 0's candidate fixed a task the baseline failed; asked to drop only the
+    # changes for the claims the baseline passed, the proposer wrote no_change and the run ended inconclusive. The measured
+    # candidate is judged on the frozen tasks instead.
+    seen = tmp_path / 'prompts'
+    agent = screening_agent(seen).replace("if mode=='no_change':", "if mode=='no_change' or c['attempt']==1:")
+    assert agent.count("c['attempt']==1:") == 1
+    code, receipt, base = cli(agent=agent)
+    assert 'your candidate fixed them, so\nthose weak outcomes were reproduced: development' in seen.read_text()
+    assert (code, receipt['status'], receipt.get('prune_declined')) == (0, 'applied', True), receipt
+    assert 'development' in receipt['confirmation']['confirmed']
