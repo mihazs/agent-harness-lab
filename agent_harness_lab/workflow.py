@@ -1086,6 +1086,7 @@ def _improve(args):
     not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
     declined = None  # the first proposer's no_change reason in an installing run: one more proposer is asked for a candidate
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
+    prune_targets = []  # tasks attempt 0 showed fixed before a prune; the pruned candidate's confirmation repeats them
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
     refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
@@ -1610,6 +1611,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
+        if _installs(args) and not controls_pass and all(t['status'] in ('passed', 'failed') for t in trials):
+            # A control guards against breaking what worked. One the baseline itself fails cannot be broken, so it blocks
+            # nothing here; only a control the baseline passed and the candidate failed is a regression.
+            outcome = {(t['task'], t['version']): t['status'] for t in trials}
+            controls_pass = not any(outcome.get((t['task'], 'baseline')) == 'passed' and outcome.get((t['task'], 'candidate')) == 'failed'
+                                    for t in trials if t['split'] == 'regression')
         # An installing run counts a fixed held-out task too: the fresh repeats, not this one run, decide whether it holds.
         gain_splits = ('development', 'heldout') if _installs(args) else ('development',)
         improvement = any(t['status'] == 'failed' for t in trials
@@ -1630,12 +1637,18 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
                     baseline, frozen, project=args.project, deadline=started+args.timeout):
                 raise ValueError('Instruction context changed during evaluation; result is stale')
+        # A pruned candidate is judged on attempt 0's frozen tasks: if it still passes the tasks attempt 0 showed fixed and
+        # loses nothing, the fresh repeats decide, not this one run, in which an intermittent baseline may happen to pass.
+        carried = (sorted(set(prune_targets) & {t['task'] for t in trials if (t['version'], t['status']) == ('candidate', 'passed')})
+                   if prune and prune_targets and attempt and _installs(args) and not _flips(trials)[1] else [])
+        if carried: improvement = True
         if evaluated['inputs_unchanged'] and controls_pass and (candidate_pass and improvement or partial):
             if partial: result['partial_improvement'] = partial
             unreproduced = sorted(t['task'] for t in trials if (t['version'], t['split'], t['status']) == ('baseline', 'development', 'passed'))
             if (_installs(args) and bank is None and not attempt and unreproduced and len(_listed(proposal, 'mechanisms')) > 1
                     and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * (len(manifest['tasks']) + 1) + 4):
                 prune = unreproduced
+                prune_targets = sorted(_flips(trials)[0])  # what attempt 0 showed fixed; the pruned candidate is confirmed on these
                 result.pop('partial_improvement', None)
                 continue
             if _installs(args):
@@ -1645,7 +1658,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 # Each task gets CONFIRM_RUNS fresh repeats and its own one-sided exact test at alpha split across the tasks
                 # (Bonferroni). A verdict is read early only when no remaining outcome could change it, so stopping early never
                 # raises the false-positive rate.
-                fixed = set(sorted(_flips(trials)[0])[:CONFIRM_TASKS])  # only these are repeated: the claim under test is the fix
+                fixed = set(sorted(_flips(trials)[0] | set(carried))[:CONFIRM_TASKS])  # only these are repeated: the claim under test is the fix
                 level = CONFIRM_ALPHA / len(fixed)
                 counts = {task: dict(candidate=0, baseline=0) for task in fixed}
                 verdict, outcome, repeats = {}, None, 0

@@ -47,21 +47,15 @@ def improve_cli(fixture, tmp_path, capsys):
     return code, json.loads(capsys.readouterr().out)
 
 
-def test_controls_the_baseline_fails_are_rebuilt_around_the_same_candidate(fixture, tmp_path, capsys):
+def test_controls_the_baseline_fails_no_longer_withhold_the_decision(fixture, tmp_path, capsys):
+    # Since 0.233.3 a control the baseline itself fails cannot be broken and blocks nothing, so the candidate that fixed a
+    # task is decided, and confirmed, on the first evaluation; no rebuild is needed.
     fixture.agent.write_text(agent(tmp_path, BROKEN_CONTROL))
     code, receipt = improve_cli(fixture, tmp_path, capsys)
     proposers, authors = calls(tmp_path)
     assert (code, receipt['status']) == (0, 'applied'), receipt
-    assert len(proposers) == 1 and len(authors) == 2  # the proposer ran once; the evaluation was built twice
-    assert receipt['controls_rebuilt'] == dict(invalid=['regression'], attempt=1)
-    assert 'not valid controls' not in authors[0] and 'not valid controls: regression.' in authors[1]
-    assert 'must pass under the baseline' in authors[1] and 'same weak outcomes' in authors[1]
-    output = Path(receipt['output'])
-    assert (output / 'candidate-1/AGENTS.md').read_text() == (output / 'candidate-0/AGENTS.md').read_text() == 'good\n'
-    claim = json.loads((output / 'preparation/evaluation-1/hypothesis.json').read_text())
-    assert claim == dict(mechanisms=['synthetic'], falsifiers=['artifact check'])
-    assert receipt['confirmation']['confirmed'] == ['development', 'heldout'] and (fixture.project / 'AGENTS.md').read_text() == 'good\n'
-    assert len(receipt['mechanism_coverage']['admission']) == 1  # one proposal, not two copies of it
+    assert len(proposers) == 1 and len(authors) == 1 and 'controls_rebuilt' not in receipt
+    assert receipt['confirmation']['confirmed'] and (fixture.project / 'AGENTS.md').read_text() == 'good\n'
 
 
 def test_a_candidate_that_also_lost_a_task_is_proposed_again_as_before(fixture, tmp_path, capsys):

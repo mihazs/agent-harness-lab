@@ -358,3 +358,36 @@ def test_a_fixed_held_out_task_counts_as_a_gain_to_confirm_in_an_installing_run(
     code, receipt, base = cli(agent=heldout_only)
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert receipt['confirmation']['confirmed'] == ['heldout']
+
+
+def test_a_control_the_baseline_fails_and_the_candidate_passes_does_not_withhold_a_confirmed_gain(cli):
+    # Regression (fixed-in: 0.233.3): a live candidate fixed the reproduced weakness in development and held-out and also
+    # passed a regression control the baseline failed; "every baseline control must pass" withheld the decision and the
+    # refinement's fresh tasks no longer reproduced the weakness. Only a control the candidate broke is a regression.
+    all_need_the_fix = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')", "'done' if good")
+    assert all_need_the_fix != workflow_fixture.FAKE
+    code, receipt, base = cli(agent=all_need_the_fix)
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert set(receipt['confirmation']['confirmed']) <= {'development', 'heldout'} and receipt['confirmation']['confirmed']
+
+
+def test_a_control_the_candidate_breaks_still_blocks(cli):
+    breaks_control = workflow_fixture.FAKE.replace("'done' if good or phase.endswith('regression')",
+                                                   "'done' if (good and not phase.endswith('regression')) or (not good and phase.endswith('regression'))")
+    code, receipt, base = cli(agent=breaks_control)
+    assert receipt['status'] != 'applied' and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_pruned_candidate_goes_to_the_repeats_even_when_the_baseline_passes_its_single_rerun(cli, tmp_path):
+    # Regression (fixed-in: 0.233.3): live, the pruned candidate's one rerun on the frozen tasks found an intermittent baseline
+    # passing the task attempt 0 showed fixed, and that single run ended the claim as a tie. The repeats decide instead.
+    counter = tmp_path / 'baseline-dev-runs'
+    rule = "'done' if good or phase.endswith(('regression','m2')) else 'wrong'"
+    agent = screening_agent(tmp_path / 'prompts')
+    assert agent.count(rule) == 1
+    lucky = ("('done' if (lambda n: (open(@C,'w').write(str(n)), n)[1])((int(open(@C).read()) if __import__('os').path.exists(@C) else 0) + 1) == 2 else 'wrong')"
+             " if not good and phase.endswith('development') else " + rule).replace('@C', repr(str(counter)))
+    code, receipt, base = cli(agent=agent.replace(rule, lucky))
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='pruned_candidate')
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert 'development' in receipt['confirmation']['confirmed']
