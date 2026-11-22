@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.233.1
+
+### Patch Changes
+
+- 8a957a9: Pure Claude trials now read the `AGENTS.md` files of the harness under test: Claude Code loads `CLAUDE.md`, not `AGENTS.md`, so with user settings excluded both arms ran without those instructions and every comparison of an `AGENTS.md` project was a tie. A trial-only `CLAUDE.md` importing `@AGENTS.md` is staged beside each `AGENTS.md` that has none, identically in both arms, hidden from `git status` and recorded as `agents_md_bridge`.
+- 4a8ef22: An installing `ahl improve` run whose final comparison was measured and not found worse ends with a verdict instead of `evaluation_failed`: `no_change` with `evaluation_no_improvement` (or `improvement_not_confirmed` when a fix showed but could not be confirmed), plus `baseline_at_least_as_good`, `candidate_lost` and `invalid_controls` where they apply.
+
 ## 0.233.0
 
 ### Minor Changes
