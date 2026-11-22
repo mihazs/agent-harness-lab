@@ -177,7 +177,10 @@ def check_file(path, *, stage, strip_digests=False, **options):
     except (OSError, ValueError) as exc:
         raise ContractError('evaluation_manifest_unreadable', stage) from exc
     stripped = strip_authored_digests(manifest) if strip_digests else 0
-    if stripped: path.write_text(json.dumps(manifest))
+    # An empty list or null declares no bundles, exactly like {}: normalizing it costs the author no repair pass.
+    emptied = isinstance(manifest, dict) and 'grader_bundles' in manifest and manifest['grader_bundles'] in ([], None)
+    if emptied: manifest['grader_bundles'] = {}
+    if stripped or emptied: path.write_text(json.dumps(manifest))
     try:
         return check_authored(manifest, stage=stage, **options), stripped
     except ContractError as error:
