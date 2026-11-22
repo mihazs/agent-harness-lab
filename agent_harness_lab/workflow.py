@@ -469,17 +469,23 @@ def _selftest_rejected(task, state, observed, tail=''):
         + (f' The last output of that grader, which is your own program: {tail[-400:]!r}' if tail.strip() else ''))
 
 
+# Validation messages that report a changed frozen input rather than an authoring mistake; those are never repaired.
+TAMPERING = ('differs from actual author output', 'changed frozen', 'modified its own frozen', 'modified the baseline', 'integrity mismatch')
+
+
 def _repair_request(error, reused):
     """(receipt, instruction) when another construction pass can fix this defect, else None: a shape defect the contract calls
     repairable, or one the controller found by running the author's graders (not on a refinement, whose merged tasks are frozen)."""
     typed = isinstance(error, manifest_contract.ContractError)
     if typed and error.stage != 'manifest_validation':
         return (error.receipt(), error.repair_instruction()) if error.repairable else None
-    if reused or typed and error.origin != manifest_contract.AGENT or not typed and not hasattr(error, 'hint'):
+    # Any other rejection of the authored manifest is the author's to fix, unless it reports tampering with frozen inputs.
+    hint = getattr(error, 'hint', None) or (str(error) if not typed and not any(mark in str(error) for mark in TAMPERING) else None)
+    if reused or typed and error.origin != manifest_contract.AGENT or not typed and not hint:
         return None
     return (error.receipt() if typed else {'reason': 'manifest_validation_rejected', 'stage': 'manifest_validation', 'file': manifest_contract.FILE,
-                                           'field': None, 'origin': manifest_contract.AGENT, 'next_step': error.hint},  # a repair-log reason, never an exit reason
-            'The controller ran your graders against your controls and rejected the evaluation. ' + (error.render() if typed else error.hint)
+                                           'field': None, 'origin': manifest_contract.AGENT, 'next_step': hint},  # a repair-log reason, never an exit reason
+            'The controller checked your evaluation and rejected it. ' + (error.render() if typed else hint)
             + ' Fix only this defect in /work, keep everything else, and finish.')
 
 

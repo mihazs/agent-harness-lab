@@ -13,8 +13,13 @@ from agent_harness_lab.workflow import _repair_request, _selftest_rejected
     (ContractError('grader_input_changed_after_freeze', 'manifest_validation', 'grader_bundles'), {'tasks': []}, False),  # a refinement keeps its merged tasks
     (ContractError('internal_contract_error', 'manifest_validation'), None, False),  # AHL's own defect is never the author's
     (_selftest_rejected('t1', 'partial', 'exited 0'), None, True),
-    (ValueError('Refinement must use fresh held-out inputs'), None, False),
-], ids=['shape', 'foreign-stage', 'infeasible', 'bundle-changed', 'refinement', 'ahl-defect', 'self-test', 'unmarked-value-error'])
+    # Regression (fixed-in: 0.233.2): a live author's non-directory task ids ended the run instead of getting a repair.
+    (ValueError('task ids must be unique simple directory names'), None, True),
+    (ValueError('Refinement must use fresh held-out inputs'), None, True),
+    (ValueError('evaluation input differs from actual author output'), None, False),  # tampering is never repaired
+    (ValueError('Evaluation construction changed frozen harness inputs'), None, False),
+], ids=['shape', 'foreign-stage', 'infeasible', 'bundle-changed', 'refinement', 'ahl-defect', 'self-test', 'task-ids',
+        'stale-heldout', 'tampered-input', 'changed-frozen'])
 def test_only_defects_the_author_can_fix_get_a_repair_request(error, reused, repairable):
     assert (_repair_request(error, reused) is not None) is repairable
 
