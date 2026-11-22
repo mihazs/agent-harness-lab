@@ -334,3 +334,4 @@ def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(
     recording = workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
     cli(agent=recording)
     assert 'never require concurrent or background processes' in seen.read_text()
+    assert 'must never forbid a step the grader requires' in seen.read_text()  # a live task forbade the install its grader needed
