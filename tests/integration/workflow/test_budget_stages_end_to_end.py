@@ -260,5 +260,7 @@ def test_an_installing_run_builds_its_refinement_evaluation_afresh(stub, capsys)
     code, receipt, run, rows = stub.run(capsys, dict(refine=True))
     # This stub's first candidate also misses the reproduced weakness, so the refinement is judged on the same frozen tasks
     # (fixed-in: 0.232.3) and nothing reused is merged into a new construction.
-    assert [row['reused'] for row in kinds(rows, 'construction')] == [0], receipt
-    assert receipt['evaluation_reused'] == {'attempt': 0, 'reason': 'refined_candidate'}
+    # Since 0.233.7 both arms failing for the identical stated reason sends the tasks back to the author once, with the same
+    # candidate; the refinement is then judged on that rebuilt evaluation's frozen tasks.
+    assert [row['reused'] for row in kinds(rows, 'construction')] == [0, 0], receipt
+    assert receipt['tasks_rechecked']['attempt'] == 1 and receipt['evaluation_reused'] == {'attempt': 1, 'reason': 'refined_candidate'}
