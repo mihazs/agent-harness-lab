@@ -1,6 +1,6 @@
 [project]
 name = "agent-harness-lab"
-version = "0.233.6"
+version = "0.233.7"
 description = "Evidence-based agent harness diagnosis, process mining, and paired evaluation"
 requires-python = ">=3.11"
 dependencies = []

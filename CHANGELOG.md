@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.233.7
+
+### Patch Changes
+
+- aaf075f: The recheck of tasks both arms fail for the identical stated reason now runs on any measured attempt, not only the first: a declined proposal and a refuted first claim no longer leave a later grader defect unchecked.
+- d57b266: The recheck of suspect tasks no longer needs the two arms to state the same reason: any claim task both arms fail with a stated grader reason goes back to the evaluation author once, since graders quote each arm's own output in their messages. A recheck lasts exactly one attempt: when its rebuilt evaluation refutes the claim, the next attempt asks the proposer again instead of rebuilding the same candidate a second time.
+- f11357f: When both arms of an installing run fail a claim task with the identical stated grader reason, the evaluation author rechecks those tasks once, with the same candidate, before the result can steer a refinement; the trial ceiling of an unconfigured run rises to 100 to leave room for it. A refinement after a rejected first candidate now gets the measured feedback instead of the rejection prompt and a reset candidate. Fixtures may no longer name absolute paths outside the workspace.
+- aaf075f: The complete control of every authored task is also graded in a workspace that holds the harness files a trial gets, so a grader that counts new or changed files in the tree is sent back to its author instead of failing every trial of both arms. The author is told to ignore those files. Two failure reasons count as the same when they differ only in the names, paths and numbers each arm put into them. A refining proposer is told never to write a rule whose only support is a failed check, nor one that contradicts another rule of the same file.
+- 8abeb37: Claude trials no longer see the sandbox's root placeholder entries as untracked files, no longer fail `git checkout -b <branch> origin/main` on the read-only `.git/config`, and can no longer read the host's `/tmp` from commands.
+
 ## 0.233.6
 
 ### Patch Changes
