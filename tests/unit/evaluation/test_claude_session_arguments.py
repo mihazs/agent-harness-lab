@@ -42,8 +42,20 @@ def test_user_harness_arguments_keep_only_the_write_grant(tmp_path):
     assert argv == ['--settings', str(tmp_path / 'claude-settings.json')]
     settings = staged(argv[1])
     assert 'disableAllHooks' not in settings and settings['permissions'] == {'defaultMode': 'acceptEdits', 'allow': ['Bash']}
-    assert settings['sandbox'] == {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}
+    assert settings['sandbox'] == {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False,
+                                   'filesystem': {'denyRead': ['/tmp']}}
     assert [path.name for path in tmp_path.iterdir()] == ['claude-settings.json']  # no MCP file: the user's servers load
+
+
+def test_trial_commands_cannot_read_the_hosts_tmp_but_authoring_sessions_keep_their_run_and_project(tmp_path):
+    # Regression (fixed-in: 0.233.7): a fixture whose instructions named an absolute host path under /tmp let the trial read
+    # the host's files, so host state changed the agent's behaviour.
+    (tmp_path / 'a').mkdir(); (tmp_path / 'b').mkdir()
+    argv = trial_surfaces.claude_arguments(tmp_path / 'a')
+    assert staged(argv[argv.index('--settings') + 1])['sandbox']['filesystem'] == {'denyRead': ['/tmp']}
+    argv = trial_surfaces.claude_arguments(tmp_path / 'b', readable=(tmp_path,))
+    assert 'filesystem' not in staged(argv[argv.index('--settings') + 1])['sandbox']
+    assert 'filesystem' in trial_surfaces.CLAUDE_STAGED['settings'][1]['sandbox']  # the shared default was not mutated
 
 
 def test_staged_settings_are_not_shared_between_calls(tmp_path):

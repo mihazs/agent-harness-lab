@@ -133,6 +133,33 @@ else:
             self.assertNotIn('Load these exact', (workspace/'prompt.txt').read_text())
         self.assertTrue(data['inputs_unchanged'])
 
+    def test_claude_trials_hide_sandbox_placeholders_and_stop_git_writing_tracking_config(self):
+        # Regression (fixed-in: 0.233.7): the sandbox's root placeholders kept `git status` dirty and broke `git add -A`, and its
+        # read-only .git/config made `git checkout -b b origin/main` fail without switching, so the commit landed on main.
+        self.use_claude_fake()
+        git = ['git', '-C', str(self.root / 'fixture'), '-c', 'user.name=t', '-c', 'user.email=t@example.invalid']
+        (self.root / 'fixture/.gitconfig').write_text('fixture file\n')  # a fixture's own file of a placeholder name stays visible
+        for command in (['init', '-q'], ['add', '.'], ['commit', '-qm', 'fixture']):
+            subprocess.run([*git, *command], check=True, capture_output=True)
+        result, data = self.run_case(agent='claude')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for trial in data['trials']:
+            self.assertIs(trial['git_tracking_disabled'], True)
+            workspace = self.root / 'out' / trial['version'] / 'case/workspace'
+            setting = subprocess.run(['git', '-C', str(workspace), 'config', '--local', 'branch.autoSetupMerge'], capture_output=True, text=True)
+            self.assertEqual(setting.stdout.strip(), 'false')
+            excluded = (workspace / '.git/info/exclude').read_text().split()
+            self.assertIn('/.bashrc', excluded)
+            self.assertNotIn('/.gitconfig', excluded)
+
+    def test_claude_trial_of_a_fixture_that_is_not_a_repository_writes_no_git_state(self):
+        self.use_claude_fake()
+        result, data = self.run_case(agent='claude')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for trial in data['trials']:
+            self.assertIs(trial['git_tracking_disabled'], False)
+            self.assertFalse((self.root / 'out' / trial['version'] / 'case/workspace/.git').exists())
+
     def test_claude_failed_result_cannot_reach_grader(self):
         self.use_claude_fake()
         _, data = self.run_case('turn_failed', agent='claude')
@@ -390,7 +417,8 @@ class TrialSurfaceTests(unittest.TestCase):
         self.assertTrue(all(enabled is False for enabled in staged.pop('enabledPlugins').values()))  # the runtime's own plugins too
         # fixed-in: 0.232.0. Without a write grant every Claude trial ended in permission_denied, so no candidate could score.
         self.assertEqual(staged, {'permissions': {'defaultMode': 'acceptEdits', 'allow': ['Bash']},
-                                  'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}})
+                                  'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False,
+                                              'filesystem': {'denyRead': ['/tmp']}}})
         for staged in (mcp, settings):
             self.assertEqual(staged.parent, self.trial)
             self.assertFalse(staged.is_relative_to(self.workspace))
