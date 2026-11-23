@@ -478,7 +478,7 @@ def test_a_fix_that_fails_confirmation_is_refined_while_a_reproduced_weakness_is
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
 
 
-def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refinement(cli):
+def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refinement(cli, tmp_path):
     # Regression (fixed-in: 0.233.4): live, the first proposer declined, the second candidate was rejected by structural
     # validation, and the third fixed one task but broke another with no refinement left.
     skill = "---\nname: alpha\ndescription: Summarize release notes\n---\nRead [the guide](references/missing.md).\n"
@@ -491,6 +491,34 @@ def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refin
              .replace("p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
                       f"p('artifact').write_text('done' if good or (({half}) != phase.endswith('regression')) else 'wrong')"))
     assert agent.count("c['attempt']==2") == 1 and agent.count('missing.md') == 1
+    seen = tmp_path / 'prompts'
+    agent = agent.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt+'\\n@@END@@\\n')")
     code, receipt, base = cli(agent=agent, mode='refine')
+    # Regression (fixed-in: 0.233.7): the refinement after a rejection was given the rejection prompt again and a candidate
+    # reset to the baseline, instead of the feedback of the measured attempt.
+    last = [prompt for prompt in seen.read_text().split('@@END@@') if 'proposal.json' in prompt and 'evaluation-construction' not in prompt][-1]
+    assert 'refine once' in last and 'was rejected before evaluation' not in last
     assert receipt.get('evaluation_reused') == dict(attempt=2, reason='refined_candidate'), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+UNREACHABLE = ("from pathlib import Path; import sys; w=Path(sys.argv[1]); ph=(w/'phase').read_text() if (w/'phase').exists() else ''\n"
+               "if ph.endswith(('development','heldout')) and not (w/'seed').exists(): print('FAIL: published digest missing'); sys.exit(1)\n"
+               "assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
+
+
+def test_a_task_both_arms_fail_for_the_identical_stated_reason_is_rechecked_by_the_author_before_any_refinement(cli, tmp_path):
+    # Regression (fixed-in: 0.233.7): live, a grader required a value no trial could produce, both arms failed it with the same
+    # message, and the controller asked the proposer to refine against it; twice the refinement wrote the grader artifact into
+    # the candidate. The author now rebuilds the evaluation first, with the same candidate, and the proposer is not asked again.
+    seen = tmp_path / 'prompts'
+    agent = (workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt+'\\n@@END@@\\n')")
+             .replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']==0: grader.write_text({UNREACHABLE!r})\n  elif not reuse: grader.write_text("))
+    assert agent.count('published digest missing') == 1
+    code, receipt, base = cli(agent=agent)
+    prompts = seen.read_text().split('@@END@@')
+    assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=1), receipt
+    assert sum('identical grader' in prompt and '- development: FAIL: published digest missing' in prompt for prompt in prompts) == 1
+    assert sum('Write' in prompt and 'proposal.json' in prompt and 'independent evaluation-construction session' not in prompt for prompt in prompts) == 1  # one proposer call
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert (Path(receipt['output']) / 'candidate-1/AGENTS.md').read_text() == (Path(receipt['output']) / 'candidate-0/AGENTS.md').read_text() == 'good\n'

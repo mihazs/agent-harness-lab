@@ -739,6 +739,15 @@ CONTROLS_INVALID = """These regression tasks of your earlier evaluation failed o
 Regression tasks must pass under the baseline harness (behaviour that works today). Build regression tasks whose graders the baseline
 passes, and keep the development tasks reproducing the same weak outcomes.
 """
+# The rebuilt evaluation of an installing run in which both arms failed a claim task with the identical grader message.
+SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation with the identical grader
+message, which usually means the task or its grader, not the harness, decided the result:
+{rows}
+Build the evaluation again for the same weak outcomes. For each task above decide whether an agent that does the task well can
+pass it from the task text and the fixture alone, inside the trial sandbox. If it cannot (the grader checks something the task
+text never states, a value only an impossible action would produce, exact wording, or a path the sandbox blocks), change the
+task or the grader so that it can; if it can, keep the task as it was.
+"""
 # What the evaluation author of an installing run is told about the proposer's claim; the candidate itself stays hidden.
 REPRODUCE = """The proposer's untested claim is in {hypothesis}: the weak outcomes it says the baseline harness produces and
 what would falsify each. This file is the one exception to the rule above about proposals. Build the development tasks to
@@ -1092,6 +1101,8 @@ def _improve(args):
     prune_targets = []  # tasks attempt 0 showed fixed before a prune; the pruned candidate's confirmation repeats them
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
+    suspect = None  # claim tasks both arms failed with the identical grader message: the author checks them once, same candidate
+    audited = False
     refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
     final_attempt = None
     proposed = None
@@ -1122,7 +1133,7 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
-        if not_reproduced or prune or rejected or declined and attempt == base:
+        if (not_reproduced or prune or (rejected or declined) and attempt == base) and not (rebuild_controls or suspect):
             # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
             shutil.rmtree(candidate)
             shutil.copytree(baseline, candidate)
@@ -1132,10 +1143,11 @@ def _improve(args):
         evaluation = prepare / f'evaluation-{base if pruned else attempt}'
         manifest_path = evaluation / 'manifest.json'
         progress('candidate_preparation', attempt=attempt + 1)
-        if rebuild_controls:
-            # The candidate stays as frozen and the proposer does not run: only the evaluation's controls are built again.
+        if rebuild_controls or suspect:
+            # The candidate stays as frozen and the proposer does not run: only the evaluation is built again.
             write_json(proposal_path, proposals[-1])
-            result['controls_rebuilt'] = dict(invalid=rebuild_controls, attempt=attempt)
+            if rebuild_controls: result['controls_rebuilt'] = dict(invalid=rebuild_controls, attempt=attempt)
+            else: result['tasks_rechecked'] = dict(tasks=sorted(suspect), attempt=attempt)
         elif controlled:
             context = role_views['proposer']
             if attempt:
@@ -1186,7 +1198,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
 '''
             if attempt:
                 prompt += (DECLINED.format(reason=declined) if declined and attempt == base else
-                           REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected else
+                           REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected and attempt == base else
                            NOT_REPRODUCED.format(feedback=output / f'feedback-{base}.json') if not_reproduced else
                            PRUNE.format(feedback=output / f'feedback-{base}.json', tasks=', '.join(prune), fixed=', '.join(prune_targets)) if prune else
                            f'Inspect development/regression feedback at {output / f"feedback-{base}.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
@@ -1228,7 +1240,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
-        if not rebuild_controls:  # the proposer returned once
+        if not (rebuild_controls or suspect):  # the proposer returned once
             proposals.append(proposal)
             returned.append(proposal)
         if proposal.get('status') == 'no_change' and _installs(args) and bank is None and prune and prune_targets and attempt > base:
@@ -1423,6 +1435,8 @@ asks for a claim, never inside provenance text or a statement that something is 
 structure or convention the grader checks, and resolve composed configuration (extends, anchors, includes) before reading it.
 A stand-in command the agent polls must finish on its first call, so no task invites sleeping. Rebuild the situation before a
 user's correction: never put the corrective instruction itself in the task text, or a baseline that follows instructions passes.
+A fixture must never name an absolute path outside the workspace (/tmp, a home directory): ship a stand-in file inside the fixture,
+because the trial can read the real machine's file at that path.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
 an installed tool), and everything the grader checks must be reachable offline from the fixture itself.
 Fixtures must be subdirectories here and graders must be outside every fixture/control directory.
@@ -1442,6 +1456,7 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                                                            for name in ('mechanisms', 'falsifiers')})
                 evaluation_prompt += REPRODUCE.format(hypothesis=evaluation / 'hypothesis.json')
                 if rebuild_controls: evaluation_prompt += CONTROLS_INVALID.format(ids=', '.join(rebuild_controls))
+                if suspect: evaluation_prompt += SUSPECT_TASKS.format(rows='\n'.join(f'- {task}: {message}' for task, message in sorted(suspect.items())))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1790,6 +1805,19 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and attempt == base and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
+        suspect = None
+        if (_installs(args) and bank is None and attempt == base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
+                and attempt + 2 < 4 and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+            # An identical grader message from both arms says the task or grader decided, not the harness. Refining against
+            # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
+            said = {(t['task'], t['version']): ' '.join(str((t.get('grader') or {}).get('stdout') or '').split())[:300]
+                    for t in trials if t['split'] != 'regression' and t['status'] == 'failed'}
+            # A grader that prints nothing gives no evidence either way, so only a stated, identical reason counts.
+            same = {task: said[task, 'baseline'] for task, version in said
+                    if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate')) == said[task, 'baseline']}
+            if same:
+                suspect, audited, base = same, True, attempt + 1
+                continue
         # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
         # evaluation might not reproduce the weakness again and would judge the next change on nothing.
