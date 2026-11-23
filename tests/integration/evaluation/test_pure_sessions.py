@@ -191,6 +191,20 @@ def test_claude_api_keys_are_dropped_when_a_subscription_login_exists(tmp_path, 
     assert runner.native_environment('claude', environ=environ)['ANTHROPIC_API_KEY'] == 'synthetic-key'  # no login: the key is the only way in
 
 
+def test_a_gateway_address_is_dropped_with_its_key_when_a_subscription_login_exists(tmp_path, runner):
+    # Regression (fixed-in: 0.233.7): live, a gateway base URL was kept while its token was dropped for the subscription
+    # login, so every stage session got 401 from the gateway and four runs in a row ended execution_error before any trial.
+    (tmp_path / '.claude').mkdir(); (tmp_path / '.claude/.credentials.json').write_text('{}')
+    environ = dict(HOME=str(tmp_path), PATH='/usr/bin', ANTHROPIC_AUTH_TOKEN='synthetic-token', ANTHROPIC_BASE_URL='https://gateway.invalid',
+                   ANTHROPIC_DEFAULT_SONNET_MODEL='gateway-alias', ANTHROPIC_MODEL='chosen-model')
+    kept = runner.native_environment('claude', environ=environ)
+    assert not {'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_SONNET_MODEL'} & set(kept)
+    assert kept['ANTHROPIC_MODEL'] == 'chosen-model'  # the user's model choice stays
+    (tmp_path / '.claude/.credentials.json').unlink()
+    kept = runner.native_environment('claude', environ=environ)  # no login: the gateway and its token stay together
+    assert (kept['ANTHROPIC_BASE_URL'], kept['ANTHROPIC_AUTH_TOKEN']) == ('https://gateway.invalid', 'synthetic-token')
+
+
 def test_a_pure_codex_preparation_session_keeps_only_the_users_model_choice(tmp_path, runner):
     (tmp_path / '.codex').mkdir()
     (tmp_path / '.codex/config.toml').write_text('model = "synthetic-model"\nmodel_reasoning_effort = "high"\n[mcp_servers.x]\ncommand = "y"\n')

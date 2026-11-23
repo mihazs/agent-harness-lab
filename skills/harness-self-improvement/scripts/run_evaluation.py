@@ -259,6 +259,10 @@ def native_environment(agent, inherit=False, environ=None):
                 auth |= {enabled} | names
     if agent == 'claude' and claude_subscription_login(source):
         auth -= {'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'}  # a key overrides the subscription login and bills the API
+        if source.get('ANTHROPIC_BASE_URL'):
+            # A gateway address belongs with the key that was just dropped: alone it sends the login to an endpoint that
+            # refuses it (401), and its model aliases mean nothing to the provider the login is for.
+            auth -= {'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'}
     return {key: value for key, value in source.items() if key in common or key in auth}
 
 
