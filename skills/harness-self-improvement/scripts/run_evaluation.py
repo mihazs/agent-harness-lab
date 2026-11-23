@@ -936,13 +936,16 @@ def _evaluate(args):
                 for f in target.rglob('*') if f.is_file()}))
         if harness_paths or skills or agent == 'claude':
             application_modules()
-            from agent_harness_lab.evaluation.trial_surfaces import hide_from_git
+            from agent_harness_lab.evaluation.trial_surfaces import disable_branch_tracking, hide_from_git, sandbox_placeholders
             staged = [*harness_paths, *(['.harness-trial'] if agent == 'claude' else []),
                       *([] if agent == 'claude' else [f'.agents/skills/{skill}' for skill in skills])]
             if agent == 'claude' and not with_user_harness:
                 from agent_harness_lab.evaluation.trial_surfaces import bridge_agents_md
                 record['agents_md_bridge'] = bridge_agents_md(workspace)  # the user's own setup bridges it otherwise
                 staged += record['agents_md_bridge']
+            if agent == 'claude':
+                staged += sandbox_placeholders(workspace)  # the sandbox mounts these at the root while commands run
+                record['git_tracking_disabled'] = disable_branch_tracking(workspace)  # .git/config is read-only in the sandbox
             hide_from_git(workspace, staged)
         environment = None
         if offline or controlled:

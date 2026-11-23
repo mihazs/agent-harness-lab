@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tomllib
 
 from agent_harness_lab import surfaces
@@ -34,9 +35,18 @@ CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
                  # sandbox: edits accepted, commands run only inside the runtime's sandbox, no unsandboxed fallback.
                  # Without a Bash allow rule, any command the runtime's parser cannot clear (a compound `a && git commit`, a
                  # heredoc, an f-string brace) is refused non-interactively; the sandbox, not the parser, confines the trial.
+                 # filesystem.denyRead hides the host's /tmp from commands (they see an empty private one, and $TMPDIR keeps
+                 # working): a fixture that names an absolute host path under /tmp must not read the host's files. The
+                 # workspace stays readable even when it lives under /tmp. Verified at Claude Code 2.1.326 on Linux only.
                  'settings': ('claude-settings.json', {'disableAllHooks': True, 'permissions': {'defaultMode': 'acceptEdits', 'allow': ['Bash']},
                                                        'sandbox': {'enabled': True, 'autoAllowBashIfSandboxed': True,
-                                                                   'allowUnsandboxedCommands': False}})}
+                                                                   'allowUnsandboxedCommands': False,
+                                                                   'filesystem': {'denyRead': ['/tmp']}}})}
+# While a command runs, Claude Code's sandbox puts these entries at the workspace root: /dev/null character devices and an
+# empty .claude/. In a git fixture they are untracked, so `git status` is never clean and `git add -A` fails with "can only
+# add regular files". Observed at 2.1.326; run_evaluation hides the ones the fixture does not already contain.
+SANDBOX_PLACEHOLDERS = ('.bash_profile', '.bashrc', '.claude', '.gitconfig', '.gitmodules', '.idea', '.mcp.json', '.profile',
+                        '.ripgreprc', '.vscode', '.zprofile', '.zshrc')
 CODEX_KEYS = ('model', 'model_reasoning_effort')
 # The documented codex exec credential override; OPENAI_API_KEY is not documented for codex exec.
 CODEX_CREDENTIAL = 'CODEX_API_KEY'
@@ -208,6 +218,7 @@ def claude_arguments(trial, *, readable=(), user_harness=False):
             else:
                 value['enabledPlugins'] = {f'{name}@builtin': False for name in CLAUDE_BUILTIN_PLUGINS}
             if readable:
+                del value['sandbox']['filesystem']  # an authoring session reads the run and project directories, wherever they are
                 value['permissions']['allow'] += [f'Read(/{Path(path).resolve()}/**)' for path in readable]  # '//' = absolute
         staged[name] = trial / filename
         _private_json(staged[name], value)
@@ -299,6 +310,18 @@ def bridge_agents_md(workspace):
     return written
 
 
+def sandbox_placeholders(workspace):
+    """SANDBOX_PLACEHOLDERS the fixture does not already contain; a fixture's own file of that name stays visible to git."""
+    return [name for name in SANDBOX_PLACEHOLDERS if not os.path.lexists(Path(workspace) / name)]
+
+
+def _git(workspace, *args):
+    # HOME is the workspace, so a fixture's own root .gitconfig would be read as the global config; ignore it.
+    return subprocess.run(['git', '-C', str(workspace), *args], capture_output=True, timeout=30,
+                          env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'GIT_CONFIG_NOSYSTEM': '1',
+                               'GIT_CONFIG_GLOBAL': os.devnull, 'HOME': str(workspace)})
+
+
 def hide_from_git(workspace, paths):
     """Keep what the trial staged out of `git status` when the fixture is a repository, so a grader that checks for a
     clean tree sees only the agent's work. Untracked paths go to .git/info/exclude; a tracked file the staging replaced is
@@ -309,13 +332,20 @@ def hide_from_git(workspace, paths):
     (git / 'info').mkdir(exist_ok=True)
     with (git / 'info' / 'exclude').open('a') as exclude:
         exclude.write(''.join('/' + path.strip('/') + '\n' for path in paths))
-    import subprocess
-    tracked = subprocess.run(['git', '-C', str(workspace), 'ls-files', '-z', '--', *paths], capture_output=True, timeout=30,
-                             env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(workspace)})
+    tracked = _git(workspace, 'ls-files', '-z', '--', *paths)
     names = [name for name in tracked.stdout.decode(errors='replace').split('\0') if name]
     if tracked.returncode == 0 and names:
-        subprocess.run(['git', '-C', str(workspace), 'update-index', '--skip-worktree', '--', *names], capture_output=True, timeout=30,
-                       env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'GIT_CONFIG_NOSYSTEM': '1', 'HOME': str(workspace)})
+        _git(workspace, 'update-index', '--skip-worktree', '--', *names)
+
+
+def disable_branch_tracking(workspace):
+    """Stop git from writing upstream tracking config when a branch is created from a remote branch; True when set.
+
+    The sandbox keeps .git/config read-only, so `git checkout -b b origin/main` made the ref, failed to lock the config and
+    left the agent on the old branch, where its commit then landed. A fixture that is not a repository is left alone."""
+    if not (Path(workspace) / '.git').is_dir():
+        return False
+    return _git(workspace, 'config', 'branch.autoSetupMerge', 'false').returncode == 0
 
 
 def harness_skill_availability(record):
