@@ -649,6 +649,23 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
                     raise _selftest_rejected(task['id'], check['state'], 'timed out or did not run' if run['timeout'] or run['exit_code'] is None
                                              else f"exited {run['exit_code']}", run['stderr'] + run['stdout'])
+                if expected and paths and remaining() > 0:
+                    # A trial workspace also holds the harness under test. The complete control must still pass there, or a
+                    # grader that walks the tree fails every trial of both arms on the staged files.
+                    from .evaluation import trial_surfaces
+                    shutil.copytree(workspace, graded, symlinks=True)
+                    try:
+                        try:
+                            trial_surfaces.stage_harness(Path(baseline), graded, sorted(paths))
+                            (graded / '.harness-trial').mkdir(exist_ok=True)
+                            trial_surfaces.hide_from_git(graded, [*sorted(paths), '.harness-trial', *trial_surfaces.bridge_agents_md(graded)])
+                        except (ValueError, OSError): staged = None  # the fixture cannot take the harness: the trial reports that itself
+                        else: staged = runner.execute(argv, path.parent, min(cap, remaining()), env=runner.native_environment('grader'))
+                    finally: shutil.rmtree(graded, ignore_errors=True)
+                    if staged is not None and (staged['timeout'] or staged['exit_code'] != 0):
+                        raise _selftest_rejected(task['id'], 'complete', 'timed out' if staged['timeout'] else f"exited {staged['exit_code']} once the workspace "
+                            'also held the harness files every trial gets (AGENTS.md, CLAUDE.md, .agents/, .claude/, .harness-trial/), which a grader must ignore',
+                            staged['stderr'] + staged['stdout'])
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
@@ -1431,6 +1448,8 @@ the environment, not the harness, and both arms fail it.
 Trials run in a sandbox where .git/config, .git/hooks, .git/worktrees and .git/modules are read-only (commits, branches
 and rebases work): never require git worktree add, git config or remote changes, upstream tracking (push -u), installed
 hooks or submodules.
+The trial workspace also holds the harness files under test (AGENTS.md, CLAUDE.md, .agents/, .claude/, .harness-trial/): a grader
+must ignore them and judge only what the task asks for, never every new or changed file in the tree.
 The task text must state every end state the grader checks, and a grader must never require a value only an action
 impossible in the trial would produce (a pipeline run, a publish, a deploy, a registry): do not seed that output as the oracle.
 Graders print the failed check on stdout (never a bare FAIL). Match banned terms on word boundaries and only where the task
@@ -1815,9 +1834,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
             said = {(t['task'], t['version']): ' '.join(str((t.get('grader') or {}).get('stdout') or '').split())[:300]
                     for t in trials if t['split'] != 'regression' and t['status'] == 'failed'}
-            # A grader that prints nothing gives no evidence either way, so only a stated, identical reason counts.
+            # A grader that prints nothing gives no evidence either way, so only a stated reason counts; it is the same
+            # reason when it differs only in the names, paths and numbers each arm's own output put into it.
+            def shape(message): return re.sub(r"\[[^\]]*\]|'[^']*'|\"[^\"]*\"|\S*[/\\]\S*|\d+", '~', message)
             same = {task: said[task, 'baseline'] for task, version in said
-                    if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate')) == said[task, 'baseline']}
+                    if version == 'baseline' and said[task, 'baseline'] and (task, 'candidate') in said
+                    and shape(said[task, 'candidate']) == shape(said[task, 'baseline'])}
             if same:
                 suspect, audited, base = same, True, attempt + 1
                 continue

@@ -503,7 +503,7 @@ def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refin
 
 
 UNREACHABLE = ("from pathlib import Path; import sys; w=Path(sys.argv[1]); ph=(w/'phase').read_text() if (w/'phase').exists() else ''\n"
-               "if ph.endswith(('development','heldout')) and not (w/'seed').exists(): print('FAIL: published digest missing'); sys.exit(1)\n"
+               "if ph.endswith(('development','heldout')) and not (w/'seed').exists(): print('FAIL: published digest missing', [(w/'AGENTS.md').read_text().strip()]); sys.exit(1)\n"
                "assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
 
 
@@ -518,7 +518,7 @@ def test_a_task_both_arms_fail_for_the_identical_stated_reason_is_rechecked_by_t
     code, receipt, base = cli(agent=agent)
     prompts = seen.read_text().split('@@END@@')
     assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=1), receipt
-    assert sum('identical grader' in prompt and '- development: FAIL: published digest missing' in prompt for prompt in prompts) == 1
+    assert sum('identical grader' in prompt and '- development: FAIL: published digest missing [' in prompt for prompt in prompts) == 1
     assert sum('Write' in prompt and 'proposal.json' in prompt and 'independent evaluation-construction session' not in prompt for prompt in prompts) == 1  # one proposer call
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (Path(receipt['output']) / 'candidate-1/AGENTS.md').read_text() == (Path(receipt['output']) / 'candidate-0/AGENTS.md').read_text() == 'good\n'
@@ -533,4 +533,24 @@ def test_the_recheck_also_runs_on_a_second_claim_after_the_first_was_refuted(cli
     assert agent.count('published digest missing') == 1 and agent.count("phase.startswith('0')") == 1
     code, receipt, base = cli(agent=agent)
     assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=2), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+WALKS_THE_TREE = ("from pathlib import Path; import sys; w=Path(sys.argv[1])\n"
+                  "extra=sorted(p.name for p in w.iterdir() if p.name not in ('artifact','original','phase'))\n"
+                  "if extra: print('FAIL: unexpected files', extra); sys.exit(1)\n"
+                  "assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
+
+
+def test_a_grader_that_counts_the_staged_harness_files_is_sent_back_before_any_trial(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): live, graders that listed new files in the workspace failed every trial of both arms on
+    # the harness files staged into it (skills, CLAUDE.md); the self-test ran on clean fixtures and never saw them.
+    seen = tmp_path / 'prompts'
+    agent = (workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt+'\\n@@END@@\\n')")
+             .replace("  if not reuse: grader.write_text(", f"  if not reuse and 'harness files every trial gets' not in prompt: grader.write_text({WALKS_THE_TREE!r})\n  elif not reuse: grader.write_text(")
+             .replace('folder.mkdir()', 'folder.mkdir(exist_ok=True)').replace('control.mkdir()', 'control.mkdir(exist_ok=True)'))  # a repair pass runs again
+    assert agent.count('unexpected files') == 1
+    code, receipt, base = cli(agent=agent)
+    repairs = [prompt for prompt in seen.read_text().split('@@END@@') if 'harness files every trial gets' in prompt and 'unexpected files' in prompt]
+    assert len(repairs) == 1 and 'on the complete control' in repairs[0], receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
