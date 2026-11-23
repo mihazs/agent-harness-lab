@@ -739,6 +739,9 @@ CONTROLS_INVALID = """These regression tasks of your earlier evaluation failed o
 Regression tasks must pass under the baseline harness (behaviour that works today). Build regression tasks whose graders the baseline
 passes, and keep the development tasks reproducing the same weak outcomes.
 """
+# Attempts of an unbanked run: a decline, a rejection, a refuted first claim, the measured attempt, one recheck of suspect
+# tasks and one refinement. The budget and `attempt > base + 1` end the loop long before, in the usual run.
+MAX_ATTEMPTS = 6
 # The rebuilt evaluation of an installing run in which both arms failed a claim task with the identical grader message.
 SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation with the identical grader
 message, which usually means the task or its grader, not the harness, decided the result:
@@ -1111,7 +1114,7 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
-    for attempt in range(1 if bank is not None else 4):  # at most a decline and a rejection before the measured attempt and its refinement
+    for attempt in range(1 if bank is not None else MAX_ATTEMPTS):
         if attempt > base + 1:
             break
         final_attempt = attempt
@@ -1806,8 +1809,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
         suspect = None
-        if (_installs(args) and bank is None and attempt == base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
-                and attempt + 2 < 4 and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+        if (_installs(args) and bank is None and attempt >= base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
+                and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
             # An identical grader message from both arms says the task or grader decided, not the harness. Refining against
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
             said = {(t['task'], t['version']): ' '.join(str((t.get('grader') or {}).get('stdout') or '').split())[:300]

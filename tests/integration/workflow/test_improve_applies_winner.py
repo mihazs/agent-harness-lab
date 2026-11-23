@@ -522,3 +522,15 @@ def test_a_task_both_arms_fail_for_the_identical_stated_reason_is_rechecked_by_t
     assert sum('Write' in prompt and 'proposal.json' in prompt and 'independent evaluation-construction session' not in prompt for prompt in prompts) == 1  # one proposer call
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (Path(receipt['output']) / 'candidate-1/AGENTS.md').read_text() == (Path(receipt['output']) / 'candidate-0/AGENTS.md').read_text() == 'good\n'
+
+
+def test_the_recheck_also_runs_on_a_second_claim_after_the_first_was_refuted(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): live, a declined proposal and a refuted claim came first, so the identical both-arm
+    # failure of the next evaluation (a grader bug) was never rechecked, with most of the budget unspent.
+    agent = (workflow_fixture.FAKE
+             .replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']==1: grader.write_text({UNREACHABLE!r})\n  elif not reuse: grader.write_text(")
+             .replace("'done' if good or phase.endswith('regression')", "'done' if good or phase.endswith('regression') or phase.startswith('0')"))
+    assert agent.count('published digest missing') == 1 and agent.count("phase.startswith('0')") == 1
+    code, receipt, base = cli(agent=agent)
+    assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=2), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
