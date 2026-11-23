@@ -498,6 +498,8 @@ def test_a_decline_then_a_rejection_still_leave_the_measured_candidate_its_refin
     # reset to the baseline, instead of the feedback of the measured attempt.
     last = [prompt for prompt in seen.read_text().split('@@END@@') if 'proposal.json' in prompt and 'evaluation-construction' not in prompt][-1]
     assert 'refine once' in last and 'was rejected before evaluation' not in last
+    # Regression (fixed-in: 0.233.7): live, a refinement fitted its rule to a grader's convention and contradicted the same file.
+    assert 'never one that contradicts another rule of the same file' in last
     assert receipt.get('evaluation_reused') == dict(attempt=2, reason='refined_candidate'), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
 
