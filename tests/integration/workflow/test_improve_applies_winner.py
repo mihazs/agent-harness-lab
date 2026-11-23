@@ -520,7 +520,7 @@ def test_a_task_both_arms_fail_for_the_identical_stated_reason_is_rechecked_by_t
     code, receipt, base = cli(agent=agent)
     prompts = seen.read_text().split('@@END@@')
     assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=1), receipt
-    assert sum('identical grader' in prompt and '- development: FAIL: published digest missing [' in prompt for prompt in prompts) == 1
+    assert sum('decided the result' in prompt and '- development: FAIL: published digest missing [' in prompt and '| changed harness: FAIL' in prompt for prompt in prompts) == 1
     assert sum('Write' in prompt and 'proposal.json' in prompt and 'independent evaluation-construction session' not in prompt for prompt in prompts) == 1  # one proposer call
     assert (code, receipt['status']) == (0, 'applied'), receipt
     assert (Path(receipt['output']) / 'candidate-1/AGENTS.md').read_text() == (Path(receipt['output']) / 'candidate-0/AGENTS.md').read_text() == 'good\n'
@@ -555,4 +555,15 @@ def test_a_grader_that_counts_the_staged_harness_files_is_sent_back_before_any_t
     code, receipt, base = cli(agent=agent)
     repairs = [prompt for prompt in seen.read_text().split('@@END@@') if 'harness files every trial gets' in prompt and 'unexpected files' in prompt]
     assert len(repairs) == 1 and 'on the complete control' in repairs[0], receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_the_recheck_does_not_need_the_two_arms_to_state_the_same_reason(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): live, a word-ban grader failed both arms and quoted each arm's own page text in its
+    # message, so the two reasons never matched and the broken task was never rechecked.
+    quoting = UNREACHABLE.replace("[(w/'AGENTS.md').read_text().strip()]", "'context: ...' + (w/'AGENTS.md').read_text().strip()*3 + ' text'")
+    assert quoting != UNREACHABLE
+    agent = workflow_fixture.FAKE.replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']==0: grader.write_text({quoting!r})\n  elif not reuse: grader.write_text(")
+    code, receipt, base = cli(agent=agent)
+    assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=1), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt

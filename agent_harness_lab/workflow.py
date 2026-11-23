@@ -759,9 +759,9 @@ passes, and keep the development tasks reproducing the same weak outcomes.
 # Attempts of an unbanked run: a decline, a rejection, a refuted first claim, the measured attempt, one recheck of suspect
 # tasks and one refinement. The budget and `attempt > base + 1` end the loop long before, in the usual run.
 MAX_ATTEMPTS = 6
-# The rebuilt evaluation of an installing run in which both arms failed a claim task with the identical grader message.
-SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation with the identical grader
-message, which usually means the task or its grader, not the harness, decided the result:
+# The rebuilt evaluation of an installing run in which both arms failed a claim task, each with a stated grader reason.
+SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation, which often means the
+task or its grader, not the harness, decided the result (the grader's reasons follow each task):
 {rows}
 Build the evaluation again for the same weak outcomes. For each task above decide whether an agent that does the task well can
 pass it from the task text and the fixture alone, inside the trial sandbox. If it cannot (the grader checks something the task
@@ -1121,7 +1121,7 @@ def _improve(args):
     prune_targets = []  # tasks attempt 0 showed fixed before a prune; the pruned candidate's confirmation repeats them
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
-    suspect = None  # claim tasks both arms failed with the identical grader message: the author checks them once, same candidate
+    suspect = None  # claim tasks both arms failed with a stated grader reason: the author checks them once, same candidate
     audited = False
     refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
     final_attempt = None
@@ -1833,16 +1833,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         suspect = None
         if (_installs(args) and bank is None and attempt >= base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
                 and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
-            # An identical grader message from both arms says the task or grader decided, not the harness. Refining against
+            # A claim task both arms fail often means the task or grader decided, not the harness. Refining against
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
             said = {(t['task'], t['version']): ' '.join(str((t.get('grader') or {}).get('stdout') or '').split())[:300]
                     for t in trials if t['split'] != 'regression' and t['status'] == 'failed'}
-            # A grader that prints nothing gives no evidence either way, so only a stated reason counts; it is the same
-            # reason when it differs only in the names, paths and numbers each arm's own output put into it.
-            def shape(message): return re.sub(r"\[[^\]]*\]|'[^']*'|\"[^\"]*\"|\S*[/\\]\S*|\d+", '~', message)
-            same = {task: said[task, 'baseline'] for task, version in said
-                    if version == 'baseline' and said[task, 'baseline'] and (task, 'candidate') in said
-                    and shape(said[task, 'candidate']) == shape(said[task, 'baseline'])}
+            # A grader that prints nothing gives no evidence either way, so only stated reasons count. The two reasons need
+            # not match: graders quote each arm's own output, and a grader that rejects every end state fails both arms anyway.
+            same = {task: said[task, 'baseline'] + (' | changed harness: ' + said[task, 'candidate'] if said[task, 'candidate'] != said[task, 'baseline'] else '')
+                    for task, version in said if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate'))}
             if same:
                 suspect, audited, base = same, True, attempt + 1
                 continue
