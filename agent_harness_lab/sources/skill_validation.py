@@ -239,6 +239,10 @@ def review_tree(baseline, candidate, original, proposed, scoped=False):
         added = [name[len(prefix):] for name in proposed if name.startswith(prefix) and name not in original]
         reasons = [] if action == 'remove' or not files else _reasons(bundle, files, added, not scoped)
         if action == 'create' and _shadowed(bundle, existing): reasons = sorted({*reasons, 'shadowed_name'})
+        if action == 'update' and reasons:
+            # A defect the baseline bundle already has (a project-relative link, say) is not the candidate's: only new ones block.
+            prior = _reasons(bundle, {name[len(prefix):]: _read(baseline, name, original) for name in before}, [], not scoped)
+            reasons = [reason for reason in reasons if reason not in prior]
         gone = sorted(before - proposed.keys()) if action == 'update' else []
         if action == 'remove' or gone:  # a removed bundle's files, or an update's deleted files, are absent from proposed
             texts = texts or {name: _read(candidate, name, proposed).decode('utf-8', 'replace') for name in proposed}
