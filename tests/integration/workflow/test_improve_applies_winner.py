@@ -567,3 +567,19 @@ def test_the_recheck_does_not_need_the_two_arms_to_state_the_same_reason(cli, tm
     code, receipt, base = cli(agent=agent)
     assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=1), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_recheck_whose_rebuilt_evaluation_refutes_the_claim_is_not_repeated(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): live, the rebuilt evaluation passed in both arms, the loop moved to another claim without
+    # clearing the recheck, and the same candidate was rebuilt and evaluated a second time with no proposer call.
+    seen = tmp_path / 'prompts'
+    agent = (workflow_fixture.FAKE.replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt+'\\n@@END@@\\n')")
+             .replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']==0: grader.write_text({UNREACHABLE!r})\n  elif not reuse: grader.write_text(")
+             .replace("'done' if good or phase.endswith('regression')", "'done' if good or phase.endswith('regression') or phase.startswith('1')"))
+    assert agent.count("phase.startswith('1')") == 1
+    code, receipt, base = cli(agent=agent)
+    prompts = seen.read_text().split('@@END@@')
+    assert receipt['tasks_rechecked']['attempt'] == 1, receipt  # not overwritten by a second rebuild
+    assert sum('decided the result' in prompt for prompt in prompts) == 1  # the author was asked to recheck once
+    assert sum('proposal.json' in prompt and 'evaluation-construction' not in prompt for prompt in prompts) == 2  # a new claim was proposed
+    assert (code, receipt['status']) == (0, 'applied'), receipt

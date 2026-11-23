@@ -1142,7 +1142,8 @@ def _improve(args):
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
-        pruned = bool(prune) or refine_frozen  # judged on attempt 0's frozen tasks, so no evaluation is constructed for it
+        rechecking, suspect = suspect, None  # one attempt only: whatever this evaluation shows, the next attempt is ordinary
+        pruned = (bool(prune) or refine_frozen) and not rechecking  # judged on the measured attempt's frozen tasks, so no evaluation is constructed for it
         preparation_trials = 1 if bank is not None or pruned else 2
         if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
@@ -1153,7 +1154,7 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
-        if (not_reproduced or prune or (rejected or declined) and attempt == base) and not (rebuild_controls or suspect):
+        if (not_reproduced or prune or (rejected or declined) and attempt == base) and not (rebuild_controls or rechecking):
             # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
             shutil.rmtree(candidate)
             shutil.copytree(baseline, candidate)
@@ -1163,11 +1164,11 @@ def _improve(args):
         evaluation = prepare / f'evaluation-{base if pruned else attempt}'
         manifest_path = evaluation / 'manifest.json'
         progress('candidate_preparation', attempt=attempt + 1)
-        if rebuild_controls or suspect:
+        if rebuild_controls or rechecking:
             # The candidate stays as frozen and the proposer does not run: only the evaluation is built again.
             write_json(proposal_path, proposals[-1])
             if rebuild_controls: result['controls_rebuilt'] = dict(invalid=rebuild_controls, attempt=attempt)
-            else: result['tasks_rechecked'] = dict(tasks=sorted(suspect), attempt=attempt)
+            else: result['tasks_rechecked'] = dict(tasks=sorted(rechecking), attempt=attempt)
         elif controlled:
             context = role_views['proposer']
             if attempt:
@@ -1263,7 +1264,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
             raise ValueError('Project harness changed during preparation; result is stale')
-        if not (rebuild_controls or suspect):  # the proposer returned once
+        if not (rebuild_controls or rechecking):  # the proposer returned once
             proposals.append(proposal)
             returned.append(proposal)
         if proposal.get('status') == 'no_change' and _installs(args) and bank is None and prune and prune_targets and attempt > base:
@@ -1481,7 +1482,7 @@ improvement budget; write manifest.json early, then refine. An overrun ends the 
                                                            for name in ('mechanisms', 'falsifiers')})
                 evaluation_prompt += REPRODUCE.format(hypothesis=evaluation / 'hypothesis.json')
                 if rebuild_controls: evaluation_prompt += CONTROLS_INVALID.format(ids=', '.join(rebuild_controls))
-                if suspect: evaluation_prompt += SUSPECT_TASKS.format(rows='\n'.join(f'- {task}: {message}' for task, message in sorted(suspect.items())))
+                if rechecking: evaluation_prompt += SUSPECT_TASKS.format(rows='\n'.join(f'- {task}: {message}' for task, message in sorted(rechecking.items())))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1830,7 +1831,6 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and attempt == base and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
-        suspect = None
         if (_installs(args) and bank is None and attempt >= base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
                 and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
             # A claim task both arms fail often means the task or grader decided, not the harness. Refining against
