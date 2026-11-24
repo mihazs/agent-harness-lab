@@ -761,3 +761,23 @@ def test_a_change_with_a_rule_nobody_measured_is_not_installed(cli, tmp_path):
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent'), receipt
     assert receipt['install_review']['verdict'] == 'unmeasured' and receipt['install_review']['conflicts'] == ['Parallel work: prefer many agents']
     assert (base.project / 'AGENTS.md').read_text() == 'bad' and receipt['confirmation']['confirmed']
+
+
+STATED = ("from pathlib import Path; import sys; w=Path(sys.argv[1])\n"
+          "if (w/'artifact').read_text()!='done': print('FAIL: artifact is not done'); sys.exit(1)\n"
+          "assert (w/'original').read_text()=='preserve'\n")
+
+
+def test_a_new_claim_after_a_prune_and_a_recheck_gets_an_evaluation_of_its_own(cli, tmp_path):
+    # Regression (fixed-in: 0.234.1): live, a pruned candidate was rechecked, the rebuilt evaluation refuted the claim, and the
+    # next proposal, about another mechanism, was judged on the rebuilt tasks of the old claim because the prune was never cleared.
+    agent = (screening_agent(tmp_path / 'prompts')
+             .replace("  if not reuse: grader.write_text(", f"  if not reuse: grader.write_text({STATED!r})\n  elif False: grader.write_text(")
+             .replace("'worse' if mode=='refine' and c['attempt']==0", "'half' if c['attempt']==1")  # the pruned candidate fixes nothing
+             .replace("'done' if good or phase.endswith(('regression','m2'))", "'done' if good or phase.endswith(('regression','m2')) or phase.startswith('2')"))
+    assert agent.count("phase.startswith('2')") == 1 and agent.count("'half' if c['attempt']==1") == 1
+    code, receipt, base = cli(agent=agent)
+    output = Path(receipt['output'])
+    assert receipt.get('rechecks_run') == 1 and receipt['tasks_rechecked']['attempt'] == 2, receipt
+    assert (output / 'preparation/evaluation-3/manifest.json').is_file(), sorted(path.name for path in (output / 'preparation').iterdir())
+    assert (code, receipt['status']) == (0, 'applied'), receipt
