@@ -426,6 +426,12 @@ def bind_instruction(args, instruction, proposal, states, manifest_path, record,
     args._instruction_scope = bound['scope']
     write_json(record, bound)
     if bound['status'] != 'valid':
+        proposed, original = states
+        if _installs(args) and all(name in surfaces.ROOT_INSTRUCTIONS for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)):
+            # A root instruction edit needs no plan: one that cannot be bound to the evaluated tasks is ignored, not a block.
+            args._instruction_scope = None
+            result['instruction_plan_ignored'] = bound['reasons']
+            return None
         result.update(status='blocked', reason='instruction_validation_blocked', instruction_reasons=bound['reasons'])
     else: check_scope(args, *states)
     return bound
@@ -758,7 +764,8 @@ passes, and keep the development tasks reproducing the same weak outcomes.
 """
 # Attempts of an unbanked run: a decline, a rejection, a refuted first claim, the measured attempt, one recheck of suspect
 # tasks and one refinement. The budget and `attempt > base + 1` end the loop long before, in the usual run.
-MAX_ATTEMPTS = 6
+MAX_ATTEMPTS = 7
+MAX_RECHECKS = 2  # a rebuilt evaluation is authored afresh and can carry a defect of its own
 # The rebuilt evaluation of an installing run in which both arms failed a claim task, each with a stated grader reason.
 SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation, which often means the
 task or its grader, not the harness, decided the result (the grader's reasons follow each task):
@@ -1122,7 +1129,7 @@ def _improve(args):
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
     suspect = None  # claim tasks both arms failed with a stated grader reason: the author checks them once, same candidate
-    audited = False
+    rechecks = 0
     refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
     final_attempt = None
     proposed = None
@@ -1270,7 +1277,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                               'Use it to see why the agent under your change still missed the weak outcome.\n'
                               'A grader message shows one evaluation\'s convention, not the project\'s: never write a rule whose only support is '
                               'that a check failed, and never one that contradicts another rule of the same file. If the weak outcome can only be '
-                              'fixed by contradicting the project\'s own rules, change that rule in place or propose no change.\n' if _installs(args) else ''))
+                              'fixed by contradicting the project\'s own rules, change that rule in place or propose no change. Add no rule for anything '
+                              'other than the weak outcomes in that feedback: a rule no task measured is refused before install.\n' if _installs(args) else ''))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1394,7 +1402,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 # The fixed comparison runs every task at the root, so it honors no task cwd.
                 instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
                                                output/f'instruction-validation-{attempt}.json', result, cwd_honored=False)
-                if instruction['status'] != 'valid': break
+                if instruction is not None and instruction['status'] != 'valid': break
             args._prerequisite_scope.bind(manifest_path,baseline,frozen)
             if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
@@ -1504,6 +1512,8 @@ asks for a claim, never inside provenance text or a statement that something is 
 structure or convention the grader checks, and resolve composed configuration (extends, anchors, includes) before reading it.
 A stand-in command the agent polls must finish on its first call, so no task invites sleeping. Rebuild the situation before a
 user's correction: never put the corrective instruction itself in the task text, or a baseline that follows instructions passes.
+A grader may require a name, file, string or format only when the task text or the fixture states it; judge behaviour, and
+accept every solution the task text allows.
 A fixture must never name an absolute path outside the workspace (/tmp, a home directory): ship a stand-in file inside the fixture,
 because the trial can read the real machine's file at that path.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
@@ -1605,7 +1615,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
             instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
                                            output/f'instruction-validation-{attempt}.json', result, cwd_honored=controlled)
-            if instruction['status'] != 'valid': break
+            if instruction is not None and instruction['status'] != 'valid': break
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
@@ -1729,6 +1739,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 if outcome is None and not confirmed:
                     dismissed = True
                     trials = [t for t in trials if t['task'] not in lost]  # the tasks the decisions below read: these proved nothing
+                    # The before/after comparison of the receipt reads the same trials, or it would still call this run regressed.
+                    single_run = dict(single_run, trials=trials, dismissed_losses=sorted(lost))
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -1850,7 +1862,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and attempt == base and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
-        if (_installs(args) and bank is None and attempt >= base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
+        if (_installs(args) and bank is None and attempt >= base and rechecks < MAX_RECHECKS and not rebuild_controls and evaluated['inputs_unchanged']
                 and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
             # A claim task both arms fail often means the task or grader decided, not the harness. Refining against
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
@@ -1861,7 +1873,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             same = {task: said[task, 'baseline'] + (' | changed harness: ' + said[task, 'candidate'] if said[task, 'candidate'] != said[task, 'baseline'] else '')
                     for task, version in said if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate'))}
             if same:
-                suspect, audited, base = same, True, attempt + 1
+                suspect, rechecks, base = same, rechecks + 1, attempt + 1
                 continue
         # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
@@ -1917,7 +1929,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
             and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])
             and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
-                                      remaining=remaining, model_calls=model_calls, progress=progress)):
+                                      remaining=remaining, model_calls=model_calls, progress=progress,
+                                      measured=[task.get('prompt', '') for task in single_run['manifest']['tasks']
+                                                if task['id'] in (result.get('confirmation') or {}).get('confirmed', ())])):
         # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
         applied = adopt_with_receipt(args.project, baseline, frozen, original, proposed, allowed_paths(args) is not None,
                                      provenance=dict(source='evaluated_candidate_apply', plan_sha256=common_plan.sha256), locked=True)

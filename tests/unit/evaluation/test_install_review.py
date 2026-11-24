@@ -3,6 +3,7 @@
 Synthetic folders and a stub runtime only; no model is called.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -112,7 +113,9 @@ def test_a_consistent_review_lets_the_install_go_on_and_its_session_is_isolated_
     assert ok and result['install_review'] == dict(verdict='consistent', reason='fits') and result['status'] == 'inconclusive'
     assert progress == ['install_review'] and [call['stage'] for call in calls] == ['install_review']
     assert calls[0]['provider_reported']['usage'] == dict(output_tokens=4)
-    assert runner.cwd == output / 'install-review' and runner.budget == 100  # the session is capped by what the run has left
+    # Regression (fixed-in: 0.234.1): the reviewer worked inside the run output, one relative path away from tasks and results.
+    assert not Path(runner.cwd).is_relative_to(output) and not Path(runner.cwd).exists() and runner.budget == 100  # capped by what the run has left
+    assert json.loads((output / 'install-review/review.json').read_text())['verdict'] == 'consistent'
     assert (runner.started[0]['plugin'], runner.started[0]['readable']) == (None, ())  # no AHL skills and no Read grant outside its own folder
     assert '===== candidate: AGENTS.md =====\ngood\n' in runner.stdin and str(output) not in runner.stdin
     assert (output / 'install-review.jsonl').is_file() and (output / 'install-review.environment.json').is_file()

@@ -432,6 +432,8 @@ def test_a_one_off_loss_with_nothing_fixed_ends_no_change(cli, tmp_path):
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
     assert receipt['regression_check']['confirmed'] == [] and receipt['regression_check']['tasks']['regression']['verdict'] == 'not_confirmed'
     assert receipt['changed_files'] == [] and (base.project / 'AGENTS.md').read_text() == 'bad'
+    # Regression (fixed-in: 0.234.1): the receipt still called the run candidate_regressed beside its no_change status.
+    assert receipt.get('before_after', {}).get('verdict') != 'candidate_regressed', receipt.get('before_after')
 
 
 def test_a_one_off_loss_on_the_last_attempt_ends_no_change_not_blocked(cli, tmp_path):
@@ -711,7 +713,7 @@ def test_a_reviewer_session_that_fails_installs_nothing(cli):
 
 def test_the_reviewer_sees_the_harness_files_and_no_evaluation_material(cli, tmp_path):
     # Regression (fixed-in: 0.233.8): the reviewer is independent. It gets the baseline text, the candidate text and their diff, in
-    # a folder of its own: no task, grader, result, proposal or path of the run.
+    # a folder of its own: no grader, result, proposal or path of the run.
     record = tmp_path / 'review-given'
     code, receipt, base = cli(agent=reviewing(json.dumps(dict(verdict='consistent', reason='synthetic')), record))
     given = json.loads(record.read_text())
@@ -722,7 +724,40 @@ def test_the_reviewer_sees_the_harness_files_and_no_evaluation_material(cli, tmp
     assert '-bad' in given['prompt'] and '+good' in given['prompt']
     material = {name: body.decode(errors='replace') for name, body in _everything_written(output / 'preparation').items()}
     assert any('Produce the synthetic artifact' in body for body in material.values())  # the evaluation exists on disk, so its absence below means something
-    for private in ('Produce the synthetic artifact', 'grade.py', 'artifact check', 'heldout', 'development', 'regression', 'results.json', 'manifest',
+    # Since 0.234.1 it also gets the instructions of the tasks whose gain was confirmed, so a rule nobody measured can be refused.
+    assert given['prompt'].count('===== measured task') == 2 and 'Produce the synthetic artifact' in given['prompt']
+    for private in ('grade.py', 'artifact check', 'heldout', 'development', 'regression', 'results.json', 'manifest',
                     'mechanisms', 'falsifiers', str(output), str(base.root)):
         assert private not in given['prompt'], private
     assert (output / 'install-review').is_dir() and sorted(path.name for path in (output / 'install-review').iterdir()) == ['review.json']
+
+
+def test_a_rebuilt_evaluation_with_a_defect_of_its_own_is_rechecked_once_more(cli, tmp_path):
+    # Regression (fixed-in: 0.234.1): live, the one recheck repaired a grader and a later evaluation of the same run brought a
+    # second batch of grader defects that nothing rechecked, so the run ended on an unmeasurable evaluation.
+    agent = workflow_fixture.FAKE.replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']<2: grader.write_text({UNREACHABLE!r})\n  elif not reuse: grader.write_text(")
+    code, receipt, base = cli(agent=agent)
+    assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=2), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_root_instruction_edit_is_not_blocked_by_an_optional_plan_that_does_not_validate(cli):
+    # Regression (fixed-in: 0.234.1): live, a proposer attached a plan naming required text that neither version carried, and
+    # an AGENTS.md-only candidate ended blocked / instruction_validation_blocked after an evaluation, with the budget unspent.
+    plan = ("proposal['instruction_plan']=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd='.',fallback_filenames=[]),"
+            "required=[dict(id='absent',text='synthetic required text')])\n   ")
+    agent = workflow_fixture.FAKE.replace("(evaluation/'proposal.json').write_text(json.dumps(proposal))", plan + "(evaluation/'proposal.json').write_text(json.dumps(proposal))")
+    assert agent.count("id='absent'") == 2
+    code, receipt, base = cli(agent=agent)
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
+
+
+def test_a_change_with_a_rule_nobody_measured_is_not_installed(cli, tmp_path):
+    # Regression (fixed-in: 0.234.1): live, a confirmed candidate carried a new section that no task measured, and the review,
+    # which saw only the files, called it consistent. The reviewer now sees what was measured and may answer `unmeasured`.
+    record = tmp_path / 'review-given'
+    answer = json.dumps(dict(verdict='unmeasured', reason='synthetic rider', conflicts=['Parallel work: prefer many agents']))
+    code, receipt, base = cli(agent=reviewing(answer, record))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent'), receipt
+    assert receipt['install_review']['verdict'] == 'unmeasured' and receipt['install_review']['conflicts'] == ['Parallel work: prefer many agents']
+    assert (base.project / 'AGENTS.md').read_text() == 'bad' and receipt['confirmation']['confirmed']

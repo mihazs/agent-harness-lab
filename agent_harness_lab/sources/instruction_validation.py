@@ -706,5 +706,9 @@ def hook(args, baseline, candidate, original, proposed, proposal, agent, *, dead
         try: parse_plan(plan)
         except (ValueError, TypeError, KeyError): return None
     document = validate(baseline, candidate, plan, runtime=RUNTIMES.get(agent), project=args.project, deadline=deadline)
+    if not nested and lenient and document.get('status') != 'valid':
+        # The same holds for a plan that parses but does not validate (required text active in neither version, say): a root
+        # instruction edit is measured by the evaluation, and the optional plan the proposer attached must not block it.
+        return None
     args._instruction_scope = document.get('scope')
     return document
