@@ -555,6 +555,7 @@ class TestFakeRuntime(FakeRuntimeCase):
     def test_trials_never_run_in_a_checkout_or_over_an_input(self, place):
         checkout = self.root / 'checkout'
         (checkout / '.git').mkdir(parents=True)
+        (checkout / '.git/HEAD').write_text('ref: refs/heads/main\n')  # since 0.234.3 an empty .git directory is no checkout
         output, protected = dict(checkout=(checkout / 'out', ()), fixture=(self.fixture / 'out', (self.fixture,)),
                                  root=(self.root, (self.fixture,)))[place]
         with pytest.raises(ValueError):
