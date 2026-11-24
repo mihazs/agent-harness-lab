@@ -426,6 +426,12 @@ def bind_instruction(args, instruction, proposal, states, manifest_path, record,
     args._instruction_scope = bound['scope']
     write_json(record, bound)
     if bound['status'] != 'valid':
+        proposed, original = states
+        if _installs(args) and all(name in surfaces.ROOT_INSTRUCTIONS for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)):
+            # A root instruction edit needs no plan: one that cannot be bound to the evaluated tasks is ignored, not a block.
+            args._instruction_scope = None
+            result['instruction_plan_ignored'] = bound['reasons']
+            return None
         result.update(status='blocked', reason='instruction_validation_blocked', instruction_reasons=bound['reasons'])
     else: check_scope(args, *states)
     return bound
@@ -1395,7 +1401,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 # The fixed comparison runs every task at the root, so it honors no task cwd.
                 instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
                                                output/f'instruction-validation-{attempt}.json', result, cwd_honored=False)
-                if instruction['status'] != 'valid': break
+                if instruction is not None and instruction['status'] != 'valid': break
             args._prerequisite_scope.bind(manifest_path,baseline,frozen)
             if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
@@ -1608,7 +1614,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
             instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
                                            output/f'instruction-validation-{attempt}.json', result, cwd_honored=controlled)
-            if instruction['status'] != 'valid': break
+            if instruction is not None and instruction['status'] != 'valid': break
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)

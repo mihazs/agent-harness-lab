@@ -737,3 +737,14 @@ def test_a_rebuilt_evaluation_with_a_defect_of_its_own_is_rechecked_once_more(cl
     code, receipt, base = cli(agent=agent)
     assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=2), receipt
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_root_instruction_edit_is_not_blocked_by_an_optional_plan_that_does_not_validate(cli):
+    # Regression (fixed-in: 0.234.1): live, a proposer attached a plan naming required text that neither version carried, and
+    # an AGENTS.md-only candidate ended blocked / instruction_validation_blocked after an evaluation, with the budget unspent.
+    plan = ("proposal['instruction_plan']=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd='.',fallback_filenames=[]),"
+            "required=[dict(id='absent',text='synthetic required text')])\n   ")
+    agent = workflow_fixture.FAKE.replace("(evaluation/'proposal.json').write_text(json.dumps(proposal))", plan + "(evaluation/'proposal.json').write_text(json.dumps(proposal))")
+    assert agent.count("id='absent'") == 2
+    code, receipt, base = cli(agent=agent)
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
