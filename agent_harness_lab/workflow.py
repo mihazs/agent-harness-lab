@@ -1131,6 +1131,49 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     args._authored_digest_ignored, args._construction_seconds = 0, 0.0
     reuse = None
+
+    def repeat(tasks, tag, ahead, behind):
+        """Fresh repeats of `tasks` in both arms, each task read with its own one-sided exact test that arm `ahead` passes more
+        often than arm `behind` at alpha split across the tasks (Bonferroni). A verdict is read early only when no remaining
+        outcome could change it, so stopping early never raises the false-positive rate. Only fresh repeats count: the first
+        run was selected for having flipped, so pooling it would bias the test."""
+        nonlocal trials_left
+        level = CONFIRM_ALPHA / len(tasks)
+        counts = {task: dict(candidate=0, baseline=0) for task in tasks}
+        verdict, outcome, repeats = {}, None, 0
+        for run in range(1, CONFIRM_RUNS + 1):
+            pending = sorted(task for task in tasks if task not in verdict)
+            if not pending: break
+            if 2 * len(pending) > trials_left or remaining() <= 0:
+                outcome = 'improvement_confirmation_unaffordable'
+                break
+            trials_left -= 2 * len(pending)
+            keep = lambda rows, key: [row for row in rows if row[key] in pending]  # a decided task is not run again
+            write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
+                grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
+                **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in pending}} if 'grader_bundles' in manifest else {})))
+            repeats = run
+            # A separate namespace: the plan below still binds the primary run through `options`.
+            second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
+                'output': str(output / f'evaluation-{attempt}-{tag}-{run}'), 'parent_deadline': time.monotonic() + remaining()})
+            progress('evaluation_repeat', attempt=attempt + 1, run=run)
+            with manifest_contract.boundary('evaluation'), stages.charge('trials'):
+                runner.evaluate(second)
+            again = json.loads((Path(second.output) / 'results.json').read_text())
+            protected[evaluation] = runner.digest(evaluation)
+            if (not all(t['status'] in ('passed', 'failed') for t in again['trials']) or not again['inputs_unchanged']
+                    or grader_fingerprint(manifest_path) != grader_before):  # an ungraded or unfaithful repeat proves nothing
+                outcome = 'improvement_confirmation_incomplete'
+                break
+            for t in again['trials']:
+                if t['task'] in counts and t['status'] == 'passed': counts[t['task']][t['version']] += 1
+            left = CONFIRM_RUNS - run
+            for task in pending:
+                a, b = counts[task][ahead], counts[task][behind]
+                if _one_sided_exact(a, b + left, CONFIRM_RUNS) <= level: verdict[task] = True   # holds whatever comes next
+                elif _one_sided_exact(a + left, b, CONFIRM_RUNS) > level: verdict[task] = False  # cannot be reached any more
+        return counts, verdict, outcome, repeats, level
+
     for attempt in range(1 if bank is not None else MAX_ATTEMPTS):
         if attempt > base + 1:
             break
@@ -1673,6 +1716,19 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason=vacuity.REASON)
             break
+        lost, dismissed = _flips(trials)[1], False
+        if _installs(args) and bank is None and lost and evaluated['inputs_unchanged'] and all(t['status'] in ('passed', 'failed') for t in trials):
+            # A loss seen once is no more trusted than a fix seen once (a faulty grader or run-to-run noise can cause it): the lost
+            # tasks are repeated in both arms, each read the other way round, and only a reproduced loss counts. Unaffordable or
+            # unfaithful repeats leave the run as it was. When no loss reproduces, the lost tasks drop out of the decisions below.
+            counts, verdict, outcome, repeats, _ = repeat(lost, 'regress', 'baseline', 'candidate')
+            if repeats:
+                confirmed = sorted(task for task, ok in verdict.items() if ok)
+                result['regression_check'] = dict(repeats_run=repeats, confirmed=confirmed,
+                    tasks={task: dict(counts[task], verdict={True: 'confirmed', False: 'not_confirmed'}.get(verdict.get(task), 'undecided')) for task in sorted(lost)})
+                if outcome is None and not confirmed:
+                    dismissed = True
+                    trials = [t for t in trials if t['task'] not in lost]  # the tasks the decisions below read: these proved nothing
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -1719,45 +1775,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if _installs(args):
                 # One run per arm is one observation and agents vary between runs, so the fixed tasks are run again until
                 # the candidate's pass rate beats the baseline's by a one-sided exact test, or that can no longer happen.
-                # Only fresh repeats count: the first run was selected for having flipped, so pooling it would bias the test.
-                # Each task gets CONFIRM_RUNS fresh repeats and its own one-sided exact test at alpha split across the tasks
-                # (Bonferroni). A verdict is read early only when no remaining outcome could change it, so stopping early never
-                # raises the false-positive rate.
                 fixed = set(sorted(_flips(trials)[0] | set(carried))[:CONFIRM_TASKS])  # only these are repeated: the claim under test is the fix
-                level = CONFIRM_ALPHA / len(fixed)
-                counts = {task: dict(candidate=0, baseline=0) for task in fixed}
-                verdict, outcome, repeats = {}, None, 0
-                for run in range(1, CONFIRM_RUNS + 1):
-                    pending = sorted(task for task in fixed if task not in verdict)
-                    if not pending: break
-                    if 2 * len(pending) > trials_left or remaining() <= 0:
-                        outcome = 'improvement_confirmation_unaffordable'
-                        break
-                    trials_left -= 2 * len(pending)
-                    keep = lambda rows, key: [row for row in rows if row[key] in pending]  # a decided task is not run again
-                    write_json(evaluation / 'manifest-confirm.json', dict(manifest, tasks=keep(manifest['tasks'], 'id'),
-                        grader_self_tests=keep(manifest['grader_self_tests'], 'task'), budget_seconds=remaining(),
-                        **({'grader_bundles': {k: v for k, v in manifest['grader_bundles'].items() if k in pending}} if 'grader_bundles' in manifest else {})))
-                    repeats = run
-                    # A separate namespace: the plan below still binds the primary run through `options`.
-                    second = argparse.Namespace(**{**vars(options), 'manifest': str(evaluation / 'manifest-confirm.json'),
-                        'output': str(output / f'evaluation-{attempt}-confirm-{run}'), 'parent_deadline': time.monotonic() + remaining()})
-                    progress('evaluation_repeat', attempt=attempt + 1, run=run)
-                    with manifest_contract.boundary('evaluation'), stages.charge('trials'):
-                        runner.evaluate(second)
-                    repeat = json.loads((Path(second.output) / 'results.json').read_text())
-                    protected[evaluation] = runner.digest(evaluation)
-                    if (not all(t['status'] in ('passed', 'failed') for t in repeat['trials']) or not repeat['inputs_unchanged']
-                            or grader_fingerprint(manifest_path) != grader_before):  # an ungraded or unfaithful repeat proves nothing
-                        outcome = 'improvement_confirmation_incomplete'
-                        break
-                    for t in repeat['trials']:
-                        if t['task'] in counts and t['status'] == 'passed': counts[t['task']][t['version']] += 1
-                    left = CONFIRM_RUNS - run
-                    for task in pending:
-                        c, b = counts[task]['candidate'], counts[task]['baseline']
-                        if _one_sided_exact(c, b + left, CONFIRM_RUNS) <= level: verdict[task] = True   # holds whatever comes next
-                        elif _one_sided_exact(c + left, b, CONFIRM_RUNS) > level: verdict[task] = False  # cannot be reached any more
+                counts, verdict, outcome, repeats, level = repeat(fixed, 'confirm', 'candidate', 'baseline')
                 confirmed = sorted(task for task, ok in verdict.items() if ok)
                 if outcome is None:
                     outcome = 'confirmed' if confirmed else 'improvement_not_confirmed'
@@ -1852,6 +1871,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 and (controls_pass and reproduced - fixed and not lost or fixed and lost)):
             # A candidate that fixed the weakness but broke what worked is refined too: keep the fix, stop the loss.
             refine_frozen = True
+        if dismissed and attempt > base:
+            # The last attempt, nothing to confirm or refine, and the one loss did not repeat: the baseline scored at least as well.
+            # Without this the single run's flipped pair would end the run blocked as candidate_regressed.
+            from .exit_guidance import REMEDIATION
+            result.update(status='no_change', reason='evaluation_no_improvement', baseline_at_least_as_good=True,
+                          remediation=REMEDIATION['evaluation_no_improvement'])
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
     if client is not None:

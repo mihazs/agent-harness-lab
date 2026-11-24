@@ -76,7 +76,12 @@ block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
 The receipt also carries a `before_after` block; a candidate worse than its baseline ends
 `blocked` with reason `candidate_regressed` and an `investigation.json`, see the
-[before/after guard](before-after-guard.md).
+[before/after guard](before-after-guard.md). An installing run does not trust a loss seen once any more than a fix seen once:
+each task the baseline passed and the candidate failed is run again in both arms (`evaluation-N-regress-R`, the same repeats and
+stopping rule, one-sided in the other direction at 0.05 divided by the number of lost tasks) and `regression_check` records the
+pass counts and the `confirmed` tasks. A run with a confirmed loss ends as above; when no loss repeats, the candidate is not
+treated as regressed: a fix of the same attempt goes on to its confirmation, and otherwise the run ends `no_change` with
+`evaluation_no_improvement`. When the budget does not allow the repeats the run is judged on the single observation.
 A second run on the same project also carries an `incremental` block: whether the earlier candidate was applied, ignored or edited, the earlier
 score as a labelled historical observation, and the stages it reran; see [incremental runs](incremental-runs.md).
 
