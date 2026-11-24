@@ -146,3 +146,16 @@ def test_validate_writes_the_packet_for_an_unsupported_unit(project, tmp_path, r
     packet = json.loads((root / hooks_validation.REVIEW).read_text())
     assert packet['evaluation']['disposition'] == document['candidate']['status'] == 'unsupported'
     assert packet['overhead']['canary_run_seconds'] is None
+
+
+def test_the_trial_location_guard_refuses_a_checkout_and_ignores_an_empty_git_placeholder(tmp_path):
+    # Regression (fixed-in: 0.234.3): while a Codex session runs, its sandbox leaves an empty .git directory in the temporary
+    # directory, and every hook trial below it was refused as running inside a Git checkout.
+    import pytest
+    from agent_harness_lab import hooks_validation
+    (tmp_path / 'tmp/.git').mkdir(parents=True)
+    hooks_validation.guard(tmp_path / 'tmp/out')  # an empty .git directory is no repository
+    (tmp_path / 'repo/.git').mkdir(parents=True); (tmp_path / 'repo/.git/HEAD').write_text('ref: refs/heads/main\n')
+    (tmp_path / 'linked').mkdir(); (tmp_path / 'linked/.git').write_text('gitdir: elsewhere\n')
+    for inside in ('repo/out', 'linked/out'):
+        with pytest.raises(ValueError, match='Git checkout'): hooks_validation.guard(tmp_path / inside)

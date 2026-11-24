@@ -115,7 +115,10 @@ def guard(output, protected=()):
     """Refuse a trial location inside any Git checkout or overlapping the project or an input directory."""
     target = Path(os.path.realpath(Path(output).absolute().parent)) / Path(output).name
     for folder in (target, *target.parents):
-        if os.path.lexists(folder / '.git'): raise ValueError('a hook trial never runs inside a Git checkout')
+        git = folder / '.git'
+        # An empty .git directory is no repository: Codex's sandbox leaves one in the temporary directory while a session runs.
+        if os.path.lexists(git) and not (git.is_dir() and not git.is_symlink() and not os.path.lexists(git / 'HEAD')):
+            raise ValueError('a hook trial never runs inside a Git checkout')
     for root in protected:
         root = Path(os.path.realpath(root))
         if target == root or target.is_relative_to(root) or root.is_relative_to(target):

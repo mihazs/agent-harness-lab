@@ -78,3 +78,22 @@ def test_branch_tracking_is_disabled_so_a_branch_from_a_remote_ref_needs_no_conf
 def test_branch_tracking_is_left_alone_when_the_workspace_is_not_a_repository(tmp_path):
     assert disable_branch_tracking(tmp_path) is False
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_repository_fixture_gets_its_git_directory_outside_the_workspace_for_codex(tmp_path):
+    # Regression (fixed-in: 0.234.3): live, Codex's workspace-write sandbox kept the workspace's own .git read-only, so no trial
+    # could commit or rebase and every git task failed in both arms of three evaluations.
+    import subprocess
+    from agent_harness_lab.evaluation.trial_surfaces import externalize_git_dir
+    workspace = tmp_path / 'trial/workspace'; workspace.mkdir(parents=True)
+    env = {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path), 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
+           'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+    def git(*args): return subprocess.run(['git', '-C', str(workspace), *args], capture_output=True, text=True, env=env)
+    git('init', '-q', '-b', 'main'); (workspace / 'a').write_text('a'); git('add', 'a'); git('commit', '-qm', 'init')
+    external = externalize_git_dir(workspace, tmp_path / 'trial')
+    assert external == tmp_path / 'trial/gitdir' and external.is_dir() and (workspace / '.git').is_file()
+    (workspace / 'b').write_text('b'); git('add', 'b')
+    assert git('commit', '-qm', 'feat: b').returncode == 0 and git('log', '--oneline').stdout.count('\n') == 2  # git follows the gitfile
+    assert externalize_git_dir(workspace, tmp_path / 'trial') is None  # already a gitfile: nothing to move
+    plain = tmp_path / 'plain'; plain.mkdir()
+    assert externalize_git_dir(plain, tmp_path) is None and not (tmp_path / 'gitdir').exists()

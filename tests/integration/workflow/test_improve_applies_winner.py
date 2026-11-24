@@ -830,3 +830,19 @@ def test_a_pruned_candidate_that_still_carries_an_unmeasured_rule_is_trimmed_too
     assert receipt['rules_trimmed'] == dict(attempt=1, rules=['an unmeasured rule']), receipt
     assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
     assert receipt['install_review']['verdict'] == 'consistent' and receipt['confirmation']['confirmed']
+
+
+def test_a_trim_after_a_refuted_first_claim_is_judged_on_the_second_claims_tasks(cli, tmp_path):
+    # Regression (fixed-in: 0.234.3): live, the first claim was refuted, the second fixed a task and was trimmed, and the trimmed
+    # candidate was then judged on the first claim's tasks, which it could not affect, so the run ended with no gain.
+    counter = tmp_path / 'reviews'
+    rider = json.dumps(dict(verdict='unmeasured', reason='synthetic rider', conflicts=['an unmeasured rule']))
+    fine = json.dumps(dict(verdict='consistent', reason='synthetic'))
+    twice = (f"n=int(open({str(counter)!r}).read()) if __import__('os').path.exists({str(counter)!r}) else 0; open({str(counter)!r},'w').write(str(n+1)); "
+             f"p('review.json').write_text({rider!r} if n==0 else {fine!r});")
+    agent = (workflow_fixture.FAKE.replace(REVIEW_DEFAULT, twice)
+             .replace("'done' if good or phase.endswith('regression')", "'done' if good or phase.endswith('regression') or phase.startswith('0')"))
+    assert agent.count("phase.startswith('0')") == 1
+    code, receipt, base = cli(agent=agent)
+    assert receipt['rules_trimmed']['attempt'] == 1 and receipt['evaluation_reused'] == dict(attempt=1, reason='trimmed_candidate'), receipt
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
