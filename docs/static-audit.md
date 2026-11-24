@@ -79,6 +79,11 @@ access and checks their digests against the inventory. The resulting private
 `constraint_references` observation is outside `audit_sha256`; unavailable files
 leave it incomplete, and its coverage and enforcement stay unknown.
 
+The CLI also reports `harness_profile`: a read-only profile of the checkout (technologies, declared and CI
+commands, layout) and the findings that compare it with the instruction files, such as a script the harness
+names and the repository lacks. It is a separate observation outside `audit_sha256`; see
+[the project profile](project-profile.md).
+
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.

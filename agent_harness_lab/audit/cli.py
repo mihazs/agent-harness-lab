@@ -207,6 +207,8 @@ def main(argv=None):
             path_enforcement='unknown', publication_allowed=False,
             next_action='Review applicable permissions and pre-tool hooks for each protected path; '
                         'static tool-name candidates do not establish path enforcement.')
+        from agent_harness_lab.project_profile import report as harness_profile
+        report['harness_profile'] = harness_profile.build(project)
         report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
         if args.improvement_recheck or args.improvement_recheck_soft_budget:
             report['improvement_recheck'] = dict(profile='ahl-audit-recheck-parameters-v1', runtime=args.runtime,
@@ -233,6 +235,9 @@ def main(argv=None):
                     args.runtime + ' and the configured profile before using improvement_hint.focus.')
         else:
             report['next_action'] = 'Capture behavioral evidence with ahl analyze and evaluate a proposed change with ahl improve.'
+        if report['status'] == 'completed' and report['harness_profile']['findings']:
+            report['next_action'] += (f" {len(report['harness_profile']['findings'])} harness profile finding(s) compare the harness with the "
+                                      'repository; each is a hypothesis to evaluate, not evidence of performance.')
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)
         folder = Path(tempfile.mkdtemp(prefix='audit-', dir=destination))
         report_path = folder / 'report.json'
@@ -285,6 +290,9 @@ def main(argv=None):
                           f"({'at least ' if row['at_least'] else ''}{row['entries']} entries)")
             for row in report['findings']:
                 print(f"{row['dimension']}: {row['reason']} ({row['path']}) — {row['remediation'] or 'not checked'}")
+            for row in report['harness_profile']['findings']:
+                print(f"harness {row['finding_class']}: {row['kind']} {json.dumps(row['subject'], ensure_ascii=True)} "
+                      f"({row['id']}) — {row['proposed_update']['action']}")
             print(report['next_action'])
         print(f'Private report: {report_path}', file=sys.stderr)
         return 0 if report['status'] == 'completed' else 3
