@@ -1134,6 +1134,7 @@ def _improve(args):
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune_targets = []  # tasks attempt 0 showed fixed before a prune; the pruned candidate's confirmation repeats them
     trim = None  # rules an early review found unmeasured: the proposer removes them and the rest is judged on the same tasks
+    trims = 0  # one trim per run; it adds one attempt beyond the measured attempt and its refinement or prune
     reviewed = None  # (candidate hash, measured tasks, review) of an early review, reused at install time when both still hold
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
@@ -1191,7 +1192,7 @@ def _improve(args):
         return counts, verdict, outcome, repeats, level
 
     for attempt in range(1 if bank is not None else MAX_ATTEMPTS):
-        if attempt > base + 1:
+        if attempt > base + 1 + trims:
             break
         final_attempt = attempt
         for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
@@ -1214,7 +1215,7 @@ def _improve(args):
                 break
             stages.begin_refinement()
         trials_left -= preparation_trials
-        if (not_reproduced or prune or (rejected or declined) and attempt == base) and not (rebuild_controls or rechecking):
+        if (not_reproduced or prune or (rejected or declined) and attempt == base) and not (rebuild_controls or rechecking or trimming):
             # A refuted change must not ride along with a later fix: the parent, not the proposer, restores the baseline content.
             shutil.rmtree(candidate)
             shutil.copytree(baseline, candidate)
@@ -1808,11 +1809,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     remaining=remaining, model_calls=model_calls, progress=progress,
                     measured=[task.get('prompt', '') for task in manifest['tasks'] if task['id'] in gained])
                 result['install_review'] = early
-                if (early['verdict'] == 'unmeasured' and early.get('conflicts') and attempt == base and not prune
+                if (early['verdict'] == 'unmeasured' and early.get('conflicts') and not trims and attempt + 1 < MAX_ATTEMPTS
                         and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
                     # The measured rule is worth keeping: the proposer drops the rules nobody measured, and what remains is
                     # judged again on the same frozen tasks and confirmed on its own repeats.
-                    trim, prune_targets = early['conflicts'], sorted(_flips(trials)[0])
+                    trim, trims, prune_targets = early['conflicts'], 1, sorted(_flips(trials)[0] | set(carried))
                     result['rules_trimmed'] = dict(attempt=attempt, rules=trim)
                     result.pop('partial_improvement', None)
                     continue

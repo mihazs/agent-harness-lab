@@ -816,3 +816,17 @@ def test_a_usage_limit_of_the_agent_account_is_reported_by_name(cli):
     code, receipt, base = cli(agent=agent)
     assert (receipt['status'], receipt['reason'], receipt['provider_message']) == ('blocked', 'provider_usage_limit_reached', 'synthetic limit, resets later'), receipt
     assert (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_pruned_candidate_that_still_carries_an_unmeasured_rule_is_trimmed_too(cli, tmp_path):
+    # Regression (fixed-in: 0.234.3): live (Codex as the agent), a candidate that had been through the prune still carried rules
+    # no task measured; the trim applied to a first candidate only, so the measured rule was refused along with them.
+    counter = tmp_path / 'reviews'
+    rider = json.dumps(dict(verdict='unmeasured', reason='synthetic rider', conflicts=['an unmeasured rule']))
+    fine = json.dumps(dict(verdict='consistent', reason='synthetic'))
+    twice = (f"n=int(open({str(counter)!r}).read()) if __import__('os').path.exists({str(counter)!r}) else 0; open({str(counter)!r},'w').write(str(n+1)); "
+             f"p('review.json').write_text({rider!r} if n==0 else {fine!r});")
+    code, receipt, base = cli(agent=screening_agent(tmp_path / 'prompts').replace(REVIEW_DEFAULT, twice))
+    assert receipt['rules_trimmed'] == dict(attempt=1, rules=['an unmeasured rule']), receipt
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
+    assert receipt['install_review']['verdict'] == 'consistent' and receipt['confirmation']['confirmed']
