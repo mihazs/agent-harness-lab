@@ -64,7 +64,10 @@ def _canonical(path, what='memory store'):
 
 def _isolated(root, excluded):
     for ancestor in (root, *root.parents):
-        if (ancestor / '.git').exists():
+        git = ancestor / '.git'
+        # A repository's .git is a gitfile or a directory holding HEAD. An empty .git directory is none: Codex's sandbox leaves
+        # one in the temporary directory while a session runs.
+        if git.is_file() or (git / 'HEAD').exists():
             raise MemoryStoreError('memory store must not live inside a source checkout')
         if os.path.lexists(ancestor / '.store.json'):  # marker of every controller PrivateJournal store (history, review, ...)
             raise MemoryStoreError('memory store must not live inside an existing protected controller store')

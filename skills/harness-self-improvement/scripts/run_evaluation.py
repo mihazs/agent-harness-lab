@@ -953,6 +953,13 @@ def _evaluate(args):
         else:
             argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config,
                                               native_environment(agent, inherit_env), with_user_harness)
+            if agent == 'codex':
+                from agent_harness_lab.evaluation.trial_surfaces import externalize_git_dir
+                external = externalize_git_dir(workspace, trial)  # the sandbox keeps a workspace's own .git read-only
+                record['git_dir_external'] = external is not None
+                if external is not None:
+                    # Before the trailing '-' that reads the prompt from stdin.
+                    argv[-1:-1] = ['-c', 'sandbox_workspace_write.writable_roots=' + json.dumps([str(external)])]
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if record['skill_preload_requested'] else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'

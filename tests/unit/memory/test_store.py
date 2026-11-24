@@ -74,8 +74,19 @@ def test_relative_dotdot_and_symlinked_paths_are_refused(tmp_path):
 
 def test_store_inside_a_checkout_is_refused(tmp_path):
     (tmp_path / 'checkout/.git').mkdir(parents=True)
+    (tmp_path / 'checkout/.git/HEAD').write_text('ref: refs/heads/main\n')
     with pytest.raises(MemoryStoreError, match='checkout'):
         MemoryStore.init(tmp_path / 'checkout/sub/store')
+    (tmp_path / 'linked').mkdir(); (tmp_path / 'linked/.git').write_text('gitdir: elsewhere\n')  # a worktree or submodule
+    with pytest.raises(MemoryStoreError, match='checkout'):
+        MemoryStore.init(tmp_path / 'linked/store')
+
+
+def test_an_empty_git_placeholder_above_the_store_is_not_a_checkout(tmp_path):
+    # Regression (fixed-in: 0.234.3): while a Codex session runs, its sandbox leaves an empty .git directory in the temporary
+    # directory; every store below it was then refused as living inside a source checkout.
+    (tmp_path / 'tmp/.git').mkdir(parents=True)
+    MemoryStore.init(tmp_path / 'tmp/sub/store')
 
 
 def test_store_inside_an_existing_controller_store_is_refused(tmp_path):

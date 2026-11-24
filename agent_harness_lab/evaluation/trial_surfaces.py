@@ -338,6 +338,24 @@ def hide_from_git(workspace, paths):
         _git(workspace, 'update-index', '--skip-worktree', '--', *names)
 
 
+def externalize_git_dir(workspace, trial):
+    """Move a repository fixture's .git directory beside the workspace and leave a gitfile pointing at it; returns the new
+    directory, or None when the fixture is not a repository with a plain .git directory.
+
+    Codex's workspace-write sandbox keeps a workspace's own .git read-only, so no trial could commit, rebase or switch
+    branches and every such task failed in both arms. A git directory outside the workspace can be granted as a writable
+    root; git, the agent and the graders all follow the gitfile."""
+    git = Path(workspace) / '.git'
+    if git.is_symlink() or not git.is_dir():
+        return None
+    target = Path(trial) / 'gitdir'
+    if target.exists() or target.is_symlink():
+        return None
+    git.rename(target)
+    git.write_text(f'gitdir: {target}\n')
+    return target
+
+
 def disable_branch_tracking(workspace):
     """Stop git from writing upstream tracking config when a branch is created from a remote branch; True when set.
 
