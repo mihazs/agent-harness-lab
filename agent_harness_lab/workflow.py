@@ -1874,6 +1874,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     for task, version in said if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate'))}
             if same:
                 suspect, rechecks, base = same, rechecks + 1, attempt + 1
+                # The rebuilt evaluation is a new measured attempt: nothing later may be judged on the tasks it replaces.
+                prune, prune_targets, refine_frozen = [], [], False
+                result['rechecks_run'] = rechecks
                 continue
         # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
