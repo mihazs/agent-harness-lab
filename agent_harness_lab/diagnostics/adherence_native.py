@@ -302,10 +302,11 @@ def _newest_first(file):
         return 0, file
 
 
-def for_analysis(args, data):
+def for_analysis(args, data, sessions_out=None):
     """(section for the analysis brief, full report or None) over the native captures an analysis read.
 
     The section is counts only. A run that read no native capture says so (`not_run`); it never reports zero findings.
+    `sessions_out`, when a list, receives the raw sessions that were read (private; the command profile counts them).
     Its `user_reactions` entry (where users intervened, closed-vocabulary tokens and counts) becomes a sibling brief section.
     """
     project = Path(args.project).resolve()
@@ -323,6 +324,7 @@ def for_analysis(args, data):
     excerpts = bool(getattr(args, 'correction_excerpts', False))
     sessions, skipped = read_sessions(files, recorded_in, harness, excerpts)
     unverified = sum(session.pop('unverified_version', False) for session in sessions)
+    if sessions_out is not None: sessions_out.extend(sessions)
     if not sessions:
         # A bound that stopped the read is not "unreadable": the untried captures may be fine.
         bounded = 'over_file_limit' in skipped or 'over_byte_budget' in skipped

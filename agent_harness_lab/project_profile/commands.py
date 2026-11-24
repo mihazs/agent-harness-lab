@@ -25,7 +25,7 @@ SETUP = frozenset('setup install bootstrap deps init'.split())
 CATEGORIES = ('test', 'lint', 'typecheck', 'format', 'build', 'run')
 VERIFICATION = ('test', 'lint', 'typecheck', 'build')
 NAME_CATEGORY = (('typecheck', 'typecheck type types tsc mypy pyright'), ('test', 'test tests spec e2e unit integration coverage'),
-                 ('lint', 'lint eslint'), ('format', 'format fmt prettier'), ('build', 'build compile dist bundle'),
+                 ('lint', 'lint eslint clippy'), ('format', 'format fmt prettier'), ('build', 'build compile dist bundle'),
                  ('run', 'dev start serve watch'))
 TEXT_CATEGORY = (
     ('typecheck', r'\b(?:tsc|mypy|pyright|cargo check|go vet)\b'),

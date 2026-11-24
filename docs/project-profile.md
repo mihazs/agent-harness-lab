@@ -52,6 +52,30 @@ folder, or is a bare `pnpm x` for a name that could be a binary. No finding is p
 no instruction file could be read: the section says `no_instruction_file`, which is not a clean
 result. When a candidate instruction file could not be read, the gap checks stay silent.
 
+## From session history
+
+When `ahl analyze` or `ahl improve` read native Claude Code or Codex sessions, the profile also counts the shell
+commands the agent ran. Each command line is split on `&&`, `;` and pipes, wrappers (`sudo`, `time`, `env X=1`) and
+redirections are dropped, and the rest is reduced to a key from a closed vocabulary: a script or target the
+project itself declares (`pnpm test`, `make lint`), a known verification tool (`pytest`, `ruff`, `mypy`, `eslint`,
+`tsc`) or `cargo` and `go` with a build or test subcommand. Package-manager use is counted apart. An argument, a
+path, a URL, a secret or an unknown program never becomes part of a key; such lines are only counted as `other`.
+
+Counts are per session (how many separate sessions ran the key at least once) beside total uses. Native captures
+carry no verified lineage, so the section says `lineage: unknown` and never calls sessions independent. A read that
+found no shell command is `not_run` with a reason, and no read at all is `not_run` too: neither is a clean result.
+The three history findings need at least three separate sessions, so one long session never stands for a practice:
+
+| Kind | Class | Fires when | Proposed update |
+| --- | --- | --- | --- |
+| `command_in_use_unrecorded` | gap | a verification or build category ran in three or more sessions and no instruction file names it by command, script or tool; when the repository also declares the command, the sessions are added as `observed_in_sessions` to the `verification_command_unnamed` finding instead of a second finding | `record_command` |
+| `practice_diverges_from_harness` | contradiction | the harness runs one package manager and three or more sessions use another far more (more than twice as many sessions as any it names) | `record_practice_or_correct_line` |
+| `user_rule_unrecorded` | gap | the user stated a run-shaped rule (`never run X`, `always run X`, `ask before running X`) for a program of the closed vocabulary in three or more sessions and no instruction file states it | `record_rule` |
+
+A user rule that names a path or an unknown command is user text and never becomes a finding; its subject is only
+the rule kind and the program. The brief gets counts, the most used keys and the finding ids; the private
+`harness-profile.json` keeps the top 40 keys with their session counts.
+
 ## In `ahl analyze` and `ahl improve`
 
 Both commands build the same profile and write it to the private `harness-profile.json` of the run
@@ -68,6 +92,16 @@ A first run whose history has findings but no verified outcome seeds the propose
 convention (see [one-call improvement](one-call-improvement.md)); a profile finding is one of those
 conventions, ranked after a truncated chain and an oversized file for a contradiction, and last for a gap.
 The seed carries a fixed focus sentence and the finding id, never instruction text.
+
+## What the receipt says about the candidate
+
+When a run stages a candidate, `workflow.json` carries `harness_profile_check`: the findings the candidate harness
+resolves, the contradictions it introduces (a script, target or path it names that neither the project nor the
+candidate has), how many findings it leaves unchanged, and which of the finding ids a mechanism cited as evidence the
+candidate resolved or left in place. It is deterministic and read-only, and an observation, never a gate and never
+a success label: a resolved finding says a line changed, not that an agent behaves better, and an introduced
+contradiction is a reason to read the change again. Whether the change is kept is still decided by the paired
+evaluation, the fresh confirmation and the install review.
 
 ## Limits
 

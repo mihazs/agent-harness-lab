@@ -64,6 +64,7 @@ an independence claim.
 | `mechanism-summaries.json` | Ranked groups with at most five evidence references each | At most 200 groups; omitted groups are counted in `truncated` |
 | `instruction-adherence.json` | Where the read Claude Code or Codex sessions ignored a project rule or a prompt instruction; digests only | At most 5,000 findings; written only when at least one native session was read; the brief's `instruction_adherence` section holds its counts |
 | `instruction-repair-plan.json` | Candidate mechanisms and repair classes for each adherence finding, recommendation only and digest only; see [instruction repair](instruction-repair.md) | One candidate per finding; written whenever `instruction-adherence.json` is; the brief carries counts only |
+| `harness-profile.json` | The project profile and the findings that compare the repository and, when native sessions were read, the commands they ran with the instruction files; private, hypotheses only; see [the project profile](project-profile.md) | At most 40 findings and 40 command keys; written by every analysis; the brief's `harness_profile` section holds at most 12 findings and the ten most used keys |
 
 Improvement preparation can inspect this private summary as well as the shorter brief.
 The evaluator-author role does not receive it. These are observed patterns and references,

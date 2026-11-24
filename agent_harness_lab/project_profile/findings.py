@@ -24,7 +24,10 @@ KINDS = dict(
     test_runner_contradicted=('contradiction', 'correct_or_remove_line'),
     harness_files_disagree=('contradiction', 'resolve_disagreement'),
     toolchain_not_stated=('gap', 'state_toolchain'),
-    verification_command_unnamed=('gap', 'name_verification_command'))
+    verification_command_unnamed=('gap', 'name_verification_command'),
+    command_in_use_unrecorded=('gap', 'record_command'),
+    practice_diverges_from_harness=('contradiction', 'record_practice_or_correct_line'),
+    user_rule_unrecorded=('gap', 'record_rule'))
 MANAGERS = dict(node=('npm', 'pnpm', 'yarn', 'bun'), python=('uv', 'poetry', 'pipenv', 'pdm'))
 DEFAULT_MANAGER = dict(node='npm', python='pip')
 RUNNER_FILE = dict(npm='package.json', pnpm='package.json', yarn='package.json', bun='package.json', make='make', task='task', just='just')

@@ -78,3 +78,11 @@ def test_the_proposer_is_told_to_read_the_findings_and_may_cite_one_as_evidence(
     assert (admission['status'], admission['rejected']) == ('admitted', 0)
     assert (output/'harness-profile.json').is_file() and (wf.project/'AGENTS.md').read_text().startswith('Use pnpm')
     assert result['changed_files'] == [] and result['status'] != 'applied'
+
+
+def test_the_receipt_says_which_findings_the_candidate_resolved_or_introduced_and_installs_nothing_for_it(wf, pipeline):
+    result = run(wf, pipeline)
+    check = result['harness_profile_check']
+    assert (check['status'], check['authority'], check['publication_allowed']) == ('compared', 'none', False)
+    assert check['introduced_contradictions'] == [] and check['cited_resolved'] + check['cited_unresolved'] != []
+    assert json.loads((Path(result['output'])/'workflow.json').read_text())['harness_profile_check'] == check
