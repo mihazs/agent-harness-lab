@@ -668,7 +668,8 @@ def test_a_confirmed_candidate_the_reviewer_finds_contradictory_is_not_installed
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent')
     assert receipt['install_review'] == dict(verdict='contradicts', reason='the new bullet reverses an existing rule',
                                              conflicts=['Always print the full path.', 'Never print the full path.'])
-    assert receipt['confirmation']['outcome'] == 'confirmed' and receipt['confirmation']['confirmed'] == ['development', 'heldout']
+    # Since 0.234.1 the review runs before the confirmation repeats, which are not spent on a change that would be refused.
+    assert 'confirmation' not in receipt
     assert (base.project / 'AGENTS.md').read_text() == 'bad'
     assert receipt['changed_files'] == [] and not {'application', 'deployment', 'recommendation'} & receipt.keys()
 
@@ -685,7 +686,9 @@ def test_a_candidate_the_reviewer_finds_consistent_is_installed_and_the_receipt_
     # Regression (fixed-in: 0.233.8): the review is recorded for an installed change too, with the cost of its session.
     code, receipt, base = cli()
     assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md'])
-    assert receipt['install_review'] == dict(verdict='consistent', reason='synthetic')
+    # Since 0.234.1 the review ran before the repeats and is reused at install: same candidate, same measured tasks.
+    assert receipt['install_review'] == dict(verdict='consistent', reason='synthetic', reused='early_review')
+    assert sum(call['stage'] == 'install_review' for call in receipt['model_calls']) == 1
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
     review = next(call for call in receipt['model_calls'] if call['stage'] == 'install_review')
     assert review['provider_reported']['usage'] == dict(output_tokens=1)
@@ -754,13 +757,32 @@ def test_a_root_instruction_edit_is_not_blocked_by_an_optional_plan_that_does_no
 
 def test_a_change_with_a_rule_nobody_measured_is_not_installed(cli, tmp_path):
     # Regression (fixed-in: 0.234.1): live, a confirmed candidate carried a new section that no task measured, and the review,
-    # which saw only the files, called it consistent. The reviewer now sees what was measured and may answer `unmeasured`.
-    record = tmp_path / 'review-given'
+    # which saw only the files, called it consistent. The reviewer now sees what was measured and may answer `unmeasured`; the
+    # proposer is asked once to drop the quoted rules, and a candidate that still carries them is not installed.
+    seen = tmp_path / 'prompts'
     answer = json.dumps(dict(verdict='unmeasured', reason='synthetic rider', conflicts=['Parallel work: prefer many agents']))
-    code, receipt, base = cli(agent=reviewing(answer, record))
+    agent = reviewing(answer).replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt)")
+    code, receipt, base = cli(agent=agent)
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent'), receipt
     assert receipt['install_review']['verdict'] == 'unmeasured' and receipt['install_review']['conflicts'] == ['Parallel work: prefer many agents']
-    assert (base.project / 'AGENTS.md').read_text() == 'bad' and receipt['confirmation']['confirmed']
+    assert receipt['rules_trimmed'] == dict(attempt=0, rules=['Parallel work: prefer many agents'])
+    assert 'remove exactly these from the candidate' in seen.read_text() and '- Parallel work: prefer many agents' in seen.read_text()
+    assert (base.project / 'AGENTS.md').read_text() == 'bad' and 'confirmation' not in receipt
+
+
+def test_a_candidate_trimmed_of_its_unmeasured_rule_is_confirmed_and_installed(cli, tmp_path):
+    # Regression (fixed-in: 0.234.1): live, a candidate confirmed 9 to 0 and 10 to 1 was refused whole because it also carried
+    # rules no task measured, so a real improvement was lost. The proposer now removes them and the rest is installed.
+    counter = tmp_path / 'reviews'
+    rider = json.dumps(dict(verdict='unmeasured', reason='synthetic rider', conflicts=['an unmeasured rule']))
+    fine = json.dumps(dict(verdict='consistent', reason='synthetic'))
+    twice = (f"n=int(open({str(counter)!r}).read()) if __import__('os').path.exists({str(counter)!r}) else 0; open({str(counter)!r},'w').write(str(n+1)); "
+             f"p('review.json').write_text({rider!r} if n==0 else {fine!r});")
+    code, receipt, base = cli(agent=workflow_fixture.FAKE.replace(REVIEW_DEFAULT, twice))
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
+    assert receipt['rules_trimmed']['rules'] == ['an unmeasured rule'] and receipt['evaluation_reused'] == dict(attempt=0, reason='trimmed_candidate')
+    assert receipt['install_review']['verdict'] == 'consistent' and receipt['confirmation']['confirmed']
+
 
 
 STATED = ("from pathlib import Path; import sys; w=Path(sys.argv[1])\n"

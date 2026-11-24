@@ -757,6 +757,13 @@ those weak outcomes were reproduced: {fixed}. The candidate is the baseline agai
 the reproduced weak outcomes, and list only those mechanisms in proposal.json.
 Do not read previous evaluation directories or held-out results.
 """
+# The second attempt of an installing run whose candidate fixed a task but carries rules that no task measured.
+TRIM = """A review of your candidate found rules that have no bearing on the tasks it was measured on. A rule nobody measured is not
+installed, so remove exactly these from the candidate, which is still in place as you left it, and change nothing else:
+{rules}
+Keep every other change byte for byte, and list only the remaining mechanisms in proposal.json.
+Do not read previous evaluation directories or held-out results.
+"""
 # The second evaluation of an installing run whose candidate fixed a task and lost none, while the authored controls failed on the baseline.
 CONTROLS_INVALID = """These regression tasks of your earlier evaluation failed on the baseline harness, so they are not valid controls: {ids}.
 Regression tasks must pass under the baseline harness (behaviour that works today). Build regression tasks whose graders the baseline
@@ -1126,6 +1133,8 @@ def _improve(args):
     base = 0  # the first measured attempt; 1 when the first proposer declined, so the retry keeps its own refinement
     rejected = None  # the validation finding that stopped the first candidate of an installing run before evaluation
     prune_targets = []  # tasks attempt 0 showed fixed before a prune; the pruned candidate's confirmation repeats them
+    trim = None  # rules an early review found unmeasured: the proposer removes them and the rest is judged on the same tasks
+    reviewed = None  # (candidate hash, measured tasks, review) of an early review, reused at install time when both still hold
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
     suspect = None  # claim tasks both arms failed with a stated grader reason: the author checks them once, same candidate
@@ -1193,7 +1202,8 @@ def _improve(args):
             result['status'] = 'budget_exhausted'
             break
         rechecking, suspect = suspect, None  # one attempt only: whatever this evaluation shows, the next attempt is ordinary
-        pruned = (bool(prune) or refine_frozen) and not rechecking  # judged on the measured attempt's frozen tasks, so no evaluation is constructed for it
+        trimming, trim = trim, None
+        pruned = (bool(prune) or refine_frozen or bool(trimming)) and not rechecking  # judged on the measured attempt's frozen tasks, so no evaluation is constructed for it
         preparation_trials = 1 if bank is not None or pruned else 2
         if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
@@ -1268,7 +1278,8 @@ Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
             if attempt:
-                prompt += (DECLINED.format(reason=declined) if declined and attempt == base else
+                prompt += (TRIM.format(rules='\n'.join('- ' + rule for rule in trimming)) if trimming else
+                           DECLINED.format(reason=declined) if declined and attempt == base else
                            REJECTED.format(finding=json.dumps(rejected, sort_keys=True)[:3000]) if rejected and attempt == base else
                            NOT_REPRODUCED.format(feedback=output / f'feedback-{base}.json') if not_reproduced else
                            PRUNE.format(feedback=output / f'feedback-{base}.json', tasks=', '.join(prune), fixed=', '.join(prune_targets)) if prune else
@@ -1448,7 +1459,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             # so the held-out freshness rule does not apply. The manifest stays byte for byte as frozen; only the staged paths may differ.
             frozen_paths = json.loads(manifest_path.read_text())
             if sorted(frozen_paths.get('harness_paths', [])) != sorted(paths): write_json(manifest_path, dict(frozen_paths, harness_paths=sorted(paths)))
-            result['evaluation_reused'] = {'attempt': base, 'reason': 'refined_candidate' if refine_frozen else 'pruned_candidate'}  # a literal, not an exit reason: exit reasons need a remediation entry
+            result['evaluation_reused'] = {'attempt': base, 'reason': 'trimmed_candidate' if trimming else 'refined_candidate' if refine_frozen else 'pruned_candidate'}  # a literal, not an exit reason: exit reasons need a remediation entry
         elif bank is not None:
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
@@ -1773,7 +1784,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         # A pruned candidate is judged on attempt 0's frozen tasks: if it still passes the tasks attempt 0 showed fixed and
         # loses nothing, the fresh repeats decide, not this one run, in which an intermittent baseline may happen to pass.
         carried = (sorted(set(prune_targets) & {t['task'] for t in trials if (t['version'], t['status']) == ('candidate', 'passed')})
-                   if prune and prune_targets and attempt > base and _installs(args) and not _flips(trials)[1] else [])
+                   if (prune or trimming) and prune_targets and attempt > base and _installs(args) and not _flips(trials)[1] else [])
         if carried: improvement = True
         if evaluated['inputs_unchanged'] and controls_pass and (candidate_pass and improvement or partial):
             if partial: result['partial_improvement'] = partial
@@ -1784,6 +1795,26 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 prune_targets = sorted(_flips(trials)[0])  # what attempt 0 showed fixed; the pruned candidate is confirmed on these
                 result.pop('partial_improvement', None)
                 continue
+            if _installs(args) and bank is None:
+                gained = sorted(sorted(_flips(trials)[0] | set(carried))[:CONFIRM_TASKS])
+                early = install_review.early(args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
+                    remaining=remaining, model_calls=model_calls, progress=progress,
+                    measured=[task.get('prompt', '') for task in manifest['tasks'] if task['id'] in gained])
+                result['install_review'] = early
+                if (early['verdict'] == 'unmeasured' and early.get('conflicts') and attempt == base and not prune
+                        and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+                    # The measured rule is worth keeping: the proposer drops the rules nobody measured, and what remains is
+                    # judged again on the same frozen tasks and confirmed on its own repeats.
+                    trim, prune_targets = early['conflicts'], sorted(_flips(trials)[0])
+                    result['rules_trimmed'] = dict(attempt=attempt, rules=trim)
+                    result.pop('partial_improvement', None)
+                    continue
+                if early['verdict'] in ('contradicts', 'test_specific', 'unmeasured'):
+                    # Nothing would be installed, so the confirmation repeats are not spent on it.
+                    result.pop('partial_improvement', None)
+                    result.update(status='no_change', reason=install_review.REASON)
+                    break
+                reviewed = (frozen_hash, gained, early)
             if _installs(args):
                 # One run per arm is one observation and agents vary between runs, so the fixed tasks are run again until
                 # the candidate's pass rate beats the baseline's by a one-sided exact test, or that can no longer happen.
@@ -1934,7 +1965,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
                                       remaining=remaining, model_calls=model_calls, progress=progress,
                                       measured=[task.get('prompt', '') for task in single_run['manifest']['tasks']
-                                                if task['id'] in (result.get('confirmation') or {}).get('confirmed', ())])):
+                                                if task['id'] in (result.get('confirmation') or {}).get('confirmed', ())],
+                                      prior=reviewed[2] if reviewed and reviewed[0] == frozen_hash
+                                            and reviewed[1] == sorted((result.get('confirmation') or {}).get('confirmed', ())) else None)):
         # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
         applied = adopt_with_receipt(args.project, baseline, frozen, original, proposed, allowed_paths(args) is not None,
                                      provenance=dict(source='evaluated_candidate_apply', plan_sha256=common_plan.sha256), locked=True)
