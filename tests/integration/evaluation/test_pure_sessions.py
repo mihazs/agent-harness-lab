@@ -83,7 +83,9 @@ def test_codex_preparation_session_ignores_user_config_and_rules_in_a_temporary_
     named = ' '.join([*argv, *environment.values()])
     assert str(host / '.codex') not in named
     disabled = next(arg for arg in argv if arg.startswith('skills.config='))
-    assert str(host / '.agents/skills/harness-self-improvement') in disabled and '.codex/skills' not in disabled
+    # Regression (fixed-in: 0.234.3): Codex honors a disable entry only when it names SKILL.md; the folder path AHL passed was
+    # ignored, so the user's own skills loaded in every pure Codex session and trial.
+    assert str(host / '.agents/skills/harness-self-improvement/SKILL.md') in disabled and '.codex/skills' not in disabled
     assert not (Path(environment['CODEX_HOME']) / 'auth.json').exists()  # copied only while the session runs
 
 
