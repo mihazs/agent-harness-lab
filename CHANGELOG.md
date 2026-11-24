@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.234.2
+
+### Patch Changes
+
+- 7fa917f: A run whose trials were refused for a usage limit of the agent account ends `blocked` with `provider_usage_limit_reached` and the provider message, instead of `evaluation_failed`.
+- 1bb1082: The install review now runs before the confirmation repeats. When it finds rules that no task measured, the proposer removes exactly those and the remaining change is judged, confirmed and installed, instead of the whole confirmed improvement being refused; a change it finds contradictory or test-specific ends the run without spending the repeats. A consistent early review is reused at install.
+
 ## 0.234.1
 
 ### Patch Changes
