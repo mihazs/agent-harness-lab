@@ -803,3 +803,16 @@ def test_a_new_claim_after_a_prune_and_a_recheck_gets_an_evaluation_of_its_own(c
     assert receipt.get('rechecks_run') == 1 and receipt['tasks_rechecked']['attempt'] == 2, receipt
     assert (output / 'preparation/evaluation-3/manifest.json').is_file(), sorted(path.name for path in (output / 'preparation').iterdir())
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_a_usage_limit_of_the_agent_account_is_reported_by_name(cli):
+    # Regression (fixed-in: 0.234.1): live, the account behind the trial sessions hit its weekly limit mid-evaluation; the
+    # refused trials were execution errors and the run ended evaluation_failed, which names neither the cause nor the remedy.
+    refused = ("if good and phase.endswith('heldout'):\n  print(json.dumps({'type':'result','is_error':True,'api_error_status':429,"
+               "'api_error':'usage_limit_reached','result':'synthetic limit, resets later'})); sys.exit(1)\n ")
+    agent = workflow_fixture.FAKE.replace(" p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                                          " " + refused + "p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')")
+    assert agent.count('usage_limit_reached') == 1
+    code, receipt, base = cli(agent=agent)
+    assert (receipt['status'], receipt['reason'], receipt['provider_message']) == ('blocked', 'provider_usage_limit_reached', 'synthetic limit, resets later'), receipt
+    assert (base.project / 'AGENTS.md').read_text() == 'bad'

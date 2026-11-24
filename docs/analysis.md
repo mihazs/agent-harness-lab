@@ -474,6 +474,7 @@ provider-reported usage per request) are not covered.
 | `area_registry_invalid` | Declare areas in ahl.json as a list of at most 32 entries, each with exactly an id (lowercase kebab-case, at most 64 characters), a label and a description, then rerun. |
 | `areas_not_declared` | Declare capability areas in the ahl.json areas list before giving accept_score as a per-area map, or give one number. |
 | `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
+| `provider_usage_limit_reached` | Wait until the usage limit of the agent runtime account resets (provider_message in the receipt gives the time), or sign the runtime in to an account with quota, then rerun. |
 | `candidate_inconsistent` | The candidate was confirmed, but a fresh review of the changed files found a rule that contradicts the rest of the harness, reads like the answer to one test or was measured by no task, or no review could be had, so nothing was installed; read install_review in the receipt, fix the named rule, then rerun. |
 | `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
 | `cwd_worktrees_unavailable` | The project repository's registered worktrees could not be read, so class counts for rows recorded outside the project root cannot name worktrees of the project. Restore read access to the repository's .git directory and rerun; until then treat registered_worktree_of_project as a lower bound. |

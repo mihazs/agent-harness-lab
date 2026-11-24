@@ -1682,6 +1682,13 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
+        limited = next((message for message in (_usage_limit(_trial_trace(Path(options.output), t)) for t in trials
+                                                if t.get('status') == 'execution_error') if message), None)
+        if limited:
+            # The agent's account ran out mid-evaluation: nothing about the harness was measured by the trials it refused.
+            result.pop('instruction_removal', None)
+            result.update(status='blocked', reason='provider_usage_limit_reached', provider_message=limited)
+            break
         if grader_fingerprint(manifest_path) != grader_before:
             # The comparison is void for adoption; fresh trials under the new grader are a new comparison.
             grader_changed = True
@@ -2012,6 +2019,18 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         checkpoint(args,output,result,original,allowed_paths(args),proposal_path)
     write_json(output / 'workflow.json', result)
     return result
+
+
+def _usage_limit(trace):
+    """The provider's own message when a session was refused for a usage limit of the account (bounded), else None."""
+    if not trace or 'usage_limit_reached' not in trace: return None
+    for line in trace.splitlines():
+        if 'usage_limit_reached' not in line: continue
+        try: event = json.loads(line)
+        except ValueError: continue
+        if isinstance(event, dict) and event.get('type') == 'result' and event.get('api_error') == 'usage_limit_reached':
+            return str(event.get('result') or 'usage limit reached')[:200]
+    return None
 
 
 def _final_message(trace, limit=1500):
