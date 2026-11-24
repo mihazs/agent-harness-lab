@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.234.0
+
+### Minor Changes
+
+- 53767dd: An installing `ahl improve` run now has a fresh, independent session review a confirmed candidate against the harness files it changes before installing it. A candidate the reviewer calls `contradicts` or `test_specific`, or one with no usable review, is not installed: the run ends `no_change` with `candidate_inconsistent`, and `install_review` in the receipt carries the verdict, reason and conflicts.
+
+### Patch Changes
+
+- 0323530: An installing `ahl improve` run now repeats a task the candidate lost (the baseline passed it, the candidate failed it) in both arms before that loss can end the run as `candidate_regressed`; a loss that does not repeat is not a regression, so a confirmed fix of the same attempt is still applied and otherwise the run ends `no_change`. The evidence is recorded as `regression_check`.
+
 ## 0.233.7
 
 ### Patch Changes
