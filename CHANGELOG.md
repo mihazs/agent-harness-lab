@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.234.3
+
+### Patch Changes
+
+- 4c672e0: Pure Codex sessions and trials now disable every user-level skill, naming each `SKILL.md`: Codex ignores a disable entry that names the skill folder, so the user skills AHL meant to exclude had been loading all along.
+- edc8566: The trim of unmeasured rules applies once per run on any measured attempt, so a candidate that already went through the prune and still carries a rule no task measured is trimmed instead of refused whole. A pruned, refined or trimmed candidate is judged on the evaluation that was last built, not on an earlier claim's tasks. Codex trials get a repository fixture's git directory outside the workspace and granted as writable, since the sandbox keeps a workspace's own `.git` read-only. An empty `.git` directory, which the Codex sandbox leaves in the temporary directory, no longer counts as a source checkout.
+
 ## 0.234.2
 
 ### Patch Changes
