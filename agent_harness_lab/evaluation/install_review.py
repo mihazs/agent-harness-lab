@@ -91,31 +91,31 @@ def measured_text(tasks):
     return ''.join(f'===== measured task {index + 1} =====\n{str(text)[:TASK_LIMIT]}\n' for index, text in enumerate(tasks))
 
 
-def _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls, inherit, measured=()):
+def _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls, inherit, measured=(), name='install-review'):
     """The reviewer's validated answer or a not_reviewed record. The session starts in a folder of its own that holds only
     review.json once it answers: the run output, which holds tasks, graders and results, is neither its working directory nor
     granted to it, and the prompt names no path outside that folder."""
     if remaining() <= 0: return dict(verdict='not_reviewed', reason='budget_exhausted')
-    kept = output / 'install-review'
-    kept.mkdir()
+    kept = output / name
+    kept.mkdir(exist_ok=True)
     material, truncated = review_input(baseline, candidate, changed)
     prompt = PROMPT.format(material=material + measured_text(measured), measured=MEASURED if measured else '')
     # The session works in a folder outside the run output, so a relative path from it reaches no task, grader or result.
     with tempfile.TemporaryDirectory(prefix='ahl-install-review-') as scratch:
-        return _answer(runner, agent, binary, output, Path(scratch), kept, prompt, truncated, remaining, model_calls, inherit)
+        return _answer(runner, agent, binary, output, Path(scratch), kept, prompt, truncated, remaining, model_calls, inherit, name)
 
 
-def _answer(runner, agent, binary, output, folder, kept, prompt, truncated, remaining, model_calls, inherit):
+def _answer(runner, agent, binary, output, folder, kept, prompt, truncated, remaining, model_calls, inherit, name):
     try:
-        command, environment = runner.preparation_command(agent, binary, None, ('harness-self-improvement',), output / 'install-review.session',
+        command, environment = runner.preparation_command(agent, binary, None, ('harness-self-improvement',), output / f'{name}.session',
                                                           output.name, inherit)
         run, credentials = runner.execute_session(command, folder, remaining(), prompt, env=environment)
     except OSError:
         return dict(verdict='not_reviewed', reason='session_not_started')
-    atomic_json(output / 'install-review.environment.json', runner.environment_receipt(environment, inherit, output, credentials))
-    (output / 'install-review.jsonl').write_text(run.pop('stdout'))
-    (output / 'install-review.stderr').write_text(run.pop('stderr'))
-    transcript = (output / 'install-review.jsonl').read_text()
+    atomic_json(output / f'{name}.environment.json', runner.environment_receipt(environment, inherit, output, credentials))
+    (output / f'{name}.jsonl').write_text(run.pop('stdout'))
+    (output / f'{name}.stderr').write_text(run.pop('stderr'))
+    transcript = (output / f'{name}.jsonl').read_text()
     provider_reported.record(model_calls, 'install_review', 0, transcript, agent)
     if runner.trace_result(dict(run, stdout=transcript), agent)[0] != 'completed':
         return dict(verdict='not_reviewed', reason='session_timeout' if run.get('timeout') else 'session_failed')
@@ -125,13 +125,31 @@ def _answer(runner, agent, binary, output, folder, kept, prompt, truncated, rema
     return dict(verdict, **({'input_truncated': True} if truncated else {}))
 
 
-def passes(result, args, output, baseline, candidate, original, proposed, *, runner, agent, binary, remaining, model_calls, progress, measured=()):
+def _free_name(output):
+    """A review may run more than once in a run (before the repeats, after a trim, at install): each keeps its own files."""
+    return next(name for name in ('install-review', *(f'install-review-{n}' for n in range(2, 9))) if not (output / f'{name}.session').exists()
+                and not (output / f'{name}.jsonl').exists())
+
+
+def early(args, output, baseline, candidate, original, proposed, *, runner, agent, binary, remaining, model_calls, progress, measured):
+    """The same review before the confirmation repeats are spent, on the tasks the single run showed fixed. The caller acts on
+    it: an `unmeasured` answer lets the proposer drop the quoted rules, and a consistent one is reused at install time."""
+    progress('install_review')
+    changed = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
+    return _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls, getattr(args, 'inherit_env', False),
+                    measured, name=_free_name(output))
+
+
+def passes(result, args, output, baseline, candidate, original, proposed, *, runner, agent, binary, remaining, model_calls, progress, measured=(), prior=None):
     """True when the confirmed candidate may be installed. Otherwise the run ends no_change with candidate_inconsistent, whether
     the reviewer found the change inconsistent or no usable review was had; the confirmation stays in the receipt."""
+    if prior is not None and prior['verdict'] == 'consistent':
+        result['install_review'] = dict(prior, reused='early_review')  # the same candidate and the same measured tasks
+        return True
     progress('install_review')
     changed = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
     result['install_review'] = review = _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls,
-                                                 getattr(args, 'inherit_env', False), measured)
+                                                 getattr(args, 'inherit_env', False), measured, name=_free_name(output))
     if review['verdict'] == 'consistent': return True
     result.pop('recommendation', None)
     result.update(status='no_change', reason=REASON)
