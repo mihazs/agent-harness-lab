@@ -66,8 +66,51 @@ def managed_environment(parent_id, agent, inherit=False):
     return environment
 
 
+def _children():
+    """Direct children of this process (Linux /proc), or None where that cannot be read."""
+    found = set()
+    try:
+        for entry in os.scandir('/proc'):
+            if not entry.name.isdigit(): continue
+            try:
+                with open(f'/proc/{entry.name}/stat', 'rb') as handle: fields = handle.read().rsplit(b') ', 1)[-1].split()
+            except OSError: continue
+            if len(fields) > 1 and int(fields[1]) == os.getpid(): found.add(int(entry.name))
+    except OSError: return None
+    return found
+
+
+def _adopt_orphans():
+    """Make this process the reaper of its orphaned descendants (Linux), so a daemon a command leaves behind can be found."""
+    if not sys.platform.startswith('linux') or getattr(_adopt_orphans, 'done', False): return
+    _adopt_orphans.done = True
+    try:
+        import ctypes
+        ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
+    except (OSError, AttributeError): pass
+
+
+def _reap_leftovers(before):
+    """Kill what a finished command left running: build daemons and servers detach into a session of their own, outlive the
+    command and pile up over the trials of a run (seen live: a 2.8 GB daemon per trial until the run was OOM-killed)."""
+    if before is None: return 0
+    killed = 0
+    for _ in range(20):  # a killed parent can hand its children on to us
+        extra = (_children() or set()) - before
+        if not extra: break
+        for pid in extra:
+            try: os.kill(pid, signal.SIGKILL); killed += 1
+            except ProcessLookupError: pass
+        for pid in extra:
+            try: os.waitpid(pid, 0)
+            except (ChildProcessError, OSError): pass
+    return killed
+
+
 def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
+    _adopt_orphans()
+    before = _children()
     encoding = locale.getpreferredencoding(False)
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
@@ -120,6 +163,7 @@ def execute(argv, cwd, timeout, stdin=None,*,env=None):
             try: os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError: pass
             process.wait()
+        leftovers = _reap_leftovers(before)
         result = dict(exit_code=None if reason == 'output_limit' else process.returncode,
                       stdout=bytes(buffers[0]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
                       stderr=bytes(buffers[1]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
