@@ -7,6 +7,7 @@ closed. Standard library only.
 """
 import difflib
 import json
+import tempfile
 from pathlib import Path
 
 from agent_harness_lab import provider_reported
@@ -80,9 +81,15 @@ def _session(runner, agent, binary, output, baseline, candidate, changed, remain
     review.json once it answers: the run output, which holds tasks, graders and results, is neither its working directory nor
     granted to it, and the prompt names no path outside that folder."""
     if remaining() <= 0: return dict(verdict='not_reviewed', reason='budget_exhausted')
-    folder = output / 'install-review'
-    folder.mkdir()
+    kept = output / 'install-review'
+    kept.mkdir()
     material, truncated = review_input(baseline, candidate, changed)
+    # The session works in a folder outside the run output, so a relative path from it reaches no task, grader or result.
+    with tempfile.TemporaryDirectory(prefix='ahl-install-review-') as scratch:
+        return _answer(runner, agent, binary, output, Path(scratch), kept, material, truncated, remaining, model_calls, inherit)
+
+
+def _answer(runner, agent, binary, output, folder, kept, material, truncated, remaining, model_calls, inherit):
     try:
         command, environment = runner.preparation_command(agent, binary, None, ('harness-self-improvement',), output / 'install-review.session',
                                                           output.name, inherit)
@@ -98,6 +105,7 @@ def _session(runner, agent, binary, output, baseline, candidate, changed, remain
         return dict(verdict='not_reviewed', reason='session_timeout' if run.get('timeout') else 'session_failed')
     try: verdict = load(folder / 'review.json')
     except ValueError as exc: return dict(verdict='not_reviewed', reason=str(exc))
+    atomic_json(kept / 'review.json', verdict)  # the validated answer, kept beside the run for the receipt's reader
     return dict(verdict, **({'input_truncated': True} if truncated else {}))
 
 

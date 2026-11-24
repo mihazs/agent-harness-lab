@@ -758,7 +758,8 @@ passes, and keep the development tasks reproducing the same weak outcomes.
 """
 # Attempts of an unbanked run: a decline, a rejection, a refuted first claim, the measured attempt, one recheck of suspect
 # tasks and one refinement. The budget and `attempt > base + 1` end the loop long before, in the usual run.
-MAX_ATTEMPTS = 6
+MAX_ATTEMPTS = 7
+MAX_RECHECKS = 2  # a rebuilt evaluation is authored afresh and can carry a defect of its own
 # The rebuilt evaluation of an installing run in which both arms failed a claim task, each with a stated grader reason.
 SUSPECT_TASKS = """Both the baseline harness and a changed harness failed these tasks of your earlier evaluation, which often means the
 task or its grader, not the harness, decided the result (the grader's reasons follow each task):
@@ -1122,7 +1123,7 @@ def _improve(args):
     prune = []  # development tasks of the screen that the baseline passed: their changes are removed before anything is installed
     rebuild_controls = None  # regression tasks both arms failed in attempt 0 although the candidate fixed a task and lost none
     suspect = None  # claim tasks both arms failed with a stated grader reason: the author checks them once, same candidate
-    audited = False
+    rechecks = 0
     refine_frozen = False  # attempt 0 reproduced a weakness the candidate did not fix: refine against the same frozen tasks
     final_attempt = None
     proposed = None
@@ -1504,6 +1505,8 @@ asks for a claim, never inside provenance text or a statement that something is 
 structure or convention the grader checks, and resolve composed configuration (extends, anchors, includes) before reading it.
 A stand-in command the agent polls must finish on its first call, so no task invites sleeping. Rebuild the situation before a
 user's correction: never put the corrective instruction itself in the task text, or a baseline that follows instructions passes.
+A grader may require a name, file, string or format only when the task text or the fixture states it; judge behaviour, and
+accept every solution the task text allows.
 A fixture must never name an absolute path outside the workspace (/tmp, a home directory): ship a stand-in file inside the fixture,
 because the trial can read the real machine's file at that path.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs
@@ -1729,6 +1732,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 if outcome is None and not confirmed:
                     dismissed = True
                     trials = [t for t in trials if t['task'] not in lost]  # the tasks the decisions below read: these proved nothing
+                    # The before/after comparison of the receipt reads the same trials, or it would still call this run regressed.
+                    single_run = dict(single_run, trials=trials, dismissed_losses=sorted(lost))
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -1850,7 +1855,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and attempt == base and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
-        if (_installs(args) and bank is None and attempt >= base and not audited and not rebuild_controls and evaluated['inputs_unchanged']
+        if (_installs(args) and bank is None and attempt >= base and rechecks < MAX_RECHECKS and not rebuild_controls and evaluated['inputs_unchanged']
                 and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
             # A claim task both arms fail often means the task or grader decided, not the harness. Refining against
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
@@ -1861,7 +1866,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             same = {task: said[task, 'baseline'] + (' | changed harness: ' + said[task, 'candidate'] if said[task, 'candidate'] != said[task, 'baseline'] else '')
                     for task, version in said if version == 'baseline' and said[task, 'baseline'] and said.get((task, 'candidate'))}
             if same:
-                suspect, audited, base = same, True, attempt + 1
+                suspect, rechecks, base = same, rechecks + 1, attempt + 1
                 continue
         # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh

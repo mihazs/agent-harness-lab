@@ -265,5 +265,7 @@ def test_an_installing_run_builds_its_refinement_evaluation_afresh(stub, capsys)
     # (fixed-in: 0.232.3) and nothing reused is merged into a new construction.
     # Since 0.233.7 both arms failing for the identical stated reason sends the tasks back to the author once, with the same
     # candidate; the refinement is then judged on that rebuilt evaluation's frozen tasks.
-    assert [row['reused'] for row in kinds(rows, 'construction')] == [0, 0], receipt
-    assert receipt['tasks_rechecked']['attempt'] == 1 and receipt['evaluation_reused'] == {'attempt': 1, 'reason': 'refined_candidate'}
+    # Since 0.234.1 a rebuilt evaluation that still fails both arms is rechecked once more (this stub's does), and the
+    # refinement is judged on the second rebuilt evaluation's frozen tasks.
+    assert [row['reused'] for row in kinds(rows, 'construction')] == [0, 0, 0], receipt
+    assert receipt['tasks_rechecked']['attempt'] == 2 and receipt['evaluation_reused'] == {'attempt': 2, 'reason': 'refined_candidate'}

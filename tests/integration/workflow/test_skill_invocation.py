@@ -169,7 +169,7 @@ class TestSkillInvocation:
         assert (code,json.loads(stdout)['status']) == (0,'applied')
         marked=[(cwd,environment) for cwd,environment,_ in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
         assert len(marked) == 3  # the proposer, the evaluation author and the install reviewer, which is given no invocation context
-        assert not (marked[-1][0]/'context.json').exists() and marked[-1][0].name == 'install-review'
+        assert not (marked[-1][0]/'context.json').exists() and marked[-1][0].name.startswith('ahl-install-review-')  # outside the run output since 0.234.1
         for cwd,environment in marked[:2]:
             context=json.loads((cwd/'context.json').read_text())['invocation']
             assert environment['AHL_MANAGED_PREPARATION'] == context['parent_run_id']

@@ -432,6 +432,8 @@ def test_a_one_off_loss_with_nothing_fixed_ends_no_change(cli, tmp_path):
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
     assert receipt['regression_check']['confirmed'] == [] and receipt['regression_check']['tasks']['regression']['verdict'] == 'not_confirmed'
     assert receipt['changed_files'] == [] and (base.project / 'AGENTS.md').read_text() == 'bad'
+    # Regression (fixed-in: 0.234.1): the receipt still called the run candidate_regressed beside its no_change status.
+    assert receipt.get('before_after', {}).get('verdict') != 'candidate_regressed', receipt.get('before_after')
 
 
 def test_a_one_off_loss_on_the_last_attempt_ends_no_change_not_blocked(cli, tmp_path):
@@ -726,3 +728,12 @@ def test_the_reviewer_sees_the_harness_files_and_no_evaluation_material(cli, tmp
                     'mechanisms', 'falsifiers', str(output), str(base.root)):
         assert private not in given['prompt'], private
     assert (output / 'install-review').is_dir() and sorted(path.name for path in (output / 'install-review').iterdir()) == ['review.json']
+
+
+def test_a_rebuilt_evaluation_with_a_defect_of_its_own_is_rechecked_once_more(cli, tmp_path):
+    # Regression (fixed-in: 0.234.1): live, the one recheck repaired a grader and a later evaluation of the same run brought a
+    # second batch of grader defects that nothing rechecked, so the run ended on an unmeasurable evaluation.
+    agent = workflow_fixture.FAKE.replace("  if not reuse: grader.write_text(", f"  if not reuse and c['attempt']<2: grader.write_text({UNREACHABLE!r})\n  elif not reuse: grader.write_text(")
+    code, receipt, base = cli(agent=agent)
+    assert receipt.get('tasks_rechecked') == dict(tasks=['development', 'heldout'], attempt=2), receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
