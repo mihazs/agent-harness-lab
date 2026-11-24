@@ -83,7 +83,10 @@ cooperative, not sandboxed):
   ends `applied`, with the changed files and the `ahl rollback` command in the receipt; `confirmation` holds each task's pass
   counts and verdict.
   A tie installs nothing: a second claim is tried, then the run ends `no_change`. A fix the repeats do not
-  show ends `no_change` as `improvement_not_confirmed`.
+  show ends `no_change` as `improvement_not_confirmed`. Before installing, a fresh session that sees only the changed harness files
+  (baseline, candidate and their diff, never a task, grader or result) checks that the change agrees with the file it goes into;
+  a rule it finds contradictory or specific to one test, or a review that cannot be had, ends `no_change` as
+  `candidate_inconsistent`, and `install_review` in the receipt holds the verdict.
   Installing is your request, not
   certification: the receipt keeps every evidence label. A project `ahl.json`, a `--scope` that includes user-level files,
   `--agent responses` and `ahl watch` keep the candidate as a recommendation that is not applied.

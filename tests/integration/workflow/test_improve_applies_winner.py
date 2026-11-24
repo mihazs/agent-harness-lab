@@ -642,3 +642,87 @@ def test_a_recheck_whose_rebuilt_evaluation_refutes_the_claim_is_not_repeated(cl
     assert sum('decided the result' in prompt for prompt in prompts) == 1  # the author was asked to recheck once
     assert sum('proposal.json' in prompt and 'evaluation-construction' not in prompt for prompt in prompts) == 2  # a new claim was proposed
     assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+REVIEW_DEFAULT = "p('review.json').write_text(json.dumps({'verdict':'consistent','reason':'synthetic'}));"
+assert workflow_fixture.FAKE.count(REVIEW_DEFAULT) == 1
+
+
+def reviewing(raw, record=None):
+    """The fake agent whose install reviewer writes `raw` to review.json (nothing when None) and, with `record`, saves what it was given."""
+    seen = '' if record is None else f"import os; open({str(record)!r},'w').write(json.dumps(dict(prompt=prompt,listing=sorted(os.listdir('.')))));"
+    return workflow_fixture.FAKE.replace(REVIEW_DEFAULT, seen + ('' if raw is None else f"p('review.json').write_text({raw!r});"))
+
+
+CONTRADICTS = json.dumps(dict(verdict='contradicts', reason='the new bullet reverses an existing rule',
+                              conflicts=['Always print the full path.', 'Never print the full path.']))
+
+
+def test_a_confirmed_candidate_the_reviewer_finds_contradictory_is_not_installed(cli):
+    # Regression (fixed-in: 0.233.8): a refinement shaped a rule to what one grader accepted; it contradicted two other rules of
+    # its file, yet passed confirmation 10 to 0 and was installed. Confirmation shows the rule changes behaviour on the test, not
+    # that it agrees with the file it joins.
+    code, receipt, base = cli(agent=reviewing(CONTRADICTS))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent')
+    assert receipt['install_review'] == dict(verdict='contradicts', reason='the new bullet reverses an existing rule',
+                                             conflicts=['Always print the full path.', 'Never print the full path.'])
+    assert receipt['confirmation']['outcome'] == 'confirmed' and receipt['confirmation']['confirmed'] == ['development', 'heldout']
+    assert (base.project / 'AGENTS.md').read_text() == 'bad'
+    assert receipt['changed_files'] == [] and not {'application', 'deployment', 'recommendation'} & receipt.keys()
+
+
+def test_a_candidate_that_reads_like_the_answer_to_one_test_is_not_installed(cli):
+    # Regression (fixed-in: 0.233.8): the second verdict that keeps a confirmed candidate out.
+    code, receipt, base = cli(agent=reviewing(json.dumps(dict(verdict='test_specific', reason='prints a magic file name'))))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent')
+    assert receipt['install_review'] == dict(verdict='test_specific', reason='prints a magic file name', conflicts=[])
+    assert (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_candidate_the_reviewer_finds_consistent_is_installed_and_the_receipt_carries_the_review(cli):
+    # Regression (fixed-in: 0.233.8): the review is recorded for an installed change too, with the cost of its session.
+    code, receipt, base = cli()
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md'])
+    assert receipt['install_review'] == dict(verdict='consistent', reason='synthetic')
+    assert (base.project / 'AGENTS.md').read_text() == 'good\n'
+    review = next(call for call in receipt['model_calls'] if call['stage'] == 'install_review')
+    assert review['provider_reported']['usage'] == dict(output_tokens=1)
+
+
+@pytest.mark.parametrize('raw,cause', [(None, 'review_not_written'), ('not json', 'review_not_json'), ('["consistent"]', 'review_not_an_object'),
+                                       (json.dumps(dict(verdict='fine', reason='x')), 'review_verdict_invalid'),
+                                       (json.dumps(dict(verdict='consistent', reason='')), 'review_reason_invalid')],
+                         ids=['nothing written', 'not json', 'not an object', 'unknown verdict', 'no reason'])
+def test_an_unusable_review_installs_nothing(cli, raw, cause):
+    # Regression (fixed-in: 0.233.8): without a usable verdict the candidate fails closed instead of installing unreviewed.
+    code, receipt, base = cli(agent=reviewing(raw))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent')
+    assert receipt['install_review'] == dict(verdict='not_reviewed', reason=cause) and receipt['confirmation']['outcome'] == 'confirmed'
+    assert (base.project / 'AGENTS.md').read_text() == 'bad' and 'application' not in receipt
+
+
+def test_a_reviewer_session_that_fails_installs_nothing(cli):
+    # Regression (fixed-in: 0.233.8): a reviewer that exits non-zero is no review.
+    failing = workflow_fixture.FAKE.replace(REVIEW_DEFAULT, 'sys.exit(3);')
+    code, receipt, base = cli(agent=failing)
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'candidate_inconsistent')
+    assert receipt['install_review'] == dict(verdict='not_reviewed', reason='session_failed') and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_the_reviewer_sees_the_harness_files_and_no_evaluation_material(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): the reviewer is independent. It gets the baseline text, the candidate text and their diff, in
+    # a folder of its own: no task, grader, result, proposal or path of the run.
+    record = tmp_path / 'review-given'
+    code, receipt, base = cli(agent=reviewing(json.dumps(dict(verdict='consistent', reason='synthetic')), record))
+    given = json.loads(record.read_text())
+    output = Path(receipt['output'])
+    assert (code, receipt['status']) == (0, 'applied') and given['listing'] == []
+    assert 'independent install-review session' in given['prompt']
+    assert '===== baseline: AGENTS.md =====\nbad' in given['prompt'] and '===== candidate: AGENTS.md =====\ngood' in given['prompt']
+    assert '-bad' in given['prompt'] and '+good' in given['prompt']
+    material = {name: body.decode(errors='replace') for name, body in _everything_written(output / 'preparation').items()}
+    assert any('Produce the synthetic artifact' in body for body in material.values())  # the evaluation exists on disk, so its absence below means something
+    for private in ('Produce the synthetic artifact', 'grade.py', 'artifact check', 'heldout', 'development', 'regression', 'results.json', 'manifest',
+                    'mechanisms', 'falsifiers', str(output), str(base.root)):
+        assert private not in given['prompt'], private
+    assert (output / 'install-review').is_dir() and sorted(path.name for path in (output / 'install-review').iterdir()) == ['review.json']

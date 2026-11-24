@@ -21,7 +21,7 @@ from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces,
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
-from agent_harness_lab.evaluation import manifest_contract, vacuity
+from agent_harness_lab.evaluation import install_review, manifest_contract, vacuity
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -1915,7 +1915,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                           baseline_at_least_as_good=not fixed, **({'candidate_lost': sorted(lost)} if lost else {}),
                           **({'invalid_controls': invalid} if invalid else {}))
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
-            and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])):
+            and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])
+            and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
+                                      remaining=remaining, model_calls=model_calls, progress=progress)):
         # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
         applied = adopt_with_receipt(args.project, baseline, frozen, original, proposed, allowed_paths(args) is not None,
                                      provenance=dict(source='evaluated_candidate_apply', plan_sha256=common_plan.sha256), locked=True)

@@ -63,6 +63,7 @@ ALLOWED_DIFFERENCES = {
                         'trials.*.environment.sha256', 'trials.*.grader_environment.sha256'),
     'preparation-*.environment.json': ('sha256',),
     'evaluation-construction-*.environment.json': ('sha256',),
+    'install-review.environment.json': ('sha256',),
     'evaluation-construction-*.json': ('manifest_repairs.*.elapsed_seconds',),
     'preparation/evaluation-*/manifest.json': ('budget_seconds', 'timeout_seconds'),
     'preparation/evaluation-*/manifest-confirm.json': ('budget_seconds', 'timeout_seconds'),

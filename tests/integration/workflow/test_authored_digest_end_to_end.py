@@ -49,6 +49,8 @@ if p('context.json').exists():
                 controls.append(dict(task=split, state=state, fixture=control.name, **({{'digest': 'f' * 64}} if mode.startswith('digests') else {{}})))
         (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'], skills=[], tasks=tasks,
             grader_self_tests=controls, grader_bundles=bundles)))
+elif 'independent install-review session' in prompt:  # the install reviewer starts in an empty folder
+    p('review.json').write_text(json.dumps({{'verdict': 'consistent', 'reason': 'synthetic'}}))
 else:
     good = p('AGENTS.md').read_text().strip() == 'good'
     p('artifact').write_text('done' if good or 'regression' in p('seed').read_text() else 'wrong')
