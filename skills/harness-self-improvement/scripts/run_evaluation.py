@@ -212,7 +212,7 @@ def trace_result(run, agent="codex"):
     return 'completed', usage
 
 
-def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None, pure=False):
+def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None, pure=False, ambient=True):
     if agent == 'claude':
         argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
                 '--no-session-persistence']
@@ -220,8 +220,14 @@ def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None, pu
             argv += ['--plugin-dir', str(plugin)]
         return argv
     homes = (Path.home() / '.agents/skills', Path.home() / '.codex/skills') if skill_homes is None else skill_homes
-    disabled = [dict(path=str(home / skill), enabled=False) for skill in skills
+    # Codex honors a disable entry only when it names the skill's SKILL.md (observed at 0.172.0): a folder path is ignored.
+    disabled = [dict(path=str(home / skill / 'SKILL.md'), enabled=False) for skill in skills
                 for home in homes if (home / skill).exists()]
+    if not ambient:
+        # A pure session loads no skill of the user's own: Codex reads ~/.agents/skills whatever CODEX_HOME says.
+        named = {entry['path'] for entry in disabled}
+        disabled += [dict(path=str(path / 'SKILL.md'), enabled=False) for home in homes if home.is_dir() for path in sorted(home.iterdir())
+                     if (path / 'SKILL.md').is_file() and str(path / 'SKILL.md') not in named]
     argv = [binary, 'exec', '--ephemeral', *(['--ignore-user-config', '--ignore-rules'] if pure else []), '--skip-git-repo-check',
             '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
     if disabled:
@@ -300,7 +306,7 @@ def preparation_command(agent, binary, plugin, skills, stage, parent_id, inherit
         return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(stage, readable=readable), environment
     isolated = trial_surfaces.codex_environment(stage, stage, {}, environment)  # config.toml is ignored; the home holds the login
     homes = trial_surfaces.home_skills(isolated) if isolated.get('CODEX_HOME') != environment.get('CODEX_HOME') else None
-    argv = agent_command(agent, binary, None, skills, skill_homes=homes, pure=True)
+    argv = agent_command(agent, binary, None, skills, skill_homes=homes, pure=True, ambient=False)
     # --ignore-user-config drops the user's model choice too; keep only that, passed explicitly.
     chosen = [part for key, value in sorted(codex_defaults(environment).items()) for part in ('-c', f'{key}={json.dumps(value)}')]
     return argv[:-1] + chosen + argv[-1:], isolated
@@ -351,7 +357,7 @@ def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, env
     environment = trial_surfaces.codex_environment(trial, workspace, defaults, environ)
     staged = environment.get('CODEX_HOME') != environ.get('CODEX_HOME')
     homes = trial_surfaces.home_skills(environ) if staged else None
-    return agent_command(agent, binary, None, skills, skill_homes=homes), environment
+    return agent_command(agent, binary, None, skills, skill_homes=homes, ambient=False), environment
 
 
 def evaluate(args):

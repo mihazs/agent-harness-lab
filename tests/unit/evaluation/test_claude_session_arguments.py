@@ -90,3 +90,21 @@ def test_trial_bash_commands_are_allowed_so_the_sandbox_not_the_parser_confines_
     from agent_harness_lab.evaluation.trial_surfaces import CLAUDE_STAGED
     settings = CLAUDE_STAGED['settings'][1]
     assert settings['permissions']['allow'] == ['Bash'] and settings['sandbox']['allowUnsandboxedCommands'] is False
+
+
+def test_a_pure_codex_session_disables_every_user_skill_by_its_skill_file(tmp_path):
+    # Regression (fixed-in: 0.234.3): live, user-level skills loaded in Codex trials of both arms. Only the skills named like
+    # the staged ones were disabled, and by folder, which Codex ignores.
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'skills/harness-self-improvement/scripts'))
+    import run_evaluation
+    home = tmp_path / 'skills'
+    for name in ('alpha', 'beta'):
+        (home / name).mkdir(parents=True); (home / name / 'SKILL.md').write_text('---\nname: x\n---\n')
+    (home / 'not-a-skill').mkdir()
+    def disabled(argv): return next((arg for arg in argv if arg.startswith('skills.config=')), '')
+    pure = disabled(run_evaluation.agent_command('codex', 'codex', None, ('alpha',), skill_homes=(home,), ambient=False))
+    assert pure.count('SKILL.md') == 2 and str(home / 'beta/SKILL.md') in pure and 'not-a-skill' not in pure
+    named = disabled(run_evaluation.agent_command('codex', 'codex', None, ('alpha',), skill_homes=(home,)))
+    assert named.count('SKILL.md') == 1 and str(home / 'alpha/SKILL.md') in named  # with the user's harness only shadowed names go
