@@ -1277,7 +1277,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                               'Use it to see why the agent under your change still missed the weak outcome.\n'
                               'A grader message shows one evaluation\'s convention, not the project\'s: never write a rule whose only support is '
                               'that a check failed, and never one that contradicts another rule of the same file. If the weak outcome can only be '
-                              'fixed by contradicting the project\'s own rules, change that rule in place or propose no change.\n' if _installs(args) else ''))
+                              'fixed by contradicting the project\'s own rules, change that rule in place or propose no change. Add no rule for anything '
+                              'other than the weak outcomes in that feedback: a rule no task measured is refused before install.\n' if _installs(args) else ''))
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
@@ -1928,7 +1929,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
             and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])
             and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
-                                      remaining=remaining, model_calls=model_calls, progress=progress)):
+                                      remaining=remaining, model_calls=model_calls, progress=progress,
+                                      measured=[task.get('prompt', '') for task in single_run['manifest']['tasks']
+                                                if task['id'] in (result.get('confirmation') or {}).get('confirmed', ())])):
         # The evaluated candidate is installed through the journal. That is not certification: every evidence label stays.
         applied = adopt_with_receipt(args.project, baseline, frozen, original, proposed, allowed_paths(args) is not None,
                                      provenance=dict(source='evaluated_candidate_apply', plan_sha256=common_plan.sha256), locked=True)
