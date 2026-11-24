@@ -57,6 +57,7 @@ REMEDIATION = {
     'improvement_confirmation_unaffordable': 'The time or trial budget ran out before the fresh repeats of the fixed tasks could settle whether the fix is reliable, so nothing was installed; rerun with a larger --timeout.',
     'improvement_confirmation_incomplete': 'A fresh repeat of the fixed tasks did not grade every trial as passed or failed, so it neither confirms nor refutes the fix and nothing was installed; read the confirm results files, then rerun.',
     'improvement_not_confirmed': 'The candidate fixed a task in the first run, but over fresh repeats of the fixed tasks the candidate pass rate of no task beat the baseline pass rate by a one-sided exact test at the per-task level, so nothing was installed; read confirmation in the receipt and the confirm results files.',
+    'candidate_inconsistent': 'The candidate was confirmed, but a fresh review of the changed files found a rule that contradicts the rest of the harness or reads like the answer to one test, or no review could be had, so nothing was installed; read install_review in the receipt, fix the named rule, then rerun.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
     'missing_or_duplicate_trials': 'Review the trial records and restore complete, unique trial coverage.',
     'evaluation_manifest_changed': 'Review the changed evaluation manifest before starting a fresh evaluation.',
@@ -139,7 +140,7 @@ def guidance(result):
         category = {'empty': 'No data', 'incomplete': 'Inconclusive', 'observed': 'Evidence observed'}.get(evidence, 'Inconclusive')
     else:
         reason = result.get('reason')
-        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'improvement_not_confirmed', 'candidate_identical_to_baseline')
+        category = {'no_change': ('No change selected' if reason in ('evaluation_no_improvement', 'improvement_not_confirmed', 'candidate_inconsistent', 'candidate_identical_to_baseline')
                                   else 'Evidence insufficient' if reason == 'no_change_evidence_insufficient' else 'No change proposed'),
                     'blocked': 'Candidate regressed' if reason in ('candidate_regressed', 'area_regressed', 'candidate_already_regressed') else 'Blocked by missing prerequisite',
                     'applied': 'Change applied', 'rejected': 'Candidate rejected',

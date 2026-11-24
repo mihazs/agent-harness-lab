@@ -168,8 +168,9 @@ class TestSkillInvocation:
             code,stdout,_=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','30'])
         assert (code,json.loads(stdout)['status']) == (0,'applied')
         marked=[(cwd,environment) for cwd,environment,_ in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
-        assert len(marked) == 2
-        for cwd,environment in marked:
+        assert len(marked) == 3  # the proposer, the evaluation author and the install reviewer, which is given no invocation context
+        assert not (marked[-1][0]/'context.json').exists() and marked[-1][0].name == 'install-review'
+        for cwd,environment in marked[:2]:
             context=json.loads((cwd/'context.json').read_text())['invocation']
             assert environment['AHL_MANAGED_PREPARATION'] == context['parent_run_id']
             assert context['remaining_seconds'] <= 30
@@ -204,7 +205,8 @@ class TestSkillInvocation:
         assert code in (0, 3)
         assert children
         assert all(('AHL_TEST_CANARY' in env) == inherit for env in children)
-        assert len(preparations) == 2
+        installs = prefix != ['watch']  # watch only recommends: no install, so no install review
+        assert len(preparations) == (3 if installs else 2)  # proposer, evaluation author, install reviewer
         assert len(graders) >= 15  # Nine self-tests and six baseline/candidate graders.
         assert all(env is not None and 'AHL_TEST_CANARY' not in env and 'CODEX_API_KEY' not in env for env in graders)
         # Preparation sessions are pure: a temporary CODEX_HOME of their own, never the user's.
@@ -212,7 +214,7 @@ class TestSkillInvocation:
                    and env['CODEX_HOME'] != synthetic['CODEX_HOME'] and Path(env['CODEX_HOME']).parent.name.endswith('.session')
                    for env in preparations)
         result = json.loads(stdout)
-        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
+        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json', *(['install-review.environment.json'] if installs else [])):
             env_receipt = json.loads((Path(result['output']) / name).read_text())
             assert env_receipt['inherited'] is inherit
             assert 'AHL_MANAGED_PREPARATION' in env_receipt['names']
@@ -246,7 +248,7 @@ class TestSkillInvocation:
         assert code in (0, 3)
         preparations = [row for row in sessions if 'AHL_MANAGED_PREPARATION' in row[1]]
         trials = [row for row in sessions if 'AHL_MANAGED_PREPARATION' not in row[1]]
-        assert len(preparations) == 2 and trials
+        assert len(preparations) == 3 and trials
         for argv, environment, copied, mode in preparations:  # always pure, with the login copied in for the run
             assert {'--ignore-user-config', '--ignore-rules'} <= set(argv)
             assert environment['CODEX_HOME'] != str(real_home) and 'CODEX_API_KEY' not in environment
@@ -262,7 +264,7 @@ class TestSkillInvocation:
         assert {trial['user_harness'] for trial in evaluation['trials']} == {label}
         expected = 'not_staged' if with_harness else 'subscription_login_copied'
         assert {trial['environment']['credentials'] for trial in evaluation['trials']} == {expected}
-        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
+        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json', 'install-review.environment.json'):
             assert json.loads((output / name).read_text())['credentials'] == 'subscription_login_copied'
         assert not list(output.rglob('auth.json'))  # no copy outlives its session
         leaked = [str(path) for path in output.rglob("*") if path.is_file() and "synthetic-login-canary" in path.read_text(errors="replace")]; assert not leaked, leaked

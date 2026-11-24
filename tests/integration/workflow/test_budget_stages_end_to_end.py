@@ -64,6 +64,9 @@ if p('context.json').exists():
         note(kind='constructed', attempt=c['attempt'], tasks=[t['id'] for t in tasks])
         (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'], skills=[], tasks=tasks,
             grader_self_tests=controls, grader_bundles=bundles)))
+elif 'independent install-review session' in prompt:  # the install reviewer starts in an empty folder
+    note(kind='review')
+    p('review.json').write_text(json.dumps({'verdict': 'consistent', 'reason': 'synthetic'}))
 else:
     note(kind='trial')
     trial = mode.get('trial', 'normal')
