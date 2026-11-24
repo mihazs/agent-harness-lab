@@ -24,7 +24,8 @@ def citable(brief, summaries=None):
     extra = summaries.get('mechanisms', []) if isinstance(summaries, dict) and summaries.get('profile') == analysis_brief.SUMMARY_PROFILE else []
     return frozenset([row['mechanism_id'] for row in brief.get('mechanisms', [])]
                      + [row['mechanism_id'] for row in extra]
-                     + [row['id'] for row in brief.get('weak_outcome_signals', []) if row.get('status') == 'observed_pattern'])
+                     + [row['id'] for row in brief.get('weak_outcome_signals', []) if row.get('status') == 'observed_pattern']
+                     + [row['id'] for row in (brief.get('harness_profile') or {}).get('findings', [])])
 
 
 def admit(proposal, brief, component_version, *, summaries=None):

@@ -52,6 +52,23 @@ folder, or is a bare `pnpm x` for a name that could be a binary. No finding is p
 no instruction file could be read: the section says `no_instruction_file`, which is not a clean
 result. When a candidate instruction file could not be read, the gap checks stay silent.
 
+## In `ahl analyze` and `ahl improve`
+
+Both commands build the same profile and write it to the private `harness-profile.json` of the run
+directory. The analysis brief gains a bounded `harness_profile` section (finding ids, kinds, subjects,
+counts and proposed actions, at most 12 findings, contradictions first) and names the private file in its
+`sources`; `report.md` lists the findings. The proposer is told, when the section has findings, that they are
+hypotheses, that a contradiction outranks a gap, and that it may add only a fact an agent cannot read from
+the repository (a non-default toolchain, an exact verification command), never a directory tour. A mechanism
+may cite a finding id in `evidence_refs`; an id the brief did not list is refused like any other unlisted
+evidence. The evaluation author then builds tasks that try to reproduce the claimed weak outcome under the
+baseline, and nothing installs without the paired evaluation, the fresh confirmation and the install review.
+
+A first run whose history has findings but no verified outcome seeds the proposer with the best static
+convention (see [one-call improvement](one-call-improvement.md)); a profile finding is one of those
+conventions, ranked after a truncated chain and an oversized file for a contradiction, and last for a gap.
+The seed carries a fixed focus sentence and the finding id, never instruction text.
+
 ## Limits
 
 The checks are lexical. They do not execute a command, resolve an import, read a nested
