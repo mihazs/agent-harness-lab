@@ -384,6 +384,65 @@ def test_a_control_the_candidate_breaks_still_blocks(cli):
                                                    "'done' if (good and not phase.endswith('regression')) or (not good and phase.endswith('regression'))")
     code, receipt, base = cli(agent=breaks_control)
     assert receipt['status'] != 'applied' and (base.project / 'AGENTS.md').read_text() == 'bad'
+    assert receipt['regression_check']['confirmed'] == ['regression']  # the loss was repeated and held
+
+
+def loses_control(tmp_path, other, losses):
+    """The regression control passes under the baseline. The candidate fails it on its runs numbered `losses`, counted from 0 over
+    the whole improve run (repeats included). The development and held-out tasks pass when `other`, an expression over `good`
+    (the candidate arm), holds."""
+    runs = repr(str(tmp_path / 'candidate-control-runs'))
+    number = f"(lambda n: (p({runs}).write_text(str(n + 1)), n)[1])(int(p({runs}).read_text()) if p({runs}).exists() else 0)"
+    lost = f"(good and phase.endswith('regression') and {number} in {tuple(losses)!r})"
+    agent = workflow_fixture.FAKE.replace(PASSES, f"'done' if not {lost} and (phase.endswith('regression') or ({other}))")
+    assert agent != workflow_fixture.FAKE
+    return agent
+
+
+def regress_dirs(receipt):
+    return sorted(Path(receipt['output']).glob('evaluation-*-regress-*'))
+
+
+def test_a_loss_that_does_not_repeat_does_not_block_a_fix_confirmed_in_the_same_attempt(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): live, one control the candidate failed once (a faulty grader or run-to-run noise) ended
+    # the run blocked as candidate_regressed with most of the budget unspent; a loss seen once is no more trusted than a fix seen once.
+    # Here the candidate fixes both tasks, fails the control in the first run only, and the baseline passes the control throughout.
+    code, receipt, base = cli(agent=loses_control(tmp_path, 'good', [0]))
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+    assert receipt['regression_check'] == dict(repeats_run=9, confirmed=[], tasks=dict(regression=dict(candidate=9, baseline=9, verdict='not_confirmed')))
+    assert len(regress_dirs(receipt)) == 9 and 'evaluation_reused' not in receipt  # no refinement was spent on a loss that was not there
+    assert receipt['confirmation']['confirmed'] == ['development', 'heldout'] and (base.project / 'AGENTS.md').read_text() == 'good\n'
+
+
+def test_a_loss_that_repeats_still_blocks_with_the_repeat_evidence(cli):
+    # Regression (fixed-in: 0.233.8): the loss is repeated before it blocks; one the candidate shows in every repeat still does.
+    # The candidate fixes nothing and fails the control each time while the baseline passes it: nine repeats, 9 of 9 against none.
+    always = workflow_fixture.FAKE.replace(PASSES, "'done' if phase.endswith(('development', 'heldout')) or not good")
+    assert always != workflow_fixture.FAKE
+    _, receipt, base = cli(agent=always)
+    assert (receipt['status'], receipt['reason']) == ('blocked', 'candidate_regressed'), receipt
+    assert receipt['regression_check'] == dict(repeats_run=9, confirmed=['regression'], tasks=dict(regression=dict(candidate=0, baseline=9, verdict='confirmed')))
+    assert (Path(receipt['output']) / 'investigation.json').exists() and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_one_off_loss_with_nothing_fixed_ends_no_change(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): a candidate that fixed nothing and failed one control once ended blocked; the repeats show
+    # the candidate passes it as often as the baseline does, so it did not regress and nothing is installed.
+    code, receipt, base = cli(agent=loses_control(tmp_path, 'True', [0]))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['regression_check']['confirmed'] == [] and receipt['regression_check']['tasks']['regression']['verdict'] == 'not_confirmed'
+    assert receipt['changed_files'] == [] and (base.project / 'AGENTS.md').read_text() == 'bad'
+
+
+def test_a_one_off_loss_on_the_last_attempt_ends_no_change_not_blocked(cli, tmp_path):
+    # Regression (fixed-in: 0.233.8): the last attempt's one flipped pair is what ended the run blocked. Both arms fail the
+    # development and held-out tasks, so the claim is reproduced and refined once on the frozen tasks; the candidate fails the
+    # control once at the start of each of those two evaluations (its runs 0 and 10) and in no repeat.
+    code, receipt, base = cli(agent=loses_control(tmp_path, 'False', [0, 10]))
+    assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['evaluation_reused'] == dict(attempt=0, reason='refined_candidate') and receipt['baseline_at_least_as_good'] is True
+    assert receipt['regression_check']['confirmed'] == [] and len(regress_dirs(receipt)) == 18
+    assert (base.project / 'AGENTS.md').read_text() == 'bad'
 
 
 def test_a_pruned_candidate_goes_to_the_repeats_even_when_the_baseline_passes_its_single_rerun(cli, tmp_path):
