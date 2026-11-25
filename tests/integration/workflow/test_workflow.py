@@ -19,6 +19,8 @@ import json, pathlib, sys
 p=pathlib.Path
 if '--version' in sys.argv: print('synthetic-agent'); sys.exit(0)
 prompt=sys.stdin.read()
+if 'independent probe-review session' in prompt:  # the probe reviewer starts in a folder without context.json; it answers `fair` for every task
+ p('probe-review.json').write_text(json.dumps({'tasks':{name:{'verdict':'fair','quote':''} for name in __import__('re').findall(r'===== task: (.+?) =====',prompt)},'reason':'synthetic'})); print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}})); sys.exit(0)
 if 'independent install-review session' in prompt:  # the install reviewer starts in a folder without context.json
  p('review.json').write_text(json.dumps({'verdict':'consistent','reason':'synthetic'})); print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}})); sys.exit(0)
 if p('context.json').exists():

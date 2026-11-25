@@ -846,3 +846,88 @@ def test_a_trim_after_a_refuted_first_claim_is_judged_on_the_second_claims_tasks
     code, receipt, base = cli(agent=agent)
     assert receipt['rules_trimmed']['attempt'] == 1 and receipt['evaluation_reused'] == dict(attempt=1, reason='trimmed_candidate'), receipt
     assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
+
+
+PROBE_DEFAULT = ("p('probe-review.json').write_text(json.dumps({'tasks':{name:{'verdict':'fair','quote':''} for name in "
+                 "__import__('re').findall(r'===== task: (.+?) =====',prompt)},'reason':'synthetic'}));")
+assert workflow_fixture.FAKE.count(PROBE_DEFAULT) == 1
+
+
+def probing(replacement, record=None):
+    """The fake agent whose probe reviewer runs `replacement` (an answer written to probe-review.json, or nothing) in place of its default
+    of `fair` for every task; with `record`, it saves what it was given. A repair pass of the author runs again, so its folders may exist."""
+    seen = '' if record is None else f"import os; open({str(record)!r},'w').write(json.dumps(dict(prompt=prompt,listing=sorted(os.listdir('.')))));"
+    return (workflow_fixture.FAKE.replace(PROBE_DEFAULT, seen + replacement)
+            .replace('folder.mkdir()', 'folder.mkdir(exist_ok=True)').replace('control.mkdir()', 'control.mkdir(exist_ok=True)')
+            .replace("prompt='Produce the synthetic artifact'", "prompt='Make the artifact' if 'gives away the behaviour' in prompt else 'Produce the synthetic artifact'"))
+
+
+def accusing(quote='the synthetic artifact', task='development'):
+    return ("p('probe-review.json').write_text(json.dumps({'tasks':{" + f"{task!r}:{{'verdict':'leaking','quote':{quote!r}}}," +
+            "'heldout':{'verdict':'fair','quote':''}},'reason':'synthetic accusation'}));")
+
+
+def test_a_task_that_gives_the_rule_away_is_sent_back_to_its_author_once_before_any_trial(cli, tmp_path):
+    # Regression (fixed-in: 0.235.1): live, claims were refuted only because the task text named the rule or the document that
+    # states it, so a baseline that followed the text passed and real gaps went unmeasured.
+    seen = tmp_path / 'prompts'
+    agent = probing(accusing()).replace('prompt=sys.stdin.read()', f"prompt=sys.stdin.read(); open({str(seen)!r},'a').write(prompt+'\\n@@END@@\\n')")
+    code, receipt, base = cli(agent=agent)
+    prompts = seen.read_text().split('@@END@@')
+    repairs = [prompt for prompt in prompts if 'gives away the behaviour' in prompt]
+    assert len(repairs) == 1 and "- development: 'the synthetic artifact'" in repairs[0] and 'heldout' not in repairs[0].split('gives away')[1], receipt
+    assert 'Keep the fixture and the grader' in repairs[0] and 'plain request' in repairs[0]
+    assert sum('independent probe-review session' in prompt for prompt in prompts) == 1  # the repaired tasks are not reviewed again
+    assert receipt['probe_review'] == [dict(attempt=0, repair_requested=True, reason='synthetic accusation', tasks=dict(
+        development=dict(verdict='leaking', quote='the synthetic artifact'), heldout=dict(verdict='fair', quote='')))]
+    assert [(row['reason'], row['stage'], row['outcome']) for row in receipt['evaluation_construction_repairs']] == [
+        ('task_text_gives_the_rule_away', 'probe_review', 'repaired')]
+    manifest = json.loads((Path(receipt['output']) / 'preparation/evaluation-0/manifest.json').read_text())
+    assert {task['prompt'] for task in manifest['tasks']} == {'Make the artifact'} and (Path(receipt['output']) / 'evaluation-0/results.json').is_file()
+    assert sum(call['stage'] == 'probe_review' for call in receipt['model_calls']) == 1  # beside the author's passes, with its own cost record
+    assert (code, receipt['status'], receipt['changed_files']) == (0, 'applied', ['AGENTS.md']), receipt
+
+
+def test_a_review_that_finds_every_task_fair_asks_for_no_repair_and_is_recorded(cli):
+    # Regression (fixed-in: 0.235.1): the same review; a fair evaluation costs the author nothing and the verdicts stay in the receipt.
+    code, receipt, base = cli()
+    assert receipt['probe_review'] == [dict(attempt=0, repair_requested=False, reason='synthetic', tasks=dict(
+        development=dict(verdict='fair', quote=''), heldout=dict(verdict='fair', quote='')))]
+    assert 'evaluation_construction_repairs' not in receipt and sum(call['stage'] == 'probe_review' for call in receipt['model_calls']) == 1
+    assert (code, receipt['status']) == (0, 'applied'), receipt
+
+
+@pytest.mark.parametrize('replacement,cause', [('', 'probe_review_not_written'), ("p('probe-review.json').write_text('not json');", 'probe_review_not_json'),
+                                               ("p('probe-review.json').write_text(json.dumps({'tasks':{}}));", 'probe_review_task_missing'),
+                                               ('sys.exit(3);', 'session_failed')],
+                         ids=['nothing written', 'not json', 'task unanswered', 'session fails'])
+def test_a_review_that_cannot_be_had_lets_the_run_go_on_and_says_why(cli, replacement, cause):
+    # Regression (fixed-in: 0.235.1): the review is advice, so an unusable one proceeds with the evaluation as built.
+    code, receipt, base = cli(agent=probing(replacement))
+    assert receipt['probe_review'] == [dict(attempt=0, verdict='not_reviewed', reason=cause)]
+    assert 'evaluation_construction_repairs' not in receipt and (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_an_accusation_whose_quote_is_not_in_the_task_text_costs_no_repair(cli):
+    # Regression (fixed-in: 0.235.1): an unsupported accusation must not send the author back for a rewrite nobody needs.
+    code, receipt, base = cli(agent=probing(accusing(quote='a rule the task text never states')))
+    assert receipt['probe_review'][0]['tasks']['development'] == dict(verdict='fair', quote='') and receipt['probe_review'][0]['repair_requested'] is False
+    assert 'evaluation_construction_repairs' not in receipt and (code, receipt['status']) == (0, 'applied'), receipt
+
+
+def test_the_probe_reviewer_sees_the_claim_and_the_task_texts_and_nothing_else(cli, tmp_path):
+    # Regression (fixed-in: 0.235.1): the reviewer is independent of the evaluation's graders and fixtures and of the candidate.
+    record = tmp_path / 'probe-given'
+    code, receipt, base = cli(agent=probing(PROBE_DEFAULT, record))
+    given = json.loads(record.read_text())
+    output = Path(receipt['output'])
+    assert (code, receipt['status']) == (0, 'applied') and given['listing'] == []  # a folder of its own, empty when it starts
+    prompt = given['prompt']
+    assert 'independent probe-review session' in prompt and '- synthetic\n' in prompt and '- artifact check\n' in prompt
+    assert prompt.count('===== task:') == 2 and prompt.count('Produce the synthetic artifact') == 2  # development and heldout; the regression task is not reviewed
+    material = {name: body.decode(errors='replace') for name, body in _everything_written(output / 'preparation').items()}
+    assert any('preserve' in body for body in material.values()) and any('grade.py' in body for body in material.values())  # they exist on disk, so their absence below means something
+    for private in ('grade.py', 'preserve', 'original', 'AGENTS.md', 'good', 'bad', 'regression', 'results.json', 'manifest', 'hypothesis', 'proposal',
+                    str(output), str(base.root)):
+        assert private not in prompt, private
+    assert (output / 'probe-review').is_dir() and sorted(path.name for path in (output / 'probe-review').iterdir()) == ['probe-review.json']

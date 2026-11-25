@@ -130,7 +130,9 @@ running its own graders showed: a self-test that does not fail a broken or parti
 pass the complete one (the receipt names the task, the control and the grader's last 400
 characters of output), an infeasible task, a changed grader input or missing split coverage.
 It is recorded with reason `manifest_validation_rejected` or the typed reason, and draws on the
-same two-repair budget as the shape repairs; every other entry point keeps one repair and its old exit.
+same two-repair budget as the shape repairs; every other entry point keeps one repair and its old exit. The same run may also send the
+author back once, with reason `task_text_gives_the_rule_away` and stage `probe_review`, when an independent review of the task texts quotes words that state
+the rule the claim says the baseline misses ([one-call improvement](one-call-improvement.md)).
 
 ## Recover from a rejected manifest
 
