@@ -182,3 +182,5 @@ competing explanations, a responsible component, and a falsifiable outcome check
 Missing capture is a finding about evidence, not agent behavior. Measure required
 boundaries and completion before efficiency; neither fewer calls nor more skills
 is success. Check instruction removal and consolidation as well as additions.
+A brief `harness_profile` finding (id `hp/...`) is a hypothesis that one harness line is wrong or missing: cite its id,
+prefer a contradiction to a gap, and add only a fact an agent cannot read from the repository, never a directory tour.

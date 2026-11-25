@@ -43,7 +43,9 @@ If `ahl` is not on PATH, use `~/.local/bin/ahl --help` or add that directory to 
 
 For an offline convention check before collecting traces, run `ahl audit .`.
 It reports static observations, not harness performance; see the
-[static audit contract](docs/static-audit.md).
+[static audit contract](docs/static-audit.md). It also compares the instruction files with the repository and
+lists lines the repository contradicts (a script, target or path that is not there) and facts the harness never
+states (a non-default toolchain, a verification command); see [the project profile](docs/project-profile.md).
 
 Start with local evidence discovery; this does not call a model:
 

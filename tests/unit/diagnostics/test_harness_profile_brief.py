@@ -1,6 +1,8 @@
 """Profile findings reach the proposer through the brief, as citable hypotheses and never as text (#1119); synthetic only."""
 import json
 
+import pytest
+
 from agent_harness_lab import workflow
 from agent_harness_lab.diagnostics import brief, improve_coverage
 from agent_harness_lab.project_profile import report
@@ -93,3 +95,50 @@ def test_the_proposer_is_told_how_to_read_the_findings_only_when_there_are_some(
 def test_the_guidance_prefers_contradictions_and_refuses_derivable_facts():
     text = ' '.join(workflow.PROFILE_GUIDANCE.split())
     assert 'Prefer a contradiction' in text and 'never add a directory tour or a stack overview' in text and 'hypotheses, not diagnoses' in text
+
+
+def check(tmp_path, before, after, proposals=()):
+    project = build(tmp_path / 'p', {**NODE, 'AGENTS.md': before})
+    baseline, candidate = build(tmp_path / 'b', {'AGENTS.md': before}), build(tmp_path / 'c', {'AGENTS.md': after})
+    return report.check_candidate(project, baseline, candidate, proposals)
+
+
+def test_a_candidate_that_removes_the_stale_line_resolves_the_finding_it_cited(tmp_path):
+    cited = report.build(build(tmp_path / 'x', {**NODE, 'AGENTS.md': 'Use pnpm. Run `pnpm run deploy`.\n'}))['findings'][0]['id']
+    proposals = [dict(mechanisms=[dict(evidence_refs=[cited]), dict(evidence_refs=['Bash/tool_reported_error']), 'legacy text'])]
+    value = check(tmp_path, 'Use pnpm. Run `pnpm run deploy`.\n', 'Use pnpm. Run `pnpm test`.\n', proposals)
+    assert (value['status'], value['authority'], value['publication_allowed']) == ('compared', 'none', False)
+    assert cited in value['resolved'] and value['cited_resolved'] == [cited] and value['cited_unresolved'] == []
+    assert value['introduced_contradictions'] == [] and value['unchanged'] == 0
+
+
+def test_a_candidate_that_adds_a_script_the_repository_lacks_introduces_a_contradiction(tmp_path):
+    value = check(tmp_path, 'Use pnpm. Run `pnpm test`.\n', 'Use pnpm. Run `pnpm test` and `pnpm run lint`.\n')
+    assert len(value['introduced_contradictions']) == 1 and value['introduced_contradictions'][0].startswith('hp/command_target_missing/')
+    assert value['resolved'] == [] and value['cited_resolved'] == []
+
+
+def test_a_candidate_that_leaves_the_finding_in_place_leaves_the_cited_id_unresolved(tmp_path):
+    line = 'Use pnpm. Run `pnpm run deploy`.\n'
+    cited = report.build(build(tmp_path / 'x', {**NODE, 'AGENTS.md': line}))['findings'][0]['id']
+    value = check(tmp_path, line, line + 'More words.\n', [dict(mechanisms=[dict(evidence_refs=[cited])])])
+    assert value['cited_unresolved'] == [cited] and value['cited_resolved'] == [] and value['unchanged'] >= 1
+
+
+def test_a_path_the_candidate_itself_creates_is_not_a_missing_path(tmp_path):
+    project = build(tmp_path / 'p', {**NODE, 'AGENTS.md': 'Use pnpm.\n'})
+    baseline = build(tmp_path / 'b', {'AGENTS.md': 'Use pnpm.\n'})
+    candidate = build(tmp_path / 'c', {'AGENTS.md': 'Use pnpm. See `.claude/rules/style.md`.\n', '.claude/rules/style.md': 'Rule.\n'})
+    assert report.check_candidate(project, baseline, candidate)['introduced_contradictions'] == []
+
+
+@pytest.mark.parametrize('error', [KeyError('x'), IndexError('x'), TypeError('x'), RecursionError()])
+def test_an_unexpected_failure_becomes_a_typed_absence_and_never_stops_the_analysis(tmp_path, monkeypatch, error):
+    def fail(*args, **kwargs): raise error
+    monkeypatch.setattr(report.findings, 'compare', fail)
+    result = report.build(build(tmp_path, {**NODE, 'AGENTS.md': 'Use pnpm.\n'}))
+    assert (result['status'], result['reason'], result['findings']) == ('unavailable', type(error).__name__, [])
+    view = report.brief_section(result)
+    assert (view['status'], view['reason'], view['findings'], view['findings_total'], view['project']) == ('unavailable', type(error).__name__, [], 0, None)
+    built, _ = brief.build(DATA, SCAN, harness_profile=view)
+    assert built['harness_profile']['status'] == 'unavailable'

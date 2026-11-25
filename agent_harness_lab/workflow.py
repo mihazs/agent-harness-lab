@@ -263,7 +263,8 @@ def evidence(args, output, source_context=None, *, progress=None):
     from .evaluation.integrity import read_regular
     args._mechanism_summaries_digest = hashlib.sha256(read_regular(output / 'mechanism-summaries.json', 4*1024*1024)).hexdigest()
     from .diagnostics import adherence_native
-    adherence_section, adherence_report = adherence_native.for_analysis(args, data)
+    read_sessions = []
+    adherence_section, adherence_report = adherence_native.for_analysis(args, data, sessions_out=read_sessions)
     if (corrections := adherence_section.pop('user_corrections', None)) is not None:
         write_json(output / 'user-corrections.json', corrections)
     if adherence_report is not None:
@@ -273,7 +274,7 @@ def evidence(args, output, source_context=None, *, progress=None):
         write_json(output / instruction_repair.ARTIFACT, repair_plan)
         adherence_section['repair_plan'] = instruction_repair.section(repair_plan)
     from .project_profile import report as harness_profile
-    profile_report = harness_profile.build(args.project)
+    profile_report = harness_profile.build(args.project, read_sessions if any(read_sessions) else None)
     write_json(output / harness_profile.ARTIFACT, profile_report)
     profile_section = harness_profile.brief_section(profile_report)
     data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store), adherence=adherence_section, harness_profile=profile_section)
@@ -2024,6 +2025,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         result['evidence_strength'] = evidence_strength(**(dict(manifest=None, trials=None, inputs_unchanged=True) if single_run is None
             else {name: single_run[name] for name in ('manifest', 'trials', 'inputs_unchanged', 'vacuity')}),
             grader_changed=grader_changed, final_attempt=single_run is None or single_run['bindings']['attempt']==final_attempt)
+    if proposed is not None:
+        from .project_profile import report as harness_profile
+        result['harness_profile_check'] = harness_profile.check_candidate(args.project, baseline, candidate, proposals)
     if audited:
         result['audit_hypothesis']=args._audit_hypothesis
         if getattr(args,'_static_automatic',False): result['static_convention_candidates']=args._static_candidates
