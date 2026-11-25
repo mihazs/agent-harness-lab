@@ -49,6 +49,8 @@ if p('context.json').exists():
                 controls.append(dict(task=split, state=state, fixture=control.name, **({{'digest': 'f' * 64}} if mode.startswith('digests') else {{}})))
         (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'], skills=[], tasks=tasks,
             grader_self_tests=controls, grader_bundles=bundles)))
+elif 'independent probe-review session' in prompt:  # the probe reviewer starts in an empty folder; every task is `fair`
+    p('probe-review.json').write_text(json.dumps({{'tasks': {{name: {{'verdict': 'fair', 'quote': ''}} for name in __import__('re').findall(r'===== task: (.+?) =====', prompt)}}, 'reason': 'synthetic'}}))
 elif 'independent install-review session' in prompt:  # the install reviewer starts in an empty folder
     p('review.json').write_text(json.dumps({{'verdict': 'consistent', 'reason': 'synthetic'}}))
 else:

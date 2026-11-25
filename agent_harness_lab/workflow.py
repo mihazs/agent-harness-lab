@@ -21,7 +21,7 @@ from agent_harness_lab import budget_stages, config, refinement_reuse, surfaces,
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evidence_label import evidence_strength, grader_fingerprint, pre_edit_check, seeded_provenance
-from agent_harness_lab.evaluation import install_review, manifest_contract, vacuity
+from agent_harness_lab.evaluation import install_review, manifest_contract, probe_review, vacuity
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
 from agent_harness_lab.monitoring import state as checkpoint_state
@@ -1564,10 +1564,11 @@ trials. The parent checks grader controls, freezes inputs, executes both version
 Time box: this construction pass is stopped after {max(0, int(box))} seconds and {max(0, int(remaining()))} seconds remain in the whole
 improvement budget; write manifest.json early, then refine. An overrun ends the pass as evaluation_construction_timeout.
 """ + (refinement_reuse.prompt_line(reused) if reused else '') + manifest_contract.contract_text(controller_grader=False) + '\n'
+            claim = None
             if _installs(args) and not reused:
                 # Strings only, bounded: the claim to reproduce, never the candidate that answers it.
-                write_json(evaluation / 'hypothesis.json', {name: [str(item)[:2000] for item in _listed(proposal, name)][:12]
-                                                           for name in ('mechanisms', 'falsifiers')})
+                claim = {name: [str(item)[:2000] for item in _listed(proposal, name)][:12] for name in ('mechanisms', 'falsifiers')}
+                write_json(evaluation / 'hypothesis.json', claim)
                 evaluation_prompt += REPRODUCE.format(hypothesis=evaluation / 'hypothesis.json')
                 if rebuild_controls: evaluation_prompt += CONTROLS_INVALID.format(ids=', '.join(rebuild_controls))
                 if rechecking: evaluation_prompt += SUSPECT_TASKS.format(rows='\n'.join(f'- {task}: {message}' for task, message in sorted(rechecking.items())))
@@ -1595,7 +1596,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             command, environment = runner.preparation_command(agent, binary, plugin, ('harness-self-improvement',),
                 output / f'evaluation-construction-{attempt}.session', output.name, getattr(args,'inherit_env',False), readable=(output, args.project))
             made = args._evaluation_repairs = []
-            suffix = ''
+            suffix, probed = '', claim is None  # one probe review per constructed evaluation, and none without the claim it reviews against
             while True:
                 attempt_started, cap = now(), min(remaining(), box)
                 construction, credentials = runner.execute_session(command, evaluation, cap, evaluation_prompt + suffix, env=environment)
@@ -1630,7 +1631,20 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     if reused: merge_reuse(args, reused, evaluation, manifest_path, authored, attempt, grading)  # only fresh held-out tasks were written
                     if _installs(args):  # the author can fix what running its own graders shows: the same repair budget
                         if made and made[-1]['stage'] == 'evaluation_construction': made[-1]['outcome'] = 'repaired'  # its shape defect is gone
-                        validated.append(validate())
+                        written, fresh = manifest_path.read_text(), set(used_heldout)
+                        validated[:] = [validate()]
+                        if not probed:  # an unusable review proceeds; a repair is requested only for a task whose quote is in its text
+                            probed = True
+                            with stages.charge('construction'):
+                                repair = probe_review.probe(args, output, claim, validated[0], attempt, result, made, remaining,
+                                    runner=runner, agent=agent, binary=binary, model_calls=model_calls, progress=progress,
+                                    reserve=stages.allotted('trials'), elapsed=round(args._construction_seconds, 1))
+                            if repair:
+                                validated.clear()
+                                manifest_path.write_text(written)  # what the author wrote: validation added controller-owned fields and digests
+                                used_heldout.intersection_update(fresh)  # the kept held-out fixture was fingerprinted by the validation just passed
+                                suffix = '\n' + repair
+                                continue
                     break
                 except ValueError as error:  # a ContractError is one
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)

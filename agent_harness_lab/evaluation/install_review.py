@@ -63,15 +63,22 @@ def review_input(baseline, candidate, changed, limit=TOTAL_LIMIT):
     return ''.join(parts), truncated
 
 
+def read_object(path, prefix='review'):
+    """The JSON object in an answer file, read within ANSWER_LIMIT bytes; ValueError `<prefix>_not_written`, `_too_large`, `_not_json`
+    or `_not_an_object` when the file is absent, a link, too large, not JSON or not an object."""
+    path = Path(path)
+    if path.is_symlink() or not path.is_file(): raise ValueError(f'{prefix}_not_written')
+    with path.open('rb') as stream: raw = stream.read(ANSWER_LIMIT + 1)
+    if len(raw) > ANSWER_LIMIT: raise ValueError(f'{prefix}_too_large')
+    try: answer = json.loads(raw)
+    except (ValueError, RecursionError): raise ValueError(f'{prefix}_not_json') from None
+    if not isinstance(answer, dict): raise ValueError(f'{prefix}_not_an_object')
+    return answer
+
+
 def load(path):
     """The validated answer file; ValueError with a short cause when it is unusable. Only a verdict other than consistent keeps conflicts."""
-    path = Path(path)
-    if path.is_symlink() or not path.is_file(): raise ValueError('review_not_written')
-    with path.open('rb') as stream: raw = stream.read(ANSWER_LIMIT + 1)
-    if len(raw) > ANSWER_LIMIT: raise ValueError('review_too_large')
-    try: answer = json.loads(raw)
-    except (ValueError, RecursionError): raise ValueError('review_not_json') from None
-    if not isinstance(answer, dict): raise ValueError('review_not_an_object')
+    answer = read_object(path)
     verdict, reason, conflicts = answer.get('verdict'), answer.get('reason'), answer.get('conflicts', [])
     if verdict not in VERDICTS: raise ValueError('review_verdict_invalid')
     if not isinstance(reason, str) or not reason.strip(): raise ValueError('review_reason_invalid')
@@ -102,10 +109,13 @@ def _session(runner, agent, binary, output, baseline, candidate, changed, remain
     prompt = PROMPT.format(material=material + measured_text(measured), measured=MEASURED if measured else '')
     # The session works in a folder outside the run output, so a relative path from it reaches no task, grader or result.
     with tempfile.TemporaryDirectory(prefix='ahl-install-review-') as scratch:
-        return _answer(runner, agent, binary, output, Path(scratch), kept, prompt, truncated, remaining, model_calls, inherit, name)
+        return answer(runner, agent, binary, output, Path(scratch), kept, prompt, truncated, remaining, model_calls, inherit, name)
 
 
-def _answer(runner, agent, binary, output, folder, kept, prompt, truncated, remaining, model_calls, inherit, name):
+def answer(runner, agent, binary, output, folder, kept, prompt, truncated, remaining, model_calls, inherit, name,
+           stage='install_review', filename='review.json', parse=None):
+    """One fresh session in `folder` and its answer file `filename`, read by `parse` (default: this module's `load`). The probe
+    review shares it: only the stage charged, the file written and the validation differ."""
     try:
         command, environment = runner.preparation_command(agent, binary, None, ('harness-self-improvement',), output / f'{name}.session',
                                                           output.name, inherit)
@@ -116,18 +126,18 @@ def _answer(runner, agent, binary, output, folder, kept, prompt, truncated, rema
     (output / f'{name}.jsonl').write_text(run.pop('stdout'))
     (output / f'{name}.stderr').write_text(run.pop('stderr'))
     transcript = (output / f'{name}.jsonl').read_text()
-    provider_reported.record(model_calls, 'install_review', 0, transcript, agent)
+    provider_reported.record(model_calls, stage, 0, transcript, agent)
     if runner.trace_result(dict(run, stdout=transcript), agent)[0] != 'completed':
         return dict(verdict='not_reviewed', reason='session_timeout' if run.get('timeout') else 'session_failed')
-    try: verdict = load(folder / 'review.json')
+    try: verdict = (parse or load)(folder / filename)
     except ValueError as exc: return dict(verdict='not_reviewed', reason=str(exc))
-    atomic_json(kept / 'review.json', verdict)  # the validated answer, kept beside the run for the receipt's reader
+    atomic_json(kept / filename, verdict)  # the validated answer, kept beside the run for the receipt's reader
     return dict(verdict, **({'input_truncated': True} if truncated else {}))
 
 
-def _free_name(output):
+def free_name(output, prefix='install-review'):
     """A review may run more than once in a run (before the repeats, after a trim, at install): each keeps its own files."""
-    return next(name for name in ('install-review', *(f'install-review-{n}' for n in range(2, 9))) if not (output / f'{name}.session').exists()
+    return next(name for name in (prefix, *(f'{prefix}-{n}' for n in range(2, 9))) if not (output / f'{name}.session').exists()
                 and not (output / f'{name}.jsonl').exists())
 
 
@@ -137,7 +147,7 @@ def early(args, output, baseline, candidate, original, proposed, *, runner, agen
     progress('install_review')
     changed = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
     return _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls, getattr(args, 'inherit_env', False),
-                    measured, name=_free_name(output))
+                    measured, name=free_name(output))
 
 
 def passes(result, args, output, baseline, candidate, original, proposed, *, runner, agent, binary, remaining, model_calls, progress, measured=(), prior=None):
@@ -149,7 +159,7 @@ def passes(result, args, output, baseline, candidate, original, proposed, *, run
     progress('install_review')
     changed = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
     result['install_review'] = review = _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls,
-                                                 getattr(args, 'inherit_env', False), measured, name=_free_name(output))
+                                                 getattr(args, 'inherit_env', False), measured, name=free_name(output))
     if review['verdict'] == 'consistent': return True
     result.pop('recommendation', None)
     result.update(status='no_change', reason=REASON)
