@@ -107,8 +107,11 @@ def repair_instruction(accused):
             'Rewrite the text of each of these tasks as a plain request from a user who wants the work done, one that neither states '
             'nor points at the rule: no rule, no document, file, ADR, runbook or checklist that states it, no instruction to follow the '
             "project's conventions or guides for this behaviour, no warning about the weak outcome. Keep the fixture and the grader, "
-            'and keep every end state the grader checks stated in the text as an outcome to reach, not as a rule to obey. '
-            'Change only those task texts in /work, keep everything else, and finish.')
+            'and keep in the text only what a user would say: the work wanted, where the result goes and its format. The one '
+            'thing the text must not state, in any form, is the behaviour the claim is about: neither as a rule nor as an outcome '
+            '("leave the queued items as they are", "based directly on main") nor as a field that asks for it. The grader still '
+            'checks that behaviour; that is the point of the task. '
+            'Change only those task texts in the manifest in your working directory, keep everything else, and finish.')
 
 
 def receipt(attempt, review, repair_requested, repair_skipped=None):
