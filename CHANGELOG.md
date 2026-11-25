@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.236.0
+
+### Minor Changes
+
+- a0c1393: An installing `ahl improve` run now has a fresh, independent session read the task texts of each newly built evaluation before any trial, seeing only the claim and those texts. A task whose text states the rule, names the document that states it, or tells the agent to follow the project's conventions for exactly that behaviour is sent back to the author once to be rewritten as a plain user request; a review that cannot be had never stops the run, and the verdicts are recorded as `probe_review`.
+
+### Patch Changes
+
+- 2a2d1cf: The evaluation author is told to state the deliverable and its format in a task and never the behaviour the claim is about; the earlier rule to state every end state the grader checks made authors spell the rule under test out as an outcome. A development task and its held-out task must be different situations.
+- 2bef44c: Processes a trial or grader command leaves running, such as build daemons that detach into their own session, are killed when the command ends. They used to pile up over the trials of a run until the run was killed by the memory limit before reaching a verdict. On Linux with a systemd user manager, each agent session also runs in a memory-limited scope of its own (`AHL_SESSION_MEMORY_MAX`, default 8G, `off` to disable), so a session whose commands outgrow the limit is killed alone instead of taking the run down.
+- 92b01a4: In an installing run, a trial the agent did not finish inside the per-trial limit counts as a failed trial (marked `timed_out`) instead of ending the whole run as `evaluation_failed`; a loss or a fix that rests on it still has to hold in the fresh repeats.
+
 ## 0.235.0
 
 ### Minor Changes
