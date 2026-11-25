@@ -69,14 +69,14 @@ def managed_environment(parent_id, agent, inherit=False):
 def _children():
     """Direct children of this process (Linux /proc), or None where that cannot be read."""
     found = set()
-    try:
-        for entry in os.scandir('/proc'):
-            if not entry.name.isdigit(): continue
-            try:
-                with open(f'/proc/{entry.name}/stat', 'rb') as handle: fields = handle.read().rsplit(b') ', 1)[-1].split()
-            except OSError: continue
-            if len(fields) > 1 and int(fields[1]) == os.getpid(): found.add(int(entry.name))
+    try: names = os.listdir('/proc')  # unreadable process state is never a sweep: nothing is killed on a guess
     except OSError: return None
+    for name in names:
+        if not name.isdigit(): continue
+        try:
+            with open(f'/proc/{name}/stat', 'rb') as handle: fields = handle.read().rsplit(b') ', 1)[-1].split()
+        except OSError: continue
+        if len(fields) > 1 and int(fields[1]) == os.getpid(): found.add(int(name))
     return found
 
 
@@ -96,7 +96,9 @@ def _reap_leftovers(before):
     if before is None: return 0
     killed = 0
     for _ in range(20):  # a killed parent can hand its children on to us
-        extra = (_children() or set()) - before
+        now = _children()
+        if now is None: break
+        extra = now - before
         if not extra: break
         for pid in extra:
             try: os.kill(pid, signal.SIGKILL); killed += 1

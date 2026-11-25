@@ -529,11 +529,14 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
     # As child subreaper this process inherits every orphan of the run, so nothing the run started outlives it or
     # writes after the post-run snapshot.
     existing, previous = _descendants(), _subreaper(1)
+    executed = None
     try:
         executed = executor(argv, workspace, timeout, PROMPT, env=launch_env)
     finally:
         lingering, swept = _sweep(existing)
         if previous is not None: _subreaper(previous)
+        # The runner kills what its command left behind before returning: those count as lingering too.
+        if lingering is not None and isinstance(executed, dict): lingering += executed.get('leftover_processes_killed', 0)
     try: diff = classify_diff(before, snapshot(root), marker['nonce'])
     except (OSError, ValueError): diff = dict(canary=0, runtime_state=0, out_of_scope=[], out_of_scope_count=None, config_writes=[],
                                               outside_trial_writes='unobserved')
