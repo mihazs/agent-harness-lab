@@ -192,3 +192,10 @@ def test_no_session_starts_without_budget_a_claim_or_a_task_to_review(tmp_path, 
     instruction, result, made, calls, _, output = run(tmp_path, runner, **kwargs)
     assert instruction == '' and result['probe_review'] == [dict(attempt=0, verdict='not_reviewed', reason=cause)]
     assert runner.started == [] and calls == [] and not (output / 'probe-review').exists()
+
+
+def test_the_reviewer_is_told_that_an_output_field_naming_the_behaviour_gives_it_away():
+    # Regression (fixed-in: 0.236.1): live, tasks asked for output fields such as "staleBadge (whether the stale badge is
+    # visible)" that were the claimed behaviour itself; the reviewer called them fair and the baseline passed by filling them in.
+    from agent_harness_lab.evaluation import probe_review
+    assert 'whose name or description is\nthe claimed behaviour itself' in probe_review.PROMPT
