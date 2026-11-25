@@ -356,6 +356,21 @@ def externalize_git_dir(workspace, trial):
     return target
 
 
+def restore_git_dir(workspace, external):
+    """Put a git directory moved out by externalize_git_dir back as the workspace's own .git; True when restored.
+
+    Graders and the grader self-test see a plain repository, as they did when the fixture was built: a grader that checks
+    for a .git directory, or copies the workspace with it, must not judge the trial's layout instead of its work."""
+    git = Path(workspace) / '.git'
+    if external is None or not Path(external).is_dir() or git.is_symlink() or not git.is_file():
+        return False
+    if git.read_text(errors='replace').strip() != f'gitdir: {external}':
+        return False  # the agent repointed it; leave what it did for the grader to see
+    git.unlink()
+    Path(external).rename(git)
+    return True
+
+
 def disable_branch_tracking(workspace):
     """Stop git from writing upstream tracking config when a branch is created from a remote branch; True when set.
 

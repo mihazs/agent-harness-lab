@@ -97,3 +97,28 @@ def test_a_repository_fixture_gets_its_git_directory_outside_the_workspace_for_c
     assert externalize_git_dir(workspace, tmp_path / 'trial') is None  # already a gitfile: nothing to move
     plain = tmp_path / 'plain'; plain.mkdir()
     assert externalize_git_dir(plain, tmp_path) is None and not (tmp_path / 'gitdir').exists()
+
+
+def test_the_moved_git_directory_is_restored_before_grading(tmp_path):
+    # Regression (fixed-in: 0.236.1): live, an authored grader required the workspace's .git to be a directory; every Codex
+    # trial left a gitfile there, so the task failed in both arms and the run ended inconclusive.
+    import subprocess
+    from agent_harness_lab.evaluation.trial_surfaces import externalize_git_dir, restore_git_dir
+    workspace = tmp_path / 'trial/workspace'; workspace.mkdir(parents=True)
+    env = {'PATH': '/usr/bin:/bin', 'HOME': str(tmp_path), 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
+           'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t'}
+    def git(*args): return subprocess.run(['git', '-C', str(workspace), *args], capture_output=True, text=True, env=env)
+    git('init', '-q', '-b', 'main'); (workspace / 'a').write_text('a'); git('add', 'a'); git('commit', '-qm', 'init')
+    external = externalize_git_dir(workspace, tmp_path / 'trial')
+    (workspace / 'b').write_text('b'); git('add', 'b'); git('commit', '-qm', 'feat: b')  # the trial's own work
+    assert restore_git_dir(workspace, external) is True
+    assert (workspace / '.git').is_dir() and not external.exists()
+    assert git('log', '--oneline').stdout.count('\n') == 2  # the trial's commit is kept
+    assert restore_git_dir(workspace, external) is False  # nothing left to restore
+
+
+def test_a_gitfile_the_agent_repointed_is_left_for_the_grader(tmp_path):
+    from agent_harness_lab.evaluation.trial_surfaces import restore_git_dir
+    workspace = tmp_path / 'workspace'; workspace.mkdir(); external = tmp_path / 'gitdir'; external.mkdir()
+    (workspace / '.git').write_text('gitdir: /somewhere/else\n')
+    assert restore_git_dir(workspace, external) is False and (workspace / '.git').is_file() and external.is_dir()

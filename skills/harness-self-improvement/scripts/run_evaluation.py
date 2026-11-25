@@ -1110,6 +1110,9 @@ def _evaluate(args):
             record['environment'] = environment_receipt(environment, inherit_env, output)
             record['user_harness'] = 'included' if with_user_harness else 'excluded'
             run, record['environment']['credentials'] = execute_session(argv, workspace, min(timeout, remaining), prompt, env=environment)
+            if record.get('git_dir_external'):
+                from agent_harness_lab.evaluation.trial_surfaces import restore_git_dir
+                record['git_dir_restored'] = restore_git_dir(workspace, trial / 'gitdir')
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
