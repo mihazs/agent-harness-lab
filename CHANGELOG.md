@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.235.0
+
+### Minor Changes
+
+- 18aca87: `ahl analyze` and `ahl improve` now compare the repository with the instruction files and give the proposer the result. The analysis brief gains a bounded `harness_profile` section and a private `harness-profile.json`, `report.md` lists the findings, a mechanism may cite a finding id as evidence, and a first run with history but no verified outcome may be seeded with the best profile finding like any other static convention. Findings stay hypotheses: nothing installs without the existing evaluation, confirmation and review gates.
+- 5af6a2b: `ahl analyze` and `ahl improve` now count the commands the agent ran in the native sessions they read, reduced to a closed vocabulary (declared scripts and targets, known verification tools, package managers) with no arguments, paths or secrets, counted per session with lineage left unknown. Commands run in several sessions that the harness never names, a package manager the sessions use instead of the one the harness names, and run-shaped rules the user repeats that the harness lacks become findings in the harness profile, with the same citable ids and the same evaluation gates as the static findings. The run receipt also lists which profile findings the candidate harness resolves or introduces, as an observation only.
+- 3d99f08: `ahl audit` adds a read-only project profile (technologies, package managers, declared and CI commands, layout) and compares it with the instruction files. It lists harness lines the repository contradicts (a script, target or path that is not there, a contradicted package manager or test runner, instruction files that disagree) and facts it declares that the harness never states (a non-default toolchain, a verification command), each with a stable id, counted evidence and a proposed update. Nothing is executed or installed; the findings are hypotheses for `ahl improve`.
+
 ## 0.234.3
 
 ### Patch Changes
