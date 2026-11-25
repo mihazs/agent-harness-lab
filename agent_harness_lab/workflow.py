@@ -1199,6 +1199,7 @@ def _improve(args):
             with manifest_contract.boundary('evaluation'), stages.charge('trials'):
                 runner.evaluate(second)
             again = json.loads((Path(second.output) / 'results.json').read_text())
+            _settle_timeouts(again['trials'])
             protected[evaluation] = runner.digest(evaluation)
             if (not all(t['status'] in ('passed', 'failed') for t in again['trials']) or not again['inputs_unchanged']
                     or grader_fingerprint(manifest_path) != grader_before):  # an ungraded or unfaithful repeat proves nothing
@@ -1720,6 +1721,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
+        if _installs(args) and bank is None: _settle_timeouts(trials)
         limited = next((message for message in (_usage_limit(_trial_trace(Path(options.output), t)) for t in trials
                                                 if t.get('status') == 'execution_error') if message), None)
         if limited:
@@ -2060,6 +2062,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         checkpoint(args,output,result,original,allowed_paths(args),proposal_path)
     write_json(output / 'workflow.json', result)
     return result
+
+
+def _settle_timeouts(trials):
+    """Count a trial the agent did not finish inside the per-trial limit as a failed trial, marked `timed_out`.
+
+    One timeout used to end a whole installing run as evaluation_failed. Not finishing in time is an outcome of that arm on
+    that task; as a failure it goes through the same guards as any other: a loss or a fix seen once is repeated before it
+    decides anything. A trial that never ran, or was refused by the provider, is not a timeout and stays as it was."""
+    for trial in trials:
+        if trial.get('status') == 'execution_error' and (trial.get('execution') or {}).get('timeout') is True:
+            trial.update(status='failed', timed_out=True)
 
 
 def _usage_limit(trace):
