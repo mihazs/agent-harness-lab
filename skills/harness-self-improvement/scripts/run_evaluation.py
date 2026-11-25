@@ -107,10 +107,24 @@ def _reap_leftovers(before):
     return killed
 
 
+_SESSION = {'scoped': False}
+
+
+def _scoped(argv, env):
+    """argv and environment of an agent session inside its own memory-limited scope, or both unchanged."""
+    scope = memory_scope() if _SESSION['scoped'] and env is not None else []
+    if not scope: return argv, env
+    # systemd-run reaches the user manager through these two variables, which the session's own filtered environment does
+    # not carry: they are lent to systemd-run and taken away again before the session's command starts.
+    lent = {name: os.environ[name] for name in ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS') if name in os.environ and name not in env}
+    return (scope + [shutil.which('env') or '/usr/bin/env', *(flag for name in lent for flag in ('-u', name))] + list(argv), {**env, **lent})
+
+
 def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
     _adopt_orphans()
     before = _children()
+    argv, env = _scoped(argv, env)
     encoding = locale.getpreferredencoding(False)
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
@@ -168,6 +182,7 @@ def execute(argv, cwd, timeout, stdin=None,*,env=None):
                       stdout=bytes(buffers[0]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
                       stderr=bytes(buffers[1]).decode(encoding, 'replace').replace('\r\n', '\n').replace('\r', '\n'),
                       elapsed_seconds=time.monotonic() - start, timeout=reason == 'timeout')
+        if leftovers: result['leftover_processes_killed'] = leftovers
         if reason == 'output_limit':
             result['output_limit'] = True
             result['stderr'] += '\nProcess output exceeded the 16 MiB limit.'
@@ -374,10 +389,34 @@ def execute_session(argv, cwd, timeout, stdin=None, *, env):
     from agent_harness_lab.evaluation import trial_surfaces
     trial_surfaces.stage_codex_login(env)
     try:
-        run = execute(argv, cwd, timeout, stdin, env=env)
+        _SESSION['scoped'] = True  # execute() wraps this one command; its callers and their argv stay as they were
+        try: run = execute(argv, cwd, timeout, stdin, env=env)
+        finally: _SESSION['scoped'] = False
     finally:
         credentials = trial_surfaces.settle_codex_login(env)
     return run, credentials
+
+
+def memory_scope(environ=None):
+    """Argv prefix that runs a session in a memory-limited scope of its own (Linux with a systemd user manager), else [].
+
+    A session runs the project's own commands. A heavy build inside one trial once used about 11 GB; inside the controller's
+    memory group that got the controller killed and the whole run lost without a receipt. In its own scope the oversized
+    session is the one that is killed, and the run records it as a failed trial and goes on. AHL_SESSION_MEMORY_MAX sets
+    the limit (systemd syntax, default 8G); the value `off` disables the scope."""
+    source = os.environ if environ is None else environ
+    limit = source.get('AHL_SESSION_MEMORY_MAX', '8G')
+    if limit == 'off' or not sys.platform.startswith('linux'): return []
+    cached = getattr(memory_scope, 'usable', None)
+    if cached is None:
+        binary = shutil.which('systemd-run')
+        try:
+            cached = bool(binary) and subprocess.run([binary, '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=64M', '--', 'true'],
+                                                     capture_output=True, timeout=10).returncode == 0
+        except (OSError, subprocess.SubprocessError): cached = False
+        memory_scope.usable, memory_scope.binary = cached, binary
+    if not cached: return []
+    return [memory_scope.binary, '--user', '--scope', '--quiet', '--collect', '-p', f'MemoryMax={limit}', '-p', 'MemorySwapMax=0', '--']
 
 
 def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None, user_harness=False):
