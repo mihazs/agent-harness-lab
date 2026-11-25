@@ -1540,7 +1540,9 @@ and rebases work): never require git worktree add, git config or remote changes,
 hooks or submodules.
 The trial workspace also holds the harness files under test (AGENTS.md, CLAUDE.md, .agents/, .claude/, .harness-trial/): a grader
 must ignore them and judge only what the task asks for, never every new or changed file in the tree.
-The task text must state every end state the grader checks, and a grader must never require a value only an action
+The task text states the deliverable the grader reads (which file or artifact, where, in what format) and never the
+behaviour the claim is about, in any form: that behaviour is what the grader checks without the text asking for it. Apart
+from it, a grader checks only what the text or the fixture states. A grader must never require a value only an action
 impossible in the trial would produce (a pipeline run, a publish, a deploy, a registry): do not seed that output as the oracle.
 Graders print the failed check on stdout (never a bare FAIL). Match banned terms on word boundaries and only where the task
 asks for a claim, never inside provenance text or a statement that something is unavailable. State in the task text any order,
@@ -1548,7 +1550,8 @@ structure or convention the grader checks, and resolve composed configuration (e
 A stand-in command the agent polls must finish on its first call, so no task invites sleeping. Rebuild the situation before a
 user's correction: never put the corrective instruction itself in the task text, or a baseline that follows instructions passes.
 A grader may require a name, file, string or format only when the task text or the fixture states it; judge behaviour, and
-accept every solution the task text allows.
+accept every solution the task text allows. A development task and its held-out task must be different situations, not one
+text over two fixtures.
 A fixture must never name an absolute path outside the workspace (/tmp, a home directory): ship a stand-in file inside the fixture,
 because the trial can read the real machine's file at that path.
 The task text must never forbid a step the grader requires (for example "do not install packages" beside a grader that needs

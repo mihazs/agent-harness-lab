@@ -339,6 +339,9 @@ def test_the_evaluation_author_is_told_to_build_only_tasks_a_trial_can_complete(
     cli(agent=recording)
     assert 'never require concurrent or background processes' in seen.read_text()
     assert 'must never forbid a step the grader requires' in seen.read_text()  # a live task forbade the install its grader needed
+    # Regression (fixed-in: 0.235.1): "state every end state the grader checks" made authors spell the rule under test out as an
+    # outcome, so a baseline that follows the text passed; the text states the deliverable, never the behaviour under test.
+    assert 'never the\nbehaviour the claim is about' in seen.read_text() and 'must state every end state' not in seen.read_text()
     # Regression (fixed-in: 0.233.5): a live task required git worktree add, which the trial sandbox makes impossible.
     assert 'never require git worktree add' in seen.read_text()
     # Regression (fixed-in: 0.233.6): a live sweep found substring word bans, bare FAIL graders and corrections replayed as the prompt.
