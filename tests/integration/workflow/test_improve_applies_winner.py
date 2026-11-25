@@ -931,3 +931,22 @@ def test_the_probe_reviewer_sees_the_claim_and_the_task_texts_and_nothing_else(c
                     str(output), str(base.root)):
         assert private not in prompt, private
     assert (output / 'probe-review').is_dir() and sorted(path.name for path in (output / 'probe-review').iterdir()) == ['probe-review.json']
+
+
+def test_a_trial_that_timed_out_once_is_a_failed_trial_the_repeats_judge(cli, tmp_path):
+    # Regression (fixed-in: 0.235.1): live, one candidate trial hit the per-trial limit and the whole run ended
+    # evaluation_failed. A timeout is now a failed trial: here the control the candidate timed out on is repeated, the loss
+    # does not repeat, and the real fix is confirmed and installed.
+    marker = tmp_path / 'slow-once'
+    slow = (f" if good and phase.endswith('regression') and not __import__('os').path.exists({str(marker)!r}):\n"
+            f"  open({str(marker)!r},'w').close(); __import__('time').sleep(30)\n")
+    agent = (workflow_fixture.FAKE
+             .replace(" p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')",
+                      slow + " p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')")
+             .replace("json.dumps(dict(harness_paths=c['harness_paths'],skills=[],tasks=tasks,grader_self_tests=controls))",
+                      "json.dumps(dict(harness_paths=c['harness_paths'],skills=[],tasks=tasks,grader_self_tests=controls,timeout_seconds=4))"))
+    assert agent.count('slow-once') == 2 and agent.count('timeout_seconds=4') == 1
+    code, receipt, base = cli(agent=agent)
+    assert marker.exists()
+    assert receipt['regression_check']['confirmed'] == [] and receipt['regression_check']['tasks']['regression']['verdict'] == 'not_confirmed', receipt
+    assert (code, receipt['status']) == (0, 'applied'), receipt
