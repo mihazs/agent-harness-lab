@@ -149,6 +149,18 @@ def test_the_toolchain_gap_is_silent_when_nothing_is_missing(tmp_path, files):
     assert not any(kind == 'toolchain_not_stated' for kind, _ in kinds(run(tmp_path, {**files, 'AGENTS.md': text})))
 
 
+def test_a_skill_that_names_the_runtime_in_prose_states_the_toolchain(tmp_path):
+    # Found on a real checkout: a skill said "Bun tests live under tests/" and the gap still fired because `bun` was ambiguous.
+    files = {'package.json': package({'test': 'bun test'}), 'bun.lock': '', 'AGENTS.md': 'Keep it small.\n',
+             '.agents/skills/routing/SKILL.md': '---\nname: routing\n---\nRepository automation uses Bun tests under `tests/`.\n'}
+    assert not any(kind == 'toolchain_not_stated' for kind, _ in kinds(run(tmp_path, files)))
+
+
+def test_a_plain_english_word_for_a_tool_is_not_a_mention_outside_code(tmp_path):
+    files = {'pyproject.toml': '[tool.poetry]\nname = "x"\n', 'poetry.lock': '', 'AGENTS.md': 'Poetry is welcome here; just make it work.\n'}
+    assert ('toolchain_not_stated', 'python') in kinds(run(tmp_path, files))
+
+
 def test_a_declared_verification_command_the_harness_never_names(tmp_path):
     result = run(tmp_path, {**NODE, 'AGENTS.md': 'Use pnpm. Keep changes small.\n'})
     found = {row['subject']: row for row in result['findings'] if row['kind'] == 'verification_command_unnamed'}

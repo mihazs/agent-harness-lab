@@ -103,6 +103,12 @@ def test_an_unparsable_manifest_is_unknown_and_never_a_guess(tmp_path):
     assert names(profile, 'language') == {'javascript'} and profile['package_managers'] == []
 
 
+def test_an_unparsable_nested_manifest_is_named_without_its_folder(tmp_path):
+    root = build(tmp_path, {'package.json': package({'test': 'x'}), 'apps/zz-private-app/package.json': '{"scripts": '})
+    profile = detect.detect(root)
+    assert profile['unknown'] == ['unparsed:nested package.json'] and 'zz-private' not in json.dumps(profile)
+
+
 def test_a_non_object_json_manifest_is_unparsed(tmp_path):
     assert detect.detect(build(tmp_path, {'package.json': '[1, 2]'}))['unknown'] == ['unparsed:package.json']
 
@@ -127,6 +133,16 @@ def test_layout_names_source_test_and_migration_folders(tmp_path):
     layout = detect.detect(root)['layout']
     assert layout['src_layout'] and layout['test_dirs'] == ['tests'] and layout['test_subdirs'] == {'tests': ['integration', 'unit']}
     assert layout['migration_dirs'] == ['migrations'] and layout['docs_dir'] and 'src' in layout['source_dirs']
+
+
+def test_a_folder_with_an_unconventional_name_is_counted_and_never_listed(tmp_path):
+    root = build(tmp_path, {'src/a.py': '', 'tests/unit/a.py': '', 'tests/zz-private-suite/a.py': '', 'zz-private-dir/a.py': '',
+                            'apps/zz-private-app/package.json': package({'dev': 'x'}), 'package.json': package({'test': 'x'})})
+    profile = detect.detect(root)
+    assert 'zz-private' not in json.dumps(profile)
+    assert profile['layout']['top_level'] == ['apps', 'src', 'tests'] and profile['layout']['other_top_level'] == 1
+    assert profile['layout']['test_subdirs'] == {'tests': ['unit']}
+    assert {row['source'] for row in profile['commands']} == {'package.json', 'nested package.json'}
 
 
 def test_generated_and_hidden_folders_are_not_walked(tmp_path):

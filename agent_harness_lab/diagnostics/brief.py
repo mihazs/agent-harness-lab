@@ -337,7 +337,7 @@ def _size(value):
     return len(rendered(value))
 
 
-def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=None, adherence=None):
+def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=None, adherence=None, harness_profile=None):
     """Return (brief, next_steps). The brief is deterministic and capped regardless of history size."""
     analysis, execution = data['analysis'], data.get('execution', {})
     ranked = sorted(result['groups'].items(), key=_rank)
@@ -360,6 +360,10 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
                                             event_store_truncated=bool((artifact_bounds or {}).get('event_store', {}).get('truncated', {}).get('applied')))))
     if (classes := _error_classes(result['groups'])) is not None:
         brief['tool_error_classes'] = classes
+    if harness_profile is not None:
+        # Hypotheses from comparing the repository with the instruction files; the full private report is the named artifact.
+        brief['harness_profile'] = harness_profile
+        brief['sources']['harness_profile'] = harness_profile['artifact']
     if adherence is not None:
         adherence = dict(adherence)
         if (reactions := adherence.pop('user_reactions', None)) is not None: brief['user_reactions'] = reactions
@@ -373,6 +377,10 @@ def build(data, result, *, agent='codex', output='<run-dir>', artifact_bounds=No
         while _size(brief) > MAX_BRIEF_BYTES and brief[section]:
             brief[section].pop()
             brief['bounds'].update(truncated=True, shrunk_to_fit=True)
+    while _size(brief) > MAX_BRIEF_BYTES and brief.get('harness_profile', {}).get('findings'):
+        brief['harness_profile']['findings'].pop()
+        brief['harness_profile']['truncated'] = True
+        brief['bounds'].update(truncated=True, shrunk_to_fit=True)
     brief['bounds']['mechanisms_listed'] = len(brief['mechanisms'])
     return brief, _next_steps(brief, output)
 

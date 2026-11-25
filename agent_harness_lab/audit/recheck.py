@@ -12,6 +12,7 @@ import time
 from agent_harness_lab import audit, surfaces
 from agent_harness_lab.audit import chain, improvement_hint, instruction_totals
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
+from agent_harness_lab.project_profile import findings, report as harness_profile
 from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.sources.claude_instructions import scope_of
 from agent_harness_lab.sources.git_view import Folder
@@ -114,8 +115,16 @@ RUNTIMES={'codex':'codex','claude':'claude-code'}
 OVERSIZED={'instruction_exceeds_launch_bytes':'Investigate whether the oversized project instruction file can be simplified safely.',
            'instruction_exceeds_project_doc_bytes':'Investigate whether the oversized project instruction file can be simplified safely.'}
 # Most content-losing first: a chain the runtime cuts, then an oversized file, a routing collision, then shape conventions.
+# A harness line the repository contradicts is followed literally, so it ranks above the shape conventions; a gap ranks last.
+PROFILE_SOURCE='https://github.com/mihazs/agent-harness-lab/blob/main/docs/harness-problem-taxonomy.md'
+PROFILE_FOCUS=dict(
+    contradiction='Investigate whether an instruction line names a script, target, path or toolchain that the repository does not support.',
+    gap='Investigate whether the harness should state a non-default toolchain or an exact verification command that the repository declares.')
+PROFILE_REASONS=tuple('harness_profile_'+kind for kind in sorted(findings.KINDS,key=lambda kind:(findings.KINDS[kind][0]!='contradiction',kind)))
 PRIORITY=(chain.DECLARED_SKIPPED,chain.SKIPPED,chain.DECLARED_TRUNCATED,chain.TRUNCATED,
-          *OVERSIZED,ROUTING,SOFT_BUDGET,PROCEDURE)
+          *OVERSIZED,*(reason for reason in PROFILE_REASONS if findings.KINDS[reason[len('harness_profile_'):]][0]=='contradiction'),
+          ROUTING,SOFT_BUDGET,PROCEDURE,
+          *(reason for reason in PROFILE_REASONS if findings.KINDS[reason[len('harness_profile_'):]][0]=='gap'))
 # What discover() evaluates per runtime: it audits the project root with the default budget, so the declared-budget chain
 # reasons never apply, and the chain and shape conventions need settled instruction totals (a project root, no unresolved import).
 APPLICABLE={'codex':(chain.SKIPPED,chain.TRUNCATED,'instruction_exceeds_project_doc_bytes',ROUTING,SOFT_BUDGET,PROCEDURE),
@@ -169,5 +178,9 @@ def discover(project, agent, *, soft_lines=SOFT_LINES):
                 instruction_soft_lines=soft_lines,threshold_origin='assumed_default',convention_source_role='general_reference_not_threshold'))
         if totals['shape']['procedure_sections']:
             rows.append(hypothesis(identity(PROCEDURE),PROCEDURE,PROCEDURE_SOURCE,improvement_hint.HINTS[PROCEDURE]))
+    profiled=harness_profile.build(project)
+    found['harness_profile']=dict(status=profiled['status'],findings=len(profiled['findings']))
+    for row in profiled['findings']:
+        rows.append(hypothesis(row['id'],'harness_profile_'+row['kind'],PROFILE_SOURCE,PROFILE_FOCUS[row['finding_class']]))
     found['candidates']=sorted(rows,key=lambda row:(PRIORITY.index(row['reason']),row['finding_id']))
     return found

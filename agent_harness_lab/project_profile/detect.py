@@ -22,6 +22,10 @@ MAX_DEPTH = 3
 MAX_PACKAGES = 200
 MAX_COMMANDS = 400
 MAX_COMMAND_CHARS = 200
+NESTED = 'nested package.json'
+CONVENTIONAL_DIRS = frozenset('src lib app apps packages cmd internal crates pkg services libs modules tests test spec __tests__ e2e '
+                              'docs scripts examples tools infra migrations alembic db prisma config'.split())
+CONVENTIONAL_SUBDIRS = frozenset('unit integration e2e fixtures support functional acceptance smoke contract helpers'.split())
 SKIP_DIRS = frozenset({'node_modules', 'vendor', 'dist', 'build', 'target', 'venv', 'env', '__pycache__', 'site-packages'})
 
 PY_TABLES = ('pytest', 'ruff', 'black', 'isort', 'mypy', 'pyright')
@@ -173,6 +177,7 @@ def _node(repo, facts):
     for rel in packages:
         data = root if rel == 'package.json' else repo.parse(rel, json.loads)
         if not isinstance(data, dict): continue
+        rel = rel if rel == 'package.json' else NESTED  # a nested package's folder name is not part of the profile
         facts.deps([*(data.get('dependencies') or {}), *(data.get('devDependencies') or {}), *(data.get('peerDependencies') or {})], rel)
         scripts = data.get('scripts') if isinstance(data.get('scripts'), dict) else {}
         for name, text in sorted(scripts.items()):
@@ -302,14 +307,15 @@ def _ci(repo, facts):
 
 
 def _layout(repo, facts):
+    """Source, test and migration folders by their conventional names; any other folder name is counted, never listed."""
     top = [entry.name for entry in repo.listing() if entry.is_dir(follow_symlinks=False) and not entry.name.startswith('.')
            and entry.name not in SKIP_DIRS][:40]
     inside = lambda name: sorted(entry.name for entry in repo.listing(name) if entry.is_dir(follow_symlinks=False)
-                                 and not entry.name.startswith(('.', '_')))[:12]
+                                 and entry.name in CONVENTIONAL_SUBDIRS)
     tests = [name for name in top if name in ('tests', 'test', 'spec', '__tests__', 'e2e')]
-    migrations = [path for path in ('migrations', 'alembic', 'db/migrate', 'prisma/migrations', 'db/migrations')
-                  if repo.is_dir(path)]
-    return dict(top_level=top, source_dirs=[name for name in top if name in ('src', 'lib', 'app', 'packages', 'apps', 'cmd', 'internal', 'crates')],
+    migrations = [path for path in ('migrations', 'alembic', 'db/migrate', 'prisma/migrations', 'db/migrations') if repo.is_dir(path)]
+    return dict(top_level=[name for name in top if name in CONVENTIONAL_DIRS], other_top_level=sum(name not in CONVENTIONAL_DIRS for name in top),
+                source_dirs=[name for name in top if name in ('src', 'lib', 'app', 'packages', 'apps', 'cmd', 'internal', 'crates')],
                 test_dirs=tests, test_subdirs={name: inside(name) for name in tests}, migration_dirs=migrations,
                 docs_dir='docs' in top, src_layout=repo.is_dir('src'), monorepo=sorted(name for kind, name in facts.tech if kind == 'monorepo'))
 
@@ -328,4 +334,5 @@ def detect(project):
                 technologies=[dict(row, evidence=sorted(row['evidence'])) for _, row in sorted(facts.tech.items())],
                 package_managers=managers, commands=facts.commands, ci_commands=facts.ci,
                 runners=runners,
-                incomplete=sorted(repo.incomplete), layout=_layout(repo, facts), unknown=sorted(repo.unknown))
+                incomplete=sorted(repo.incomplete), layout=_layout(repo, facts),
+                unknown=sorted({re.sub(r'^(\w+):.+/(package\.json)$', r'\1:nested \2', item) for item in repo.unknown}))

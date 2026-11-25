@@ -32,7 +32,7 @@ JS_TEST_RUNNERS = frozenset('jest vitest mocha ava'.split())
 META = frozenset('verify check ci all validate presubmit precommit pre-commit'.split())
 GENERIC_TOOLS = frozenset('npm pnpm yarn bun make task just uv poetry pipenv pdm cargo go pip'.split())
 # A word that is also plain English counts as a mention only inside a code span.
-AMBIGUOUS = frozenset('bun poetry uv make task just go'.split())
+AMBIGUOUS = frozenset('poetry uv make task just go'.split())
 GENERATED = frozenset('node_modules dist build target out coverage htmlcov tmp temp log logs venv env artifacts vendor __pycache__ '
                       'site-packages'.split())
 PLACEHOLDER = frozenset('path foo bar baz your example examples dir folder xxx name file project module'.split())
