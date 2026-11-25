@@ -39,7 +39,7 @@ def withheld_activities(summary, analysis):
     return result
 
 
-def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mechanisms=None):
+def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mechanisms=None, profile=None):
     analysis = data['analysis']
     summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining','method_inputs','method_execution')}
     summary['profile'] = 'ahl-analysis-execution-v1'
@@ -63,6 +63,10 @@ def views(data, assets, root, deadline, *, closed_domain=None, brief=None, mecha
         if role == 'proposer' and mechanisms is not None:
             target = folder/'mechanism-summaries.json'
             target.write_text(json.dumps(mechanisms, allow_nan=False))
+            target.chmod(0o600)
+        if role == 'proposer' and profile is not None:  # the private findings behind the brief's bounded harness_profile section (#1127)
+            target = folder/'harness-profile.json'
+            target.write_text(json.dumps(profile, allow_nan=False))
             target.chmod(0o600)
         check_deadline(deadline)
         shutil.copytree(Path(assets)/'skills/harness-self-improvement',folder/'methodology/harness-self-improvement',symlinks=True,
@@ -105,6 +109,9 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     if analysis and (Path(context)/'mechanism-summaries.json').is_file():
         instructions += ('\nInspect /inputs/fixture/mechanism-summaries.json for ranked observed patterns and evidence references. '
                          'They are not diagnoses or verified outcomes; formulate falsifiable candidates for separate evaluation.')
+    if analysis and (Path(context)/'harness-profile.json').is_file():
+        instructions += ('\nInspect /inputs/fixture/harness-profile.json for the findings the brief lists: each names the harness line, its '
+                         'location and a proposed update. They are hypotheses, not diagnoses; open the line before changing it.')
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
     state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
