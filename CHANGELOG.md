@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.237.0
+
+### Minor Changes
+
+- 645ff1d: `ahl improve --from-audit` can select a harness-profile finding from a saved audit report after a fresh recheck, and the controlled proposer receives the private `harness-profile.json` next to the analysis brief. A selected finding still goes through the paired evaluation, confirmation and install review.
+- a63c684: The harness profile now reads the decision records a checkout keeps (adr-tools and MADR layouts, accepted and superseded statuses only) and the cheap architectural patterns of its tree (internal dependencies between workspace packages, generated-code and migration folders). A harness line that runs a tool an accepted decision ruled out, or that still states a superseded decision, becomes a contradiction; decision records or a pattern that no instruction file mentions become gaps. They carry stable ids and counted evidence, and reach the brief, the proposer and `ahl audit` like the other profile findings. Unclear records never produce a finding.
+- e689e0e: The harness profile now also checks the commands and paths in skills, slash commands, agent definitions and hook handlers against the project, with the same findings, ids and rules as the instruction files; a hook command is judged only after `$CLAUDE_PROJECT_DIR` is expanded.
+- 5fb79b9: The harness profile now flags a runtime version a root instruction file states (`Python 3.9`, `Node 16`, `Go 1.20`, `Rust 1.70`) below the minimum, or other than the exact pin, that `requires-python`, `engines.node`, `rust-version`, the `go` directive, `.python-version`, `.nvmrc` or `.node-version` declare, as a `version_contradicted` finding in `ahl audit`, the analysis brief and the proposer's citable claims.
+
+### Patch Changes
+
+- 17c639c: `ahl improve --agent codex` refuses an `--output` under `/dev` (such as `/dev/shm`) up front: Codex's sandbox mounts a private `/dev`, so its sessions could not read the run's inputs and the run ended inconclusive after the proposer found nothing to read.
+- e08352b: The probe review also treats a task as leaking when it asks for an output field, column or file whose name or description is the claimed behaviour itself.
+- 8ae9ed4: A manifest repair request for a per-task field (such as a grader written as one string) now asks the author to fix that field in every task, so a defect repeated across tasks no longer uses up the repair passes one task at a time.
+- 1be8326: After a Codex trial, the git directory moved beside the workspace is put back as the workspace's own `.git` before grading, so graders and their self-tests see an ordinary repository.
+- 18409eb: A skill's path reference that exists in one of its subfolders or a sibling skill, or a version token such as `x402/2.0`, is no longer reported as a missing path.
+
 ## 0.236.0
 
 ### Minor Changes
