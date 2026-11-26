@@ -213,6 +213,14 @@ def test_a_pure_codex_preparation_session_keeps_only_the_users_model_choice(tmp_
     assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'synthetic-model', 'model_reasoning_effort': 'high'}
 
 
+def test_ahl_codex_model_pins_the_evaluation_model_and_keeps_the_users_effort(tmp_path, runner, monkeypatch):
+    (tmp_path / '.codex').mkdir()
+    (tmp_path / '.codex/config.toml').write_text('model = "synthetic-model"\nmodel_reasoning_effort = "high"\n')
+    monkeypatch.setenv('AHL_CODEX_MODEL', 'pinned-model')
+    assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'pinned-model', 'model_reasoning_effort': 'high'}
+    assert runner.codex_defaults(dict(HOME=str(tmp_path / 'none'))) == {'model': 'pinned-model'}  # no config file: the pin alone
+
+
 def test_pure_claude_sessions_also_switch_off_the_runtimes_own_plugins_and_report_what_loaded(tmp_path):
     # Regression (fixed-in: 0.233.0): a live pure session still loaded four '@builtin' plugins of Claude Code itself.
     from agent_harness_lab.evaluation import trial_surfaces

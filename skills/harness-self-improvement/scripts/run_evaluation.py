@@ -378,8 +378,11 @@ def codex_defaults(environ=None):
     source = os.environ if environ is None else environ
     path = Path(source.get('CODEX_HOME') or Path(source.get('HOME') or Path.home()) / '.codex') / 'config.toml'
     try: raw = tomllib.loads(path.read_text())
-    except (OSError, ValueError): return {}
-    return {key: raw[key] for key in ('model', 'model_reasoning_effort') if isinstance(raw.get(key), str)}
+    except (OSError, ValueError): raw = {}
+    chosen = {key: raw[key] for key in ('model', 'model_reasoning_effort') if isinstance(raw.get(key), str)}
+    if os.environ.get('AHL_CODEX_MODEL'):  # a machine-wide evaluation pin that leaves the user's own Codex config alone
+        chosen['model'] = os.environ['AHL_CODEX_MODEL']
+    return chosen
 
 
 def execute_session(argv, cwd, timeout, stdin=None, *, env):
@@ -820,14 +823,7 @@ def _evaluate(args):
     if available <= 0: blocked = 'preflight_budget_exhausted'
     version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute(
         [binary, '--version'], manifest_path.parent, min(timeout, available), env=native_environment(agent, inherit_env))
-    config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
-    config = {}
-    try:
-        raw_config = tomllib.loads(config_path.read_text()) if agent == 'codex' and not blocked else {}
-        config = {k: raw_config[k] for k in ('model', 'model_reasoning_effort')
-                  if isinstance(raw_config.get(k), str)}
-    except (OSError, ValueError):
-        pass
+    config = codex_defaults() if agent == 'codex' and not blocked else {}
     authentication = None
     if agent == 'codex' and not blocked:
         application_modules()
