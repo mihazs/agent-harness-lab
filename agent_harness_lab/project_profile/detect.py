@@ -13,6 +13,7 @@ import stat
 import tomllib
 
 from agent_harness_lab.evaluation.integrity import read_regular
+from agent_harness_lab.project_profile import versions
 from agent_harness_lab.project_profile.commands import ALIASES, KIND, category, category_of, simple_commands, tools_in
 
 PROFILE = 'ahl-project-profile-v1'
@@ -106,11 +107,20 @@ class Repo:
 class Facts:
     def __init__(self):
         self.tech, self.managers, self.commands, self.ci, self.scripts, self.nested = {}, {}, [], [], {}, {}
+        self.runtimes = []
 
     def add(self, kind, name, evidence, version=None):
         row = self.tech.setdefault((kind, name), dict(kind=kind, name=name, version=None, evidence=set()))
         row['evidence'].add(evidence)
         if version and not row['version']: row['version'] = str(version)[:64]
+
+    def runtime(self, name, source, text, pinned=False):
+        """A runtime version a manifest declares, as a minimum or an exact pin; an unparsable constraint adds nothing."""
+        if not isinstance(text, str): return
+        lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith('#')]
+        parsed = versions.constraint(lines[0]) if len(lines) == 1 else None
+        if parsed and (parsed[0] == 'pin' or not pinned):
+            self.runtimes.append(dict(runtime=name, source=source, kind=parsed[0], version=versions.text(parsed[1])))
 
     def manager(self, ecosystem, name, evidence):
         self.managers.setdefault((ecosystem, name), set()).add(evidence)
@@ -167,6 +177,8 @@ def _python(repo, facts):
         if manager in tool: facts.manager('python', manager, 'pyproject.toml')
     text = repo.read('.python-version')
     if text and text.strip(): facts.add('language', 'python', '.python-version', text.split()[0])
+    facts.runtime('python', 'pyproject.toml', meta.get('requires-python') or '')
+    facts.runtime('python', '.python-version', text or '', pinned=True)
 
 
 def _node(repo, facts):
@@ -186,6 +198,7 @@ def _node(repo, facts):
         facts.scripts.setdefault('package.json', set())
         engines = root.get('engines') if isinstance(root.get('engines'), dict) else {}
         if isinstance(engines.get('node'), str): facts.add('language', 'javascript', 'package.json', 'node ' + engines['node'])
+        facts.runtime('node', 'package.json', engines.get('node') or '')
         field = root.get('packageManager')
         if isinstance(field, str) and (name := field.partition('@')[0]) in ('npm', 'pnpm', 'yarn', 'bun'):
             facts.manager('node', name, 'package.json')
@@ -201,6 +214,7 @@ def _node(repo, facts):
     for name in ('.nvmrc', '.node-version'):
         text = repo.read(name)
         if text and text.strip(): facts.add('language', 'javascript', name, 'node ' + text.split()[0])
+        facts.runtime('node', name, text or '', pinned=True)
     if repo.is_file('deno.json') or repo.is_file('deno.jsonc'): facts.add('language', 'typescript', 'deno.json', 'deno')
 
 
@@ -209,12 +223,14 @@ def _rust_go_other(repo, facts):
     if cargo is not None:
         package = cargo.get('package', {})
         facts.add('language', 'rust', 'Cargo.toml', package.get('rust-version') or package.get('edition'))
+        if isinstance(package.get('rust-version'), str): facts.runtime('rust', 'Cargo.toml', '>=' + package['rust-version'])
         facts.manager('rust', 'cargo', 'Cargo.toml')
         if 'workspace' in cargo: facts.add('monorepo', 'cargo-workspace', 'Cargo.toml')
     text = repo.read('go.mod')
     if text is not None:
         version = re.search(r'^go\s+(\S+)', text, re.M)
         facts.add('language', 'go', 'go.mod', version.group(1) if version else None)
+        if version: facts.runtime('go', 'go.mod', '>=' + version.group(1))
         facts.manager('go', 'go', 'go.mod')
         if repo.is_file('go.work'): facts.add('monorepo', 'go-workspace', 'go.work')
     for name, (language, manager) in OTHER_MANIFESTS.items():
@@ -332,7 +348,7 @@ def detect(project):
                for key in ('package.json', 'make', 'task', 'just')}
     return dict(profile=PROFILE, status='observed', publication_allowed=False,
                 technologies=[dict(row, evidence=sorted(row['evidence'])) for _, row in sorted(facts.tech.items())],
-                package_managers=managers, commands=facts.commands, ci_commands=facts.ci,
+                package_managers=managers, runtimes=sorted(facts.runtimes, key=lambda row: (row['runtime'], row['source'])), commands=facts.commands, ci_commands=facts.ci,
                 runners=runners,
                 incomplete=sorted(repo.incomplete), layout=_layout(repo, facts),
                 unknown=sorted({re.sub(r'^(\w+):.+/(package\.json)$', r'\1:nested \2', item) for item in repo.unknown}))

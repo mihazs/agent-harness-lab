@@ -18,6 +18,7 @@ Only manifests, lockfiles, task-runner files and CI configs, through a bounded n
 - Technologies and toolchain: `pyproject.toml`, requirements files, `package.json`
   (including `packageManager`), lockfiles, `Cargo.toml`, `go.mod`, Dockerfiles, task runners and
   CI. Package managers come from lockfiles, the `packageManager` field and tool tables.
+- Runtime versions: the minimum or pin each manifest declares for Python, Node, Rust and Go, under `runtimes`.
 - Declared commands: `package.json` scripts, `Makefile` targets, `Taskfile` tasks and `justfile`
   recipes, each with a category (`test`, `lint`, `typecheck`, `format`, `build`, `run`).
 - CI commands: the `run:` steps of `.github/workflows/*.yml` and the script lines of
@@ -41,6 +42,7 @@ Each finding has a stable `id` (`hp/<kind>/<digest>`, independent of line number
 | `path_reference_missing` | contradiction | a code span or Markdown link names a repository path that exists neither at the root nor beside the file | `correct_or_remove_line` |
 | `toolchain_contradicted` | contradiction | the harness runs a package manager of an ecosystem and names none that the lockfile or `packageManager` field shows | `correct_or_remove_line` |
 | `test_runner_contradicted` | contradiction | the harness runs `jest`, `vitest`, `mocha` or `ava` and the dependencies declare another of them but not that one | `correct_or_remove_line` |
+| `version_contradicted` | contradiction | a root instruction file states `Python 3.X`, `Node NN`, `Go 1.NN` or `Rust 1.NN` (a floor is `3.X+`, `or newer`, `>=`) below what every manifest declares (`requires-python`, `engines.node`, `rust-version`, the `go` directive), or an exact statement names another version than every `.python-version`, `.nvmrc` or `.node-version` pin; a floor the manifest satisfies, a list or range of versions, a negated line, a fenced block and a constraint the reader does not fully parse (`\|\|`, `>3`, aliases such as `lts/*`) stay silent | `correct_or_remove_line` |
 | `harness_files_disagree` | contradiction | two root instruction files name disjoint package managers | `resolve_disagreement` |
 | `toolchain_not_stated` | gap | a non-default package manager is detected and no instruction or skill file names any of the ecosystem | `state_toolchain` |
 | `verification_command_unnamed` | gap | a category of declared or CI command (`test`, `lint`, `typecheck`, `build`) is named by no instruction or skill file, by command or by tool | `name_verification_command`, with up to three candidate command lines |
