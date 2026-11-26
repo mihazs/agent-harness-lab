@@ -118,5 +118,6 @@ def check_candidate(project, baseline, candidate, proposals=()):
                     if isinstance(item, dict) for ref in item.get('evidence_refs') or [] if ref in before})
     return dict(profile=CHECK, status='compared', authority='none', publication_allowed=False,
                 introduced_contradictions=sorted(name for name, kind in after.items() if name not in before and kind == 'contradiction'),
+                introduced=sorted(name for name in after if name not in before),
                 resolved=sorted(name for name in before if name not in after), unchanged=len(before.keys() & after.keys()),
                 cited_resolved=[name for name in cited if name not in after], cited_unresolved=[name for name in cited if name in after])

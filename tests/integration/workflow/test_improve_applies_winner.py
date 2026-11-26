@@ -72,7 +72,7 @@ def test_the_evaluated_winner_is_installed_with_a_verified_receipt_and_a_working
     assert (base.project / 'AGENTS.md').read_text() == 'good\n'
     application = receipt['application']
     assert (application['status'], application['authority'], application['certification']) == ('applied_verified', 'operator_invocation', 'not_established')
-    assert application['basis'] == 'improvement_confirmed'
+    assert application['basis'] == 'improvement_confirmed' and receipt['install_basis'] == 'measured_improvement'
     confirmation = receipt['confirmation']  # up to twelve fresh repeats of both fixed tasks; 9 of 9 against none holds whatever the other three bring
     assert (confirmation['outcome'], confirmation['confirmed'], confirmation['repeats_per_task']) == ('confirmed', ['development', 'heldout'], 12)
     assert (confirmation['alpha'], confirmation['per_task_alpha']) == (0.05, 0.025) and len(repeats(receipt)) == confirmation['repeats_run'] == 9

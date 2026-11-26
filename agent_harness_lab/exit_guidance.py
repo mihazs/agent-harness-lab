@@ -152,6 +152,9 @@ def guidance(result):
         action = 'Review the private receipt before retrying.'
     else:
         action = loop_step(result) or REMEDIATION.get(reason, STATUS_ACTION.get(status, 'Review the private receipt before retrying.'))
+    if status == 'applied' and result.get('install_basis') == 'verified_correction':
+        category = 'Verified correction applied (not a measured improvement)'
+        action = 'The behavioural comparison showed no gain; roll back with the recorded command if the correction is unwanted.'
     if status != 'analyzed' and reason != 'history_not_found_for_worktree' and any(r.get('reason') == 'history_not_found_for_worktree' for r in result.get('capture_reasons') or ()):
         action += ' ' + REMEDIATION['history_not_found_for_worktree']
     steps = result.get('next_steps')

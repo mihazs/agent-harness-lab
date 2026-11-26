@@ -902,6 +902,31 @@ def adopt_with_receipt(project, baseline, candidate, original, proposed, scoped=
         return application_receipt(journal, journal._execute(transaction['deployment']))
 
 
+def _install_correction(result, args, output, baseline, original, attempts, scoped, **review):
+    """The verified-correction lane (#1145): a run that ended without a measured gain installs a candidate that only corrects the
+    lines a static contradiction cites, when every gate holds. The behavioural result stays as it was."""
+    from .evaluation import verified_correction as lane
+    chosen = lane.choose(result, args, baseline, original, attempts)
+    if chosen is None: return
+    record, proposed = result['verified_correction'], chosen['proposed']
+    names = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
+    if not _targets_writable(args.project, names):
+        record.update(status='refused', reason=lane.NOT_WRITABLE)
+        return
+    result['install_review'] = early = install_review.early(args, output, baseline, chosen['frozen'], original, proposed, measured=[], **review)
+    if early['verdict'] != 'consistent':
+        record.update(status='refused', reason='install_review_' + early['verdict'])
+        return
+    applied = adopt_with_receipt(args.project, baseline, chosen['frozen'], original, proposed, scoped,
+                                 provenance=dict(source='verified_correction', finding_id=record['finding']), locked=True)
+    if applied['status'] == 'no_change': return
+    record['status'] = 'installed'
+    result.update(status='applied', changed_files=[operation['path'] for operation in applied['operations']],
+                  application=dict(applied, basis=lane.BASIS, authority='operator_invocation', certification='not_established'),
+                  install_basis=lane.BASIS, deployment=applied['deployment'],
+                  rollback=f'ahl rollback {applied["deployment"]} --project {shlex.quote(str(args.project))}')
+
+
 def recommend_plugin_change(project, profile, plugin_checkouts, plugin_id, changes, **options):
     """Route a change to a selected external plugin checkout to a private patch bundle; adopt never sees it."""
     from .plugin_recommendations import bundle
@@ -1153,6 +1178,7 @@ def _improve(args):
     proposals, returned = [], []  # returned: every proposal the stage wrote, None for an unusable one
     model_calls = []  # one entry per owned model call, with the runtime's own figures when its transcript carried any
     single_run = None
+    evaluated_attempts = []  # every evaluated candidate with its raw trials, for the verified-correction lane
     not_reproduced = []  # attempts of an installing run whose hypothesis the baseline did not fail
     declined = None  # the first proposer's no_change reason in an installing run: one more proposer is asked for a candidate
     base = 0  # the first measured attempt; 1 when the first proposer declined, so the retry keeps its own refinement
@@ -1773,6 +1799,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest=manifest_path.parent.name, manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
+        evaluated_attempts.append(dict(attempt=attempt, frozen=frozen, proposed=proposed, trials=[dict(t) for t in trials],
+                                       inputs_unchanged=evaluated['inputs_unchanged']))
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
             trials=[dict(t, agent_final_message=_final_message(_trial_trace(Path(options.output), t)))
                     if _installs(args) and t['status'] == 'failed' else t for t in trials if t['split'] != 'heldout']))
@@ -2014,6 +2042,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.update(status='no_change', reason='improvement_not_confirmed' if fixed else 'evaluation_no_improvement',
                           baseline_at_least_as_good=not fixed, **({'candidate_lost': sorted(lost)} if lost else {}),
                           **({'invalid_controls': invalid} if invalid else {}))
+    if _installs(args) and (result.get('status'), result.get('reason')) == ('no_change', 'evaluation_no_improvement') and evaluated_attempts:
+        _install_correction(result, args, output, baseline, original, evaluated_attempts, allowed_paths(args) is not None,
+                            runner=runner, agent=agent, binary=binary, remaining=remaining, model_calls=model_calls, progress=progress)
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
             and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])
             and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
@@ -2029,6 +2060,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             del result['recommendation']
             result.update(status='applied', changed_files=[operation['path'] for operation in applied['operations']],
                           application=dict(applied, basis='improvement_confirmed', authority='operator_invocation', certification='not_established'),
+                          install_basis='measured_improvement',
                           deployment=applied['deployment'],
                           rollback=f'ahl rollback {applied["deployment"]} --project {shlex.quote(str(args.project))}')
     result['automatic_promotion']=False
@@ -2038,6 +2070,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         result['preparation'] = preparation.block(returned[-1], identical=result.get('reason') == 'candidate_identical_to_baseline',
                                                   brief=getattr(args, '_analysis_brief', None))
         with (output/'report.md').open('a') as report: report.write(preparation.section(result['preparation']))
+    if result.get('install_basis'):
+        with (output/'report.md').open('a') as report: report.write(f"\n## Install basis\n\n`{result['install_basis']}`\n")
     incremental.attach(result, args._incremental, original, getattr(args, '_reuse', None))
     construction_receipt(result, args)
     audited = getattr(args,'_audit_hypothesis',None) is not None
