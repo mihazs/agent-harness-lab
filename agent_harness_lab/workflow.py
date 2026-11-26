@@ -1811,7 +1811,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             record_feedback(args._closed_input_domain,refinement_feedback,evaluated)
         if access is not None: access.feedback(refinement_feedback)
         quiet = budget_stages.uninformative(trials, lambda trial: _trial_trace(Path(options.output), trial))
-        if quiet is not None:  # no pass anywhere and both arms alike: another attempt would spend the budget to learn nothing
+        recheckable = (_installs(args) and bank is None and attempt >= base and rechecks < MAX_RECHECKS and evaluated['inputs_unchanged']
+                       and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4)
+        # Agents that finished their turn and failed every task, controls included, point at the tasks, not the harness: the author
+        # checks them first (below). A runtime failure, or no recheck left, ends the run: another attempt would learn nothing.
+        if quiet is not None and not (recheckable and quiet.get('classification') == 'agent_failed'):
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
             break
@@ -1975,8 +1979,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if (_installs(args) and bank is None and attempt == base and evaluated['inputs_unchanged'] and fixed and not lost
                 and broken and all(outcome[task, version] == 'failed' for task in broken for version in ('baseline', 'candidate'))):
             rebuild_controls = broken
-        if (_installs(args) and bank is None and attempt >= base and rechecks < MAX_RECHECKS and not rebuild_controls and evaluated['inputs_unchanged']
-                and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):
+        if recheckable and not rebuild_controls:
             # A claim task both arms fail often means the task or grader decided, not the harness. Refining against
             # it would fit the change to a grader artifact, so the author checks those tasks first, with the same candidate.
             said = {(t['task'], t['version']): ' '.join(str((t.get('grader') or {}).get('stdout') or '').split())[:300]
@@ -1991,6 +1994,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 prune, prune_targets, refine_frozen = [], [], False
                 result['rechecks_run'] = rechecks
                 continue
+        if quiet is not None:  # no grader said why: a recheck has nothing to go on
+            result.pop('instruction_removal',None)
+            result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
+            break
         # The baseline failed a task built for the claim and the controls held, but the candidate did not fix it: the
         # weakness is reproduced, the change is not good enough. Refine the change against the same frozen tasks; a fresh
         # evaluation might not reproduce the weakness again and would judge the next change on nothing.
