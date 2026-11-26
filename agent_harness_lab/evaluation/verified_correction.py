@@ -71,10 +71,15 @@ def choose(result, args, baseline, original, attempts):
     if finding is None:
         if refusal: result['verified_correction'] = dict(status='refused', reason=refusal)
         return None
-    refused = []
+    refused, current = [], {row['id']: row for row in report.build(args.project)['findings']}
     for item in attempts:
-        failed = ('edits_beyond_cited_lines' if not only_cited_lines(baseline, item['frozen'], original, item['proposed'], finding['where'])
-                  else 'finding_not_resolved_or_introduced' if not resolves(report.check_candidate(args.project, baseline, item['frozen']), finding['id'])
+        check = report.check_candidate(args.project, baseline, item['frozen'])
+        # Lines of every other contradiction the same candidate resolves may change too: correcting two dead references at once
+        # is still only a correction, and the profile check below proves nothing new was introduced.
+        where = finding['where'] + [row for name in check.get('resolved', ()) if name != finding['id'] and name in current
+                                    and current[name]['finding_class'] == 'contradiction' for row in current[name]['where']]
+        failed = ('edits_beyond_cited_lines' if not only_cited_lines(baseline, item['frozen'], original, item['proposed'], where)
+                  else 'finding_not_resolved_or_introduced' if not resolves(check, finding['id'])
                   else 'evaluation_regressed' if not lost_nothing(item['trials'], item['inputs_unchanged']) else None)
         if failed is None:
             result['verified_correction'] = dict(status='candidate', finding=finding['id'], attempt=item['attempt'])
