@@ -340,6 +340,7 @@ def detect(project):
     """The deterministic profile of one checkout (a path or a Repo); the checkout is only read."""
     repo, facts = project if isinstance(project, Repo) else Repo(project), Facts()
     for step in (_python, _node, _rust_go_other, _runners, _ci): step(repo, facts)
+    from agent_harness_lab.project_profile import architecture  # imports this module
     if any(item in ('unparsed:package.json', 'unreadable:package.json') for item in repo.unknown): repo.incomplete.add('package.json')
     if 'walk_bound' in repo.unknown: repo.incomplete.add('package.json')
     managers = [dict(ecosystem=ecosystem, name=name, evidence=sorted(evidence)) for (ecosystem, name), evidence in sorted(facts.managers.items())]
@@ -350,5 +351,5 @@ def detect(project):
                 technologies=[dict(row, evidence=sorted(row['evidence'])) for _, row in sorted(facts.tech.items())],
                 package_managers=managers, runtimes=sorted(facts.runtimes, key=lambda row: (row['runtime'], row['source'])), commands=facts.commands, ci_commands=facts.ci,
                 runners=runners,
-                incomplete=sorted(repo.incomplete), layout=_layout(repo, facts),
+                incomplete=sorted(repo.incomplete), layout=_layout(repo, facts), architecture=architecture.observe(repo),
                 unknown=sorted({re.sub(r'^(\w+):.+/(package\.json)$', r'\1:nested \2', item) for item in repo.unknown}))
