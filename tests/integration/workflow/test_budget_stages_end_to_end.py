@@ -163,14 +163,17 @@ def test_a_task_whose_reference_completion_cannot_fit_the_per_trial_timeout_is_r
 
 
 @pytest.mark.parametrize('trial, kind', [('fail-all', 'agent_failed'), ('crash-all', 'runtime_failure')])
-def test_a_run_where_both_arms_fail_every_task_alike_stops_uninformative_without_a_second_construction(stub, capsys, trial, kind):
+def test_a_run_where_both_arms_fail_every_task_alike_stops_uninformative_after_the_rechecks_it_can_use(stub, capsys, trial, kind):
     code, receipt, run, rows = stub.run(capsys, dict(trial=trial))
     assert (code, receipt['status'], receipt['reason']) == (3, 'inconclusive', 'evaluation_uninformative'), receipt
     block = receipt['evaluation_uninformative']
     assert (block['classification'], block['trials'], block['tasks'], block['class_counts']) == (kind, 6, 3, {kind: 6})
     assert block['next_step'] and 'grader' not in json.dumps(block['class_counts'])
-    assert len(kinds(rows, 'construction')) == 1 and len(kinds(rows, 'proposal')) == 1 and len(kinds(rows, 'trial')) == 6
-    assert not (run / 'preparation/evaluation-1').exists()
+    # fixed-in: agents that finished their turn and failed every task (controls too) with a stated grader reason point at the
+    # tasks: the author rebuilds them (twice at most, same candidate) before the run stops; a runtime crash stops at once.
+    rebuilt = 2 if kind == 'agent_failed' else 0
+    assert len(kinds(rows, 'construction')) == 1 + rebuilt and len(kinds(rows, 'proposal')) == 1 and len(kinds(rows, 'trial')) == 6 * (1 + rebuilt)
+    assert receipt.get('rechecks_run', 0) == rebuilt and (run / 'preparation/evaluation-1').exists() == bool(rebuilt)
     assert assert_breakdown(receipt)['stages']['refinement']['spent_seconds'] == 0
     assert 'recommendation' not in receipt
 
