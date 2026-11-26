@@ -75,6 +75,9 @@ def output_dir(args, *, deadline=None):
     from .read_only import require_external_output
     require_external_output(args.project, parent if args.output is None else args.output)
     require_external_output(args.project, tempfile.gettempdir())
+    # Codex's Linux sandbox mounts a private /dev: under /dev/shm a session sees only its writable roots, never the run's inputs.
+    if getattr(args, 'agent', None) == 'codex' and args.output is not None and Path(args.output).resolve().is_relative_to('/dev'):
+        raise ValueError('Codex sessions cannot read a run output under /dev (its sandbox mounts a private /dev): choose --output elsewhere')
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
