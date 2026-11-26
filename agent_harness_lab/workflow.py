@@ -279,7 +279,7 @@ def evidence(args, output, source_context=None, *, progress=None):
     profile_section = harness_profile.brief_section(profile_report)
     data_brief, next_steps = brief.build(data, scanned, agent=getattr(args, 'agent', None) if getattr(args, 'agent', None) in ('codex', 'claude') else 'codex', output=output, artifact_bounds=dict(analysis=data_view['artifact_bounds'], event_store=store), adherence=adherence_section, harness_profile=profile_section)
     write_json(output / 'analysis-brief.json', data_brief)
-    args._analysis_next_steps, args._analysis_brief = next_steps, data_brief
+    args._analysis_next_steps, args._analysis_brief, args._harness_profile = next_steps, data_brief, profile_report
     report_text = report(data_view['analysis'], source_context=source_context) + execution_report(data['execution']) + harness_profile.report_lines(profile_section)
     if memory_summary is not None:
         report_text += ('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
@@ -1097,7 +1097,8 @@ def _improve(args):
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline,brief=getattr(args,'_analysis_brief',None),
-                                        mechanisms=getattr(args,'_mechanism_summaries',None))
+                                        mechanisms=getattr(args,'_mechanism_summaries',None),
+                                        profile=getattr(args,'_harness_profile',None))
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
@@ -2127,7 +2128,7 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=now() if parent_started is None else parent_started
     if hasattr(args,'_automatic_focus'): args.focus = None
-    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental','_reuse','_mechanism_summaries','_mechanism_summaries_digest'):
+    for name in ('_audit_hypothesis','_static_automatic','_static_candidates','_static_audit','_automatic_focus','_stages','_observed','_evaluation_reuse','_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started','_scope_current','_scope_results','_scope_roots','_incremental','_reuse','_mechanism_summaries','_mechanism_summaries_digest','_harness_profile'):
         if hasattr(args,name):delattr(args,name)
     args._construction_started=started
     args._budget_started=started

@@ -96,6 +96,13 @@ may cite a finding id in `evidence_refs`; an id the brief did not list is refuse
 evidence. The evaluation author then builds tasks that try to reproduce the claimed weak outcome under the
 baseline, and nothing installs without the paired evaluation, the fresh confirmation and the install review.
 
+On the controlled path (`--agent responses`) the proposer's input folder also holds the private
+`harness-profile.json` beside the brief, so it can read each finding's location and proposed update; no other
+role receives it. `ahl improve PROJECT --from-audit REPORT` accepts a profile finding the saved audit report
+lists: the project is compared again, the finding is used only if that fresh comparison still reports its id
+(a changed line or manifest refuses it), and a contradiction outranks a gap. Static conventions in the same
+report are tried first. The seed is the same fixed focus sentence plus the finding id and takes the same gates.
+
 A first run whose history has findings but no verified outcome seeds the proposer with the best static
 convention (see [one-call improvement](one-call-improvement.md)); a profile finding is one of those
 conventions, ranked after a truncated chain and an oversized file for a contradiction, and last for a gap.

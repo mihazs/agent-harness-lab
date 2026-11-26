@@ -12,7 +12,7 @@ import time
 from agent_harness_lab import audit, surfaces
 from agent_harness_lab.audit import chain, improvement_hint, instruction_totals
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
-from agent_harness_lab.project_profile import findings, report as harness_profile
+from agent_harness_lab.project_profile import findings, findings as profile_findings, report as harness_profile
 from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.sources.claude_instructions import scope_of
 from agent_harness_lab.sources.git_view import Folder
@@ -63,6 +63,9 @@ def select(path, project, runtime):
         descriptor=open_directory_nofollow(project/cwd); os.close(descriptor)
     findings=report.get('findings')
     if not isinstance(findings,list): raise ValueError('invalid audit findings')
+    saved_profile=report.get('harness_profile')
+    profile_ids={row['id'] for row in (saved_profile.get('findings') if isinstance(saved_profile,dict) else None) or ()
+                 if isinstance(row,dict) and isinstance(row.get('id'),str) and row.get('kind') in profile_findings.KINDS}
     selected={(row.get('id'),row.get('reason')) for row in findings if isinstance(row,dict)
               and isinstance(row.get('reason'),str)
               and ((row.get('dimension')=='instructions' and row.get('reason') in REASONS | {PROCEDURE} | ({SOFT_BUDGET} if version2 else set()))
@@ -97,13 +100,32 @@ def select(path, project, runtime):
                 result.update(instruction_soft_lines=soft,threshold_origin='caller_declared',
                               convention_source_role='general_reference_not_threshold')
             return result
-    if finding is None: raise ValueError('no eligible current audit finding')
+    if finding is None:
+        if (result:=_profile_hypothesis(profile_ids,project,fresh.harness_inventory_sha256)) is None:
+            raise ValueError('no eligible current audit finding')
+        return result
     return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',
                 finding_id=finding.id, reason=finding.reason, convention_source=finding.source,
                 inventory_sha256=fresh.harness_inventory_sha256,
                 focus=ROUTING_FOCUS if finding.reason==ROUTING else improvement_hint.HINTS[finding.reason],
                 selection='caller_declared_freshly_rechecked',
                 snapshot_relation='separate_observation', authority='none',publication_allowed=False)
+
+
+def _profile_hypothesis(ids, project, inventory_sha256):
+    """The best saved profile finding that a fresh comparison of the project still reports (contradiction first), else None.
+
+    The saved report only names ids; a finding the fresh, session-free comparison no longer reports (its line is gone, or it
+    came from session history) is refused, never trusted from the report."""
+    current=sorted((row for row in harness_profile.build(project)['findings'] if row['id'] in ids),
+                   key=lambda row:(row['finding_class']!='contradiction',row['id']))
+    if not current: return None
+    row=current[0]
+    return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',finding_id=row['id'],
+                reason='harness_profile_'+row['kind'],convention_source=PROFILE_SOURCE,inventory_sha256=inventory_sha256,
+                focus=f"{PROFILE_FOCUS[row['finding_class']]} Target finding {row['id']}.",
+                selection='caller_declared_freshly_rechecked',snapshot_relation='separate_observation',
+                authority='none',publication_allowed=False)
 
 
 # Automatic discovery for a first run whose history has findings but no verified outcome (#332). It reuses the hypothesis
