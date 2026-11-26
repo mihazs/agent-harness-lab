@@ -51,6 +51,7 @@ _SAFE = re.compile(r'[A-Za-z0-9_][\w:.-]{0,63}')
 def finding(kind, subject, scope, evidence, where, update=None):
     """One finding with its stable id; `scope` keeps two findings with one subject in different places apart."""
     cls, action = KINDS[kind]
+    evidence = dict(evidence, **({'surface': scope} if scope in harness_text.SURFACES else {}))
     return dict(id=f'hp/{kind}/{digest([kind, subject, scope])[:10]}', kind=kind, finding_class=cls, subject=subject,
                 evidence=evidence, where=sorted(where, key=lambda row: (row['file'], row['line']))[:MAX_WHERE],
                 proposed_update=dict(action=action, **(update or {})), status='candidate_claim', source='static')
@@ -88,7 +89,8 @@ def _checkable(text, link):
 def stale_paths(repo, entries):
     ignored, seen = _ignored(repo), {}
     for entry in entries:
-        if entry['scope'] == 'skill': continue
+        if entry['scope'] == 'hook': continue
+        surface = entry['scope'] if entry['scope'] in harness_text.SURFACES else ''
         base, lines = os.path.dirname(entry['path']), entry['text'].splitlines()
         found = [(number, span, False) for number, span, fenced in harness_text.spans(entry['text']) if not fenced]
         found += [(number, target, True) for number, line in enumerate(lines, 1) for target in _LINK.findall(line)]
@@ -96,8 +98,28 @@ def stale_paths(repo, entries):
             path = _checkable(text, link)
             if path is None or _EXAMPLE.search(lines[number - 1]) or ignored(path): continue
             if repo.kind(path) is None and (not base or repo.kind(f'{base}/{path}') is None):
-                seen.setdefault(path, []).append(dict(path=entry['path'], line=number))
-    return [finding('path_reference_missing', path, '', dict(mentions=len(rows)), _where(rows)) for path, rows in sorted(seen.items())][:MAX_PER_KIND]
+                seen.setdefault((path, surface), []).append(dict(path=entry['path'], line=number))
+    return [finding('path_reference_missing', path, surface, dict(mentions=len(rows)), _where(rows))
+            for (path, surface), rows in sorted(seen.items())][:MAX_PER_KIND]
+
+
+def hook_script(command):
+    """The checkout path a hook command runs (its program path, or the script right after an interpreter), else None."""
+    if command['cd']: return None
+    inner = commands.unwrapped(command)
+    found = inner['path'] or (inner['args'][0] if inner['program'] in commands.INTERPRETERS and inner['args'] else None)
+    if found is None or not re.fullmatch(r'(?:\./)?[\w@.+-]+(?:/[\w@.+-]+)*', found) or '..' in found: return None
+    path = found.removeprefix('./')
+    return None if path.split('/')[0] in GENERATED | PLACEHOLDER or '/' not in path and '.' not in path else path
+
+
+def stale_hook_scripts(repo, mentions):
+    """A hook command that runs a script the checkout does not have; a path left unexpanded, absolute or after a `cd` is not judged."""
+    ignored, seen = _ignored(repo), {}
+    for mention in mentions:
+        path = hook_script(mention['command']) if mention['scope'] == 'hook' else None
+        if path and repo.kind(path) is None and not ignored(path): seen.setdefault(path, []).append(mention)
+    return [finding('path_reference_missing', path, 'hook', dict(mentions=len(rows)), _where(rows)) for path, rows in sorted(seen.items())][:MAX_PER_KIND]
 
 
 def stale_targets(profile, mentions):
@@ -105,15 +127,16 @@ def stale_targets(profile, mentions):
     seen = {}
     for mention in mentions:
         pair = commands.runner_target(mention['command'])
-        if pair is None or mention['scope'] != 'root' or not _SAFE.fullmatch(pair[1]) or pair[0] == 'npm' and pair[1] != 'test': continue
+        scope = mention['scope']
+        if pair is None or scope != 'root' and scope not in harness_text.SURFACES or not _SAFE.fullmatch(pair[1]) or pair[0] == 'npm' and pair[1] != 'test': continue
         if pair[1].lower() in PLACEHOLDER_TARGET or pair[1].isupper(): continue  # `make NAME` and `just x` name a slot, not a target
         runner = profile['runners'][RUNNER_FILE[pair[0]]]
         if not runner['complete'] or pair[1] in runner['targets'] or pair[1] in runner.get('nested_targets', ()): continue
         if not runner['present'] and runner.get('nested'): continue  # a nested package may declare it
-        seen.setdefault(pair, []).append(mention)
-    return [finding('command_target_missing', ' '.join(pair), '', dict(runner=pair[0], target=pair[1], mentions=len(rows),
+        seen.setdefault((pair, scope if scope != 'root' else ''), []).append(mention)
+    return [finding('command_target_missing', ' '.join(pair), surface, dict(runner=pair[0], target=pair[1], mentions=len(rows),
             state='target_not_declared' if profile['runners'][RUNNER_FILE[pair[0]]]['present'] else 'runner_file_absent'), _where(rows))
-            for pair, rows in sorted(seen.items())][:MAX_PER_KIND]
+            for (pair, surface), rows in sorted(seen.items())][:MAX_PER_KIND]
 
 
 def named_managers(mentions, ecosystem):
@@ -212,14 +235,19 @@ def verification_gaps(profile, entries, mentions):
 def compare(profile, repo, entries):
     """The static findings of one profile and its instruction files, contradictions first; none without a readable file.
 
-    A skill file informs the gap checks (it may state the command) but is not checked for stale lines. When any candidate
+    Skills, slash commands, agent definitions and hook handlers are checked for a missing runner target or path like a root
+    file (the finding says which `surface`); skills, commands and agents also inform the gap checks (they may state the
+    command), hooks do not (no agent reads them). When any candidate
     instruction file could not be read, the gap checks stay silent: the missing file may hold the fact."""
     if not entries: return []
-    root = [entry for entry in entries if entry['scope'] != 'skill']
+    root = [entry for entry in entries if entry['scope'] in ('root', 'nested')]
     mentions = [row for entry in root for row in harness_text.mentions(entry)]
-    found = [*stale_targets(profile, mentions), *stale_paths(repo, root), *toolchain_contradictions(profile, mentions),
-             *runner_contradictions(profile, mentions), *disagreements(mentions)]
-    if not any(item.startswith('unread:') for item in repo.unknown):
-        mentions += [row for entry in entries if entry['scope'] == 'skill' for row in harness_text.mentions(entry)]
-        found += [*toolchain_gaps(profile, entries), *verification_gaps(profile, entries, mentions)]
+    surface = [row for entry in entries if entry['scope'] in harness_text.SURFACES for row in harness_text.mentions(entry)]
+    found = [*stale_targets(profile, [*mentions, *surface]), *stale_paths(repo, entries), *stale_hook_scripts(repo, surface),
+             *toolchain_contradictions(profile, mentions), *runner_contradictions(profile, mentions), *disagreements(mentions)]
+    # A hook runs without the agent reading it, so its commands and text never state a fact to the agent.
+    said = [entry for entry in entries if entry['scope'] != 'hook']
+    if said and not any(item.startswith('unread:') for item in repo.unknown):
+        mentions += [row for row in surface if row['scope'] != 'hook']
+        found += [*toolchain_gaps(profile, said), *verification_gaps(profile, said, mentions)]
     return found

@@ -4,6 +4,7 @@ Only code spans (inline backticks and fenced blocks) count as mentions of a comm
 set, because a word like "test" in a sentence names nothing. A line that negates ("never run `npm run x`", "instead of") is
 not a mention. The reader is lexical and bounded: an unreadable or oversized file is skipped and counted, never guessed.
 """
+import json
 import os
 import re
 import stat
@@ -17,6 +18,11 @@ _INLINE = re.compile(r'`([^`\n]+)`')
 _FENCE = re.compile(r'^\s*(```|~~~)')
 _NEGATION = re.compile(r"\b(?:never|don'?t|do not|avoid|instead of|rather than|deprecated|removed|no longer|not|without|except)\b|\bnão\b", re.I)
 _WORD = re.compile(r'[a-z0-9][\w.:@/+-]*')
+HOOK_FILES = ('.claude/settings.json', '.codex/hooks.json')
+# Scopes whose commands run from the checkout root, so they are judged like the root instruction files.
+SURFACES = frozenset('skill command agent hook'.split())
+# The only expansion the harness documents for a project hook; any other variable leaves the command unjudged.
+_PROJECT_DIR = re.compile(r'\$(?:\{CLAUDE_PROJECT_DIR\}|CLAUDE_PROJECT_DIR\b)')
 _PROMPT = re.compile(r'^\s*(?:[$>]\s+|#\s+(?=\S))')
 
 
@@ -31,13 +37,17 @@ def read(repo, path):
 
 def files(repo: Repo):
     """[dict(path, text, scope)] for the root instruction files and `.claude/rules/*.md` (scope root), nested AGENTS.md or
-    CLAUDE.md (nested) and project skills (skill); `unread` names a candidate that could not be read."""
+    CLAUDE.md (nested), project skills (skill), `.claude/commands/*.md` (command), `.claude/agents/*.md` (agent) and the hook
+    settings files (hook); `unread` names a candidate that could not be read."""
     paths = [name for name in ROOT_FILES if repo.kind(name) in (stat.S_IFREG, stat.S_IFLNK)]
     paths += [f'.claude/rules/{entry.name}' for entry in repo.listing('.claude/rules') if entry.name.endswith('.md')]
     skills = [f'{base}/{entry.name}/SKILL.md' for base in ('.claude/skills', '.agents/skills') for entry in repo.listing(base)
               if entry.is_dir(follow_symlinks=False)]
+    flat = {f'{base}/{entry.name}': scope for base, scope in (('.claude/commands', 'command'), ('.claude/agents', 'agent'))
+            for entry in repo.listing(base) if entry.name.endswith('.md') and repo.is_file(f'{base}/{entry.name}')}
+    hooks = {name: 'hook' for name in HOOK_FILES if repo.is_file(name)}
     scopes = {**{path: 'root' for path in paths}, **{path: 'nested' for path in repo.find({'AGENTS.md', 'CLAUDE.md'}) if path not in paths},
-              **{path: 'skill' for path in skills if repo.is_file(path)}}
+              **{path: 'skill' for path in skills if repo.is_file(path)}, **flat, **hooks}
     found = []
     for path, scope in list(scopes.items())[:MAX_FILES]:
         text = read(repo, path)
@@ -62,8 +72,31 @@ def spans(text, negated=False):
     return found
 
 
+def hook_commands(text):
+    """(line number, command) of each hook handler's `command` in a hook settings file, with `$CLAUDE_PROJECT_DIR` expanded to
+    the checkout; an unparsable file has none. The line is where the JSON string first appears, 1 when it cannot be found."""
+    try: data = json.loads(text)
+    except ValueError: return []
+    lines, found = text.splitlines(), []
+
+    def walk(node, depth=0):
+        if depth > 8: return
+        if isinstance(node, dict):
+            if isinstance(node.get('command'), str):
+                needle = json.dumps(node['command'])[1:-1]
+                found.append((next((n for n, line in enumerate(lines, 1) if needle in line), 1), _PROJECT_DIR.sub('.', node['command'])))
+            for value in node.values(): walk(value, depth + 1)
+        elif isinstance(node, list):
+            for value in node: walk(value, depth + 1)
+    if isinstance(data, dict): walk(data.get('hooks'))
+    return found
+
+
 def mentions(entry):
-    """One dict per simple command a file's code spans mention: path, line, command, fenced."""
+    """One dict per simple command a file's code spans (a hook file's handler commands) mention: path, line, command, fenced."""
+    if entry['scope'] == 'hook':
+        return [dict(path=entry['path'], line=number, command=command, fenced=False, scope='hook')
+                for number, line in hook_commands(entry['text']) for command in commands.simple_commands(line)]
     return [dict(path=entry['path'], line=number, command=command, fenced=fenced, scope=entry['scope'])
             for number, span, fenced in spans(entry['text']) for command in commands.simple_commands(span)]
 

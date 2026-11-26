@@ -45,6 +45,14 @@ Each finding has a stable `id` (`hp/<kind>/<digest>`, independent of line number
 | `toolchain_not_stated` | gap | a non-default package manager is detected and no instruction or skill file names any of the ecosystem | `state_toolchain` |
 | `verification_command_unnamed` | gap | a category of declared or CI command (`test`, `lint`, `typecheck`, `build`) is named by no instruction or skill file, by command or by tool | `name_verification_command`, with up to three candidate command lines |
 
+The two contradiction kinds above also read the places an agent or the harness runs commands from, and say which in
+`evidence.surface`: `skill` (`SKILL.md` under `.claude/skills` or `.agents/skills`), `command` (`.claude/commands/*.md`),
+`agent` (`.claude/agents/*.md`) and `hook` (the `command` of each handler under `hooks` in `.claude/settings.json` or
+`.codex/hooks.json`). A hook command is judged only for the script it runs (its program path, or the file after an
+interpreter) and for a declared runner target, after `$CLAUDE_PROJECT_DIR` is expanded to the checkout; a command that uses
+any other variable, `~`, an absolute path or a `cd` is not judged. Skills, commands and agents also count as stating a
+fact for the gap checks; a hook never does, because no agent reads it.
+
 A line is not a claim, and stays silent, when it negates ("never", "instead of", "deprecated"),
 gives an example ("for example", "such as"), follows a `cd`, passes an option before the name
 (`pnpm --filter x run y`), holds a placeholder or glob, names a generated or git-ignored

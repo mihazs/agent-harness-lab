@@ -89,7 +89,7 @@ def rule_findings(entries, sessions):
     """A run-shaped rule (`never run X`, `always run X`, `ask before running X`) the user stated in several sessions for a program
     of the closed vocabulary, which no instruction file states. The subject is the rule kind and that program, never user text."""
     try:
-        recorded = {key for entry in entries if entry['scope'] != 'skill' for key in _run_rules(entry['text'], False)}
+        recorded = {key for entry in entries if entry['scope'] in ('root', 'nested') for key in _run_rules(entry['text'], False)}
     except ValueError:
         return []  # a harness file past the rule bound cannot be compared; stay silent
     seen = {}

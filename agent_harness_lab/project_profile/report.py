@@ -20,8 +20,9 @@ def build(project, sessions=None):
         summary = session_commands.summarize(sessions, profile) if sessions else dict(
             profile=session_commands.PROFILE, status='not_run', reason='no_native_session_read', sessions_read=0, publication_allowed=False)
         if entries and sessions is not None:
-            mentions = [row for entry in entries for row in harness_text.mentions(entry)]
-            found = history.apply(found, profile, entries, mentions, summary, sessions)
+            said = [entry for entry in entries if entry['scope'] != 'hook']
+            mentions = [row for entry in said for row in harness_text.mentions(entry)]
+            found = history.apply(found, profile, said, mentions, summary, sessions)
         status = 'compared' if entries else 'no_instruction_file'
         unread = sum(item.startswith('unread:') for item in repo.unknown)
     except (OSError, ValueError, TypeError, KeyError, IndexError, RecursionError, NotImplementedError) as exc:
