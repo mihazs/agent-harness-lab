@@ -30,3 +30,11 @@ def test_the_self_test_instruction_names_task_state_and_the_bounded_grader_outpu
     assert str(error) == 'Grader self-test rejected: broken/partial must fail and complete must pass'
     assert 'task t1 exited 0 on the partial control; it must exit 1' in instruction and 'x' * 397 + 'END' in instruction and 'x' * 398 not in instruction
     assert (receipt['reason'], receipt['stage'], receipt['origin']) == ('manifest_validation_rejected', 'manifest_validation', 'agent_output_defect')
+
+
+# fixed-in: graders written as a bare script path failed one at a time; each repair fixed only the grader it named
+def test_a_selftest_repair_asks_for_every_grader_and_the_native_contract_shows_the_argv_shape():
+    from agent_harness_lab.evaluation import manifest_contract
+    assert 'run every grader on its controls' in _selftest_rejected('t1', 'broken', 'did not run', 'Permission denied').hint
+    assert '["python3", "graders/check.py", "{workspace}"]' in manifest_contract.contract_text(controller_grader=False)
+    assert 'python3' not in manifest_contract.contract_text(controller_grader=True)
