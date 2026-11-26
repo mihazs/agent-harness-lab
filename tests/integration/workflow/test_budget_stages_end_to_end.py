@@ -62,7 +62,7 @@ if p('context.json').exists():
                 (control / 'artifact').write_text('done' if state == 'complete' else 'wrong')
                 controls.append(dict(task=split, state=state, fixture=control.name))
         note(kind='constructed', attempt=c['attempt'], tasks=[t['id'] for t in tasks])
-        (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'], skills=[], tasks=tasks,
+        (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=(['wrong.md'] if mode.get('wrong_paths') else c['harness_paths']), skills=(['x'] if mode.get('wrong_paths') else []), tasks=tasks,
             grader_self_tests=controls, grader_bundles=bundles)))
 elif 'independent probe-review session' in prompt:  # the probe reviewer starts in an empty folder; every task is `fair`
     note(kind='probe')
@@ -275,3 +275,12 @@ def test_an_installing_run_builds_its_refinement_evaluation_afresh(stub, capsys)
     # refinement is judged on the second rebuilt evaluation's frozen tasks.
     assert [row['reused'] for row in kinds(rows, 'construction')] == [0, 0, 0], receipt
     assert receipt['tasks_rechecked']['attempt'] == 2 and receipt['evaluation_reused'] == {'attempt': 2, 'reason': 'refined_candidate'}
+
+
+# fixed-in: an author who rewrote the staged harness_paths (or named a skill) used up a construction repair pass
+def test_rewritten_staged_paths_are_restored_by_the_controller_without_a_repair(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(wrong_paths=True))
+    assert receipt['status'] != 'invalid_input' and not receipt.get('evaluation_construction_repairs'), receipt
+    assert not any(row.get('repair') for row in kinds(rows, 'construction'))
+    manifest = json.loads((run / 'preparation/evaluation-0/manifest.json').read_text())
+    assert manifest['skills'] == [] and 'wrong.md' not in manifest['harness_paths']

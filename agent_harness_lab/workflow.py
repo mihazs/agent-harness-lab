@@ -1504,6 +1504,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('Evaluation construction changed frozen harness inputs')
             options, fresh = dict(grader_backend=grading), set(used_heldout)
             if bank is not None: options['bank_sha256'] = args.project_settings['bank']['sha256']
+            # The staged paths and empty skills are the controller's own values: an author who rewrote them costs no repair pass.
+            authored = json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
+            if isinstance(authored, dict) and (authored.get('skills') or sorted(authored.get('harness_paths') or []) != sorted(paths)):
+                write_json(manifest_path, dict(authored, skills=[], harness_paths=sorted(paths)))
             try:
                 with manifest_contract.boundary('manifest_validation'), stages.charge('construction'):
                     return (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **options)
