@@ -10,7 +10,7 @@ import fnmatch
 import os
 import re
 
-from agent_harness_lab.project_profile import commands, harness_text
+from agent_harness_lab.project_profile import commands, harness_text, versions
 from agent_harness_lab.sources.schema import digest
 
 PROFILE = 'ahl-harness-findings-v1'
@@ -22,6 +22,7 @@ KINDS = dict(
     path_reference_missing=('contradiction', 'correct_or_remove_line'),
     toolchain_contradicted=('contradiction', 'correct_or_remove_line'),
     test_runner_contradicted=('contradiction', 'correct_or_remove_line'),
+    version_contradicted=('contradiction', 'correct_or_remove_line'),
     harness_files_disagree=('contradiction', 'resolve_disagreement'),
     toolchain_not_stated=('gap', 'state_toolchain'),
     verification_command_unnamed=('gap', 'name_verification_command'),
@@ -173,6 +174,29 @@ def runner_contradictions(profile, mentions):
             for name, rows in sorted(says.items()) if have and name not in have]
 
 
+def _contradicts(declared, stated):
+    """Whether one declared runtime version rules out one statement: a statement below the minimum, an exact statement that
+    names another pin, or a floor above the pin. A floor the manifest satisfies is not a contradiction."""
+    have, said = versions.number(declared['version']), versions.number(stated['version'])
+    if declared['kind'] == 'minimum': return versions.below(said, have)
+    return versions.below(have, said) if stated['floor'] else versions.below(said, have) or versions.below(have, said)
+
+
+def version_contradictions(profile, entries):
+    """A version statement in a root instruction file that every manifest declaring that runtime's version contradicts. When
+    the manifests disagree among themselves the statement may match one of them, so it stays silent."""
+    seen = {}
+    for entry in entries:
+        if entry['scope'] != 'root': continue
+        for row in harness_text.version_statements(entry):
+            declared = [item for item in profile.get('runtimes', ()) if item['runtime'] == row['runtime']]
+            if declared and all(_contradicts(item, row) for item in declared):
+                seen.setdefault((row['runtime'], row['version'] + ('+' if row['floor'] else '')), (declared, []))[1].append(row)
+    return [finding('version_contradicted', f'{runtime} {stated}', runtime, dict(
+            runtime=runtime, stated=stated, declared=[f"{item['source']} {item['kind']} {item['version']}" for item in declared],
+            mentions=len(rows)), _where(rows)) for (runtime, stated), (declared, rows) in sorted(seen.items())][:MAX_PER_KIND]
+
+
 def disagreements(mentions):
     found = []
     for ecosystem in MANAGERS:
@@ -244,7 +268,8 @@ def compare(profile, repo, entries):
     mentions = [row for entry in root for row in harness_text.mentions(entry)]
     surface = [row for entry in entries if entry['scope'] in harness_text.SURFACES for row in harness_text.mentions(entry)]
     found = [*stale_targets(profile, [*mentions, *surface]), *stale_paths(repo, entries), *stale_hook_scripts(repo, surface),
-             *toolchain_contradictions(profile, mentions), *runner_contradictions(profile, mentions), *disagreements(mentions)]
+             *toolchain_contradictions(profile, mentions), *runner_contradictions(profile, mentions), *disagreements(mentions),
+             *version_contradictions(profile, entries)]
     # A hook runs without the agent reading it, so its commands and text never state a fact to the agent.
     said = [entry for entry in entries if entry['scope'] != 'hook']
     if said and not any(item.startswith('unread:') for item in repo.unknown):

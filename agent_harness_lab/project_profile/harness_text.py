@@ -9,7 +9,7 @@ import os
 import re
 import stat
 
-from agent_harness_lab.project_profile import commands
+from agent_harness_lab.project_profile import commands, versions
 from agent_harness_lab.project_profile.detect import Repo
 
 MAX_FILES = 64
@@ -106,3 +106,16 @@ def words(entries):
     prose = {word.strip('.:-/') for entry in entries for word in _WORD.findall(entry['text'].lower())}
     code = {word.strip('.:-/') for entry in entries for _, span, _ in spans(entry['text'], negated=True) for word in _WORD.findall(span.lower())}
     return prose, code
+
+
+def version_statements(entry):
+    """One dict per runtime version (`Python 3.9`, `Node 16+`) a file's prose states: runtime, version, floor, path, line.
+    A fenced block and a negated line state nothing."""
+    fenced, found = False, []
+    for number, line in enumerate(entry['text'].splitlines(), 1):
+        if _FENCE.match(line):
+            fenced = not fenced
+        elif not fenced and not _NEGATION.search(line):
+            found += [dict(runtime=runtime, version=version, floor=floor, path=entry['path'], line=number)
+                      for runtime, version, floor in versions.stated_in(line)]
+    return found
