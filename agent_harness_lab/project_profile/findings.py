@@ -87,8 +87,18 @@ def _checkable(text, link):
     first = parts[0]
     if first in GENERATED or first in PLACEHOLDER or first.startswith('.venv') or '.' in first and first.rsplit('.', 1)[1] in _TLD:
         return None
-    if text.endswith('/') or link or re.search(r'\.\w{1,8}$', parts[-1]): return '/'.join(parts)
+    # an extension has a letter: `x402/2.0` is a protocol version, not a file
+    if text.endswith('/') or link or re.search(r'\.(?=\w*[A-Za-z])\w{1,8}$', parts[-1]): return '/'.join(parts)
     return None
+
+
+def _nearby(repo, base, path, surface):
+    """A surface's path that exists one folder below it or in a sibling skill (`shared/x`, another skill's `references/x`): the
+    reference is ambiguous, not missing."""
+    if not surface or not base: return False
+    parent = os.path.dirname(base)
+    return any(entry.is_dir(follow_symlinks=False) and repo.kind(f'{folder}/{entry.name}/{path}') is not None
+               for folder in (base, parent) if folder for entry in repo.listing(folder))
 
 
 def stale_paths(repo, entries):
@@ -102,7 +112,7 @@ def stale_paths(repo, entries):
         for number, text, link in found:
             path = _checkable(text, link)
             if path is None or _EXAMPLE.search(lines[number - 1]) or ignored(path): continue
-            if repo.kind(path) is None and (not base or repo.kind(f'{base}/{path}') is None):
+            if repo.kind(path) is None and (not base or repo.kind(f'{base}/{path}') is None) and not _nearby(repo, base, path, surface):
                 seen.setdefault((path, surface), []).append(dict(path=entry['path'], line=number))
     return [finding('path_reference_missing', path, surface, dict(mentions=len(rows)), _where(rows))
             for (path, surface), rows in sorted(seen.items())][:MAX_PER_KIND]
