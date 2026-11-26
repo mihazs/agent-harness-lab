@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.239.0
+
+### Minor Changes
+
+- f428581: `AHL_CODEX_MODEL` pins the model of AHL's Codex preparation sessions and trials without editing the user's Codex `config.toml`. Trials and preparation sessions now read the Codex defaults the same way.
+
+### Patch Changes
+
+- f18df47: The verified-correction lane also runs when a first-run gain was not confirmed by the repeats (`improvement_not_confirmed`), so a correct fix of a static contradiction is no longer dropped because a flaky task briefly favoured it.
+- 93fcbce: A verified correction may also change the lines of other contradictions the same candidate resolves, so fixing two dead references at once is no longer refused as an edit beyond the cited lines.
+- 32a3644: The evaluation author's contract now shows the grader argv shape (an interpreter first, such as `["python3", "graders/check.py", "{workspace}"]`), and a grader self-test repair asks the author to run every grader on its controls, not only the one reported, so a defect shared by several graders no longer exhausts the repair passes.
+- e681c59: An installing run whose agents finished their turn but failed every task in both arms, controls included, with a stated grader reason now has the evaluation author rebuild the tasks (at most twice) before it ends `evaluation_uninformative`; a runtime failure still stops at once.
+
 ## 0.238.0
 
 ### Minor Changes
