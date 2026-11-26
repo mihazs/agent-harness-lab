@@ -480,7 +480,8 @@ def _selftest_rejected(task, state, observed, tail=''):
     return _author_defect('Grader self-test rejected: broken/partial must fail and complete must pass',
         f"The grader for task {task} {observed} on the {state} control; it must exit {0 if state == 'complete' else 1} there "
         f"(0 passes, 1 fails; broken and partial controls must fail, complete must pass)."
-        + (f' The last output of that grader, which is your own program: {tail[-400:]!r}' if tail.strip() else ''))
+        + (f' The last output of that grader, which is your own program: {tail[-400:]!r}' if tail.strip() else '')
+        + ' Only the first failing grader is reported: run every grader on its controls the same way before you finish.')
 
 
 # Validation messages that report a changed frozen input rather than an authoring mistake; those are never repaired.

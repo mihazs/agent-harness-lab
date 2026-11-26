@@ -57,7 +57,9 @@ def contract_text(controller_grader=True):
     return ('Manifest contract: manifest.json holds ' + ', '.join(a['manifest']) + '; each task declares '
             + ', '.join(task) + '; each grader_self_tests entry has exactly ' + ', '.join(a['control'])
             + '; each grader_bundles entry has exactly ' + ', '.join(a['bundle'])
-            + '. The controller owns ' + ', '.join(owned) + ' and the run limits; never write them. '
+            + '.' + ('' if controller_grader else ' Each grader is a JSON list of strings run from the manifest folder whose first'
+                     ' element is the interpreter, such as ["python3", "graders/check.py", "{workspace}"]: a bare script path does not run.')
+            + ' The controller owns ' + ', '.join(owned) + ' and the run limits; never write them. '
             'Omit every digest: the controller computes bundle and control digests itself, and an authored digest is never an integrity claim.')
 
 
