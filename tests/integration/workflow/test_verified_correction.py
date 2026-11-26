@@ -146,3 +146,14 @@ def test_a_candidate_correcting_two_contradictions_at_once_is_still_a_verified_c
     result = run(fixed, files=files)
     assert (result['status'], result['install_basis']) == ('applied', 'verified_correction')
     assert (wf.project/'AGENTS.md').read_text() == fixed
+
+
+# fixed-in: a correction whose first-run gain the repeats did not confirm ended `improvement_not_confirmed` without the lane
+def test_a_correction_whose_gain_is_not_confirmed_still_installs_as_a_verified_correction(lane):
+    wf, run = lane
+    # The uncorrected file fails the development task in the first run only (trials 0-5); every repeat passes in both arms.
+    flaky = f"not (p('AGENTS.md').read_text() != {FIXED!r} and phase.endswith('development') and seen < 6)"
+    result = run(trial_agent=agent(flaky, counter=wf.root/'count'), trials=200)
+    assert result['confirmation']['outcome'] == 'improvement_not_confirmed', result.get('confirmation')
+    assert (result['status'], result['install_basis'], result['changed_files']) == ('applied', 'verified_correction', ['AGENTS.md'])
+    assert (wf.project/'AGENTS.md').read_text() == FIXED

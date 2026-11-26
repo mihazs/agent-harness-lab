@@ -2042,7 +2042,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.update(status='no_change', reason='improvement_not_confirmed' if fixed else 'evaluation_no_improvement',
                           baseline_at_least_as_good=not fixed, **({'candidate_lost': sorted(lost)} if lost else {}),
                           **({'invalid_controls': invalid} if invalid else {}))
-    if _installs(args) and (result.get('status'), result.get('reason')) == ('no_change', 'evaluation_no_improvement') and evaluated_attempts:
+    # A gain the repeats did not confirm is still no measured gain: a correction may install on its own basis.
+    if _installs(args) and result.get('status') == 'no_change' and result.get('reason') in ('evaluation_no_improvement', 'improvement_not_confirmed') and evaluated_attempts:
         _install_correction(result, args, output, baseline, original, evaluated_attempts, allowed_paths(args) is not None,
                             runner=runner, agent=agent, binary=binary, remaining=remaining, model_calls=model_calls, progress=progress)
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
