@@ -135,3 +135,14 @@ def test_the_paired_gate_reads_losses_and_regression_tasks(trials, kept, fine):
     from agent_harness_lab.evaluation.verified_correction import lost_nothing
     rows = [dict(task=task, version=version, split=split, status=status) for task, version, split, status in trials]
     assert lost_nothing(rows, kept) is fine
+
+
+# fixed-in: a candidate that also corrected a second contradiction's line was refused as `edits_beyond_cited_lines`
+def test_a_candidate_correcting_two_contradictions_at_once_is_still_a_verified_correction(lane):
+    wf, run = lane
+    second = 'Read `docs/gone.md` first.\n'
+    files = dict(FILES, **{'AGENTS.md': HEAD + BAD + second + TAIL})
+    fixed = HEAD + 'Use pnpm. Run `pnpm test`.\n' + 'Read the README first.\n' + TAIL
+    result = run(fixed, files=files)
+    assert (result['status'], result['install_basis']) == ('applied', 'verified_correction')
+    assert (wf.project/'AGENTS.md').read_text() == fixed
