@@ -48,3 +48,16 @@ def test_a_checkout_without_an_instruction_file_is_not_reported_clean(tmp_path, 
     assert main(['audit', str(root), '--json']) == 0
     section = json.loads(capsys.readouterr().out)['harness_profile']
     assert (section['status'], section['findings']) == ('no_instruction_file', [])
+
+
+def test_decision_findings_reach_the_audit_and_the_brief_section(tmp_path, capsys):
+    from agent_harness_lab.project_profile import report
+    root = build(tmp_path, {'package.json': package({'test': 'jest'}), 'docs/adr/0002-use-pnpm.md': '# 2. Use pnpm\n\n## Status\n\nAccepted\n',
+                            'AGENTS.md': 'Run `npm test`. Run `jest`.\n'})
+    (root / '.git').mkdir()
+    assert main(['audit', str(root)]) == 0
+    out = capsys.readouterr().out
+    assert 'harness contradiction: decision_contradicted "npm"' in out and 'harness gap: decision_records_unstated "decision_records"' in out
+    listed = report.brief_section(report.build(root))['findings']
+    assert [(row['kind'], row['finding_class']) for row in listed if row['kind'].startswith('decision')] == [
+        ('decision_contradicted', 'contradiction'), ('decision_records_unstated', 'gap')]

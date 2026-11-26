@@ -29,6 +29,18 @@ A fact the reader cannot settle (an unparsable or oversized manifest, a Makefile
 `include` or pattern rules, a Taskfile with `includes`) is recorded under `unknown` or
 `incomplete`, and the findings that depend on it stay silent.
 
+## Decisions and patterns
+
+`architecture` in the profile lists the decision records and the cheap patterns of the tree; no code is parsed. A record
+is a `NNNN-slug.md` file in `doc/adr`, `docs/adr`, `adr`, `docs/decisions`, `doc/decisions`, `decisions`,
+`docs/architecture/decisions`, `docs/architecture/adr`, `architecture/decisions` or the folder `.adr-dir` names (the layouts of
+[adr-tools](https://github.com/npryce/adr-tools) and [MADR](https://adr.github.io/madr/)). Its status comes from YAML front
+matter (`status:`), a `## Status` section or a `Status:` line, and only plainly `accepted` and `superseded` (with the number of
+the record that replaced it) count: a proposed, deprecated, hedged or missing status is skipped, never guessed. The tool a record
+decided on is read only from a title such as "Use pnpm" that names exactly one tool of a closed group. Patterns are the count of
+nested packages that depend on each other, the folders named `generated` and the migration folders. Titles and bodies are never
+stored. Whether agents touch the area is not judged, so a pattern gap is a hypothesis about a fact the harness never states.
+
 ## Findings
 
 Each finding has a stable `id` (`hp/<kind>/<digest>`, independent of line numbers), a
@@ -46,6 +58,10 @@ Each finding has a stable `id` (`hp/<kind>/<digest>`, independent of line number
 | `harness_files_disagree` | contradiction | two root instruction files name disjoint package managers | `resolve_disagreement` |
 | `toolchain_not_stated` | gap | a non-default package manager is detected and no instruction or skill file names any of the ecosystem | `state_toolchain` |
 | `verification_command_unnamed` | gap | a category of declared or CI command (`test`, `lint`, `typecheck`, `build`) is named by no instruction or skill file, by command or by tool | `name_verification_command`, with up to three candidate command lines |
+| `decision_contradicted` | contradiction | the harness runs a package manager or JS test runner that an accepted decision record (its title names exactly one tool, such as "Use pnpm") decided against, and the lockfile and dependencies do not already settle the group | `correct_or_remove_line`, with the record path |
+| `superseded_decision_stated` | contradiction | the harness runs the tool a superseded record chose while its accepted replacement chose another, or cites a superseded record by path or as `ADR-N` outside a negated or historical line | `correct_or_remove_line` |
+| `decision_records_unstated` | gap | accepted decision records exist and no instruction file names their folder, "ADR" or "decision records" | `reference_decision_records`, with the folders |
+| `pattern_not_stated` | gap | the checkout has internal dependency edges between nested packages, a `generated` folder or a migration folder, and no instruction file mentions it by word or path | `state_pattern`, with the pattern and up to three paths |
 
 The two contradiction kinds above also read the places an agent or the harness runs commands from, and say which in
 `evidence.surface`: `skill` (`SKILL.md` under `.claude/skills` or `.agents/skills`), `command` (`.claude/commands/*.md`),

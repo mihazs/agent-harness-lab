@@ -28,7 +28,11 @@ KINDS = dict(
     verification_command_unnamed=('gap', 'name_verification_command'),
     command_in_use_unrecorded=('gap', 'record_command'),
     practice_diverges_from_harness=('contradiction', 'record_practice_or_correct_line'),
-    user_rule_unrecorded=('gap', 'record_rule'))
+    user_rule_unrecorded=('gap', 'record_rule'),
+    decision_contradicted=('contradiction', 'correct_or_remove_line'),
+    superseded_decision_stated=('contradiction', 'correct_or_remove_line'),
+    decision_records_unstated=('gap', 'reference_decision_records'),
+    pattern_not_stated=('gap', 'state_pattern'))
 MANAGERS = dict(node=('npm', 'pnpm', 'yarn', 'bun'), python=('uv', 'poetry', 'pipenv', 'pdm'))
 DEFAULT_MANAGER = dict(node='npm', python='pip')
 RUNNER_FILE = dict(npm='package.json', pnpm='package.json', yarn='package.json', bun='package.json', make='make', task='task', just='just')
@@ -264,15 +268,17 @@ def compare(profile, repo, entries):
     command), hooks do not (no agent reads them). When any candidate
     instruction file could not be read, the gap checks stay silent: the missing file may hold the fact."""
     if not entries: return []
+    from agent_harness_lab.project_profile import architecture_findings  # imports this module
     root = [entry for entry in entries if entry['scope'] in ('root', 'nested')]
     mentions = [row for entry in root for row in harness_text.mentions(entry)]
     surface = [row for entry in entries if entry['scope'] in harness_text.SURFACES for row in harness_text.mentions(entry)]
     found = [*stale_targets(profile, [*mentions, *surface]), *stale_paths(repo, entries), *stale_hook_scripts(repo, surface),
              *toolchain_contradictions(profile, mentions), *runner_contradictions(profile, mentions), *disagreements(mentions),
-             *version_contradictions(profile, entries)]
+             *version_contradictions(profile, entries), *architecture_findings.contradictions(profile, root, mentions)]
     # A hook runs without the agent reading it, so its commands and text never state a fact to the agent.
     said = [entry for entry in entries if entry['scope'] != 'hook']
     if said and not any(item.startswith('unread:') for item in repo.unknown):
         mentions += [row for row in surface if row['scope'] != 'hook']
-        found += [*toolchain_gaps(profile, said), *verification_gaps(profile, said, mentions)]
+        found += [*toolchain_gaps(profile, said), *verification_gaps(profile, said, mentions),
+                  *architecture_findings.gaps(profile, said)]
     return found
