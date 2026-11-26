@@ -4,6 +4,7 @@ Every violation names the stage, file and field (names only, never content), say
 agent output is at fault, and gives the exact next step. No result text is a bare exception message.
 """
 from contextlib import contextmanager
+import re
 
 SPLITS = ('development', 'regression', 'heldout')
 STATES = ('broken', 'partial', 'complete')
@@ -81,7 +82,12 @@ class ContractError(ValueError):
                     next_step=self.next_step)
 
     def repair_instruction(self):
-        return ('The controller rejected your manifest.json before any grading. Rejection: ' + self.render()
+        # The check stops at the first bad task: name the field in every task, or each repair pass fixes one task only.
+        each = re.fullmatch(r'tasks\[\d+\]\.(\w+)', self.field or '')
+        every = (f' Only the first defect is reported: check `{each[1]}` in every task and give each the same documented shape.'
+                 + (' A grader is a JSON list of strings (an argv such as ["python3", "graders/x.py", "{workspace}"]), never one string.'
+                    if each[1] == 'grader' else '')) if each else ''
+        return ('The controller rejected your manifest.json before any grading. Rejection: ' + self.render() + every
                 + ' Fix only this defect in /work, keep everything else, and finish.')
 
 

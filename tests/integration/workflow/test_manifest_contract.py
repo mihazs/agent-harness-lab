@@ -353,3 +353,10 @@ def test_an_installing_run_repairs_two_defects_in_turn_and_a_run_that_only_recom
     (wf.project / 'AGENTS.md').write_text('bad')  # the first run installed its winner
     with pytest.raises(contract.ContractError):
         improve(wf.args())  # the programmatic entry keeps one repair
+
+
+# fixed-in: a per-task shape defect was reported one task per repair pass, so a third bad task exhausted the repairs
+def test_a_per_task_field_repair_names_the_field_in_every_task():
+    text = contract.ContractError('evaluation_manifest_field_invalid', 'evaluation_construction', 'tasks[0].grader').repair_instruction()
+    assert 'check `grader` in every task' in text and 'never one string' in text
+    assert 'every task' not in contract.ContractError('evaluation_manifest_field_invalid', 'evaluation_construction', 'tasks').repair_instruction()
