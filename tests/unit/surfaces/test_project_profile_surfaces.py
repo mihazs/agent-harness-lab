@@ -93,3 +93,11 @@ def test_a_hook_never_states_a_fact_to_the_agent(tmp_path):
 def test_hooks_alone_never_make_a_gap(tmp_path):
     files = {'pnpm-lock.yaml': '', 'package.json': package({'test': 'vitest run'}), **hooks('pnpm test')}
     assert report.build(build(tmp_path, files))['findings'] == []
+
+
+# fixed-in: skill paths resolved inside a subfolder or a sibling skill, and protocol versions, were reported as missing
+def test_a_skill_path_in_a_subfolder_or_a_sibling_skill_or_a_version_token_is_not_missing(tmp_path):
+    files = {'.agents/skills/lint/shared/rules/lists.json': '', '.agents/skills/lint/references/tells.md': '',
+             '.agents/skills/lint/SKILL.md': '**shared/**: `rules/lists.json`\n',
+             '.agents/skills/deck/SKILL.md': 'Read `lint` `references/tells.md`; protocol `x402/2.0`.\nUse `prompts/gone.md`.\n'}
+    assert missing(tmp_path, files) == [('path_reference_missing', 'prompts/gone.md', 'skill', [dict(file='.agents/skills/deck/SKILL.md', line=2)])]
