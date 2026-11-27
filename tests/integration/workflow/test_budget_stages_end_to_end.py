@@ -77,6 +77,7 @@ else:
     good = p('AGENTS.md').read_text().strip() == 'good'
     if trial == 'crash-all' or trial == 'candidate-crashes' and good or trial == 'fail-heldout-crashes' and 'heldout' in p('seed').read_text(): sys.exit(3)
     wrong = trial in ('fail-all', 'candidate-crashes', 'fail-heldout-crashes')
+    if mode.get('late_trial_seconds') and not p('seed').read_text().endswith('0'): advance('@CLOCK@', mode['late_trial_seconds'])
     p('artifact').write_text('done' if not wrong and (good or 'regression' in p('seed').read_text()) else 'wrong')
 print(done)
 '''
@@ -308,3 +309,10 @@ def test_a_later_construction_that_overruns_keeps_the_measured_result(stub, caps
     code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_overrun=100))
     assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
     assert receipt['later_construction_failed']['reason'] == 'evaluation_construction_timeout' and (run / 'evaluation-0').is_dir()
+
+
+# fixed-in: a search that ran out of budget after measured attempts without a gain ended `budget_exhausted` (inconclusive)
+def test_running_out_of_budget_after_measured_attempts_without_a_gain_is_a_measured_no_change(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_trial_seconds=200))
+    assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['budget_exhausted_during_search']['measured_attempts'] >= 1
