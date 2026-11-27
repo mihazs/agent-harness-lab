@@ -82,8 +82,10 @@ def test_the_attempt_that_corrected_the_finding_is_installed_when_a_later_one_dr
 @pytest.mark.parametrize('candidate, reason', [
     (FIXED + 'Always add a changelog entry.\n', 'edits_beyond_cited_lines'),
     (HEAD + 'Use pnpm. Run `pnpm test`.\n' + 'Be brief.\n', 'edits_beyond_cited_lines'),
-    (HEAD + 'Use pnpm. Run `pnpm test`, then `pnpm run release`.\n' + TAIL, 'finding_not_resolved_or_introduced'),
-    (HEAD + 'Use pnpm. Run `npm test`.\n' + TAIL, 'finding_not_resolved_or_introduced')])
+    (HEAD + 'Use pnpm. Run `pnpm test`, then `pnpm run deploy` twice.\n' + TAIL, 'finding_not_resolved_or_introduced'),
+    (HEAD + 'Use pnpm. Run `npm test`.\n' + TAIL, 'correction_adds_a_reference'),
+    # fixed-in: a dead reference replaced by an existing command that does not do what the line says was installed
+    (HEAD + 'Use pnpm. Run `pnpm test`; it also deploys via `pnpm run test`.\n' + TAIL, 'correction_adds_a_reference')])
 def test_an_extra_edit_an_unresolved_or_an_introduced_finding_installs_nothing(lane, candidate, reason):
     wf, run = lane
     result = run(candidate)

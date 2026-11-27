@@ -8,6 +8,7 @@ install review is consistent. This is never a measured improvement: the behaviou
 """
 import difflib
 from pathlib import Path
+import re
 
 BASIS = 'verified_correction'
 MEASURED = 'measured_improvement'
@@ -47,6 +48,21 @@ def only_cited_lines(baseline, candidate, original, proposed, where):
     return True
 
 
+_REFERENCE = re.compile(r'`([^`\n]+)`|\]\(([^)\s]+)\)')
+
+
+def adds_no_reference(baseline, candidate, original, proposed):
+    """True when every replaced line names only commands, paths and links its original line already named. A correction removes
+    or rewords a dead reference: a new one (an existing command that does not do what the line now says) is a fresh claim no
+    gate can verify."""
+    def named(lines): return {a or b for line in lines for a, b in _REFERENCE.findall(line)}
+    for name in (n for n in original.keys() | proposed.keys() if original.get(n) != proposed.get(n)):
+        before, after = _lines(baseline, name) or [], _lines(candidate, name) or []
+        for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, before, after, autojunk=False).get_opcodes():
+            if tag == 'replace' and not named(after[j1:j2]) <= named(before[i1:i2]): return False
+    return True
+
+
 def resolves(check, finding_id):
     """True when the profile check compared the harness, resolved the target and introduced no finding of any class."""
     return check.get('status') == 'compared' and finding_id in check['resolved'] and not check['introduced']
@@ -60,7 +76,7 @@ def lost_nothing(trials, inputs_unchanged):
         and all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate' and t['split'] == 'regression'))
 
 
-GATES = ('edits_beyond_cited_lines', 'finding_not_resolved_or_introduced', 'evaluation_regressed')
+GATES = ('edits_beyond_cited_lines', 'correction_adds_a_reference', 'finding_not_resolved_or_introduced', 'evaluation_regressed')
 
 
 def choose(result, args, baseline, original, attempts):
@@ -79,6 +95,7 @@ def choose(result, args, baseline, original, attempts):
         where = finding['where'] + [row for name in check.get('resolved', ()) if name != finding['id'] and name in current
                                     and current[name]['finding_class'] == 'contradiction' for row in current[name]['where']]
         failed = ('edits_beyond_cited_lines' if not only_cited_lines(baseline, item['frozen'], original, item['proposed'], where)
+                  else 'correction_adds_a_reference' if not adds_no_reference(baseline, item['frozen'], original, item['proposed'])
                   else 'finding_not_resolved_or_introduced' if not resolves(check, finding['id'])
                   else 'evaluation_regressed' if not lost_nothing(item['trials'], item['inputs_unchanged']) else None)
         if failed is None:
