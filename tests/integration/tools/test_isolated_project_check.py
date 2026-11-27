@@ -396,3 +396,16 @@ def test_a_repository_with_every_slot_taken_is_a_setup_problem(repo, temporary, 
         status = check.main([str(repo), '--', 'true'])
 
     assert status == 2 and 'temporary slots' in capsys.readouterr().err
+
+
+# fixed-in: a killed check left its temporary worktree registered in the real repository and its slot folder taken forever
+def test_a_stale_leftover_check_and_its_worktree_are_removed_and_a_fresh_one_stays(repo, monkeypatch, tmp_path):
+    import hashlib
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path / 'tmp')); (tmp_path / 'tmp').mkdir()
+    stem = hashlib.sha256(str(repo.resolve()).encode()).hexdigest()[:12]
+    old, fresh = tmp_path / 'tmp' / f'ahl-isolated-{stem}-0', tmp_path / 'tmp' / f'ahl-isolated-{stem}-1'
+    old.mkdir(); fresh.mkdir()
+    git(repo, 'worktree', 'add', '--detach', '--quiet', str(old / 'worktree'), 'HEAD')
+    os.utime(old, (1, 1))
+    assert check.remove_stale(repo.resolve(), stem) == [old.name]
+    assert not old.exists() and fresh.is_dir() and str(old) not in git(repo, 'worktree', 'list')
