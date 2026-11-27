@@ -1833,9 +1833,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         quiet = budget_stages.uninformative(trials, lambda trial: _trial_trace(Path(options.output), trial))
         recheckable = (_installs(args) and bank is None and attempt >= base and rechecks < MAX_RECHECKS and evaluated['inputs_unchanged']
                        and attempt + 1 < MAX_ATTEMPTS and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4)
-        # Agents that finished their turn and failed every task, controls included, point at the tasks, not the harness: the author
-        # checks them first (below). A runtime failure, or no recheck left, ends the run: another attempt would learn nothing.
-        if quiet is not None and not (recheckable and quiet.get('classification') == 'agent_failed'):
+        # Agents that mostly finished their turn and failed every task, controls included, point at the tasks, not the harness: the
+        # author checks them first (below). Mostly runtime failures, or no recheck left, end the run: another attempt would learn nothing.
+        if quiet is not None and not (recheckable and 2 * (quiet.get('class_counts') or {}).get('agent_failed', 0) >= quiet.get('trials', 1)):
             result.pop('instruction_removal',None)
             result.update(status='inconclusive',reason='evaluation_uninformative',evaluation_uninformative=quiet)
             break
