@@ -146,6 +146,10 @@ def codex_authentication(version, environ, user_harness=False):
 # temporary CODEX_HOME -> the real login file it may borrow; and -> sha256 of the bytes copied while a session runs.
 # The bytes themselves are never kept.
 _LOGINS, _COPIES = {}, {}
+_CREATED = set()  # temporary CODEX_HOMEs codex_environment made; only these are ever pruned
+# Kept after a session: the receipt-relevant configuration. Everything else Codex rebuilds per home (plugin downloads, caches,
+# session databases), about 50 MB for each trial and preparation session.
+KEPT_IN_CODEX_HOME = frozenset({'config.toml', 'hooks.json', 'requirements.toml'})
 
 
 def _write_private(path, data, flags):
@@ -195,6 +199,18 @@ def settle_codex_login(environment):
         temporary.unlink(missing_ok=True)
         copy.unlink(missing_ok=True)
     return status
+
+
+def prune_codex_home(environment):
+    """After a session: delete what Codex regenerates in a temporary CODEX_HOME this module created, keeping its configuration.
+    A user's real CODEX_HOME, or any home not made by codex_environment, is never touched."""
+    home = environment.get('CODEX_HOME')
+    if home not in _CREATED: return
+    _CREATED.discard(home)
+    for entry in Path(home).iterdir():
+        if entry.name in KEPT_IN_CODEX_HOME: continue
+        if entry.is_dir() and not entry.is_symlink(): shutil.rmtree(entry, ignore_errors=True)
+        else: entry.unlink(missing_ok=True)
 
 
 def _private_json(path, value):
@@ -266,6 +282,7 @@ def codex_environment(trial, workspace, defaults, environ):
         raise ValueError('temporary Codex configuration did not round-trip')
     (home / 'config.toml').write_text(text)
     (home / 'config.toml').chmod(0o600)
+    _CREATED.add(str(home))
     real, dropped = codex_login(environ), {'CODEX_HOME'}
     if real is not None:
         _LOGINS[str(home)] = real.resolve()
