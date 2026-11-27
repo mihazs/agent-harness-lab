@@ -37,7 +37,7 @@ if p('context.json').exists():
         reuse = c.get('reuse')
         note(kind='construction', attempt=c['attempt'], reused=len(reuse['tasks']) if reuse else 0,
              remaining_in_prompt='seconds remain' in prompt and 'time box' in prompt.lower(), repair='overran its time box' in prompt)
-        seconds = mode.get('construct_seconds', 0)
+        seconds = mode.get('construct_seconds', 0) + (mode.get('late_overrun', 0) if c['attempt'] >= 1 else 0)
         if mode.get('construct_overrun_once') and not p('@MARK@').exists():
             p('@MARK@').write_text('x'); seconds = mode['construct_overrun_once']
         advance('@CLOCK@', seconds)
@@ -301,3 +301,10 @@ def test_a_later_construction_that_cannot_be_repaired_keeps_the_measured_result(
     code, receipt, run, rows = stub.run(capsys, dict(refine=True, bad_later=True))
     assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
     assert receipt['later_construction_failed']['attempt'] >= 1 and (run / 'evaluation-0').is_dir()
+
+
+# fixed-in: a later evaluation author that overran its time box ended the run budget_exhausted, discarding the measured attempt
+def test_a_later_construction_that_overruns_keeps_the_measured_result(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_overrun=100))
+    assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['later_construction_failed']['reason'] == 'evaluation_construction_timeout' and (run / 'evaluation-0').is_dir()
