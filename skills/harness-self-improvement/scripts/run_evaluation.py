@@ -400,6 +400,7 @@ def execute_session(argv, cwd, timeout, stdin=None, *, env):
         finally: _SESSION['scoped'] = False
     finally:
         credentials = trial_surfaces.settle_codex_login(env)
+        trial_surfaces.prune_codex_home(env)
     return run, credentials
 
 
