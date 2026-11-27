@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.239.1
+
+### Patch Changes
+
+- 4c21ea4: Before any grader runs, an evaluation whose control fixtures are shared between states or with the task's input fixture, or whose complete control lacks a declared artifact, goes back to the author once with every offending task named and the reminder never to loosen a grader to pass a control.
+- 156e9b3: A grader control written as a single file instead of a workspace directory is named in the same up-front repair request as the other control defects.
+- b4d5d36: A verified correction may only remove or reword a dead reference: a replaced line that names a command, path or link its original line did not is refused (`correction_adds_a_reference`), because an existing command named in place of a dead one can make a new false claim no gate verifies.
+- 9ced744: When an installing run has already measured an attempt without a gain and a later evaluation cannot be built within the repair passes, the run now ends `no_change` on the measured result (recording `later_construction_failed`, and letting the verified-correction lane run) instead of `invalid_input`.
+- 0aaaf5c: The recheck before an uninformative stop also runs when most trials are agent failures and a few are runtime or tool failures (`mixed`), instead of only when every trial is an agent failure.
+- 31d6059: When an evaluation author rewrites the staged `harness_paths` or names a skill, the controller restores its own values before validation instead of spending a construction repair pass on them.
+
 ## 0.239.0
 
 ### Minor Changes
