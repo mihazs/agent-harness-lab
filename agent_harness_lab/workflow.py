@@ -1923,6 +1923,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 early = install_review.early(args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,
                     remaining=remaining, model_calls=model_calls, progress=progress,
                     measured=[task.get('prompt', '') for task in manifest['tasks'] if task['id'] in gained])
+                if early['verdict'] == 'unmeasured':
+                    from .evaluation import verified_correction
+                    if verified_correction.proven_lines(args.project, baseline, frozen, early.get('conflicts') or []):
+                        # The unmeasured lines only correct cited contradictions: proven without a task, they do not block the gain.
+                        early = dict(early, verdict='consistent', corrections_accepted=early['conflicts'])
                 result['install_review'] = early
                 if (early['verdict'] == 'unmeasured' and early.get('conflicts') and not trims and attempt + 1 < MAX_ATTEMPTS
                         and remaining() >= stages.allotted('refinement') and trials_left >= 2 + 2 * len(manifest['tasks']) + 4):

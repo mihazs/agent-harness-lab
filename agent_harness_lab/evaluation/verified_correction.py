@@ -117,3 +117,24 @@ def choose(result, args, baseline, original, attempts):
     if named is None: return None
     result['verified_correction'] = dict(status='refused', finding=named, reason=GATES[max(refused)] if refused else 'no_evaluated_candidate')
     return None
+
+
+def proven_lines(project, baseline, candidate, conflicts):
+    """True when every line a review called unmeasured is a verified correction: the candidate's line at a position a current
+    contradiction cites, that contradiction resolved, nothing introduced, and the line names no reference its original did not.
+    Removing a dead reference needs no measurement; it must not block a confirmed gain elsewhere in the same candidate."""
+    from agent_harness_lab.project_profile import report
+    check = report.check_candidate(project, baseline, candidate)
+    if check.get('status') != 'compared' or check.get('introduced') or not conflicts: return False
+    current = {row['id']: row for row in report.build(project)['findings']}
+    cited = {(row['file'], row['line']) for name in check.get('resolved', ()) if current.get(name, {}).get('finding_class') == 'contradiction'
+             for row in current[name]['where']}
+    def named(text): return {a or b for a, b in _REFERENCE.findall(text)}
+    def proven(quote):
+        for name, number in cited:
+            before, after = _lines(baseline, name), _lines(candidate, name)
+            if before and after and number <= min(len(before), len(after)) and quote.strip() in after[number - 1] \
+                    and named(after[number - 1]) <= named(before[number - 1]):
+                return True
+        return False
+    return all(proven(quote) for quote in conflicts)

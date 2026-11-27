@@ -160,6 +160,10 @@ def passes(result, args, output, baseline, candidate, original, proposed, *, run
     changed = [name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)]
     result['install_review'] = review = _session(runner, agent, binary, output, baseline, candidate, changed, remaining, model_calls,
                                                  getattr(args, 'inherit_env', False), measured, name=free_name(output))
+    if review['verdict'] == 'unmeasured':
+        from agent_harness_lab.evaluation import verified_correction
+        if verified_correction.proven_lines(args.project, baseline, candidate, review.get('conflicts') or []):
+            result['install_review'] = review = dict(review, verdict='consistent', corrections_accepted=review['conflicts'])
     if review['verdict'] == 'consistent': return True
     result.pop('recommendation', None)
     result.update(status='no_change', reason=REASON)
