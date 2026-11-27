@@ -87,8 +87,8 @@ also passes the selected provider's connection and authentication variables:
 Claude also receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and
 `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and
 `ANTHROPIC_DEFAULT_HAIKU_MODEL`. Codex sessions and trials take `model` and
-`model_reasoning_effort` from the user's Codex `config.toml`; `AHL_CODEX_MODEL`
-replaces that model for AHL's sessions only, without editing the user's Codex configuration.
+`model_reasoning_effort` from the user's Codex `config.toml`; `AHL_CODEX_MODEL` and
+`AHL_CODEX_EFFORT` replace them for AHL's sessions only, without editing the user's Codex configuration.
 Advanced provider settings,
 custom credential chains and model-specific regional overrides may need
 `--inherit-env` on `ahl evaluate`, `ahl improve`, `ahl watch`, or

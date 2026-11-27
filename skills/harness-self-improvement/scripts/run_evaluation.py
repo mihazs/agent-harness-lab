@@ -380,8 +380,9 @@ def codex_defaults(environ=None):
     try: raw = tomllib.loads(path.read_text())
     except (OSError, ValueError): raw = {}
     chosen = {key: raw[key] for key in ('model', 'model_reasoning_effort') if isinstance(raw.get(key), str)}
-    if os.environ.get('AHL_CODEX_MODEL'):  # a machine-wide evaluation pin that leaves the user's own Codex config alone
-        chosen['model'] = os.environ['AHL_CODEX_MODEL']
+    # Machine-wide evaluation pins that leave the user's own Codex config alone.
+    for key, variable in (('model', 'AHL_CODEX_MODEL'), ('model_reasoning_effort', 'AHL_CODEX_EFFORT')):
+        if os.environ.get(variable): chosen[key] = os.environ[variable]
     return chosen
 
 
