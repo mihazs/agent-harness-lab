@@ -62,6 +62,7 @@ if p('context.json').exists():
                 (control / 'artifact').write_text('done' if state == 'complete' else 'wrong')
                 controls.append(dict(task=split, state=state, fixture=control.name))
         note(kind='constructed', attempt=c['attempt'], tasks=[t['id'] for t in tasks])
+        if mode.get('bad_later') and c['attempt'] >= 1: tasks = []  # every later construction pass is malformed
         (evaluation / 'manifest.json').write_text(json.dumps(dict(harness_paths=(['wrong.md'] if mode.get('wrong_paths') else c['harness_paths']), skills=(['x'] if mode.get('wrong_paths') else []), tasks=tasks,
             grader_self_tests=controls, grader_bundles=bundles)))
 elif 'independent probe-review session' in prompt:  # the probe reviewer starts in an empty folder; every task is `fair`
@@ -292,3 +293,11 @@ def test_mostly_failed_tasks_with_one_crash_are_still_rechecked(stub, capsys):
     assert receipt['rechecks_run'] == 2 and len(kinds(rows, 'construction')) == 3, receipt
     assert (receipt['status'], receipt['reason']) == ('inconclusive', 'evaluation_uninformative')
     assert receipt['evaluation_uninformative']['classification'] == 'mixed'
+
+
+# fixed-in: an evaluation the author could not build in a later attempt ended the run invalid_input and discarded the measured
+# attempts before it
+def test_a_later_construction_that_cannot_be_repaired_keeps_the_measured_result(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(refine=True, bad_later=True))
+    assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
+    assert receipt['later_construction_failed']['attempt'] >= 1 and (run / 'evaluation-0').is_dir()
