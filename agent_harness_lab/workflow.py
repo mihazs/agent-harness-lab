@@ -81,6 +81,8 @@ def output_dir(args, *, deadline=None):
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
+        from .run_retention import prune
+        prune(parent, current=output)
     else:
         output = args.output.resolve()
         output.mkdir(parents=True, exist_ok=False, mode=0o700)

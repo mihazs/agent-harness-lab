@@ -22,11 +22,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 VERSION = 2
 NO_HOOKS = ('-c', 'core.hooksPath=/dev/null')
 BUS_VARIABLES = ('XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS')
 SLOTS = 16  # overlapping checks of one repository
+STALE_SECONDS = 24 * 3600  # a leftover older than this belongs to a killed check, never a running one
 
 
 def _git(repo, *args, check=True):
@@ -132,6 +134,22 @@ def substitute(argv, worktree):
     return [part.replace('{worktree}', str(worktree)) for part in argv]
 
 
+def remove_stale(repo, stem, now=None):
+    """Delete this repository's leftover check folders older than STALE_SECONDS (a killed check never ran its cleanup) together with
+    their registered worktrees; a check still running in another slot is younger and stays. Returns the folders removed."""
+    now, removed = time.time() if now is None else now, []
+    for leftover in sorted(Path(tempfile.gettempdir()).glob(f'ahl-isolated-{stem}-*')):
+        try:
+            if leftover.is_symlink() or not leftover.is_dir() or now - leftover.stat().st_mtime < STALE_SECONDS: continue
+        except OSError:
+            continue
+        subprocess.run(['git', *NO_HOOKS, 'worktree', 'remove', '--force', str(leftover / 'worktree')], cwd=repo, capture_output=True)
+        shutil.rmtree(leftover, ignore_errors=True)
+        removed.append(leftover.name)
+    if removed: subprocess.run(['git', *NO_HOOKS, 'worktree', 'prune'], cwd=repo, capture_output=True)
+    return removed
+
+
 @contextlib.contextmanager
 def private_directory(repo):
     """An owner-only directory in the temporary root, removed on exit.
@@ -141,6 +159,7 @@ def private_directory(repo):
     reading the first) finds them. A check that overlaps another takes the next slot; mkdir never follows a planted link.
     """
     stem = hashlib.sha256(str(repo).encode(errors='surrogateescape')).hexdigest()[:12]
+    remove_stale(repo, stem)
     for slot in range(SLOTS):
         path = Path(tempfile.gettempdir()) / f'ahl-isolated-{stem}-{slot}'
         try:
