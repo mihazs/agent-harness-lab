@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.241.1
+
+### Patch Changes
+
+- d47729b: When an installing run has already measured an attempt and a later evaluation author overruns its time box, the run ends `no_change` on the measured result (with `later_construction_failed`), and the verified-correction lane can still run, instead of `budget_exhausted`.
+- 419d21b: An installing run that runs out of budget after measured attempts that showed no gain now ends `no_change` / `evaluation_no_improvement` (with `budget_exhausted_during_search`), and the verified-correction lane can run on those attempts. A run that ran out while a gain was pending (a confirmation, or a fixed task with nothing lost) still ends `budget_exhausted`.
+- 558428d: A confirmed gain is no longer refused because the install review called an accompanying line unmeasured when that line is itself a verified correction: a cited line of a contradiction the candidate resolves, naming no new reference, with nothing introduced. The review records the accepted lines in `corrections_accepted`.
+
 ## 0.241.0
 
 ### Minor Changes
