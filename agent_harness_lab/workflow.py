@@ -2110,9 +2110,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         result.update(status='no_change', reason='evaluation_no_improvement', remediation=_no_gain_remediation(),
                       budget_exhausted_during_search=dict(reason=result.get('reason'), measured_attempts=len(evaluated_attempts)))
     # A gain the repeats did not confirm is still no measured gain: a correction may install on its own basis.
-    if _installs(args) and result.get('status') == 'no_change' and result.get('reason') in ('evaluation_no_improvement', 'improvement_not_confirmed') and evaluated_attempts:
+    # A correction stands on its own proof, so a search that ran out of budget (even with a weakness still pending) may install
+    # one too; the behavioural ending is kept beside the install so it is never read as a measured gain.
+    out_of_budget = result.get('status') == 'budget_exhausted'
+    if _installs(args) and evaluated_attempts and (out_of_budget or result.get('status') == 'no_change' and result.get('reason') in ('evaluation_no_improvement', 'improvement_not_confirmed')):
+        behavioural = dict(status=result.get('status'), reason=result.get('reason'))
         _install_correction(result, args, output, baseline, original, evaluated_attempts, allowed_paths(args) is not None,
                             runner=runner, agent=agent, binary=binary, remaining=remaining, model_calls=model_calls, progress=progress)
+        if result.get('install_basis') == 'verified_correction' and out_of_budget: result['behavioural_result'] = behavioural
     if (result.get('recommendation') == 'candidate_requires_independent_certification' and _installs(args)
             and not common_plan.unresolved_operations and _targets_writable(args.project, [op.path for op in common_plan.operations])
             and install_review.passes(result, args, output, baseline, frozen, original, proposed, runner=runner, agent=agent, binary=binary,

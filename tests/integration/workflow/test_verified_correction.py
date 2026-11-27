@@ -174,3 +174,11 @@ def test_a_plain_improve_whose_candidate_corrects_nothing_reports_no_lane(lane):
     wf, run = lane
     result = run(HEAD + BAD + 'Be careful.\n', audit=False)
     assert result['status'] == 'no_change' and 'verified_correction' not in result and 'install_basis' not in result
+
+
+# fixed-in: a search that ran out of budget with a weakness still pending never offered its proven correction to the lane
+def test_a_proven_correction_installs_after_a_search_that_ran_out_of_budget(lane):
+    wf, run = lane
+    result = run(trial_agent=agent("not phase.endswith('development')"), trials=12, audit=False)  # both arms fail the claim
+    assert result['status'] == 'applied' and result['install_basis'] == 'verified_correction', result and (wf.project/'AGENTS.md').read_text() == FIXED
+    assert result['behavioural_result']['status'] == 'budget_exhausted'
