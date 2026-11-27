@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.240.0
+
+### Minor Changes
+
+- 7134c07: `AHL_CODEX_EFFORT` pins the reasoning effort of AHL's Codex preparation sessions and trials, next to `AHL_CODEX_MODEL`, without editing the user's Codex `config.toml`.
+
 ## 0.239.1
 
 ### Patch Changes
