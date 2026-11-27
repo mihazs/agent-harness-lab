@@ -591,13 +591,15 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     lacking = sorted(f"{t['id']} ({c['fixture']} lacks {a})" for t in tasks for c in controls if c.get('task') == t['id']
                      and c.get('state') == 'complete' for a in (t.get('artifacts') or []) if isinstance(a, str)
                      and not (path.parent / c['fixture'] / a).exists())
-    if shared or lacking:
+    files = sorted({c['fixture'] for c in controls if (path.parent / c['fixture']).exists() and not (path.parent / c['fixture']).is_dir()})
+    if shared or lacking or files:
         raise _author_defect('Each grader needs distinct broken, partial and complete control fixtures holding the end state',
             'Each grader_self_tests fixture is the finished workspace the grader reads after an agent worked, never the task\'s '
             'input fixture: broken and partial hold a wrong or incomplete deliverable, complete holds every declared artifact in '
             'its correct form, and the three are different directories. Do not loosen a grader to pass a control.'
             + (f" Tasks whose controls share a directory with each other or with the task fixture: {', '.join(shared)}." if shared else '')
             + (f" Complete controls missing a declared artifact: {'; '.join(lacking)}." if lacking else '')
+            + (f" A control fixture is a directory holding the workspace files, never one file: {', '.join(files)}." if files else '')
             + ' Fix every task listed, then finish.')
     for index, task in enumerate(tasks):
         checks = [c for c in controls if c.get('task') == task['id']]

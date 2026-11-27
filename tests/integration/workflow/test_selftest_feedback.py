@@ -94,3 +94,16 @@ def test_controls_that_reuse_the_task_fixture_are_named_for_every_task_in_one_re
     assert 'never the task\'s input fixture' in repair and 'Do not loosen a grader' in repair
     assert all(split in repair for split in ('development', 'regression', 'heldout'))
     assert [r['outcome'] for r in receipt['evaluation_construction_repairs']] == ['repaired']
+
+
+# fixed-in: controls written as single JSON files reached the grader stage and ended the run after the repairs
+FILES = SHARED.replace("fixture=split if first else control.name", "fixture=(control.name+'.json') if first else control.name").replace(
+    "(control/'artifact').write_text(", "(evaluation/(control.name+'.json')).write_text('{}'); (control/'artifact').write_text(")
+
+
+def test_controls_written_as_files_are_named_as_files_in_the_one_repair(wf, tmp_path, capsys):
+    wf.agent.write_text(FILES)
+    improve_cli(wf, tmp_path)
+    receipt, prompts = json.loads(capsys.readouterr().out), prompts_of(tmp_path)
+    assert receipt['status'] == 'applied', receipt
+    assert 'never one file' in prompts[1][len(prompts[0]):] and 'development-complete.json' in prompts[1]
