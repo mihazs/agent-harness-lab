@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.241.0
+
+### Minor Changes
+
+- 02d18fa: Old run outputs are deleted automatically. When `ahl improve` creates a run in its state directory, earlier `run-*` folders of that project are removed if they are older than `AHL_RUN_RETENTION_DAYS` (default 30). The newest `AHL_RUN_KEEP` (default 10) are kept, as is any run named by the incremental pointer or record. `AHL_RUN_RETENTION_DAYS=off` disables it, and an explicit `--output` is never touched. `scripts/isolated_project_check.py` now also removes its own leftover check folders older than a day and their registered worktrees before it starts.
+
+### Patch Changes
+
+- 39ca681: The verified-correction lane also runs for a plain `ahl improve` (without `--from-audit`): an installing run whose candidate corrects current static contradictions of the project, and passes every gate, installs that correction instead of ending `no_change`. A run whose candidates correct no contradiction is unchanged.
+- 94422af: An installing run whose claims the baseline refuted no longer stops after the second one. Each refuted claim starts a fresh claim line with its own refinement, up to three refuted claims, within the budget, trial and attempt limits. The proposer sees the feedback of every refuted claim and is asked for a different weak outcome.
+
 ## 0.240.1
 
 ### Patch Changes
