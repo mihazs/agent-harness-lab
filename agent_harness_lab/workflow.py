@@ -1705,10 +1705,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 except ValueError as error:  # a ContractError is one
                     args._authored_digest_ignored += getattr(error, 'digests_stripped', 0)
                     request = _repair_request(error, reused)
-                    if request is None or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0: raise  # an installing run may repair two defects in turn
+                    if request is None or len(made) >= (2 if _installs(args) else 1) or remaining() <= 0:  # an installing run may repair two defects in turn
+                        if not (_installs(args) and evaluated_attempts): raise
+                        # An earlier attempt was measured without a gain: a later evaluation the author could not build ends the
+                        # search on that measured result, never as invalid input that discards it.
+                        result.update(status='no_change', reason='evaluation_no_improvement', later_construction_failed=dict(
+                            attempt=attempt, reason=getattr(error, 'reason', None) or 'manifest_validation_rejected'))
+                        break
                     made.append(dict(request[0], attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = '\n' + request[1]
-            if result['status'] in ('execution_error', 'budget_exhausted'):
+            if result['status'] in ('execution_error', 'budget_exhausted') or 'later_construction_failed' in result:
                 break
             if made: made[-1]['outcome'] = 'repaired'
         if not pruned: checked = validated[0] if validated else validate()
