@@ -95,6 +95,8 @@ def test_the_proposer_is_told_how_to_read_the_findings_only_when_there_are_some(
 def test_the_guidance_prefers_contradictions_and_refuses_derivable_facts():
     text = ' '.join(workflow.PROFILE_GUIDANCE.split())
     assert 'Prefer a contradiction' in text and 'never add a directory tour or a stack overview' in text and 'hypotheses, not diagnoses' in text
+    # fixed-in: a proposer swapped a dead script path for an existing script that does not run that test
+    assert 'never swap in another command or path' in text
 
 
 def check(tmp_path, before, after, proposals=()):
