@@ -81,26 +81,39 @@ GATES = ('edits_beyond_cited_lines', 'correction_adds_a_reference', 'finding_not
 
 def choose(result, args, baseline, original, attempts):
     """The first evaluated attempt (a later one may have drifted to another weakness) that passes gates 1 to 4, or None.
-    Records `verified_correction` on the result: the refusal that got furthest, or the chosen attempt."""
+    Records `verified_correction` on the result: the refusal that got furthest, or the chosen attempt.
+
+    A run aimed at a profile finding (--from-audit) is judged on that finding. Any other installing run is judged on the current
+    contradictions each candidate resolves: a plain `ahl improve` whose proposer corrected a dead reference measures no gap
+    either, and must not drop a correction the same gates prove. A run whose candidates resolve none says nothing."""
     from agent_harness_lab.project_profile import report
     finding, refusal = target(args)
-    if finding is None:
-        if refusal: result['verified_correction'] = dict(status='refused', reason=refusal)
+    if finding is None and refusal:
+        result['verified_correction'] = dict(status='refused', reason=refusal)
         return None
-    refused, current = [], {row['id']: row for row in report.build(args.project)['findings']}
+    current = {row['id']: row for row in report.build(args.project)['findings']}
+    contradictions = {name for name, row in current.items() if row['finding_class'] == 'contradiction'}
+    if finding is None and not contradictions: return None
+    refused, named = [], finding['id'] if finding else None
+    # A candidate that lost a task in any evaluation is never a correction, even when a later evaluation of the same files was clean.
+    lossy = [item['proposed'] for item in attempts if not lost_nothing(item['trials'], item['inputs_unchanged'])]
     for item in attempts:
         check = report.check_candidate(args.project, baseline, item['frozen'])
-        # Lines of every other contradiction the same candidate resolves may change too: correcting two dead references at once
-        # is still only a correction, and the profile check below proves nothing new was introduced.
-        where = finding['where'] + [row for name in check.get('resolved', ()) if name != finding['id'] and name in current
-                                    and current[name]['finding_class'] == 'contradiction' for row in current[name]['where']]
+        resolved = [name for name in check.get('resolved', ()) if name in contradictions]
+        primary = finding['id'] if finding else (resolved[0] if resolved else None)
+        if primary is None: continue  # an untargeted candidate that corrects nothing is not a correction at all
+        named = named or primary
+        # Lines of every contradiction the same candidate resolves may change: correcting two dead references at once is still
+        # only a correction, and the profile check below proves nothing new was introduced.
+        where = (finding['where'] if finding else []) + [row for name in resolved for row in current[name]['where']]
         failed = ('edits_beyond_cited_lines' if not only_cited_lines(baseline, item['frozen'], original, item['proposed'], where)
                   else 'correction_adds_a_reference' if not adds_no_reference(baseline, item['frozen'], original, item['proposed'])
-                  else 'finding_not_resolved_or_introduced' if not resolves(check, finding['id'])
-                  else 'evaluation_regressed' if not lost_nothing(item['trials'], item['inputs_unchanged']) else None)
+                  else 'finding_not_resolved_or_introduced' if not resolves(check, primary)
+                  else 'evaluation_regressed' if item['proposed'] in lossy else None)
         if failed is None:
-            result['verified_correction'] = dict(status='candidate', finding=finding['id'], attempt=item['attempt'])
+            result['verified_correction'] = dict(status='candidate', finding=primary, attempt=item['attempt'])
             return item
         refused.append(GATES.index(failed))
-    result['verified_correction'] = dict(status='refused', finding=finding['id'], reason=GATES[max(refused)] if refused else 'no_evaluated_candidate')
+    if named is None: return None
+    result['verified_correction'] = dict(status='refused', finding=named, reason=GATES[max(refused)] if refused else 'no_evaluated_candidate')
     return None

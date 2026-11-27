@@ -44,7 +44,7 @@ def lane(monkeypatch, capsys):
     with ExitStack() as cleanups:
         wf = WorkflowTests(cleanups.callback)
 
-        def run(candidate=FIXED, files=FILES, trial_agent=None, later=None, trials=None):
+        def run(candidate=FIXED, files=FILES, trial_agent=None, later=None, trials=None, audit=True):
             build(wf.project.parent, files, name=wf.project.name)
             (wf.project/'.git').mkdir(exist_ok=True)
             (wf.project/'candidate_text').write_text(candidate)
@@ -54,7 +54,7 @@ def lane(monkeypatch, capsys):
             assert audit_main([str(wf.project), '--json', '--improvement-recheck']) == 0
             (wf.root/'audit.json').write_text(capsys.readouterr().out)
             args = wf.args()
-            args.command, args.from_audit = 'improve', wf.root/'audit.json'
+            args.command, args.from_audit = 'improve', (wf.root/'audit.json' if audit else None)
             if trials: args.trial_limit = trials
             return improve(args)
         yield wf, run
@@ -159,3 +159,18 @@ def test_a_correction_whose_gain_is_not_confirmed_still_installs_as_a_verified_c
     assert result['confirmation']['outcome'] == 'improvement_not_confirmed', result.get('confirmation')
     assert (result['status'], result['install_basis'], result['changed_files']) == ('applied', 'verified_correction', ['AGENTS.md'])
     assert (wf.project/'AGENTS.md').read_text() == FIXED
+
+
+# fixed-in: a plain `ahl improve` (no --from-audit) whose proposer corrected a dead reference ended `no_change`: the lane only
+# ran for audit-targeted runs, and agents behave the same with or without the dead reference
+def test_a_plain_improve_that_corrects_a_contradiction_installs_it_as_a_verified_correction(lane):
+    wf, run = lane
+    result = run(audit=False)
+    assert (result['status'], result['install_basis'], result['changed_files']) == ('applied', 'verified_correction', ['AGENTS.md']), result
+    assert (wf.project/'AGENTS.md').read_text() == FIXED and result['verified_correction']['finding'].startswith('hp/')
+
+
+def test_a_plain_improve_whose_candidate_corrects_nothing_reports_no_lane(lane):
+    wf, run = lane
+    result = run(HEAD + BAD + 'Be careful.\n', audit=False)
+    assert result['status'] == 'no_change' and 'verified_correction' not in result and 'install_basis' not in result
