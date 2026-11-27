@@ -95,9 +95,10 @@ def test_a_tie_installs_nothing_and_a_second_hypothesis_is_tried_first(cli):
     # A candidate that showed no gain is not an improvement. The baseline passed what was built to break it, twice.
     code, receipt, base = cli(original='good')
     assert (code, receipt['status'], receipt['reason']) == (0, 'no_change', 'evaluation_no_improvement')
-    assert receipt['hypotheses_not_reproduced'] == 2 and 'application' not in receipt and receipt['changed_files'] == []
+    # fixed-in: a run stopped after two refuted claims with most of its budget left; it now tries MAX_REFUTED claims.
+    assert receipt['hypotheses_not_reproduced'] == workflow.MAX_REFUTED and 'application' not in receipt and receipt['changed_files'] == []
     assert (base.project / 'AGENTS.md').read_text() == 'good'
-    assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == 2  # a fresh evaluation per hypothesis
+    assert len(list(Path(receipt['output']).glob('preparation/evaluation-?'))) == workflow.MAX_REFUTED  # a fresh evaluation per hypothesis
 
 
 def test_a_fix_the_baseline_also_passes_in_the_repeats_installs_nothing(cli, tmp_path):
@@ -182,9 +183,9 @@ def test_after_a_tie_the_second_attempt_starts_from_the_baseline_again(cli):
         ".read_text().strip() for name", ".read_text().split()[0] for name")  # an appended line keeps the arm passing: a tie
     assert appending.count('attempt%d') == 1 and appending.count('split()[0]') == 1
     _, receipt, _ = cli(agent=appending, original='good')
-    assert (receipt['status'], receipt['hypotheses_not_reproduced']) == ('no_change', 2)
-    first, second = ((Path(receipt['output']) / f'candidate-{n}/AGENTS.md').read_text() for n in (0, 1))
-    assert 'attempt0' in first and second == 'good\nattempt1\n'
+    assert (receipt['status'], receipt['hypotheses_not_reproduced']) == ('no_change', workflow.MAX_REFUTED)
+    first, second, third = ((Path(receipt['output']) / f'candidate-{n}/AGENTS.md').read_text() for n in (0, 1, 2))
+    assert 'attempt0' in first and second == 'good\nattempt1\n' and third == 'good\nattempt2\n'
 
 
 def test_a_candidate_rejected_by_the_structural_validation_gets_one_corrected_attempt(cli, tmp_path):
