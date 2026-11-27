@@ -860,6 +860,11 @@ def _listed(proposal, name):
     return value if isinstance(value, list) else []
 
 
+def _no_gain_remediation():
+    from .exit_guidance import REMEDIATION
+    return REMEDIATION['evaluation_no_improvement']
+
+
 def _flips(trials):
     """(fixed, lost): tasks the baseline failed and the candidate passed, and the reverse, in one run. Regression tasks
     are controls, so a flip there is never counted as fixed."""
@@ -1675,7 +1680,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                     timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
                     if made or remaining() < box + stages.allotted('trials'):  # a second pass must not eat the trials allotment
                         if _installs(args) and evaluated_attempts:  # an earlier attempt was measured: end on it, as for a defect
-                            result.update(status='no_change', reason='evaluation_no_improvement', later_construction_failed=dict(
+                            result.update(status='no_change', reason='evaluation_no_improvement', remediation=_no_gain_remediation(), later_construction_failed=dict(
                                 attempt=attempt, reason=timed_out.reason))
                         else:
                             result.update(status='budget_exhausted', reason=timed_out.reason, contract_violation=timed_out.receipt())
@@ -1718,7 +1723,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                         if not (_installs(args) and evaluated_attempts): raise
                         # An earlier attempt was measured without a gain: a later evaluation the author could not build ends the
                         # search on that measured result, never as invalid input that discards it.
-                        result.update(status='no_change', reason='evaluation_no_improvement', later_construction_failed=dict(
+                        result.update(status='no_change', reason='evaluation_no_improvement', remediation=_no_gain_remediation(), later_construction_failed=dict(
                             attempt=attempt, reason=getattr(error, 'reason', None) or 'manifest_validation_rejected'))
                         break
                     made.append(dict(request[0], attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
@@ -2088,6 +2093,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.update(status='no_change', reason='improvement_not_confirmed' if fixed else 'evaluation_no_improvement',
                           baseline_at_least_as_good=not fixed, **({'candidate_lost': sorted(lost)} if lost else {}),
                           **({'invalid_controls': invalid} if invalid else {}))
+    # Out of budget mid-search after measured attempts that showed no gain: that is the measured answer, not an unknown. A run that
+    # ran out while a gain was pending (a confirmation, a fixed task with nothing lost, or a reproduced weakness) stays inconclusive.
+    def reproduced(trials):  # the baseline failed a claim task while every baseline control held: a real weakness awaits its fix
+        base = [t for t in trials if t['version'] == 'baseline']
+        return (any(t['split'] != 'regression' and t['status'] == 'failed' for t in base)
+                and all(t['status'] == 'passed' for t in base if t['split'] == 'regression'))
+    gain_pending = 'confirmation' in result or result.get('recommendation') or any(
+        _flips(item['trials'])[0] and not _flips(item['trials'])[1] or reproduced(item['trials']) for item in evaluated_attempts)
+    if _installs(args) and result.get('status') == 'budget_exhausted' and evaluated_attempts and not gain_pending:
+        result.update(status='no_change', reason='evaluation_no_improvement', remediation=_no_gain_remediation(),
+                      budget_exhausted_during_search=dict(reason=result.get('reason'), measured_attempts=len(evaluated_attempts)))
     # A gain the repeats did not confirm is still no measured gain: a correction may install on its own basis.
     if _installs(args) and result.get('status') == 'no_change' and result.get('reason') in ('evaluation_no_improvement', 'improvement_not_confirmed') and evaluated_attempts:
         _install_correction(result, args, output, baseline, original, evaluated_attempts, allowed_paths(args) is not None,
