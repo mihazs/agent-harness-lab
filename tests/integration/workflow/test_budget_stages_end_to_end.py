@@ -74,8 +74,8 @@ else:
     note(kind='trial')
     trial = mode.get('trial', 'normal')
     good = p('AGENTS.md').read_text().strip() == 'good'
-    if trial == 'crash-all' or trial == 'candidate-crashes' and good: sys.exit(3)
-    wrong = trial in ('fail-all', 'candidate-crashes')
+    if trial == 'crash-all' or trial == 'candidate-crashes' and good or trial == 'fail-heldout-crashes' and 'heldout' in p('seed').read_text(): sys.exit(3)
+    wrong = trial in ('fail-all', 'candidate-crashes', 'fail-heldout-crashes')
     p('artifact').write_text('done' if not wrong and (good or 'regression' in p('seed').read_text()) else 'wrong')
 print(done)
 '''
@@ -284,3 +284,11 @@ def test_rewritten_staged_paths_are_restored_by_the_controller_without_a_repair(
     assert not any(row.get('repair') for row in kinds(rows, 'construction'))
     manifest = json.loads((run / 'preparation/evaluation-0/manifest.json').read_text())
     assert manifest['skills'] == [] and 'wrong.md' not in manifest['harness_paths']
+
+
+# fixed-in: a run whose agents mostly failed every task (one task also crashed in both arms) was `mixed` and stopped unrechecked
+def test_mostly_failed_tasks_with_one_crash_are_still_rechecked(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(trial='fail-heldout-crashes'))
+    assert receipt['rechecks_run'] == 2 and len(kinds(rows, 'construction')) == 3, receipt
+    assert (receipt['status'], receipt['reason']) == ('inconclusive', 'evaluation_uninformative')
+    assert receipt['evaluation_uninformative']['classification'] == 'mixed'
