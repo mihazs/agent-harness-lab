@@ -219,6 +219,8 @@ def test_ahl_codex_model_pins_the_evaluation_model_and_keeps_the_users_effort(tm
     monkeypatch.setenv('AHL_CODEX_MODEL', 'pinned-model')
     assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'pinned-model', 'model_reasoning_effort': 'high'}
     assert runner.codex_defaults(dict(HOME=str(tmp_path / 'none'))) == {'model': 'pinned-model'}  # no config file: the pin alone
+    monkeypatch.setenv('AHL_CODEX_EFFORT', 'xhigh')
+    assert runner.codex_defaults(dict(HOME=str(tmp_path))) == {'model': 'pinned-model', 'model_reasoning_effort': 'xhigh'}
 
 
 def test_pure_claude_sessions_also_switch_off_the_runtimes_own_plugins_and_report_what_loaded(tmp_path):
