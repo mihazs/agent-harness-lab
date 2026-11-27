@@ -1674,7 +1674,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 if construction['timeout'] or took > box + 1:
                     timed_out = manifest_contract.ContractError('evaluation_construction_timeout', 'evaluation_construction')
                     if made or remaining() < box + stages.allotted('trials'):  # a second pass must not eat the trials allotment
-                        result.update(status='budget_exhausted', reason=timed_out.reason, contract_violation=timed_out.receipt())
+                        if _installs(args) and evaluated_attempts:  # an earlier attempt was measured: end on it, as for a defect
+                            result.update(status='no_change', reason='evaluation_no_improvement', later_construction_failed=dict(
+                                attempt=attempt, reason=timed_out.reason))
+                        else:
+                            result.update(status='budget_exhausted', reason=timed_out.reason, contract_violation=timed_out.receipt())
                         break
                     made.append(dict(timed_out.receipt(), attempt=1, outcome='requested', elapsed_seconds=round(args._construction_seconds, 1)))
                     suffix = (f'\nYour previous pass overran its time box. The controller allows one more pass of {int(box)} seconds: '
