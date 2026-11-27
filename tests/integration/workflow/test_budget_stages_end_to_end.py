@@ -31,6 +31,7 @@ if p('context.json').exists():
     c = json.loads(p('context.json').read_text()); evaluation = p(c['evaluation'])
     if c['phase'] == 'candidate':
         note(kind='proposal', attempt=c['attempt'])
+        if mode.get('late_propose_seconds') and c['attempt'] >= 1: advance('@CLOCK@', mode['late_propose_seconds'])
         (p(c['candidate']) / 'AGENTS.md').write_text('worse\n' if mode.get('refine') and c['attempt'] == 0 else 'good\n')
         (evaluation / 'proposal.json').write_text(json.dumps({'status': 'candidate', 'mechanisms': ['synthetic'], 'falsifiers': ['artifact check']}))
     else:
@@ -78,7 +79,7 @@ else:
     if trial == 'crash-all' or trial == 'candidate-crashes' and good or trial == 'fail-heldout-crashes' and 'heldout' in p('seed').read_text(): sys.exit(3)
     wrong = trial in ('fail-all', 'candidate-crashes', 'fail-heldout-crashes')
     if mode.get('late_trial_seconds') and not p('seed').read_text().endswith('0'): advance('@CLOCK@', mode['late_trial_seconds'])
-    p('artifact').write_text('done' if not wrong and (good or 'regression' in p('seed').read_text()) else 'wrong')
+    p('artifact').write_text('done' if not wrong and (good or trial == 'pass-all' or 'regression' in p('seed').read_text()) else 'wrong')
 print(done)
 '''
 
@@ -309,10 +310,17 @@ def test_a_later_construction_that_overruns_keeps_the_measured_result(stub, caps
     code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_overrun=100))
     assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
     assert receipt['later_construction_failed']['reason'] == 'evaluation_construction_timeout' and (run / 'evaluation-0').is_dir()
+    assert receipt['remediation']  # fixed-in: these no_change endings carried no next step
 
 
 # fixed-in: a search that ran out of budget after measured attempts without a gain ended `budget_exhausted` (inconclusive)
 def test_running_out_of_budget_after_measured_attempts_without_a_gain_is_a_measured_no_change(stub, capsys):
-    code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_trial_seconds=200))
+    # Both arms pass everything: every claim is refuted by the baseline and nothing is pending.
+    code, receipt, run, rows = stub.run(capsys, dict(trial='pass-all', late_propose_seconds=500))
     assert (receipt['status'], receipt['reason']) == ('no_change', 'evaluation_no_improvement'), receipt
-    assert receipt['budget_exhausted_during_search']['measured_attempts'] >= 1
+    assert receipt.get('budget_exhausted_during_search', {}).get('measured_attempts', 0) >= 1 and receipt['remediation'], {k: receipt.get(k) for k in ('status', 'reason', 'hypotheses_not_reproduced', 'budget_stages', 'rechecks_run')}
+
+
+def test_running_out_of_budget_with_a_reproduced_weakness_stays_inconclusive(stub, capsys):
+    code, receipt, run, rows = stub.run(capsys, dict(refine=True, late_propose_seconds=500))
+    assert receipt['status'] == 'budget_exhausted' and 'budget_exhausted_during_search' not in receipt, receipt
