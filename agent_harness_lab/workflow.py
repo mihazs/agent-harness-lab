@@ -744,7 +744,9 @@ PROFILE_GUIDANCE = """The brief's harness_profile section lists deterministic fi
 line the repository contradicts (a missing script, target or path, a package manager its lockfile does not use) or a toolchain or
 verification command the harness never states. Each has an id you may cite as the evidence of a mechanism, a location and a proposed
 update. They are hypotheses, not diagnoses: open the named line first. Prefer a contradiction, because an agent follows a wrong line
-literally, and change only the line a finding names. Add a fact only when an agent cannot read it from the repository itself (a
+literally, and change only the line a finding names. Correct a contradiction by removing the wrong reference or rewording the line
+around references it already names; never swap in another command or path unless you have read that it does what the line says.
+Add a fact only when an agent cannot read it from the repository itself (a
 non-default toolchain, an exact verification command); never add a directory tour or a stack overview.
 """
 
