@@ -72,3 +72,25 @@ def test_repairs_that_never_fix_the_grader_end_invalid_input_after_two_passes(wf
     assert [r['outcome'] for r in receipt['evaluation_construction_repairs']] == ['requested', 'requested']
     assert len(prompts_of(tmp_path)) == 3  # one pass, two repairs
     assert not Path(receipt['output'], 'evaluation-0').exists()  # stopped before any trial ran
+
+
+OLD_CONTROL = "controls.append(dict(task=split,state=state,fixture=control.name))"
+assert OLD_CONTROL in base.FAKE, 'fake agent moved'
+# The first construction pass points every control at the task's own input fixture; the repair pass writes real end states.
+SHARED = (base.FAKE.replace(OLD_CONTROL, "controls.append(dict(task=split,state=state,fixture=split if first else control.name))")
+          .replace("tasks=[]; controls=[]", "first=not p('.shared').exists(); p('.shared').write_text('x'); tasks=[]; controls=[]")
+          .replace(OLD_MANIFEST, "with (evaluation/'prompts.txt').open('a') as log: log.write(prompt+'\\n=====\\n')\n  " + OLD_MANIFEST)
+          .replace('folder.mkdir()', 'folder.mkdir(exist_ok=True)').replace('control.mkdir()', 'control.mkdir(exist_ok=True)'))
+
+
+# fixed-in: controls pointing at the task's input fixture were reported one grader at a time as a failing grader, and an
+# author loosened its grader to pass them; the controller now names every such task before any grader runs
+def test_controls_that_reuse_the_task_fixture_are_named_for_every_task_in_one_repair(wf, tmp_path, capsys):
+    wf.agent.write_text(SHARED)
+    improve_cli(wf, tmp_path)
+    receipt, prompts = json.loads(capsys.readouterr().out), prompts_of(tmp_path)
+    assert receipt['status'] == 'applied', receipt
+    repair = prompts[1][len(prompts[0]):]
+    assert 'never the task\'s input fixture' in repair and 'Do not loosen a grader' in repair
+    assert all(split in repair for split in ('development', 'regression', 'heldout'))
+    assert [r['outcome'] for r in receipt['evaluation_construction_repairs']] == ['repaired']
